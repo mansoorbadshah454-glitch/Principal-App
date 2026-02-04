@@ -17,25 +17,36 @@ const ClassCard = ({ cls, onDelete }) => {
     const presentCount = Math.max(0, Math.round(totalStudents * (0.85 + (seed % 15) / 100)));
     const absentCount = totalStudents - presentCount;
 
+    // Dynamic Theme Color based on odd/even id
+    const isEven = seed % 2 === 0;
+    const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
+    const themeLight = isEven ? '#e0e7ff' : '#ecfeff'; // Light variants
+
+
     return (
         <div
             onClick={() => navigate(`/classes/${cls.id}`)}
             className="card" style={{
                 padding: '0',
                 overflow: 'hidden',
-                border: 'none',
+                border: '1px solid #dbeafe', // Subtle blue border
                 position: 'relative',
-                background: 'white',
-                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                background: '#eff6ff', // Light Blue background
+                boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)', // Blue-tinted shadow
                 borderRadius: '16px',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                transition: 'all 0.3s ease'
             }}>
-            <div style={{ padding: '1.5rem', borderBottom: '1px solid #f1f5f9' }}>
+            {/* Theme Decoration Strip */}
+            <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
+
+            <div style={{ padding: '1.5rem', borderBottom: '1px solid #dbeafe' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                     <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)' }}>{cls.name}</h3>
                     <div style={{
-                        padding: '0.25rem 0.75rem', background: '#f8fafc', borderRadius: '20px',
-                        fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)'
+                        padding: '0.25rem 0.75rem', background: 'white', borderRadius: '20px',
+                        fontSize: '0.85rem', fontWeight: '600', color: themeColor,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                     }}>
                         {totalStudents} Students
                     </div>
@@ -43,12 +54,12 @@ const ClassCard = ({ cls, onDelete }) => {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        <User size={16} />
+                        <User size={16} color={themeColor} />
                         <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
                     </div>
 
                     {/* Attendance Stats */}
-                    <div style={{ display: 'flex', gap: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', gap: '1rem', padding: '0.75rem', background: 'white', borderRadius: '8px', border: '1px solid #dbeafe' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }} />
                             <div>
@@ -68,7 +79,7 @@ const ClassCard = ({ cls, onDelete }) => {
                 </div>
             </div>
 
-            <div style={{ padding: '1.5rem' }}>
+            <div style={{ padding: '1.5rem', background: 'transparent' }}>
                 <div
                     onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
                     style={{
@@ -77,10 +88,10 @@ const ClassCard = ({ cls, onDelete }) => {
                         userSelect: 'none'
                     }}
                 >
-                    <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                    <p style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>
                         Subjects ({cls.subjects?.length || 0})
                     </p>
-                    {showSubjects ? <ChevronDown size={16} color="var(--text-secondary)" /> : <ChevronRight size={16} color="var(--text-secondary)" />}
+                    {showSubjects ? <ChevronDown size={16} color="#64748b" /> : <ChevronRight size={16} color="#64748b" />}
                 </div>
 
                 {showSubjects && (
@@ -88,7 +99,8 @@ const ClassCard = ({ cls, onDelete }) => {
                         {cls.subjects?.slice(0, 5).map((subj, idx) => (
                             <span key={idx} style={{
                                 fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '6px',
-                                background: '#f1f5f9', color: 'var(--text-secondary)'
+                                background: 'white', border: '1px solid #dbeafe', color: 'var(--text-secondary)',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                             }}>
                                 {subj}
                             </span>
@@ -96,7 +108,7 @@ const ClassCard = ({ cls, onDelete }) => {
                         {cls.subjects?.length > 5 && (
                             <span style={{
                                 fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '6px',
-                                background: '#f1f5f9', color: 'var(--text-secondary)'
+                                background: 'white', border: '1px solid #dbeafe', color: 'var(--text-secondary)'
                             }}>
                                 +{cls.subjects.length - 5}
                             </span>
@@ -109,10 +121,11 @@ const ClassCard = ({ cls, onDelete }) => {
                         onClick={(e) => { e.stopPropagation(); navigate(`/classes/${cls.id}`); }}
                         style={{
                             flex: 1, padding: '0.75rem',
-                            background: 'transparent', border: '1px solid #e2e8f0', borderRadius: '8px',
-                            color: 'var(--text-main)', fontWeight: '600', cursor: 'pointer',
+                            background: 'white', border: `1px solid ${themeLight}`, borderRadius: '8px',
+                            color: themeColor, fontWeight: '600', cursor: 'pointer',
                             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                            transition: 'all 0.2s'
+                            transition: 'all 0.2s',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.03)'
                         }}>
                         Details <ChevronRight size={16} />
                     </button>
