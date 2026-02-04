@@ -20,26 +20,36 @@ const ClassDetails = () => {
     useEffect(() => {
         const fetchClassDetails = async () => {
             try {
+                const sessionData = localStorage.getItem('manual_session');
+                const schoolId = sessionData ? JSON.parse(sessionData).schoolId : null;
+
+                if (!schoolId) return;
+
                 // 1. Fetch Class Info
-                const docRef = doc(db, `schools/${JSON.parse(localStorage.getItem('manual_session')).schoolId}/classes`, classId);
+                const docRef = doc(db, `schools/${schoolId}/classes`, classId);
                 const docSnap = await getDoc(docRef);
 
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     setClassData({ id: docSnap.id, ...data });
 
-                    // 2. Generate Mock Students based on student count
-                    const studentCount = data.students || 25;
-                    const mockStudents = Array.from({ length: studentCount }, (_, i) => ({
-                        id: `st-${i + 1}`,
-                        name: `Student ${i + 1}`,
-                        rollNo: `R-${100 + i}`,
-                        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${i + 1}`,
-                        status: Math.random() > 0.15 ? 'present' : 'absent', // 85% attendance
-                        avgScore: 65 + Math.floor(Math.random() * 30), // 65-95
-                        homework: 70 + Math.floor(Math.random() * 30) // 70-100
+                    // 2. Fetch Real Students from Sub-collection
+                    const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
+                    const studentsSnap = await import('firebase/firestore').then(mod => mod.getDocs(studentsRef));
+
+                    const realStudents = studentsSnap.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data(),
+                        // Map fields to UI requirements if necessary
+                        rollNo: doc.data().rollNo || 'N/A',
+                        status: doc.data().status || 'absent',
+                        avgScore: doc.data().avgScore || 0,
+                        homework: doc.data().homework || 0,
+                        // Generate avatar if not present
+                        avatar: doc.data().avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
                     }));
-                    setStudents(mockStudents);
+
+                    setStudents(realStudents);
                 } else {
                     console.log("No such class!");
                 }

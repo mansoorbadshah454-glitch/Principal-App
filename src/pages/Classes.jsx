@@ -8,7 +8,7 @@ import { auth } from '../firebase';
 // Internal Component for individual Class Card logic
 const ClassCard = ({ cls, onDelete }) => {
     const navigate = useNavigate();
-    const [showSubjects, setShowSubjects] = useState(true);
+    const [showSubjects, setShowSubjects] = useState(false);
 
     // Simulate Daily Attendance
     const totalStudents = cls.students || 0;
@@ -170,22 +170,58 @@ const Classes = () => {
         fetchUser();
     }, []);
 
+    // Customize sort order: Nursery triggers -2, Prep triggers -1, others parse number
+    const getClassOrder = (name) => {
+        const lower = name.toLowerCase();
+        if (lower.includes('nursery')) return -2;
+        if (lower.includes('prep')) return -1;
+        return parseInt(name.replace(/\D/g, '')) || 0;
+    };
+
     // Fetch Classes
     useEffect(() => {
         if (!schoolId) return;
 
         const q = query(collection(db, `schools/${schoolId}/classes`));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
             const classesData = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             }));
 
-            // Custom Numerical Sort
+            // Seed default classes if none exist
+            if (classesData.length === 0) {
+                const DEFAULT_CLASSES = [
+                    'Nursery', 'Prep',
+                    'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5',
+                    'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'
+                ];
+
+                // We disconnect temporarily or just let the listener handle the updates
+                // Using Promise.all to add them in parallel might be too fast for some limits, but usually fine for 12 docs
+                // We'll just do it; the snapshot listener will pick them up
+                try {
+                    console.log("Seeding default classes...");
+                    const batchPromises = DEFAULT_CLASSES.map(name =>
+                        addDoc(collection(db, `schools/${schoolId}/classes`), {
+                            name,
+                            teacher: '', // No default teacher
+                            students: 0,
+                            subjects: ['English', 'Urdu', 'Mathematics', 'Islamiyat'], // Basic default subjects
+                            createdAt: new Date()
+                        })
+                    );
+                    // We don't await here to block the UI; we let the snapshot update handle it
+                    // But we could await if we wanted to show a loader. 
+                    // Since it's 'readymade', having them pop in is fine.
+                } catch (err) {
+                    console.error("Error seeding classes", err);
+                }
+            }
+
+            // Enhanced Sort
             classesData.sort((a, b) => {
-                const numA = parseInt(a.name.replace(/\D/g, '')) || 0;
-                const numB = parseInt(b.name.replace(/\D/g, '')) || 0;
-                return numA - numB;
+                return getClassOrder(a.name) - getClassOrder(b.name);
             });
 
             setClasses(classesData);

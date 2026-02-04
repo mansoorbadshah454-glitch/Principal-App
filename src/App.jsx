@@ -7,6 +7,7 @@ import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
 import Classes from './pages/Classes';
 import ClassDetails from './pages/ClassDetails';
+import Admission from './pages/Admission';
 import Login from './pages/Login';
 
 function App() {
@@ -50,7 +51,7 @@ function App() {
 
       <Route path="/" element={user ? <MainLayout /> : <Navigate to="/login" />}>
         <Route index element={<Dashboard />} />
-        <Route path="admission" element={<div className="card"><h2>New Admission Page</h2></div>} />
+        <Route path="admission" element={<Admission />} />
         <Route path="classes" element={<Classes />} />
         <Route path="classes/:classId" element={<ClassDetails />} />
         <Route path="teachers" element={<div className="card"><h2>Teachers Page</h2></div>} />

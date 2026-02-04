@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield
@@ -7,7 +7,7 @@ import {
 import { auth } from '../firebase';
 
 const Sidebar = () => {
-    const navigate = useNavigate();
+    // const navigate = useNavigate();
 
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
