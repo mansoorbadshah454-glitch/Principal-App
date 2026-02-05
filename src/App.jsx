@@ -14,6 +14,8 @@ import Login from './pages/Login';
 import Collections from './pages/Collections';
 import ClassCollection from './pages/ClassCollection';
 
+import Promotions from './pages/Promotions';
+
 function App() {
   const [user, setUser] = useState(() => {
     const manualSession = localStorage.getItem('manual_session');
@@ -62,11 +64,12 @@ function App() {
         <Route path="parents" element={<Parents />} />
         <Route path="collections" element={<Collections />} />
         <Route path="collections/:classId" element={<ClassCollection />} />
-        <Route path="promotions" element={<div className="card"><h2>Promotions Page</h2></div>} />
+        <Route path="promotions" element={<Promotions />} />
         <Route path="users" element={<div className="card"><h2>User Admin Page</h2></div>} />
       </Route>
     </Routes>
   );
 }
+
 
 export default App;
