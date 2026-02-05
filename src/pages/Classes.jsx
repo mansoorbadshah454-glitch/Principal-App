@@ -169,15 +169,22 @@ const Classes = () => {
         const fetchUser = () => {
             const manualSession = localStorage.getItem('manual_session');
             if (manualSession) {
-                const userData = JSON.parse(manualSession);
-                setSchoolId(userData.schoolId);
-            } else if (auth.currentUser) {
-                // In a real app we might fetch the user doc here, 
-                // but for now let's check local storage or assume a global context
-                // Fallback for auth-only users if not in local storage:
-                // This part depends on how you handle standard auth persistence
-                // For this implementation, we'll try to get it from a potential local cache or re-fetch
-                // We'll trust the manual_session logic mostly as per Login.jsx
+                try {
+                    const userData = JSON.parse(manualSession);
+                    if (userData.schoolId) {
+                        setSchoolId(userData.schoolId);
+                    } else {
+                        console.error("School ID missing in session");
+                        setLoading(false);
+                    }
+                } catch (e) {
+                    console.error("Session parse error", e);
+                    setLoading(false);
+                }
+            } else {
+                console.log("No manual session found");
+                // For this demo, we can't do much without a session
+                setLoading(false);
             }
         };
         fetchUser();
@@ -185,6 +192,7 @@ const Classes = () => {
 
     // Customize sort order: Nursery triggers -2, Prep triggers -1, others parse number
     const getClassOrder = (name) => {
+        if (!name || typeof name !== 'string') return 0;
         const lower = name.toLowerCase();
         if (lower.includes('nursery')) return -2;
         if (lower.includes('prep')) return -1;

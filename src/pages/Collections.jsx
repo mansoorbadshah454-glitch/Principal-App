@@ -100,12 +100,24 @@ const Collections = () => {
     useEffect(() => {
         const manualSession = localStorage.getItem('manual_session');
         if (manualSession) {
-            setSchoolId(JSON.parse(manualSession).schoolId);
+            try {
+                const userData = JSON.parse(manualSession);
+                if (userData.schoolId) {
+                    setSchoolId(userData.schoolId);
+                } else {
+                    setLoading(false);
+                }
+            } catch (e) {
+                setLoading(false);
+            }
+        } else {
+            setLoading(false);
         }
     }, []);
 
     // Helper for Sort
     const getClassOrder = (name) => {
+        if (!name || typeof name !== 'string') return 0;
         const lower = name.toLowerCase();
         if (lower.includes('nursery')) return -2;
         if (lower.includes('prep')) return -1;
