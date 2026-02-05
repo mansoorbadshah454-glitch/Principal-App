@@ -25,6 +25,7 @@ const Dashboard = () => {
     const [showClassDropdown, setShowClassDropdown] = useState(false);
     const [selectedMonth, setSelectedMonth] = useState('February');
     const [showMonthDropdown, setShowMonthDropdown] = useState(false);
+    const [rankingPage, setRankingPage] = useState(0);
 
     // Collection Stats State
     const [collectionStats, setCollectionStats] = useState({ paid: 0, unpaid: 0, total: 0 });
@@ -989,6 +990,106 @@ const Dashboard = () => {
                                             </p>
                                         </div>
                                     ))}
+                                </div>
+                            </div>
+
+                            {/* Teacher Performance Ranking Card */}
+                            <div className="card" style={{
+                                position: 'relative',
+                                background: 'linear-gradient(135deg, #ffffff 0%, #fefce8 100%)',
+                                border: '1px solid #fef08a'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                    <h3 style={{ fontSize: '1.125rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#854d0e' }}>
+                                        <Award size={20} fill="#facc15" color="#ca8a04" />
+                                        Performance Ranking
+                                    </h3>
+                                    <span style={{ fontSize: '0.8rem', color: '#a16207', background: '#fef9c3', padding: '0.25rem 0.5rem', borderRadius: '8px', fontWeight: '600' }}>
+                                        Top Performers
+                                    </span>
+                                </div>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                    {teachers
+                                        .map(t => ({
+                                            ...t,
+                                            // Simulated weighted score: 40% App Usage (mocked via status), 60% Student Impact (mock score)
+                                            performanceScore: Math.round(((t.status === 'on' ? 95 : 85) * 0.4) + (t.score * 0.6))
+                                        }))
+                                        .sort((a, b) => b.performanceScore - a.performanceScore)
+                                        .slice(rankingPage * 5, (rankingPage + 1) * 5)
+                                        .map((teacher, index) => {
+                                            const actualRank = (rankingPage * 5) + index + 1;
+                                            return (
+                                                <div key={index} style={{
+                                                    display: 'flex', alignItems: 'center', gap: '1rem',
+                                                    padding: '0.75rem', borderRadius: '12px',
+                                                    background: actualRank === 1 ? 'linear-gradient(90deg, #fef9c3 0%, #ffffff 100%)' : '#ffffff',
+                                                    border: actualRank === 1 ? '1px solid #fde047' : '1px solid #f1f5f9',
+                                                    boxShadow: actualRank === 1 ? '0 4px 6px -1px rgba(250, 204, 21, 0.1)' : 'none'
+                                                }}>
+                                                    {/* Rank Badge */}
+                                                    <div style={{
+                                                        width: '28px', height: '28px', borderRadius: '50%',
+                                                        background: actualRank === 1 ? '#fbbf24' : (actualRank === 2 ? '#e2e8f0' : (actualRank === 3 ? '#fb923c' : '#f8fafc')),
+                                                        color: actualRank > 3 ? '#64748b' : 'white',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        fontWeight: '700', fontSize: '0.85rem',
+                                                        boxShadow: actualRank < 4 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
+                                                    }}>
+                                                        {actualRank}
+                                                    </div>
+
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                                                            <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#1e293b' }}>{teacher.name}</span>
+                                                            <span style={{ fontWeight: '700', fontSize: '0.9rem', color: actualRank === 1 ? '#ca8a04' : 'var(--primary)' }}>
+                                                                {teacher.performanceScore}%
+                                                            </span>
+                                                        </div>
+                                                        <div style={{ width: '100%', height: '6px', background: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
+                                                            <div style={{
+                                                                width: `${teacher.performanceScore}%`,
+                                                                height: '100%',
+                                                                background: actualRank === 1 ? '#eab308' : 'var(--primary)',
+                                                                borderRadius: '3px',
+                                                                transition: 'width 1s ease-out'
+                                                            }} />
+                                                        </div>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem' }}>
+                                                            <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{teacher.class}</span>
+                                                            {actualRank === 1 && <span style={{ fontSize: '0.7rem', color: '#ca8a04', fontWeight: '600' }}>🏆 Top Performer</span>}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                </div>
+
+                                {/* Pagination Controls */}
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '1rem' }}>
+                                    <button
+                                        onClick={() => setRankingPage(Math.max(0, rankingPage - 1))}
+                                        disabled={rankingPage === 0}
+                                        style={{
+                                            border: 'none', background: 'transparent', cursor: rankingPage === 0 ? 'default' : 'pointer',
+                                            color: rankingPage === 0 ? '#cbd5e1' : '#64748b', fontSize: '0.85rem', fontWeight: '600',
+                                            display: 'flex', alignItems: 'center', gap: '0.25rem'
+                                        }}
+                                    >
+                                        <ChevronDown size={16} style={{ transform: 'rotate(90deg)' }} /> Prev
+                                    </button>
+                                    <button
+                                        onClick={() => setRankingPage(rankingPage + 1)}
+                                        disabled={(rankingPage + 1) * 5 >= teachers.length}
+                                        style={{
+                                            border: 'none', background: 'transparent', cursor: (rankingPage + 1) * 5 >= teachers.length ? 'default' : 'pointer',
+                                            color: (rankingPage + 1) * 5 >= teachers.length ? '#cbd5e1' : '#64748b', fontSize: '0.85rem', fontWeight: '600',
+                                            display: 'flex', alignItems: 'center', gap: '0.25rem'
+                                        }}
+                                    >
+                                        Next <ChevronDown size={16} style={{ transform: 'rotate(-90deg)' }} />
+                                    </button>
                                 </div>
                             </div>
                         </div>
