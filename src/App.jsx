@@ -7,9 +7,12 @@ import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
 import Classes from './pages/Classes';
 import Teachers from './pages/Teachers';
+import Parents from './pages/Parents';
 import ClassDetails from './pages/ClassDetails';
 import Admission from './pages/Admission';
 import Login from './pages/Login';
+import Collections from './pages/Collections';
+import ClassCollection from './pages/ClassCollection';
 
 function App() {
   const [user, setUser] = useState(() => {
@@ -56,8 +59,9 @@ function App() {
         <Route path="classes" element={<Classes />} />
         <Route path="classes/:classId" element={<ClassDetails />} />
         <Route path="teachers" element={<Teachers />} />
-        <Route path="parents" element={<div className="card"><h2>Parents Page</h2></div>} />
-        <Route path="collections" element={<div className="card"><h2>Collections Page</h2></div>} />
+        <Route path="parents" element={<Parents />} />
+        <Route path="collections" element={<Collections />} />
+        <Route path="collections/:classId" element={<ClassCollection />} />
         <Route path="promotions" element={<div className="card"><h2>Promotions Page</h2></div>} />
         <Route path="users" element={<div className="card"><h2>User Admin Page</h2></div>} />
       </Route>
