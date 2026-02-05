@@ -105,16 +105,35 @@ const Dashboard = () => {
         },
     ];
 
-    const teachers = [
-        { name: 'Robert Fox', class: 'Class 10A', status: 'on', score: 98 },
-        { name: 'Jane Cooper', class: 'Class 8B', status: 'off', score: 85 },
-        { name: 'Wade Warren', class: 'Class 5C', status: 'on', score: 92 },
-        { name: 'Cameron Williamson', class: 'Class 12', status: 'on', score: 88 },
-        { name: 'Esther Howard', class: 'Class 9B', status: 'on', score: 95 },
-        { name: 'Guy Hawkins', class: 'Class 7A', status: 'off', score: 78 },
-        { name: 'Theresa Webb', class: 'Class 11C', status: 'on', score: 91 },
-        { name: 'Jenny Wilson', class: 'Class 6D', status: 'on', score: 84 },
-    ];
+    // Teachers Data State
+    const [teachers, setTeachers] = useState([]);
+
+    React.useEffect(() => {
+        const session = localStorage.getItem('manual_session');
+        if (session) {
+            const { schoolId } = JSON.parse(session);
+            const q = query(collection(db, `schools/${schoolId}/teachers`));
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const list = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    // Simulate dynamic properties for the dashboard since they aren't in DB yet
+                    // Deterministic simulation based on ID to keep it consistent across renders
+                    const seed = doc.id.charCodeAt(0) + (data.name?.length || 0);
+                    return {
+                        id: doc.id,
+                        name: data.name,
+                        class: Array.isArray(data.assignedClasses) && data.assignedClasses.length > 0
+                            ? data.assignedClasses[0]
+                            : (data.assignedClasses || 'Unassigned'),
+                        status: seed % 2 === 0 ? 'on' : 'off', // Simulated status
+                        score: 75 + (seed % 20) // Simulated student impact score (75-95)
+                    };
+                });
+                setTeachers(list);
+            });
+            return () => unsubscribe();
+        }
+    }, []);
 
     // Dynamic Data Generation based on Selected Class
     const [fetchedClasses, setFetchedClasses] = React.useState([]);
@@ -1021,13 +1040,22 @@ const Dashboard = () => {
                                         .map((teacher, index) => {
                                             const actualRank = (rankingPage * 5) + index + 1;
                                             return (
-                                                <div key={index} style={{
-                                                    display: 'flex', alignItems: 'center', gap: '1rem',
-                                                    padding: '0.75rem', borderRadius: '12px',
-                                                    background: actualRank === 1 ? 'linear-gradient(90deg, #fef9c3 0%, #ffffff 100%)' : '#ffffff',
-                                                    border: actualRank === 1 ? '1px solid #fde047' : '1px solid #f1f5f9',
-                                                    boxShadow: actualRank === 1 ? '0 4px 6px -1px rgba(250, 204, 21, 0.1)' : 'none'
-                                                }}>
+                                                <div
+                                                    key={index}
+                                                    onClick={() => navigate('/teachers', { state: { selectedTeacherId: teacher.id } })}
+                                                    style={{
+                                                        display: 'flex', alignItems: 'center', gap: '1rem',
+                                                        padding: '0.75rem', borderRadius: '12px',
+                                                        background: actualRank === 1 ? 'linear-gradient(90deg, #fef9c3 0%, #ffffff 100%)' : '#ffffff',
+                                                        border: actualRank === 1 ? '1px solid #fde047' : '1px solid #f1f5f9',
+                                                        boxShadow: actualRank === 1 ? '0 4px 6px -1px rgba(250, 204, 21, 0.1)' : 'none',
+                                                        cursor: 'pointer',
+                                                        transition: 'transform 0.2s',
+                                                        zIndex: 1
+                                                    }}
+                                                    onMouseEnter={(e) => e.currentTarget.style.transform = 'translateX(4px)'}
+                                                    onMouseLeave={(e) => e.currentTarget.style.transform = 'translateX(0)'}
+                                                >
                                                     {/* Rank Badge */}
                                                     <div style={{
                                                         width: '28px', height: '28px', borderRadius: '50%',

@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, Edit } from 'lucide-react';
 import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc } from 'firebase/firestore';
@@ -8,7 +8,7 @@ import { auth } from '../firebase';
 
 // Internal Component for individual Teacher Card logic
 // Internal Component for individual Teacher Card logic
-const TeacherCard = ({ teacher, onDelete, onEdit }) => {
+const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
     // Dynamic Theme Color based on name char code for variety
     const seed = teacher.name.charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
@@ -16,16 +16,21 @@ const TeacherCard = ({ teacher, onDelete, onEdit }) => {
     const themeLight = isEven ? '#e0e7ff' : '#ecfeff';
 
     return (
-        <div className="card" style={{
-            padding: '0',
-            overflow: 'hidden',
-            border: '1px solid #dbeafe',
-            position: 'relative',
-            background: 'white',
-            boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)',
-            borderRadius: '16px',
-            transition: 'all 0.3s ease'
-        }}>
+        <div
+            id={`teacher-${teacher.id}`}
+            className="card"
+            style={{
+                padding: '0',
+                overflow: 'hidden',
+                border: isHighlighted ? '2px solid var(--primary)' : '1px solid #dbeafe',
+                position: 'relative',
+                background: 'white',
+                boxShadow: isHighlighted ? '0 0 0 4px rgba(99, 102, 241, 0.2)' : '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)',
+                borderRadius: '16px',
+                transition: 'all 0.3s ease',
+                transform: isHighlighted ? 'scale(1.02)' : 'scale(1)',
+                zIndex: isHighlighted ? 10 : 1
+            }}>
             <div style={{ padding: '1.5rem', borderBottom: '1px solid #f1f5f9' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                     <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
@@ -187,6 +192,25 @@ const Teachers = () => {
 
         return () => unsubscribe();
     }, [schoolId]);
+
+    // Handle Scroll to Teacher from Dashboard
+    const location = useLocation();
+    const [highlightedTeacherId, setHighlightedTeacherId] = useState(null);
+
+    useEffect(() => {
+        if (location.state?.selectedTeacherId && !loading && teachers.length > 0) {
+            const teacherId = location.state.selectedTeacherId;
+            const element = document.getElementById(`teacher-${teacherId}`);
+            if (element) {
+                setTimeout(() => {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setHighlightedTeacherId(teacherId);
+                    // Remove highlight after 3 seconds
+                    setTimeout(() => setHighlightedTeacherId(null), 3000);
+                }, 500); // Small delay to ensure rendering
+            }
+        }
+    }, [location.state, loading, teachers]);
 
     const [isEditing, setIsEditing] = useState(false);
     const [editingId, setEditingId] = useState(null);
@@ -451,7 +475,13 @@ const Teachers = () => {
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
                     {teachers.map((t) => (
-                        <TeacherCard key={t.id} teacher={t} onDelete={handleDeleteClick} onEdit={handleEditClick} />
+                        <TeacherCard
+                            key={t.id}
+                            teacher={t}
+                            onDelete={handleDeleteClick}
+                            onEdit={handleEditClick}
+                            isHighlighted={highlightedTeacherId === t.id}
+                        />
                     ))}
                 </div>
             )}
