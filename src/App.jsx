@@ -15,6 +15,8 @@ import Collections from './pages/Collections';
 import ClassCollection from './pages/ClassCollection';
 
 import Promotions from './pages/Promotions';
+import NewsFeed from './pages/NewsFeed';
+import Settings from './pages/Settings';
 
 function App() {
   const [user, setUser] = useState(() => {
@@ -65,6 +67,8 @@ function App() {
         <Route path="collections" element={<Collections />} />
         <Route path="collections/:classId" element={<ClassCollection />} />
         <Route path="promotions" element={<Promotions />} />
+        <Route path="news-feed" element={<NewsFeed />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="users" element={<div className="card"><h2>User Admin Page</h2></div>} />
       </Route>
     </Routes>

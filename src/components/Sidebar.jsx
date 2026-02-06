@@ -2,7 +2,7 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
-    Wallet, TrendingUp, UserCog, LogOut, Shield
+    Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText
 } from 'lucide-react';
 import { auth } from '../firebase';
 
@@ -11,6 +11,7 @@ const Sidebar = () => {
 
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+        { icon: FileText, label: 'News Feeds', path: '/news-feed' },
         { icon: UserPlus, label: 'New Admission', path: '/admission' },
         { icon: GraduationCap, label: 'Classes', path: '/classes' },
         { icon: Users, label: 'Teachers', path: '/teachers' },
@@ -18,6 +19,7 @@ const Sidebar = () => {
         { icon: Wallet, label: 'Collections', path: '/collections' },
         { icon: TrendingUp, label: 'Promotions', path: '/promotions' },
         { icon: UserCog, label: 'User Admin', path: '/users' },
+        { icon: SettingsIcon, label: 'Settings', path: '/settings' },
     ];
 
     const handleLogout = async () => {
