@@ -10,24 +10,31 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects }) 
     if (!isOpen || !student) return null;
 
     // --- Data Prep ---
-    const subjects = classSubjects && classSubjects.length > 0
-        ? classSubjects
-        : ['Math', 'Science', 'English', 'Urdu', 'Art'];
-
-    const seed = student.id ? student.id.charCodeAt(0) : 0;
-
     // 1. Subject Scores
-    const subjectData = subjects.slice(0, 6).map((sub) => ({
-        subject: sub,
-        score: Math.min(100, Math.max(50, Math.floor(Math.random() * 40) + 60 + (seed % 10)))
-    }));
+    // Use student.academicScores if available, otherwise generate fallback data
+    const subjectData = student.academicScores && student.academicScores.length > 0
+        ? student.academicScores
+        : (classSubjects && classSubjects.length > 0 ? classSubjects : ['Math', 'Science', 'English', 'Urdu', 'Art']).slice(0, 6).map((sub) => {
+            // Fallback generation
+            const seed = student.id ? student.id.charCodeAt(0) : 0;
+            return {
+                subject: sub,
+                score: Math.min(100, Math.max(50, Math.floor(Math.random() * 40) + 60 + (seed % 10)))
+            };
+        });
 
     // 2. Behavior Metrics
+    const rawWellness = student.wellness || {};
+    const seed = student.id ? student.id.charCodeAt(0) : 0;
+
     const behaviorData = [
-        { name: 'Behavior', score: 85 + (seed % 15), color: '#8b5cf6' },
-        { name: 'Health', score: 92 + (seed % 8), color: '#ec4899' },
-        { name: 'Hygiene', score: 88 + (seed % 10), color: '#10b981' },
+        { name: 'Behavior', score: rawWellness.behavior || (85 + (seed % 15)), color: '#8b5cf6' },
+        { name: 'Health', score: rawWellness.health || (92 + (seed % 8)), color: '#ec4899' },
+        { name: 'Hygiene', score: rawWellness.hygiene || (88 + (seed % 10)), color: '#10b981' },
     ];
+
+    // 3. Attendance
+    const attendanceScore = student.attendance?.percentage || student.attendance || 85;
 
     // Styles Objects for robustness against CSS issues
     const styles = {
@@ -143,7 +150,7 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects }) 
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: '#10b981' }}>
                                         <Calendar size={16} />
-                                        <span>Att: {student.attendance || 85}%</span>
+                                        <span>Att: {attendanceScore}%</span>
                                     </div>
                                 </div>
                             </div>
