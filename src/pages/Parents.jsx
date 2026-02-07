@@ -7,7 +7,7 @@ import { auth } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 
 // Internal Component for individual Parent Card logic
-const ParentCard = ({ parent, onDelete, onEdit }) => {
+const ParentCard = ({ parent, onDelete, onEdit, onMessage }) => {
     // Dynamic Theme Color based on name char code for variety
     const seed = parent.name.charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
@@ -89,6 +89,10 @@ const ParentCard = ({ parent, onDelete, onEdit }) => {
                         <ShieldCheck size={16} color="#64748b" />
                         <span>Password: <span style={{ fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px' }}>{parent.password}</span></span>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                        <BookOpen size={16} color="#64748b" /> {/* Using BookOpen as placeholder for Briefcase if not avail, but let's try to import Briefcase at top or use User */}
+                        <span>{parent.occupation || 'Occupation: N/A'}</span>
+                    </div>
                 </div>
             </div>
 
@@ -110,12 +114,26 @@ const ParentCard = ({ parent, onDelete, onEdit }) => {
                         )}
                     </div>
                 </div>
-                <div style={{
-                    width: '32px', height: '32px', borderRadius: '8px',
-                    background: 'white', border: '1px solid #e2e8f0',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>
-                    <Baby size={16} color="#fbbf24" fill="#fbbf24" />
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                        onClick={() => onMessage(parent)}
+                        style={{
+                            width: '32px', height: '32px', borderRadius: '8px',
+                            background: 'white', border: '1px solid #e2e8f0',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer', color: '#8b5cf6'
+                        }}
+                        title="Send Message"
+                    >
+                        <Mail size={16} />
+                    </button>
+                    <div style={{
+                        width: '32px', height: '32px', borderRadius: '8px',
+                        background: 'white', border: '1px solid #e2e8f0',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                        <Baby size={16} color="#fbbf24" fill="#fbbf24" />
+                    </div>
                 </div>
             </div>
         </div>
@@ -420,17 +438,47 @@ const Parents = () => {
         }
     };
 
-    // Delete Logic
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [parentToDelete, setParentToDelete] = useState(null);
     const [confirmPassword, setConfirmPassword] = useState('');
     const [deleteError, setDeleteError] = useState('');
+
+    // Message Logic
+    const [showMessageModal, setShowMessageModal] = useState(false);
+    const [selectedParentForMessage, setSelectedParentForMessage] = useState(null);
+    const [messageText, setMessageText] = useState('');
 
     const handleDeleteClick = (id) => {
         setParentToDelete(id);
         setShowDeleteConfirm(true);
         setConfirmPassword('');
         setDeleteError('');
+    };
+
+    const handleSendMessage = async () => {
+        if (!selectedParentForMessage || !messageText.trim()) return;
+
+        try {
+            // Write to notifications subcollection of the parent
+            // Path: schools/{schoolId}/parents/{parentId}/notifications
+            const notifRef = collection(db, `schools/${schoolId}/parents/${selectedParentForMessage.id}/notifications`);
+            await addDoc(notifRef, {
+                title: "Message from Principal",
+                message: messageText.trim(),
+                timestamp: new Date(), // Using client date for now, ideally serverTimestamp
+                read: false,
+                type: 'private_message',
+                sender: 'Principal'
+            });
+
+            alert("Message sent successfully!");
+            setShowMessageModal(false);
+            setMessageText('');
+            setSelectedParentForMessage(null);
+        } catch (error) {
+            console.error("Error sending message:", error);
+            alert("Failed to send message.");
+        }
     };
 
     const confirmDelete = async (e) => {
@@ -455,12 +503,19 @@ const Parents = () => {
 
         if (isVerified) {
             try {
-                await deleteDoc(doc(db, `schools/${schoolId}/parents`, parentToDelete));
+                // Call Cloud Function for Secure Full Delete (Auth + DB)
+                const deleteUserFn = httpsCallable(functions, 'deleteSchoolUser');
+                await deleteUserFn({
+                    targetUid: parentToDelete,
+                    role: 'parent',
+                    schoolId: schoolId
+                });
+
                 setShowDeleteConfirm(false);
                 setParentToDelete(null);
             } catch (error) {
                 console.error("Error deleting parent:", error);
-                setDeleteError("Failed to delete. Try again.");
+                setDeleteError(`Failed to delete: ${error.message}`);
             }
         } else {
             setDeleteError("Incorrect password.");
@@ -669,10 +724,95 @@ const Parents = () => {
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
                     {filteredParents.map((p) => (
-                        <ParentCard key={p.id} parent={p} onDelete={handleDeleteClick} onEdit={handleEditClick} />
+                        <ParentCard
+                            key={p.id}
+                            parent={p}
+                            onDelete={handleDeleteClick}
+                            onEdit={handleEditClick}
+                            onMessage={(parent) => {
+                                setSelectedParentForMessage(parent);
+                                setShowMessageModal(true);
+                            }}
+                        />
                     ))}
                 </div>
             )}
+
+            {/* Message Modal */}
+            {showMessageModal && selectedParentForMessage && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 1000 // No background overlay as requested (transparent)
+                }}>
+                    <div className="animate-scale-in" style={{
+                        background: 'white', borderRadius: '24px', padding: '2rem',
+                        width: '90%', maxWidth: '500px',
+                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: 'var(--text-main)' }}>
+                                Message Parent
+                            </h2>
+                            <button onClick={() => setShowMessageModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem', background: '#f8fafc', borderRadius: '16px' }}>
+                            <div style={{
+                                width: '48px', height: '48px', borderRadius: '50%',
+                                background: 'var(--primary)', color: 'white',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold'
+                            }}>
+                                {selectedParentForMessage.name.charAt(0)}
+                            </div>
+                            <div>
+                                <h3 style={{ fontWeight: '600', margin: 0 }}>{selectedParentForMessage.name}</h3>
+                                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>Send a private notification</p>
+                            </div>
+                        </div>
+
+                        <textarea
+                            placeholder="Write your message here..."
+                            rows="5"
+                            value={messageText}
+                            onChange={(e) => setMessageText(e.target.value)}
+                            style={{
+                                width: '100%', padding: '1rem', borderRadius: '12px',
+                                border: '1px solid #e2e8f0', resize: 'none', outline: 'none',
+                                fontSize: '1rem', marginBottom: '1.5rem', fontFamily: 'inherit'
+                            }}
+                        />
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                            <button
+                                onClick={() => setShowMessageModal(false)}
+                                style={{
+                                    padding: '0.75rem 1.5rem', borderRadius: '12px',
+                                    background: '#f1f5f9', color: '#64748b', border: 'none',
+                                    fontWeight: '600', cursor: 'pointer'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSendMessage}
+                                disabled={!messageText.trim()}
+                                style={{
+                                    padding: '0.75rem 1.5rem', borderRadius: '12px',
+                                    background: 'var(--primary)', color: 'white', border: 'none',
+                                    fontWeight: '600', cursor: 'pointer', opacity: !messageText.trim() ? 0.7 : 1,
+                                    display: 'flex', alignItems: 'center', gap: '0.5rem'
+                                }}
+                            >
+                                <Mail size={18} /> Send Message
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
 
             {/* Add Parent Modal */}
             {showAddParent && (
