@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { db } from '../firebase';
 import { collection, getDocs, addDoc, doc, updateDoc, increment, serverTimestamp, query, orderBy, where, limit, arrayUnion } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const Admission = () => {
     const [parentDetails, setParentDetails] = useState({
@@ -247,19 +248,25 @@ const Admission = () => {
             let finalParentId = existingParent ? existingParent.id : null;
 
             if (!finalParentId) {
-                // Create New Parent
-                const parentDoc = await addDoc(collection(db, `schools/${schoolId}/parents`), {
-                    name: parentDetails.fatherName,
-                    phone: parentDetails.phone,
-                    occupation: parentDetails.occupation,
-                    email: parentDetails.email,
+                // Create New Parent via Server-Side Function (Secure)
+                const functions = getFunctions();
+                const createSchoolUserFn = httpsCallable(functions, 'createSchoolUser');
+
+                const result = await createSchoolUserFn({
+                    email: parentDetails.email ? parentDetails.email.trim() : '',
+                    password: parentDetails.password, // Admission form should have password field if new
+                    name: parentDetails.fatherName.trim(),
+                    role: 'parent',
+                    schoolId: schoolId,
+                    phone: parentDetails.phone.trim(),
                     address: parentDetails.address,
-                    username: parentDetails.username,
-                    password: parentDetails.password,
-                    createdAt: serverTimestamp(),
-                    linkedStudents: [] // Will fill below
+                    username: parentDetails.username.trim(),
+                    occupation: parentDetails.occupation,
+                    linkedStudents: [] // We link students after creating them below
                 });
-                finalParentId = parentDoc.id;
+
+                finalParentId = result.data.uid;
+
             } else {
                 // Optional: Update Existing Parent Details if needed? 
                 // For now, we trust the search result or leave it as is to avoid overwrites.

@@ -48,6 +48,15 @@ const Login = () => {
                     return;
                 }
 
+                // SAVE SESSION for persistence (Required for Parents.jsx and other modules)
+                localStorage.setItem('manual_session', JSON.stringify({
+                    uid: user.uid,
+                    schoolId: schoolId,
+                    role: claims.role,
+                    email: user.email,
+                    isManual: false
+                }));
+
                 navigate('/');
                 return;
             } else {
