@@ -6,9 +6,40 @@ import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, order
 import { auth } from '../firebase';
 
 // Internal Component for individual Class Card logic
-const ClassCard = ({ cls, onDelete, onEdit }) => {
+const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
     const navigate = useNavigate();
     const [showSubjects, setShowSubjects] = useState(false);
+    const [showStudents, setShowStudents] = useState(false);
+    const [studentsList, setStudentsList] = useState([]);
+    const [loadingStudents, setLoadingStudents] = useState(false);
+    const [filter, setFilter] = useState('all'); // 'all', 'present', 'absent'
+
+    // Fetch Students Real-time
+    useEffect(() => {
+        if (showStudents && schoolId) {
+            setLoadingStudents(true);
+            const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const students = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                // Sort by name or roll no? Let's sort by Name for now
+                students.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                setStudentsList(students);
+                setLoadingStudents(false);
+            }, (error) => {
+                console.error("Error fetching students:", error);
+                setLoadingStudents(false);
+            });
+            return () => unsubscribe();
+        }
+    }, [showStudents, schoolId, cls.id]);
+
+    const filteredStudents = studentsList.filter(student => {
+        if (filter === 'all') return true;
+        return (student.status || 'absent') === filter;
+    });
 
     // Simulate Daily Attendance
     const totalStudents = cls.students || 0;
@@ -91,7 +122,7 @@ const ClassCard = ({ cls, onDelete, onEdit }) => {
                     onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
                     style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0',
+                        cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0.75rem', // Adjusted margin
                         userSelect: 'none'
                     }}
                 >
@@ -123,7 +154,113 @@ const ClassCard = ({ cls, onDelete, onEdit }) => {
                     </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '0.75rem', marginTop: showSubjects ? '0' : '1.5rem' }}>
+                {/* Show Students Toggle */}
+                <div
+                    onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); }}
+                    style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        cursor: 'pointer', marginBottom: showStudents ? '0.75rem' : '1.5rem',
+                        userSelect: 'none', borderTop: '1px dashed #cbd5e1', paddingTop: '0.75rem'
+                    }}
+                >
+                    <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--primary)' }}>
+                        View Student List
+                    </p>
+                    {showStudents ? <ChevronDown size={16} color="var(--primary)" /> : <ChevronRight size={16} color="var(--primary)" />}
+                </div>
+
+                {showStudents && (
+                    <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }}>
+                        {/* Filter Buttons */}
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setFilter('all'); }}
+                                style={{
+                                    flex: 1, padding: '0.4rem 0.75rem', borderRadius: '6px', border: 'none', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                    background: filter === 'all' ? 'var(--primary)' : 'white',
+                                    color: filter === 'all' ? 'white' : 'var(--text-secondary)',
+                                    boxShadow: filter === 'all' ? '0 2px 4px rgba(99, 102, 241, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
+                                }}
+                            >
+                                All Students
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setFilter('present'); }}
+                                style={{
+                                    flex: 1, padding: '0.4rem 0.75rem', borderRadius: '6px', border: 'none', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                    background: filter === 'present' ? '#10b981' : 'white',
+                                    color: filter === 'present' ? 'white' : 'var(--text-secondary)',
+                                    boxShadow: filter === 'present' ? '0 2px 4px rgba(16, 185, 129, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
+                                }}
+                            >
+                                Present
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setFilter('absent'); }}
+                                style={{
+                                    flex: 1, padding: '0.4rem 0.75rem', borderRadius: '6px', border: 'none', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                    background: filter === 'absent' ? '#ef4444' : 'white',
+                                    color: filter === 'absent' ? 'white' : 'var(--text-secondary)',
+                                    boxShadow: filter === 'absent' ? '0 2px 4px rgba(239, 68, 68, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
+                                }}
+                            >
+                                Absent
+                            </button>
+                        </div>
+
+
+                        {loadingStudents ? (
+                            <div style={{ display: 'flex', justifyContent: 'center', padding: '1rem' }}>
+                                <Loader2 className="animate-spin" size={20} color="var(--primary)" />
+                            </div>
+                        ) : filteredStudents.length === 0 ? (
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '0.5rem' }}>
+                                No students found for this filter.
+                            </p>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '200px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
+                                {filteredStudents.map(student => (
+                                    <div key={student.id} style={{
+                                        display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                        background: 'white', padding: '0.5rem', borderRadius: '8px',
+                                        border: '1px solid #e2e8f0'
+                                    }}>
+                                        <div style={{
+                                            width: '32px', height: '32px', borderRadius: '50%',
+                                            background: '#f1f5f9', overflow: 'hidden', flexShrink: 0,
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            border: student.status === 'present' ? '2px solid #10b981' : (student.status === 'absent' ? '2px solid #ef4444' : 'none')
+                                        }}>
+                                            {student.profilePic ? (
+                                                <img src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            ) : (
+                                                <User size={16} color="#94a3b8" />
+                                            )}
+                                        </div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {student.name}
+                                            </p>
+                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                                Roll: {student.rollNo || 'N/A'}
+                                            </p>
+                                        </div>
+                                        <div style={{
+                                            fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px',
+                                            background: student.status === 'present' ? '#dcfce7' : (student.status === 'absent' ? '#fee2e2' : '#f3f4f6'),
+                                            color: student.status === 'present' ? '#166534' : (student.status === 'absent' ? '#991b1b' : '#64748b')
+                                        }}>
+                                            {student.status === 'present' ? 'P' : (student.status === 'absent' ? 'A' : '-')}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+
                     <button
                         onClick={(e) => { e.stopPropagation(); navigate(`/classes/${cls.id}`); }}
                         style={{
@@ -734,7 +871,7 @@ const Classes = () => {
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
                     {classes.map((cls) => (
-                        <ClassCard key={cls.id} cls={cls} onDelete={handleDeleteClick} onEdit={handleEditClick} />
+                        <ClassCard key={cls.id} cls={cls} onDelete={handleDeleteClick} onEdit={handleEditClick} schoolId={schoolId} />
                     ))}
                 </div>
             )}

@@ -6,7 +6,7 @@ import {
     Calendar, School, Trash2, Plus, Save, Loader2, Camera, ChevronRight, ChevronLeft
 } from 'lucide-react';
 import { db } from '../firebase';
-import { collection, getDocs, addDoc, doc, updateDoc, increment, serverTimestamp, query, orderBy, where, limit, arrayUnion } from 'firebase/firestore';
+import { collection, getDocs, addDoc, setDoc, doc, updateDoc, increment, serverTimestamp, query, orderBy, where, limit, arrayUnion } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const Admission = () => {
@@ -40,6 +40,7 @@ const Admission = () => {
             gender: 'select',
             admissionClass: '', // This will now store the Class ID
             previousSchool: '',
+            rollNo: '',
             profilePic: null
         }
     ]);
@@ -208,6 +209,7 @@ const Admission = () => {
             gender: 'select',
             admissionClass: '',
             previousSchool: '',
+            rollNo: '',
             profilePic: null
         }]);
     };
@@ -281,8 +283,8 @@ const Admission = () => {
                 const selectedClass = availableClasses.find(c => c.id === student.admissionClass);
                 const className = selectedClass ? selectedClass.name : 'Unknown';
 
-                // Add Student Doc
-                const studentRef = await addDoc(collection(db, `schools/${schoolId}/classes/${student.admissionClass}/students`), {
+                // Prepare Student Data Object
+                const studentData = {
                     name: `${student.firstName} ${student.lastName}`,
                     firstName: student.firstName,
                     lastName: student.lastName,
@@ -291,16 +293,30 @@ const Admission = () => {
                     previousSchool: student.previousSchool,
                     profilePic: student.profilePic || null,
                     parentDetails: { ...parentDetails, parentId: finalParentId }, // Link Ref in Student Doc
-                    rollNo: `TPP-${Math.floor(1000 + Math.random() * 9000)}`,
+                    rollNo: student.rollNo || `TPP-${Math.floor(1000 + Math.random() * 9000)}`,
                     status: 'present',
                     avgScore: 0,
                     homework: 0,
+                    classId: student.admissionClass, // Ensure classId is in the doc
+                    className: className,
                     createdAt: serverTimestamp()
-                });
+                };
+
+                // Generate ID via ref (so we use same ID for both locations)
+                const studentRef = doc(collection(db, `schools/${schoolId}/classes/${student.admissionClass}/students`));
+                const studentId = studentRef.id;
+
+                // 1. Save to Class Sub-collection
+                await setDoc(studentRef, studentData);
+
+                // 2. Save to Master "Students" Collection (Sync for easy search/listing)
+                const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
+                await setDoc(masterStudentRef, studentData);
 
                 // Add to links array
+                // Add to links array
                 newStudentLinks.push({
-                    studentId: studentRef.id,
+                    studentId: studentId,
                     studentName: `${student.firstName} ${student.lastName}`,
                     classId: student.admissionClass,
                     className: className
@@ -704,6 +720,21 @@ const Admission = () => {
                                                 value={student.lastName}
                                                 onChange={(e) => handleStudentChange(index, e)}
                                                 className="modern-input"
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="input-group">
+                                        <label className="input-label">Roll Number</label>
+                                        <div className="input-wrapper">
+                                            <input
+                                                type="text"
+                                                name="rollNo"
+                                                value={student.rollNo}
+                                                onChange={(e) => handleStudentChange(index, e)}
+                                                className="modern-input"
+                                                placeholder="e.g. 101"
                                                 required
                                             />
                                         </div>

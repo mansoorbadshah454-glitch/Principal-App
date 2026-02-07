@@ -4,8 +4,9 @@ import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
     CheckCircle2, XCircle, MoreVertical, Search, Filter
 } from 'lucide-react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
+import { doc, getDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import StudentProfileModal from '../components/StudentProfileModal';
 
 const ClassDetails = () => {
     const { classId } = useParams();
@@ -13,55 +14,142 @@ const ClassDetails = () => {
     const [classData, setClassData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'present', 'absent'
-
-    // Mock Students Data (replace with real sub-collection later)
     const [students, setStudents] = useState([]);
+    const [schoolId, setSchoolId] = useState(null);
+    const [selectedStudent, setSelectedStudent] = useState(null);
+    const [showProfileModal, setShowProfileModal] = useState(false);
 
+    // 1. Resolve School ID
     useEffect(() => {
-        const fetchClassDetails = async () => {
+        const resolveUser = async () => {
+            // Priority 1: Manual Session
+            const manualSession = localStorage.getItem('manual_session');
+            if (manualSession) {
+                try {
+                    const data = JSON.parse(manualSession);
+                    if (data.schoolId) {
+                        setSchoolId(data.schoolId);
+                        return;
+                    }
+                } catch (e) {
+                    console.error("Session parse error", e);
+                }
+            }
+
+            // Priority 2: Firebase Auth
+            const unsubscribe = auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    try {
+                        const token = await user.getIdTokenResult();
+                        if (token.claims.schoolId) {
+                            setSchoolId(token.claims.schoolId);
+                        }
+                    } catch (e) {
+                        console.error("Claims error", e);
+                    }
+                }
+            });
+            return () => unsubscribe();
+        };
+        resolveUser();
+    }, []);
+
+    // 2. Fetch Class Data & Students (depend on schoolId)
+    useEffect(() => {
+        if (!schoolId || !classId) return;
+
+        setLoading(true);
+
+        const fetchAll = async () => {
             try {
-                const sessionData = localStorage.getItem('manual_session');
-                const schoolId = sessionData ? JSON.parse(sessionData).schoolId : null;
+                // A. Class Metadata (One-time fetch is usually fine, or sensitive to changes?)
+                // Let's use getDoc for metadata to keep it simple, or onSnapshot if we want total real-time.
+                // Given "no refresh" request, onSnapshot is safer.
+                const classRef = doc(db, `schools/${schoolId}/classes`, classId);
+                const unsubClass = onSnapshot(classRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        setClassData({ id: docSnap.id, ...docSnap.data() });
+                    }
+                });
 
-                if (!schoolId) return;
-
-                // 1. Fetch Class Info
-                const docRef = doc(db, `schools/${schoolId}/classes`, classId);
-                const docSnap = await getDoc(docRef);
-
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    setClassData({ id: docSnap.id, ...data });
-
-                    // 2. Fetch Real Students from Sub-collection
-                    const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
-                    const studentsSnap = await import('firebase/firestore').then(mod => mod.getDocs(studentsRef));
-
-                    const realStudents = studentsSnap.docs.map(doc => ({
+                // B. Students List (Real-time)
+                const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
+                // Optional: orderBy name if fields exist
+                const q = query(studentsRef);
+                const unsubStudents = onSnapshot(q, (snapshot) => {
+                    const realStudents = snapshot.docs.map(doc => ({
                         id: doc.id,
                         ...doc.data(),
-                        // Map fields to UI requirements if necessary
+                        // Map fields to UI requirements
                         rollNo: doc.data().rollNo || 'N/A',
-                        status: doc.data().status || 'absent',
+                        status: doc.data().status || 'absent', // Default to absent if missing? or present?
                         avgScore: doc.data().avgScore || 0,
                         homework: doc.data().homework || 0,
                         // Generate avatar if not present
-                        avatar: doc.data().avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
+                        avatar: doc.data().profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
                     }));
-
+                    // Sort by name
+                    realStudents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                     setStudents(realStudents);
-                } else {
-                    console.log("No such class!");
-                }
+                    setLoading(false);
+                }, (err) => {
+                    console.error("Error fetching students:", err);
+                    setLoading(false);
+                });
+
+                return () => {
+                    unsubClass();
+                    unsubStudents();
+                };
+
             } catch (error) {
-                console.error("Error fetching class:", error);
-            } finally {
+                console.error("Error setting up listeners:", error);
                 setLoading(false);
             }
         };
 
-        if (classId) fetchClassDetails();
-    }, [classId]);
+        // We need to handle the cleanup of the async setup
+        // This is a bit tricky with async in useEffect. 
+        // Better pattern:
+        let unsubClass = () => { };
+        let unsubStudents = () => { };
+
+        const startListeners = async () => {
+            // Class Metadata
+            const classRef = doc(db, `schools/${schoolId}/classes`, classId);
+            unsubClass = onSnapshot(classRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    setClassData({ id: docSnap.id, ...docSnap.data() });
+                }
+            });
+
+            // Students
+            const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
+            const q = query(studentsRef);
+            unsubStudents = onSnapshot(q, (snapshot) => {
+                const realStudents = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data(),
+                    rollNo: doc.data().rollNo || 'N/A',
+                    status: doc.data().status || 'absent',
+                    avgScore: doc.data().avgScore || 0,
+                    homework: doc.data().homework || 0,
+                    avatar: doc.data().profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
+                }));
+                realStudents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                setStudents(realStudents);
+                setLoading(false);
+            });
+        };
+
+        startListeners();
+
+        return () => {
+            unsubClass();
+            unsubStudents();
+        };
+
+    }, [schoolId, classId]);
 
     const filteredStudents = students.filter(s => {
         if (filterStatus === 'all') return true;
@@ -165,14 +253,25 @@ const ClassDetails = () => {
 
             {/* Students Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
-                {filteredStudents.map((student) => (
-                    <div key={student.id} className="card" style={{
-                        padding: '1.5rem', position: 'relative', border: 'none',
-                        background: 'white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
-                    }}>
+                {filteredStudents.map((student, index) => (
+                    <div
+                        key={student.id}
+                        className="card cursor-pointer transform hover:scale-105 transition-transform duration-200"
+                        onClick={() => {
+                            setSelectedStudent({ ...student, rank: index + 1 }); // Simple rank based on sorted list
+                            setShowProfileModal(true);
+                        }}
+                        style={{
+                            padding: '1.5rem', position: 'relative', border: 'none',
+                            background: 'white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
+                        }}
+                    >
                         <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
-                            <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); /* Add menu logic here later */ }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                            >
                                 <MoreVertical size={20} />
                             </button>
                         </div>
@@ -212,6 +311,15 @@ const ClassDetails = () => {
                     </div>
                 ))}
             </div>
+
+            {/* Student Profile Modal */}
+            <StudentProfileModal
+                isOpen={showProfileModal}
+                onClose={() => setShowProfileModal(false)}
+                student={selectedStudent}
+                rank={selectedStudent?.rank}
+                classSubjects={classData?.subjects}
+            />
         </div>
     );
 };
