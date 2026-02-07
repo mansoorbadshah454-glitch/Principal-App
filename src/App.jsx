@@ -4,6 +4,16 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
 
 import MainLayout from './layouts/MainLayout';
+// import MainLayout from './layouts/MainLayout';
+// const MainLayout = () => {
+//   return (
+//     <div style={{ padding: 20, border: '5px solid red' }}>
+//       <h1>Main Layout (Mock)</h1>
+//       <Outlet />
+//     </div>
+//   );
+// };
+import { Outlet } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Classes from './pages/Classes';
 import Teachers from './pages/Teachers';
@@ -13,31 +23,62 @@ import Admission from './pages/Admission';
 import Login from './pages/Login';
 import Collections from './pages/Collections';
 import ClassCollection from './pages/ClassCollection';
-
 import Promotions from './pages/Promotions';
 import NewsFeed from './pages/NewsFeed';
 import Settings from './pages/Settings';
 
+// Dummy Components to prevent crash
+// const Dashboard = () => <h1>Dashboard (Mock)</h1>;
+// const Classes = () => <h1>Classes (Mock)</h1>;
+// const Teachers = () => <h1>Teachers (Mock)</h1>;
+// const Parents = () => <h1>Parents (Mock)</h1>;
+// const ClassDetails = () => <h1>ClassDetails (Mock)</h1>;
+// const Admission = () => <h1>Admission (Mock)</h1>;
+// const Login = () => <h1>Login (Mock)</h1>;
+// const Collections = () => <h1>Collections (Mock)</h1>;
+// const ClassCollection = () => <h1>ClassCollection (Mock)</h1>;
+// const Promotions = () => <h1>Promotions (Mock)</h1>;
+// const NewsFeed = () => <h1>NewsFeed (Mock)</h1>;
+// const Settings = () => <h1>Settings (Mock)</h1>;
+
 function App() {
   const [user, setUser] = useState(() => {
-    const manualSession = localStorage.getItem('manual_session');
-    return manualSession ? JSON.parse(manualSession) : null;
+    try {
+      const manualSession = localStorage.getItem('manual_session');
+      return manualSession ? JSON.parse(manualSession) : null;
+    } catch (e) {
+      console.error("Session parse error", e);
+      localStorage.removeItem('manual_session');
+      return null;
+    }
   });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log("App mounted");
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log("Auth State Changed", currentUser);
       if (!currentUser) {
         // Check if there's a manual bypass session
-        const manualSession = localStorage.getItem('manual_session');
-        if (manualSession) {
-          setUser(JSON.parse(manualSession));
-        } else {
+        try {
+          const manualSession = localStorage.getItem('manual_session');
+          if (manualSession) {
+            setUser(JSON.parse(manualSession));
+          } else {
+            setUser(null);
+          }
+        } catch (e) {
+          console.error("Session check error", e);
+          localStorage.removeItem('manual_session');
           setUser(null);
         }
       } else {
         setUser(currentUser);
       }
+      setLoading(false);
+    }, (error) => {
+      console.error("Auth Error", error);
+      alert("Auth Error: " + error.message);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -74,6 +115,5 @@ function App() {
     </Routes>
   );
 }
-
 
 export default App;

@@ -2,9 +2,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, Edit } from 'lucide-react';
-import { db } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc } from 'firebase/firestore';
-import { auth } from '../firebase';
+import { db, functions, auth } from '../firebase';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 // Internal Component for individual Teacher Card logic
 // Internal Component for individual Teacher Card logic
@@ -146,14 +147,53 @@ const Teachers = () => {
 
     // Initialize User & School ID
     useEffect(() => {
-        const fetchUser = () => {
+        let unsubscribeAuth = null;
+
+        const fetchUser = async () => {
+            // Priority 1: Check Manual Session (Legacy/Bypass)
             const manualSession = localStorage.getItem('manual_session');
             if (manualSession) {
-                const userData = JSON.parse(manualSession);
-                setSchoolId(userData.schoolId);
+                try {
+                    const userData = JSON.parse(manualSession);
+                    if (userData.schoolId) {
+                        setSchoolId(userData.schoolId);
+                        setLoading(false);
+                        return;
+                    }
+                } catch (e) {
+                    console.error("Session parse error", e);
+                }
             }
+
+            // Priority 2: Check Standard Firebase Auth
+            unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    try {
+                        const tokenResult = await user.getIdTokenResult();
+                        const claims = tokenResult.claims;
+                        if (claims.schoolId) {
+                            setSchoolId(claims.schoolId);
+                        } else {
+                            console.error("No School ID claim found on user");
+                            // Fallback: Check if user doc has schoolId check might be redundant if claims are set correctly, 
+                            // but good for safety if we want to add it later. 
+                            // For now, relying on claims is standard.
+                        }
+                    } catch (e) {
+                        console.error("Error fetching claims", e);
+                    }
+                } else {
+                    console.log("No authenticated user found");
+                }
+                setLoading(false);
+            });
         };
+
         fetchUser();
+
+        return () => {
+            if (unsubscribeAuth) unsubscribeAuth();
+        };
     }, []);
 
     // Fetch Teachers & Classes
@@ -230,7 +270,13 @@ const Teachers = () => {
 
     const handleAddTeacher = async (e) => {
         e.preventDefault();
-        if (!schoolId) return;
+        console.log("handleAddTeacher called. School ID:", schoolId);
+
+        if (!schoolId) {
+            alert("Error: School ID is missing. Please reload the page or log in again.");
+            console.error("School ID is missing in handleAddTeacher");
+            return;
+        }
 
         try {
             if (isEditing) {
@@ -279,39 +325,72 @@ const Teachers = () => {
                     }
                 }
 
-            } else {
-                // Add Logic
-                await addDoc(collection(db, `schools/${schoolId}/teachers`), {
-                    ...newTeacher,
-                    createdAt: new Date()
-                });
 
-                if (newTeacher.assignedClasses && newTeacher.assignedClasses.length > 0) {
-                    const updatePromises = newTeacher.assignedClasses.map(async (className) => {
-                        const q = query(
-                            collection(db, `schools/${schoolId}/classes`),
-                            where("name", "==", className)
-                        );
-                        const querySnapshot = await getDocs(q);
-                        if (!querySnapshot.empty) {
-                            const classDoc = querySnapshot.docs[0];
-                            await updateDoc(doc(db, `schools/${schoolId}/classes`, classDoc.id), {
-                                teacher: newTeacher.name
-                            });
-                        }
+            } else {
+                // Add Logic - VIA CLOUD FUNCTION (Secure)
+                console.log("Creating new teacher account...");
+                setLoading(true);
+
+                try {
+                    const createSchoolUserFn = httpsCallable(functions, 'createSchoolUser');
+                    console.log("Calling Cloud Function: createSchoolUser");
+
+                    const result = await createSchoolUserFn({
+                        email: newTeacher.email.trim(),
+                        password: newTeacher.password,
+                        name: newTeacher.name.trim(),
+                        role: 'teacher',
+                        schoolId: schoolId,
+                        // Pass extra fields directly to backend
+                        phone: newTeacher.phone.trim(),
+                        subjects: newTeacher.subjects,
+                        address: newTeacher.address,
+                        assignedClasses: newTeacher.assignedClasses,
+                        username: newTeacher.username.trim()
                     });
-                    await Promise.all(updatePromises);
+
+                    console.log("Cloud Function Result:", result);
+                    const newTeacherUid = result.data.uid;
+
+                    // Note: Doc creation is now handled entirely by the Cloud Function.
+                    // We only need to handle Class assignments in other collections if needed.
+
+                    // 3. Handle Class Assignments
+                    if (newTeacher.assignedClasses && newTeacher.assignedClasses.length > 0) {
+                        const updatePromises = newTeacher.assignedClasses.map(async (className) => {
+                            const q = query(
+                                collection(db, `schools/${schoolId}/classes`),
+                                where("name", "==", className)
+                            );
+                            const querySnapshot = await getDocs(q);
+                            if (!querySnapshot.empty) {
+                                const classDoc = querySnapshot.docs[0];
+                                await updateDoc(doc(db, `schools/${schoolId}/classes`, classDoc.id), {
+                                    teacher: newTeacher.name,
+                                    teacherId: newTeacherUid // Also link ID upon creation
+                                });
+                            }
+                        });
+                        await Promise.all(updatePromises);
+                    }
+                    setLoading(false);
+
+                    setShowAddTeacher(false);
+                    setNewTeacher({ name: '', email: '', phone: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
+                    setStep(1);
+                    setIsEditing(false);
+                    setEditingId(null);
+
+                } catch (error) {
+                    console.error("Error creating teacher:", error);
+                    alert("Failed to create teacher account. " + error.message);
+                    setLoading(false);
                 }
             }
-
-            setShowAddTeacher(false);
-            setNewTeacher({ name: '', email: '', phone: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
-            setStep(1);
-            setIsEditing(false);
-            setEditingId(null);
         } catch (error) {
             console.error("Error saving teacher:", error);
-            alert("Failed to save teacher. Please try again.");
+            alert("Failed to save teacher. " + error.message);
+            setLoading(false); // Ensure loading is turned off on error
         }
     };
 
@@ -335,11 +414,26 @@ const Teachers = () => {
         // Basic Manual Auth Check (same as Classes.jsx)
         let isVerified = false;
         const manualSession = localStorage.getItem('manual_session');
-        if (manualSession) {
+
+        if (auth.currentUser) {
+            // Standard Auth Re-authentication
+            try {
+                const credential = EmailAuthProvider.credential(auth.currentUser.email, confirmPassword);
+                await reauthenticateWithCredential(auth.currentUser, credential);
+                isVerified = true;
+            } catch (err) {
+                console.error("Re-auth failed", err);
+                if (err.code === 'auth/wrong-password') {
+                    setDeleteError("Incorrect password.");
+                    return;
+                }
+            }
+        } else if (manualSession) {
+            // Legacy Manual Auth Check
             try {
                 const userData = JSON.parse(manualSession);
                 const userDocRef = doc(db, `schools/${schoolId}/users`, userData.uid);
-                const snapshot = await import('firebase/firestore').then(mod => mod.getDoc(userDocRef));
+                const snapshot = await getDoc(userDocRef);
                 if (snapshot.exists() && snapshot.data().manualPassword === confirmPassword) {
                     isVerified = true;
                 }

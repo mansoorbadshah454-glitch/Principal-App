@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2 } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2, Edit } from 'lucide-react';
 import { db } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, writeBatch } from 'firebase/firestore';
 import { auth } from '../firebase';
 
 // Internal Component for individual Class Card logic
-const ClassCard = ({ cls, onDelete }) => {
+const ClassCard = ({ cls, onDelete, onEdit }) => {
     const navigate = useNavigate();
     const [showSubjects, setShowSubjects] = useState(false);
 
@@ -53,7 +53,14 @@ const ClassCard = ({ cls, onDelete }) => {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            color: 'var(--text-secondary)', fontSize: '0.9rem',
+                            cursor: 'default'
+                        }}
+                    >
                         <User size={16} color={themeColor} />
                         <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
                     </div>
@@ -129,6 +136,21 @@ const ClassCard = ({ cls, onDelete }) => {
                         }}>
                         Details <ChevronRight size={16} />
                     </button>
+
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onEdit(cls); }}
+                        style={{
+                            padding: '0.75rem',
+                            background: 'white', border: `1px solid ${themeLight}`, borderRadius: '8px',
+                            color: themeColor, cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            transition: 'all 0.2s'
+                        }}
+                        title="Edit Class (Teacher/Subjects)"
+                    >
+                        <Edit size={16} />
+                    </button>
+
                     <button
                         onClick={(e) => { e.stopPropagation(); onDelete(cls.id); }}
                         style={{
@@ -165,29 +187,51 @@ const Classes = () => {
     ];
 
     // Initialize User & School ID
+    // Initialize User & School ID
     useEffect(() => {
-        const fetchUser = () => {
+        const fetchUser = async () => {
+            // Priority 1: Check Manual Session (Legacy/Bypass)
             const manualSession = localStorage.getItem('manual_session');
             if (manualSession) {
                 try {
                     const userData = JSON.parse(manualSession);
                     if (userData.schoolId) {
                         setSchoolId(userData.schoolId);
-                    } else {
-                        console.error("School ID missing in session");
-                        setLoading(false);
+                        return;
                     }
                 } catch (e) {
                     console.error("Session parse error", e);
-                    setLoading(false);
                 }
-            } else {
-                console.log("No manual session found");
-                // For this demo, we can't do much without a session
-                setLoading(false);
             }
+
+            // Priority 2: Check Standard Firebase Auth
+            // We need to wait for auth to initialize
+            const unsubscribe = auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    try {
+                        const tokenResult = await user.getIdTokenResult();
+                        const claims = tokenResult.claims;
+                        if (claims.schoolId) {
+                            setSchoolId(claims.schoolId);
+                        } else {
+                            console.error("No School ID claim found on user");
+                        }
+                    } catch (e) {
+                        console.error("Error fetching claims", e);
+                    }
+                } else {
+                    console.log("No authenticated user found");
+                }
+                setLoading(false);
+            });
+
+            return unsubscribe; // Cleanup listener
         };
-        fetchUser();
+
+        const cleanup = fetchUser();
+        return () => {
+            if (cleanup && typeof cleanup === 'function') cleanup();
+        };
     }, []);
 
     // Customize sort order: Nursery triggers -2, Prep triggers -1, others parse number
@@ -212,32 +256,8 @@ const Classes = () => {
 
             // Seed default classes if none exist
             if (classesData.length === 0) {
-                const DEFAULT_CLASSES = [
-                    'Nursery', 'Prep',
-                    'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5',
-                    'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'
-                ];
-
-                // We disconnect temporarily or just let the listener handle the updates
-                // Using Promise.all to add them in parallel might be too fast for some limits, but usually fine for 12 docs
-                // We'll just do it; the snapshot listener will pick them up
-                try {
-                    console.log("Seeding default classes...");
-                    const batchPromises = DEFAULT_CLASSES.map(name =>
-                        addDoc(collection(db, `schools/${schoolId}/classes`), {
-                            name,
-                            teacher: '', // No default teacher
-                            students: 0,
-                            subjects: ['English', 'Urdu', 'Mathematics', 'Islamiyat'], // Basic default subjects
-                            createdAt: new Date()
-                        })
-                    );
-                    // We don't await here to block the UI; we let the snapshot update handle it
-                    // But we could await if we wanted to show a loader. 
-                    // Since it's 'readymade', having them pop in is fine.
-                } catch (err) {
-                    console.error("Error seeding classes", err);
-                }
+                // Backend now handles auto-provisioning of classes on school creation.
+                // We do nothing here to avoid conflicts or client-side spam.
             }
 
             // Enhanced Sort
@@ -272,12 +292,13 @@ const Classes = () => {
             await addDoc(collection(db, `schools/${schoolId}/classes`), {
                 name: newClass.name,
                 teacher: newClass.teacher,
+                teacherId: newClass.teacherId || null,
                 students: 0, // Default 0 for new class
                 subjects: newClass.subjects,
                 createdAt: new Date()
             });
             setShowAddClass(false);
-            setNewClass({ name: '', teacher: '', subjects: [] });
+            setNewClass({ name: '', teacher: '', teacherId: null, subjects: [] });
         } catch (error) {
             console.error("Error adding class:", error);
             alert("Failed to add class. Please try again.");
@@ -345,8 +366,194 @@ const Classes = () => {
         }
     };
 
+    const [showEditClass, setShowEditClass] = useState(false);
+    const [editingClass, setEditingClass] = useState(null);
+
+    const handleEditClick = (cls) => {
+        setEditingClass({ ...cls });
+        setShowEditClass(true);
+    };
+
+    const [teachers, setTeachers] = useState([]);
+
+    // Fetch Teachers for Dropdown
+    useEffect(() => {
+        if (!schoolId) return;
+        const q = query(collection(db, `schools/${schoolId}/teachers`));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const teachersData = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            teachersData.sort((a, b) => a.name.localeCompare(b.name));
+            setTeachers(teachersData);
+        }, (error) => {
+            console.error("Error fetching teachers:", error);
+        });
+        return () => unsubscribe();
+    }, [schoolId]);
+
+    const handleUpdateClass = async (e) => {
+        e.preventDefault();
+        if (!schoolId || !editingClass) return;
+
+        try {
+            const classRef = doc(db, `schools/${schoolId}/classes`, editingClass.id);
+            await updateDoc(classRef, {
+                teacher: editingClass.teacher, // Name (Legacy/UI)
+                teacherId: editingClass.teacherId || null, // ID (Safe/Backend)
+                subjects: editingClass.subjects
+            });
+            setShowEditClass(false);
+            setEditingClass(null);
+        } catch (error) {
+            console.error("Error updating class:", error);
+            alert("Failed to update class.");
+        }
+    };
+
+    const handleTeacherChange = (e) => {
+        const selectedId = e.target.value;
+        if (!selectedId) {
+            setEditingClass({ ...editingClass, teacher: '', teacherId: null });
+            return;
+        }
+        const selectedTeacher = teachers.find(t => t.id === selectedId);
+        if (selectedTeacher) {
+            setEditingClass({ ...editingClass, teacher: selectedTeacher.name, teacherId: selectedTeacher.id });
+        }
+    };
+
+    const handleEditSubjectToggle = (subject) => {
+        setEditingClass(prev => {
+            const subjects = prev.subjects.includes(subject)
+                ? prev.subjects.filter(s => s !== subject)
+                : [...prev.subjects, subject];
+            return { ...prev, subjects };
+        });
+    };
+
     return (
         <div className="animate-fade-in-up">
+            {/* ... existing header ... */}
+
+            {/* Edit Class Modal */}
+            {showEditClass && editingClass && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    zIndex: 1000,
+                    background: 'rgba(0,0,0,0.6)',
+                    backdropFilter: 'blur(3px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    padding: '1rem'
+                }}>
+                    <div className="card custom-scrollbar" style={{
+                        width: '100%', maxWidth: '600px', maxHeight: '80vh', overflowY: 'auto',
+                        padding: '2rem', background: 'white', borderRadius: '24px',
+                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: '700' }}>Edit Class: {editingClass.name}</h2>
+                            <button onClick={() => setShowEditClass(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                                <X size={24} color="var(--text-secondary)" />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleUpdateClass}>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
+                                    Assign Teacher
+                                </label>
+                                <div style={{ position: 'relative' }}>
+                                    <select
+                                        value={editingClass.teacherId || ''}
+                                        onChange={handleTeacherChange}
+                                        style={{
+                                            width: '100%', padding: '0.75rem', borderRadius: '8px',
+                                            border: '1px solid #e2e8f0', outline: 'none',
+                                            fontSize: '0.95rem', appearance: 'none',
+                                            backgroundColor: 'white', cursor: 'pointer'
+                                        }}
+                                    >
+                                        <option value="">Select a Teacher</option>
+                                        {teachers.map(t => (
+                                            <option key={t.id} value={t.id}>{t.name}</option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown size={16} style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#64748b' }} />
+                                </div>
+                                {(!teachers || teachers.length === 0) && (
+                                    <p style={{ fontSize: '0.8rem', color: '#f59e0b', marginTop: '0.5rem' }}>
+                                        No teachers found. Please add teachers in the Teachers section first.
+                                    </p>
+                                )}
+                            </div>
+
+                            <div style={{ marginBottom: '2rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+                                    Manage Subjects
+                                </label>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                                    {subjectOptions.map((subj) => (
+                                        <div
+                                            key={subj}
+                                            onClick={() => handleEditSubjectToggle(subj)}
+                                            style={{
+                                                padding: '0.75rem',
+                                                borderRadius: '8px',
+                                                border: editingClass.subjects.includes(subj) ? '1px solid var(--primary)' : '1px solid #e2e8f0',
+                                                background: editingClass.subjects.includes(subj) ? '#eff6ff' : 'white',
+                                                cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            <div style={{
+                                                width: '20px', height: '20px', borderRadius: '4px',
+                                                border: editingClass.subjects.includes(subj) ? 'none' : '2px solid #cbd5e1',
+                                                background: editingClass.subjects.includes(subj) ? 'var(--primary)' : 'transparent',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                            }}>
+                                                {editingClass.subjects.includes(subj) && <span style={{ color: 'white', fontSize: '14px' }}>✓</span>}
+                                            </div>
+                                            <span style={{ fontSize: '0.9rem', color: editingClass.subjects.includes(subj) ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: '500' }}>
+                                                {subj}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowEditClass(false)}
+                                    style={{
+                                        padding: '0.75rem 1.5rem', borderRadius: '8px',
+                                        background: 'transparent', border: '1px solid #e2e8f0',
+                                        cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="btn-primary"
+                                    style={{
+                                        padding: '0.75rem 1.5rem', borderRadius: '8px',
+                                        background: 'var(--primary)', border: 'none',
+                                        cursor: 'pointer', fontWeight: '600', color: 'white',
+                                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                                    }}
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div style={{
                 display: 'flex',
@@ -458,14 +665,76 @@ const Classes = () => {
                     <Loader2 className="animate-spin" size={32} color="var(--primary)" />
                 </div>
             ) : classes.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>
+                <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <BookOpen size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
-                    <p>No classes found. Add your first class to get started.</p>
+                    <p style={{ marginBottom: '1.5rem' }}>No classes found. You can set up the default structure instantly.</p>
+                    <button
+                        onClick={async () => {
+                            console.log("Setup button clicked. School ID:", schoolId);
+                            if (!schoolId) {
+                                // Try to get from localStorage one more time as a fallback
+                                const manualSession = localStorage.getItem('manual_session');
+                                if (manualSession) {
+                                    const userData = JSON.parse(manualSession);
+                                    if (userData.schoolId) {
+                                        setSchoolId(userData.schoolId);
+                                        // But we can't proceed immediately with setSchoolId (async), so alert user to refresh
+                                        alert("School ID found in storage but not loaded. Reloading...");
+                                        window.location.reload();
+                                        return;
+                                    }
+                                }
+                                alert("Error: School ID is missing. Please log out and log in again.");
+                                return;
+                            }
+
+                            setLoading(true);
+                            try {
+                                const DEFAULT_CLASSES = [
+                                    'Nursery', 'Prep',
+                                    'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5',
+                                    'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'
+                                ];
+
+                                const batch = writeBatch(db);
+                                DEFAULT_CLASSES.forEach(name => {
+                                    const docRef = doc(collection(db, `schools/${schoolId}/classes`));
+                                    batch.set(docRef, {
+                                        name,
+                                        teacher: '',
+                                        students: 0,
+                                        subjects: ['English', 'Urdu', 'Mathematics', 'Islamiyat'],
+                                        createdAt: new Date()
+                                    });
+                                });
+
+                                await batch.commit();
+                                // No manual reload needed, onSnapshot will pick it up
+                            } catch (error) {
+                                console.error("Error seeding classes:", error);
+                                alert("Failed to create default classes.");
+                                setLoading(false);
+                            }
+                        }}
+                        className="btn-primary"
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            borderRadius: '12px',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            background: 'var(--primary)',
+                            color: 'white',
+                            border: 'none',
+                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                        }}
+                    >
+                        Setup Default Classes
+                    </button>
                 </div>
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
                     {classes.map((cls) => (
-                        <ClassCard key={cls.id} cls={cls} onDelete={handleDeleteClick} />
+                        <ClassCard key={cls.id} cls={cls} onDelete={handleDeleteClick} onEdit={handleEditClick} />
                     ))}
                 </div>
             )}
@@ -542,7 +811,6 @@ const Classes = () => {
                 </div>
             )}
 
-            {/* Add Class Modal - Same as before but submitting to DB */}
             {/* Add Class Modal */}
             {showAddClass && (
                 <div style={{
@@ -596,18 +864,33 @@ const Classes = () => {
                                     <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
                                         Class Assigned to
                                     </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Teacher Name"
-                                        value={newClass.teacher}
-                                        onChange={(e) => setNewClass({ ...newClass, teacher: e.target.value })}
-                                        style={{
-                                            width: '100%', padding: '0.75rem', borderRadius: '8px',
-                                            border: '1px solid #e2e8f0', outline: 'none',
-                                            fontSize: '0.95rem'
-                                        }}
-                                        required
-                                    />
+                                    <div style={{ position: 'relative' }}>
+                                        <select
+                                            value={newClass.teacherId || ''}
+                                            onChange={(e) => {
+                                                const selectedId = e.target.value;
+                                                if (!selectedId) {
+                                                    setNewClass({ ...newClass, teacher: '', teacherId: null });
+                                                } else {
+                                                    const selectedTeacher = teachers.find(t => t.id === selectedId);
+                                                    setNewClass({ ...newClass, teacher: selectedTeacher?.name || '', teacherId: selectedId });
+                                                }
+                                            }}
+                                            style={{
+                                                width: '100%', padding: '0.75rem', borderRadius: '8px',
+                                                border: '1px solid #e2e8f0', outline: 'none',
+                                                fontSize: '0.95rem', appearance: 'none',
+                                                backgroundColor: 'white', cursor: 'pointer'
+                                            }}
+                                            required
+                                        >
+                                            <option value="">Select a Teacher</option>
+                                            {teachers.map(t => (
+                                                <option key={t.id} value={t.id}>{t.name}</option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown size={16} style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#64748b' }} />
+                                    </div>
                                 </div>
                             </div>
 
@@ -676,6 +959,8 @@ const Classes = () => {
                     </div>
                 </div>
             )}
+
+
         </div>
     );
 };

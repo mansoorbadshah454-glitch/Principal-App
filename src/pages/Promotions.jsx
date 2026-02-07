@@ -1,14 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-    TrendingUp, ArrowRight, CheckCircle2, XCircle,
-    AlertCircle, GraduationCap, ChevronRight, Loader2,
-    Users, ArrowUpRight, UserPlus, Search, ArrowDown
+    Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, AlertCircle
 } from 'lucide-react';
-
 import { db, auth } from '../firebase';
 import {
     collection, getDocs, doc, writeBatch,
-    query, orderBy, getDoc, setDoc, deleteDoc, addDoc
+    query, orderBy, addDoc
 } from 'firebase/firestore';
 
 const Promotions = () => {
@@ -19,12 +16,11 @@ const Promotions = () => {
     const [students, setStudents] = useState([]);
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-
-    // Processing States
     const [processing, setProcessing] = useState(false);
-    const [promotionStatus, setPromotionStatus] = useState(null); // 'success' | 'error'
+    const [promotionStatus, setPromotionStatus] = useState(null);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-    // Helper: Determine class order for sorting and splitting
+    // Helper: Class Sorting order
     const getClassOrder = (name) => {
         if (!name || typeof name !== 'string') return 0;
         const lower = name.toLowerCase();
@@ -33,21 +29,46 @@ const Promotions = () => {
         return parseInt(name.replace(/\D/g, '')) || 0;
     };
 
-    // Initialize User & School ID
+    // 1. Init User & Global Safety Timeout
     useEffect(() => {
+        // Global Safety Timeout - Force stop loading after 8 seconds no matter what
+        const globalTimeout = setTimeout(() => {
+            if (loading) {
+                console.warn("Global timeout triggered - forcing render");
+                setLoading(false);
+            }
+        }, 8000);
+
         const fetchUser = () => {
-            const manualSession = localStorage.getItem('manual_session');
-            if (manualSession) {
-                const userData = JSON.parse(manualSession);
-                setSchoolId(userData.schoolId);
-            } else if (auth.currentUser) {
-                // Fallback for standard auth if needed
+            try {
+                const manualSession = localStorage.getItem('manual_session');
+                if (manualSession) {
+                    const userData = JSON.parse(manualSession);
+                    if (userData.schoolId) {
+                        setSchoolId(userData.schoolId);
+                        // Don't stop loading yet, let fetchClasses define success
+                    } else {
+                        console.error("No schoolId in manual session");
+                        setLoading(false);
+                    }
+                } else if (auth.currentUser) {
+                    // Fallback: If auth exists but no manual session, we stop loading to show "No Data" or allow retry
+                    console.warn("Auth exists but no manual session found");
+                    setLoading(false);
+                } else {
+                    setLoading(false);
+                }
+            } catch (e) {
+                console.error("Auth check failed", e);
+                setLoading(false);
             }
         };
         fetchUser();
+
+        return () => clearTimeout(globalTimeout);
     }, []);
 
-    // Fetch Classes
+    // 2. Fetch Classes
     useEffect(() => {
         if (!schoolId) return;
 
@@ -59,7 +80,6 @@ const Promotions = () => {
                     id: doc.id,
                     ...doc.data()
                 }));
-
                 classesData.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
                 setClasses(classesData);
                 setLoading(false);
@@ -68,13 +88,22 @@ const Promotions = () => {
                 setLoading(false);
             }
         };
+
         fetchClasses();
+
+        // Safety Timeout
+        const timeout = setTimeout(() => {
+            if (loading) {
+                console.warn("Loading classes timed out.");
+                setLoading(false);
+            }
+        }, 5000);
+        return () => clearTimeout(timeout);
     }, [schoolId]);
 
-    // Handle Class Selection
+    // 3. Handle Class Selection
     const handleClassSelect = async (cls) => {
         if (selectedClass?.id === cls.id) return;
-
         setSelectedClass(cls);
         setStudents([]);
         setSearchQuery('');
@@ -85,7 +114,6 @@ const Promotions = () => {
             const studentsRef = collection(db, `schools/${schoolId}/classes/${cls.id}/students`);
             const snapshot = await getDocs(studentsRef);
 
-            // Identify Next & Previous Class
             const currentIndex = classes.findIndex(c => c.id === cls.id);
             const nextClass = classes[currentIndex + 1] || null;
             const previousClass = classes[currentIndex - 1] || null;
@@ -93,15 +121,13 @@ const Promotions = () => {
             const fetchedStudents = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data(),
-                promotionStatus: 'promote', // 'promote' | 'retain' | 'demote'
+                promotionStatus: 'promote',
                 nextClassId: nextClass ? nextClass.id : 'graduate',
                 nextClassName: nextClass ? nextClass.name : 'Graduated',
                 previousClassId: previousClass ? previousClass.id : null,
                 previousClassName: previousClass ? previousClass.name : 'None'
             }));
-
             setStudents(fetchedStudents);
-
         } catch (error) {
             console.error("Error fetching students:", error);
         } finally {
@@ -115,116 +141,44 @@ const Promotions = () => {
         ));
     };
 
-    // Helper: Generate Dummy Students
-    const handleGenerateDummy = async () => {
-        if (!selectedClass || !schoolId) return;
-        setProcessing(true);
-        try {
-            const dummyNames = [
-                "Ali Khan", "Sara Ahmed", "Bilal Hassan", "Zainab Bibi", "Usman Gondal",
-                "Ayesha Malik", "Omar Farooq", "Fatima Noor", "Ahmed Raza", "Hina Shah"
-            ];
-
-            // Create 5 random students
-            const promises = Array.from({ length: 5 }).map((_, i) => {
-                const name = dummyNames[Math.floor(Math.random() * dummyNames.length)];
-                return addDoc(collection(db, `schools/${schoolId}/classes/${selectedClass.id}/students`), {
-                    name: name,
-                    fatherName: `Father of ${name.split(' ')[0]}`,
-                    rollNo: `R-${Math.floor(1000 + Math.random() * 9000)}`,
-                    admissionDate: new Date(),
-                    feeStatus: Math.random() > 0.3 ? 'paid' : 'unpaid'
-                });
-            });
-
-            await Promise.all(promises);
-
-            // Refresh list
-            handleClassSelect(selectedClass);
-
-        } catch (error) {
-            console.error("Error generating dummy data:", error);
-            alert("Failed to generate demo students.");
-        } finally {
-            setProcessing(false);
-        }
-    };
-
-    const [showConfirmModal, setShowConfirmModal] = useState(false);
-
-    const handleBulkPromote = async () => {
-        // Trigger modal instead of window.confirm
-        setShowConfirmModal(true);
-    };
-
+    // 4. Process Promotions
     const processPromotions = async () => {
         setShowConfirmModal(false);
         setProcessing(true);
-
         try {
             const batch = writeBatch(db);
             let operationCount = 0;
-            // Limit check not strictly needed for UI batch unless > 500, but kept simple
 
             for (const student of students) {
-                const status = student.promotionStatus || (student.promote ? 'promote' : 'retain');
+                const status = student.promotionStatus || 'promote';
 
+                // Logic simplifed for robustness
                 if (status === 'promote') {
-                    // 1. If Graduating
                     if (student.nextClassId === 'graduate') {
-                        // Move to alumni collection
                         const alumniRef = doc(db, `schools/${schoolId}/alumni`, student.id);
-                        batch.set(alumniRef, {
-                            ...student,
-                            graduatedAt: new Date(),
-                            previousClassId: selectedClass.id
-                        });
-                        const currentStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id);
-                        batch.delete(currentStudentRef);
-                    }
-                    // 2. If Moving to Next Class
-                    else if (student.nextClassId) {
+                        batch.set(alumniRef, { ...student, graduatedAt: new Date(), previousClassId: selectedClass.id });
+                        batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                    } else if (student.nextClassId) {
                         const nextClassRef = doc(db, `schools/${schoolId}/classes/${student.nextClassId}/students`, student.id);
-                        batch.set(nextClassRef, {
-                            ...student,
-                            promotedAt: new Date(),
-                            previousClassId: selectedClass.id
-                        });
-                        const currentStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id);
-                        batch.delete(currentStudentRef);
+                        batch.set(nextClassRef, { ...student, promotedAt: new Date(), previousClassId: selectedClass.id });
+                        batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
                     }
                 } else if (status === 'demote' && student.previousClassId) {
-                    // 3. Demote to Previous Class
                     const prevClassRef = doc(db, `schools/${schoolId}/classes/${student.previousClassId}/students`, student.id);
-                    batch.set(prevClassRef, {
-                        ...student,
-                        demotedAt: new Date(),
-                        previousClassId: selectedClass.id
-                    });
-                    const currentStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id);
-                    batch.delete(currentStudentRef);
-
+                    batch.set(prevClassRef, { ...student, demotedAt: new Date(), previousClassId: selectedClass.id });
+                    batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
                 } else {
-                    // 4. Retain in Current Class (Default or 'retain')
+                    // Retain
                     const currentStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id);
-                    batch.update(currentStudentRef, {
-                        retained: true,
-                        retainedAt: new Date()
-                    });
+                    batch.update(currentStudentRef, { retained: true, retainedAt: new Date() });
                 }
-
                 operationCount++;
             }
 
-            if (operationCount > 0) {
-                await batch.commit();
-            }
-
+            if (operationCount > 0) await batch.commit();
             setPromotionStatus('success');
-            // Refresh logic - maybe clear selection or refetch
             setSelectedClass(null);
             setStudents([]);
-            // Optional: Reload classes to update counts if we were tracking them in local state
         } catch (error) {
             console.error("Promotion failed:", error);
             setPromotionStatus('error');
@@ -233,421 +187,148 @@ const Promotions = () => {
         }
     };
 
+    // --- RENDER ---
     if (loading) {
         return (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}>
-                <Loader2 className="animate-spin" size={32} color="var(--primary)" />
+            <div style={{ padding: '50px', textAlign: 'center' }}>
+                <p>Loading Promotions...</p>
+                <p style={{ fontSize: '12px', color: '#999', marginTop: '10px' }}>
+                    If this takes too long,
+                    <button
+                        onClick={() => setLoading(false)}
+                        style={{ marginLeft: '5px', textDecoration: 'underline', border: 'none', background: 'none', cursor: 'pointer', color: 'blue' }}
+                    >
+                        click here to stop waiting
+                    </button>.
+                </p>
             </div>
         );
     }
 
     return (
-        <div className="animate-fade-in-up">
+        <div style={{ padding: '20px' }}>
             {/* Header */}
-            <div style={{ marginBottom: '2.5rem' }}>
-                <h1 style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--text-main)', marginBottom: '0.5rem' }}>
-                    Annual Promotions
-                </h1>
-                <p style={{ color: 'var(--text-secondary)' }}>
-                    Manage end-of-year student promotions and graduations.
-                </p>
+            <div style={{ marginBottom: '20px' }}>
+                <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Annual Promotions</h1>
+                <p style={{ color: '#666' }}>Promote students to the next class.</p>
             </div>
 
-            {/* Success Message */}
+            {/* Success Msg */}
             {promotionStatus === 'success' && (
-                <div className="card" style={{
-                    marginBottom: '2rem', padding: '1.5rem',
-                    background: '#ecfdf5', border: '1px solid #a7f3d0',
-                    display: 'flex', alignItems: 'center', gap: '1rem'
-                }}>
-                    <CheckCircle2 color="#059669" size={24} />
-                    <div>
-                        <h3 style={{ fontWeight: '700', color: '#065f46' }}>Promotions Completed Successfully</h3>
-                        <p style={{ color: '#047857', fontSize: '0.9rem' }}>Student records have been updated.</p>
-                    </div>
+                <div style={{ padding: '15px', background: '#ecfdf5', color: '#065f46', marginBottom: '20px', borderRadius: '8px' }}>
+                    Success! Student records updated.
                 </div>
             )}
 
-            {/* 1. Class Selector */}
-            <div style={{ marginBottom: '2rem' }}>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '1rem' }}>
-                    1. Select Current Class
-                </h3>
-
-                {/* Row 1: Primary (Nursery to Class 6) - Order <= 6 */}
-                <div className="custom-scrollbar" style={{
-                    display: 'flex', gap: '0.75rem', overflowX: 'auto', paddingBottom: '0.5rem', marginBottom: '0.75rem',
-                    scrollSnapType: 'x mandatory'
-                }}>
-                    {classes.filter(c => getClassOrder(c.name) <= 6).map((cls) => {
-                        const isSelected = selectedClass?.id === cls.id;
-                        return (
-                            <div
-                                key={cls.id}
-                                onClick={() => handleClassSelect(cls)}
-                                className={isSelected ? 'card' : ''}
-                                style={{
-                                    minWidth: '110px',
-                                    padding: '0.75rem',
-                                    borderRadius: '12px',
-                                    border: isSelected ? '2px solid var(--primary)' : '1px solid #e2e8f0',
-                                    background: isSelected ? '#eef2ff' : 'white',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s',
-                                    scrollSnapAlign: 'start',
-                                    position: 'relative',
-                                    boxShadow: isSelected ? '0 4px 12px -2px rgba(79, 70, 229, 0.15)' : 'none',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    textAlign: 'center'
-                                }}
-                            >
-                                {isSelected && (
-                                    <div style={{
-                                        position: 'absolute', top: '4px', right: '4px',
-                                        background: 'var(--primary)', borderRadius: '50%',
-                                        width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                    }}>
-                                        <CheckCircle2 size={10} color="white" />
-                                    </div>
-                                )}
-                                <h4 style={{ fontSize: '0.9rem', fontWeight: '700', marginBottom: '0.25rem', color: isSelected ? 'var(--primary)' : 'var(--text-main)' }}>
-                                    {cls.name}
-                                </h4>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                    <Users size={12} />
-                                    <span>{cls.students || 0}</span>
-                                </div>
-                            </div>
-                        );
-                    })}
+            {/* ERROR Msg */}
+            {promotionStatus === 'error' && (
+                <div style={{ padding: '15px', background: '#fef2f2', color: '#991b1b', marginBottom: '20px', borderRadius: '8px' }}>
+                    Error processing promotions. Check console.
                 </div>
+            )}
 
-                {/* Row 2: Secondary (Class 7+) - Order > 6 */}
-                {classes.some(c => getClassOrder(c.name) > 6) && (
-                    <div className="custom-scrollbar" style={{
-                        display: 'flex', gap: '0.75rem', overflowX: 'auto', paddingBottom: '0.5rem',
-                        scrollSnapType: 'x mandatory'
-                    }}>
-                        {classes.filter(c => getClassOrder(c.name) > 6).map((cls) => {
-                            const isSelected = selectedClass?.id === cls.id;
-                            return (
-                                <div
-                                    key={cls.id}
-                                    onClick={() => handleClassSelect(cls)}
-                                    className={isSelected ? 'card' : ''}
-                                    style={{
-                                        minWidth: '110px',
-                                        padding: '0.75rem',
-                                        borderRadius: '12px',
-                                        border: isSelected ? '2px solid var(--primary)' : '1px solid #e2e8f0',
-                                        background: isSelected ? '#eef2ff' : 'white',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s',
-                                        scrollSnapAlign: 'start',
-                                        position: 'relative',
-                                        boxShadow: isSelected ? '0 4px 12px -2px rgba(79, 70, 229, 0.15)' : 'none',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        textAlign: 'center'
-                                    }}
-                                >
-                                    {isSelected && (
-                                        <div style={{
-                                            position: 'absolute', top: '4px', right: '4px',
-                                            background: 'var(--primary)', borderRadius: '50%',
-                                            width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                        }}>
-                                            <CheckCircle2 size={10} color="white" />
-                                        </div>
-                                    )}
-                                    <h4 style={{ fontSize: '0.9rem', fontWeight: '700', marginBottom: '0.25rem', color: isSelected ? 'var(--primary)' : 'var(--text-main)' }}>
-                                        {cls.name}
-                                    </h4>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                        <Users size={12} />
-                                        <span>{cls.students || 0}</span>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
+            {/* Class List */}
+            {classes.length > 0 ? (
+                <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px' }}>
+                    {classes.map(cls => (
+                        <div
+                            key={cls.id}
+                            onClick={() => handleClassSelect(cls)}
+                            style={{
+                                minWidth: '120px', padding: '15px', borderRadius: '8px', cursor: 'pointer',
+                                border: selectedClass?.id === cls.id ? '2px solid blue' : '1px solid #ddd',
+                                backgroundColor: selectedClass?.id === cls.id ? '#eff6ff' : 'white'
+                            }}
+                        >
+                            <div style={{ fontWeight: 'bold', textAlign: 'center' }}>{cls.name}</div>
+                            <div style={{ textAlign: 'center', fontSize: '12px', color: '#666' }}>{cls.students || 0} Students</div>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div style={{ padding: '20px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
+                    <p style={{ color: '#64748b' }}>No classes found for this school.</p>
+                </div>
+            )}
+
+            {/* Debug Footer */}
+            <div style={{ marginTop: '50px', padding: '10px', fontSize: '10px', color: '#ccc', borderTop: '1px solid #eee' }}>
+                <p>Debug School ID: {schoolId || 'Not Found'}</p>
+                <p>Raw Session: {localStorage.getItem('manual_session') || 'NULL'}</p>
+                <button onClick={() => window.location.reload()} style={{ marginTop: '10px', padding: '4px' }}>Reload</button>
             </div>
 
-            {/* 2. Student List & Action Area */}
+            {/* Student List */}
             {selectedClass && (
-                <div className="animate-fade-in-up">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
-                        <div>
-                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)' }}>
-                                2. Review Candidates
-                            </h3>
-                            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                Promoting from <b>{selectedClass.name}</b>
-                            </p>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                            {/* Search Bar */}
-                            <div style={{
-                                position: 'relative',
-                                display: 'flex', alignItems: 'center'
-                            }}>
-                                <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px' }} />
-                                <input
-                                    type="text"
-                                    placeholder="Search by name or roll no..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    style={{
-                                        padding: '0.5rem 1rem 0.5rem 2.25rem',
-                                        borderRadius: '8px',
-                                        border: '1px solid #e2e8f0',
-                                        outline: 'none',
-                                        fontSize: '0.9rem',
-                                        width: '240px',
-                                        color: 'var(--text-main)'
-                                    }}
-                                />
-                            </div>
-
-                            {students.length > 0 && (
-                                <div style={{
-                                    padding: '0.5rem 1rem', background: 'white', borderRadius: '8px',
-                                    border: '1px solid #e2e8f0', fontSize: '0.9rem', fontWeight: '600'
-                                }}>
-                                    Total Candidates: {students.length}
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                <div style={{ marginTop: '20px' }}>
+                    <h3 style={{ marginBottom: '10px' }}>Students: {selectedClass.name}</h3>
 
                     {loadingStudents ? (
-                        <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
-                            <Loader2 className="animate-spin" size={24} style={{ margin: '0 auto 1rem', color: 'var(--primary)' }} />
-                            <p style={{ color: 'var(--text-secondary)' }}>Loading students...</p>
-                        </div>
+                        <div>Loading students...</div>
                     ) : students.length === 0 ? (
-                        <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
-                            <AlertCircle size={32} style={{ margin: '0 auto 1rem', color: '#fbbf24' }} />
-                            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>No students found in this class.</p>
-
-                            {/* Demo Helper */}
-                            <button
-                                onClick={handleGenerateDummy}
-                                disabled={processing}
-                                style={{
-                                    padding: '0.75rem 1.5rem', borderRadius: '8px',
-                                    background: '#eff6ff', border: '1px solid #dbeafe',
-                                    color: 'var(--primary)', fontWeight: '600',
-                                    cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                                    fontSize: '0.9rem'
-                                }}
-                            >
-                                {processing ? <Loader2 className="animate-spin" size={16} /> : <UserPlus size={16} />}
-                                Generate Demo Students
-                            </button>
-                        </div>
+                        <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>No students found.</div>
                     ) : (
-                        <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                                    <tr>
-                                        <th style={{ padding: '1rem', textAlign: 'left', fontSize: '0.85rem', color: '#64748b', fontWeight: '600' }}>Student Name</th>
-                                        <th style={{ padding: '1rem', textAlign: 'left', fontSize: '0.85rem', color: '#64748b', fontWeight: '600' }}>Roll No</th>
-                                        <th style={{ padding: '1rem', textAlign: 'left', fontSize: '0.85rem', color: '#64748b', fontWeight: '600' }}>Current Status</th>
-                                        <th style={{ padding: '1rem', textAlign: 'center', fontSize: '0.85rem', color: '#64748b', fontWeight: '600' }}>Action Data</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {students.filter(s =>
-                                        searchQuery === '' ||
-                                        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        (s.rollNo && s.rollNo.toString().toLowerCase().includes(searchQuery.toLowerCase()))
-                                    ).map((student, idx) => {
-                                        const status = student.promotionStatus || 'promote';
-                                        return (
-                                            <tr key={student.id} className="list-item-hover" style={{ borderBottom: idx !== students.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                                                <td style={{ padding: '1rem' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                                        <div style={{
-                                                            width: '36px', height: '36px', borderRadius: '50%', background: '#e0e7ff',
-                                                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600', color: 'var(--primary)'
-                                                        }}>
-                                                            {student.name.charAt(0)}
-                                                        </div>
-                                                        <div>
-                                                            <p style={{ fontWeight: '600', color: 'var(--text-main)' }}>{student.name}</p>
-                                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{student.fatherName}</p>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td style={{ padding: '1rem', color: 'var(--text-secondary)', fontWeight: '500' }}>{student.rollNo || '-'}</td>
-                                                <td style={{ padding: '1rem' }}>
-                                                    <span style={{
-                                                        padding: '0.25rem 0.75rem', borderRadius: '99px', fontSize: '0.75rem', fontWeight: '600',
-                                                        background: '#f1f5f9', color: '#475569'
-                                                    }}>
-                                                        Pending Review
-                                                    </span>
-                                                </td>
-                                                <td style={{ padding: '1rem' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}>
-                                                        {/* Retain Button */}
-                                                        <button
-                                                            onClick={() => handleStatusChange(student.id, 'retain')}
-                                                            title="Retain in same class"
-                                                            style={{
-                                                                padding: '0.5rem', borderRadius: '8px', cursor: 'pointer',
-                                                                background: status === 'retain' ? '#fef2f2' : 'transparent',
-                                                                border: status === 'retain' ? '1px solid #fecaca' : '1px solid #e2e8f0',
-                                                                color: status === 'retain' ? '#dc2626' : '#94a3b8',
-                                                                transition: 'all 0.2s'
-                                                            }}
-                                                        >
-                                                            <XCircle size={18} />
-                                                        </button>
+                        <div style={{ border: '1px solid #eee', borderRadius: '8px' }}>
+                            {students.map(student => {
+                                const status = student.promotionStatus || 'promote';
+                                return (
+                                    <div key={student.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px', borderBottom: '1px solid #eee' }}>
+                                        <div>
+                                            <div style={{ fontWeight: 'bold' }}>{student.name}</div>
+                                            <div style={{ fontSize: '12px', color: '#666' }}>Roll: {student.rollNo || '-'}</div>
+                                        </div>
 
-                                                        {/* Demote Button (Only if previous class exists) */}
-                                                        {student.previousClassId && (
-                                                            <button
-                                                                onClick={() => handleStatusChange(student.id, 'demote')}
-                                                                title={`Send to ${student.previousClassName}`}
-                                                                style={{
-                                                                    padding: '0.5rem', borderRadius: '8px', cursor: 'pointer',
-                                                                    background: status === 'demote' ? '#fffbeb' : 'transparent',
-                                                                    border: status === 'demote' ? '1px solid #fcd34d' : '1px solid #e2e8f0',
-                                                                    color: status === 'demote' ? '#d97706' : '#94a3b8',
-                                                                    transition: 'all 0.2s'
-                                                                }}
-                                                            >
-                                                                <ArrowDown size={18} />
-                                                            </button>
-                                                        )}
+                                        <div style={{ display: 'flex', gap: '5px' }}>
+                                            <button
+                                                onClick={() => handleStatusChange(student.id, 'retain')}
+                                                style={{ padding: '5px 10px', background: status === 'retain' ? '#fee2e2' : '#f3f4f6', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                                            >
+                                                Retain
+                                            </button>
 
-                                                        {/* Promote Button */}
-                                                        <button
-                                                            onClick={() => handleStatusChange(student.id, 'promote')}
-                                                            title={`Promote to ${student.nextClassName}`}
-                                                            style={{
-                                                                padding: '0.5rem', borderRadius: '8px', cursor: 'pointer',
-                                                                background: status === 'promote' ? '#ecfdf5' : 'transparent',
-                                                                border: status === 'promote' ? '1px solid #6ee7b7' : '1px solid #e2e8f0',
-                                                                color: status === 'promote' ? '#059669' : '#94a3b8',
-                                                                transition: 'all 0.2s'
-                                                            }}
-                                                        >
-                                                            <CheckCircle2 size={18} />
-                                                        </button>
+                                            {student.previousClassId && (
+                                                <button
+                                                    onClick={() => handleStatusChange(student.id, 'demote')}
+                                                    style={{ padding: '5px 10px', background: status === 'demote' ? '#fef3c7' : '#f3f4f6', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                                                >
+                                                    Demote
+                                                </button>
+                                            )}
 
-                                                        {/* Destination Indicator */}
-                                                        <div style={{
-                                                            display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                                            marginLeft: '0.5rem', fontSize: '0.85rem', fontWeight: '600',
-                                                            color: status === 'promote' ? 'var(--primary)' :
-                                                                status === 'retain' ? '#dc2626' : '#d97706'
-                                                        }}>
-                                                            <ArrowRight size={14} color="#cbd5e1" />
-                                                            <span>
-                                                                {status === 'promote' ? student.nextClassName :
-                                                                    status === 'retain' ? selectedClass.name :
-                                                                        student.previousClassName}
-                                                            </span>
-                                                            {status === 'promote' && student.nextClassId === 'graduate' && <GraduationCap size={14} />}
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
+                                            <button
+                                                onClick={() => handleStatusChange(student.id, 'promote')}
+                                                style={{ padding: '5px 10px', background: status === 'promote' ? '#d1fae5' : '#f3f4f6', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                                            >
+                                                Promote ({student.nextClassName})
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
 
-                            {/* Footer Actions */}
-                            <div style={{ padding: '1.5rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', marginRight: 'auto' }}>
-                                    <AlertCircle size={16} />
-                                    <span style={{ fontSize: '0.85rem' }}>Review all actions before confirming. Can't be undone easily.</span>
-                                </div>
+                            <div style={{ padding: '20px', textAlign: 'right', background: '#f9fafb' }}>
                                 <button
-                                    onClick={() => setSelectedClass(null)}
-                                    style={{
-                                        padding: '0.75rem 1.5rem', borderRadius: '8px',
-                                        background: 'transparent', border: '1px solid #cbd5e1',
-                                        cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
-                                    }}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleBulkPromote}
+                                    onClick={() => setShowConfirmModal(true)}
                                     disabled={processing}
-                                    className="btn-primary"
-                                    style={{
-                                        padding: '0.75rem 2rem', borderRadius: '8px',
-                                        cursor: processing ? 'not-allowed' : 'pointer', fontWeight: '600',
-                                        display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                        opacity: processing ? 0.7 : 1
-                                    }}
+                                    style={{ padding: '10px 20px', background: 'blue', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
                                 >
-                                    {processing ? <Loader2 className="animate-spin" size={18} /> : <TrendingUp size={18} />}
-                                    <span>Process Actions ({students.length})</span>
+                                    {processing ? 'Processing...' : 'Confirm All Promotions'}
                                 </button>
                             </div>
                         </div>
                     )}
                 </div>
             )}
-            {/* Confirmation Modal */}
+
+            {/* Modal */}
             {showConfirmModal && (
-                <div style={{
-                    position: 'fixed', inset: 0, zIndex: 1100,
-                    background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>
-                    <div className="card" style={{ maxWidth: '450px', width: '100%', padding: '2rem', animation: 'fadeInUp 0.3s ease-out' }}>
-                        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-                            <div style={{
-                                width: '60px', height: '60px', borderRadius: '50%', background: '#eef2ff',
-                                color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem'
-                            }}>
-                                <AlertCircle size={32} />
-                            </div>
-                            <h2 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.5rem', color: 'var(--text-main)' }}>Confirm Promotions</h2>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: '1.5' }}>
-                                You are about to process decisions for <b>{students.length}</b> students.
-                                <br />
-                                Promoted/Demoted students will be moved. Retained students will remain.
-                            </p>
-                        </div>
-                        <div style={{ display: 'flex', gap: '1rem' }}>
-                            <button
-                                onClick={() => setShowConfirmModal(false)}
-                                style={{
-                                    flex: 1, padding: '0.75rem', borderRadius: '8px',
-                                    background: 'transparent', border: '1px solid #e2e8f0',
-                                    cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
-                                }}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={processPromotions}
-                                className="btn-primary"
-                                style={{
-                                    flex: 1, padding: '0.75rem', borderRadius: '8px',
-                                    cursor: 'pointer', fontWeight: '600',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                }}
-                            >
-                                <CheckCircle2 size={18} />
-                                Confirm & Process
-                            </button>
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ background: 'white', padding: '30px', borderRadius: '8px', minWidth: '300px' }}>
+                        <h3>Confirm Action?</h3>
+                        <p>This will update {students.length} students.</p>
+                        <div style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                            <button onClick={() => setShowConfirmModal(false)} style={{ padding: '8px 16px', cursor: 'pointer' }}>Cancel</button>
+                            <button onClick={processPromotions} style={{ padding: '8px 16px', background: 'blue', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Confirm</button>
                         </div>
                     </div>
                 </div>

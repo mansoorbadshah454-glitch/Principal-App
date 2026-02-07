@@ -22,16 +22,28 @@ const MainLayout = () => {
         if (currentSchoolId) {
             // Listen for status
             const unsubStatus = onSnapshot(doc(db, "schools", currentSchoolId), (docSnap) => {
-                if (docSnap.exists() && docSnap.data().status === 'suspended') {
-                    setIsSuspended(true);
+                if (docSnap.exists()) {
+                    if (docSnap.data().status === 'suspended') {
+                        setIsSuspended(true);
+                    } else {
+                        setIsSuspended(false);
+                    }
+                    setLoading(false);
                 } else {
-                    setIsSuspended(false);
+                    console.error("School document does not exist!");
+                    alert("School Not Found! Your access might have been revoked.");
+                    localStorage.removeItem('manual_session');
+                    window.location.href = '/login';
                 }
+            }, (error) => {
+                console.error("Status snapshot error:", error);
+                // If permission denied, likely school deleted or rule mismatch
                 setLoading(false);
             });
 
             // Listen for announcements
             const unsubAnnounce = onSnapshot(doc(db, `schools/${currentSchoolId}/announcements`, 'global_broadcast'), (docSnap) => {
+                // ... (existing logic)
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     const sessionData = localStorage.getItem('manual_session');
@@ -45,6 +57,8 @@ const MainLayout = () => {
                 } else {
                     setAnnouncement(null);
                 }
+            }, (error) => {
+                console.warn("Announcement snapshot error (ignorable):", error);
             });
 
             return () => {

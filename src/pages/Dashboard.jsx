@@ -175,7 +175,22 @@ const Dashboard = () => {
                 setCollectionStats({ paid: totalPaid, unpaid: totalUnpaid, total: totalStudents });
                 setStatsLoaded(true);
             });
-            return () => unsubscribe();
+
+            // Safety Timeout: If data doesn't load in 8 seconds, assumes connection issue
+            const safetyTimeout = setTimeout(() => {
+                if (!statsLoaded) {
+                    console.warn("Data loading timed out. Firebase might be stuck.");
+                    setStatsLoaded(true); // Force load to stop spinner
+                }
+            }, 8000);
+
+            return () => {
+                unsubscribe();
+                clearTimeout(safetyTimeout);
+            };
+        } else {
+            console.error("No session found in localStorage");
+            setStatsLoaded(true);
         }
     }, []);
 

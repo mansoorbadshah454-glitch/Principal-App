@@ -4,6 +4,8 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { Shield, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+// import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
 
 const Login = () => {
     const [email, setEmail] = useState('');
@@ -25,9 +27,18 @@ const Login = () => {
             const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
             const user = userCredential.user;
 
-            const userDoc = await getDoc(doc(db, "global_users", user.uid));
-            if (userDoc.exists() && userDoc.data().role === 'principal') {
-                const schoolId = userDoc.data().schoolId;
+            // Secure Claim Check
+            const tokenResult = await user.getIdTokenResult();
+            const claims = tokenResult.claims;
+
+            if (claims.role === 'principal' || claims.role === 'super_admin') {
+                const schoolId = claims.schoolId;
+
+                if (!schoolId) {
+                    await auth.signOut();
+                    setError('Security Error: No School ID associated with this account.');
+                    return;
+                }
 
                 // Check school status
                 const schoolSnap = await getDoc(doc(db, "schools", schoolId));
@@ -98,6 +109,22 @@ const Login = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleMigration = async () => {
+        alert("Migration disabled temporarily for debugging.");
+        // if (!window.confirm("Run Account Migration? This will fix login for existing users.")) return;
+        // setLoading(true);
+        // try {
+        //     const migrate = httpsCallable(functions, 'adminMigrateUsers');
+        //     const result = await migrate({ secret: "migration_secret_123" });
+        //     alert(`Migration Complete! Fixed ${result.data.migrated} accounts. You can now login.`);
+        // } catch (err) {
+        //     console.error(err);
+        //     alert("Migration Failed: " + err.message);
+        // } finally {
+        //     setLoading(false);
+        // }
     };
 
     return (
@@ -240,6 +267,15 @@ const Login = () => {
                     <p style={{ color: '#64748b', fontSize: '0.875rem' }}>
                         Forgot password? <a href="#" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: '600' }}>Contact Support</a>
                     </p>
+                    <button
+                        onClick={handleMigration}
+                        style={{ marginTop: '1rem', background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                        (Admin) Fix Connection Issues
+                    </button>
+                    <div style={{ marginTop: '0.5rem', color: '#475569', fontSize: '0.7rem' }}>
+                        ver: Blaze-Silo-1.0
+                    </div>
                 </div>
             </div>
         </div>

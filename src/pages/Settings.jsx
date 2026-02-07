@@ -34,6 +34,8 @@ const Settings = () => {
                 } finally {
                     setInitialLoading(false);
                 }
+            } else {
+                setInitialLoading(false);
             }
         };
         fetchSettings();
