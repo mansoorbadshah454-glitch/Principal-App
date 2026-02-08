@@ -11,8 +11,19 @@
 <body>
   <div id="root"></div>
   <script>
-    window.onerror = function (message, source, lineno, colno, error) {
-      alert('Global Error: ' + message + '\nSource: ' + source + ':' + lineno);
+    ndow.onerror = function ( message, source, lineno, colno, error) {
+       Ignore benign ResizeObserver error
+      if (typeof message === 'string' &      e.includes('Re    ser    op completed with undelivered notifications')) {
+         return            }
+      // Ignore Script error. (common cross-orig    or)
+  iff message === 'string' && message.includes('Script error.')) {
+        return false;
+      }
+      
+      console.error('Global Error:', message, source, lineno, error);
+      // Only alert for other errors in development, or log to service in prod
+      // Preventing alert spam for user
+      // alert('Global Error: ' + message + '\nSource: ' + source + ':' + lineno);
       return false;
     };
     window.addEventListener('unhandledrejection', function (event) {

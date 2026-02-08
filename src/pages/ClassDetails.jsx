@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
-    CheckCircle2, XCircle, MoreVertical, Search, Filter
+    CheckCircle2, XCircle, MoreVertical, Search, Filter,
+    CheckCircle, Ban, Wallet
 } from 'lucide-react';
 import { auth, db } from '../firebase';
-import { doc, getDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
 import StudentProfileModal from '../components/StudentProfileModal';
 
 const ClassDetails = () => {
@@ -18,6 +19,9 @@ const ClassDetails = () => {
     const [schoolId, setSchoolId] = useState(null);
     const [selectedStudent, setSelectedStudent] = useState(null);
     const [showProfileModal, setShowProfileModal] = useState(false);
+
+    // Custom Collection Action State
+    const [currentAction, setCurrentAction] = useState(null);
 
     // 1. Resolve School ID
     useEffect(() => {
@@ -54,65 +58,16 @@ const ClassDetails = () => {
         resolveUser();
     }, []);
 
-    // 2. Fetch Class Data & Students (depend on schoolId)
+    // 2. Fetch Class Data, Students & Current Action
     useEffect(() => {
         if (!schoolId || !classId) return;
 
         setLoading(true);
 
-        const fetchAll = async () => {
-            try {
-                // A. Class Metadata (One-time fetch is usually fine, or sensitive to changes?)
-                // Let's use getDoc for metadata to keep it simple, or onSnapshot if we want total real-time.
-                // Given "no refresh" request, onSnapshot is safer.
-                const classRef = doc(db, `schools/${schoolId}/classes`, classId);
-                const unsubClass = onSnapshot(classRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        setClassData({ id: docSnap.id, ...docSnap.data() });
-                    }
-                });
-
-                // B. Students List (Real-time)
-                const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
-                // Optional: orderBy name if fields exist
-                const q = query(studentsRef);
-                const unsubStudents = onSnapshot(q, (snapshot) => {
-                    const realStudents = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data(),
-                        // Map fields to UI requirements
-                        rollNo: doc.data().rollNo || 'N/A',
-                        status: doc.data().status || 'absent', // Default to absent if missing? or present?
-                        avgScore: doc.data().avgScore || 0,
-                        homework: doc.data().homework || 0,
-                        // Generate avatar if not present
-                        avatar: doc.data().profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
-                    }));
-                    // Sort by name
-                    realStudents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-                    setStudents(realStudents);
-                    setLoading(false);
-                }, (err) => {
-                    console.error("Error fetching students:", err);
-                    setLoading(false);
-                });
-
-                return () => {
-                    unsubClass();
-                    unsubStudents();
-                };
-
-            } catch (error) {
-                console.error("Error setting up listeners:", error);
-                setLoading(false);
-            }
-        };
-
         // We need to handle the cleanup of the async setup
-        // This is a bit tricky with async in useEffect. 
-        // Better pattern:
         let unsubClass = () => { };
         let unsubStudents = () => { };
+        let unsubSchool = () => { };
 
         const startListeners = async () => {
             // Class Metadata
@@ -120,7 +75,13 @@ const ClassDetails = () => {
             unsubClass = onSnapshot(classRef, (docSnap) => {
                 if (docSnap.exists()) {
                     setClassData({ id: docSnap.id, ...docSnap.data() });
+                } else {
+                    console.log("Class document not found");
+                    setLoading(false); // Stop loading if class doesn't exist
                 }
+            }, (err) => {
+                console.error("Error fetching class:", err);
+                setLoading(false);
             });
 
             // Students
@@ -139,6 +100,22 @@ const ClassDetails = () => {
                 realStudents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 setStudents(realStudents);
                 setLoading(false);
+            }, (err) => {
+                console.error("Error fetching students:", err);
+                setLoading(false);
+            });
+
+            // Action (Listen to 'classes/action_metadata' to comply with rules)
+            const actionRef = doc(db, 'schools', schoolId, 'classes', 'action_metadata');
+            unsubSchool = onSnapshot(actionRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    setCurrentAction(docSnap.data());
+                } else {
+                    setCurrentAction(null);
+                }
+            }, (error) => {
+                console.error("Error listening to action:", error);
+                // Don't necessarily stop loading here as this is secondary data
             });
         };
 
@@ -147,6 +124,7 @@ const ClassDetails = () => {
         return () => {
             unsubClass();
             unsubStudents();
+            unsubSchool();
         };
 
     }, [schoolId, classId]);
@@ -155,6 +133,53 @@ const ClassDetails = () => {
         if (filterStatus === 'all') return true;
         return s.status === filterStatus;
     });
+
+    // Check if this class is targeted by the current action
+    const isTargeted = currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(classId)));
+
+    // Calculate Action Stats
+    const actionStats = React.useMemo(() => {
+        if (!isTargeted || !currentAction) return { paid: 0, unpaid: 0 };
+        let paid = 0;
+        let unpaid = 0;
+        students.forEach(s => {
+            if (s.customPayments?.[currentAction.name]?.status === 'paid') {
+                paid++;
+            } else {
+                unpaid++;
+            }
+        });
+        return { paid, unpaid };
+    }, [students, isTargeted, currentAction]);
+
+
+    const togglePaymentStatus = async (studentId, newStatus) => {
+        // Check for Manual Bypass
+        const manualSession = localStorage.getItem('manual_session');
+        if (manualSession) {
+            const session = JSON.parse(manualSession);
+            if (session.isManual) {
+                alert("Restricted: Manual Bypass Mode is Read-Only. Cannot update payments.");
+                return;
+            }
+        }
+
+        if (!schoolId || !classId || !currentAction || !auth.currentUser) return;
+
+        try {
+            const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
+            await updateDoc(studentRef, {
+                [`customPayments.${currentAction.name}`]: {
+                    status: newStatus,
+                    date: new Date().toISOString()
+                }
+            });
+        } catch (error) {
+            console.error("Error updating payment:", error);
+            alert("Failed to update payment status");
+        }
+    };
+
 
     const stats = [
         { label: 'Class Score %', value: '82%', icon: Activity, color: '#6366f1', bg: '#e0e7ff' },
@@ -211,6 +236,41 @@ const ClassDetails = () => {
                 ))}
             </div>
 
+            {/* ACTION STATS (Only if Targeted) */}
+            {isTargeted && (
+                <div style={{ marginBottom: '2.5rem' }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Wallet size={20} color="var(--primary)" />
+                        {currentAction.name} Collection
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
+                        <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.3)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+                                <div style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.2)', borderRadius: '10px' }}>
+                                    <CheckCircle size={24} />
+                                </div>
+                                <span style={{ fontSize: '1rem', fontWeight: '600', opacity: 0.9 }}>{currentAction.name} Paid</span>
+                            </div>
+                            <div style={{ fontSize: '2.5rem', fontWeight: '800' }}>
+                                {actionStats.paid} <span style={{ fontSize: '1rem', fontWeight: '500', opacity: 0.8 }}>Students</span>
+                            </div>
+                        </div>
+
+                        <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(135deg, #f43f5e 0%, #e11d48 100%)', color: 'white', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(244, 63, 94, 0.3)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+                                <div style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.2)', borderRadius: '10px' }}>
+                                    <Ban size={24} />
+                                </div>
+                                <span style={{ fontSize: '1rem', fontWeight: '600', opacity: 0.9 }}>{currentAction.name} Unpaid</span>
+                            </div>
+                            <div style={{ fontSize: '2.5rem', fontWeight: '800' }}>
+                                {actionStats.unpaid} <span style={{ fontSize: '1rem', fontWeight: '500', opacity: 0.8 }}>Students</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Action Bar & Filters */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: 'var(--text-main)' }}>Student Profiles</h2>
@@ -253,63 +313,97 @@ const ClassDetails = () => {
 
             {/* Students Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
-                {filteredStudents.map((student, index) => (
-                    <div
-                        key={student.id}
-                        className="card cursor-pointer transform hover:scale-105 transition-transform duration-200"
-                        onClick={() => {
-                            setSelectedStudent({ ...student, rank: index + 1 }); // Simple rank based on sorted list
-                            setShowProfileModal(true);
-                        }}
-                        style={{
-                            padding: '1.5rem', position: 'relative', border: 'none',
-                            background: 'white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
-                            display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
-                        }}
-                    >
-                        <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); /* Add menu logic here later */ }}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
-                            >
-                                <MoreVertical size={20} />
-                            </button>
-                        </div>
+                {filteredStudents.map((student, index) => {
+                    // Check payment status for this student
+                    const isPaid = isTargeted && student.customPayments?.[currentAction.name]?.status === 'paid';
 
-                        <div style={{
-                            width: '80px', height: '80px', borderRadius: '50%', marginBottom: '1rem',
-                            background: '#f3f4f6', overflow: 'hidden', border: '3px solid white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
-                        }}>
-                            {/* Use generic initials or icon if image fails, but svg api is reliable */}
-                            <img src={student.avatar} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        </div>
-
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '0.25rem' }}>{student.name}</h3>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem', fontWeight: '500' }}>Roll No: {student.rollNo}</p>
-
-                        <div style={{
-                            padding: '0.5rem 1rem', borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600', width: '100%',
-                            background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
-                            color: student.status === 'present' ? '#166534' : '#991b1b',
-                            marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                        }}>
-                            {student.status === 'present' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                            {student.status === 'present' ? 'Present Today' : 'Absent Today'}
-                        </div>
-
-                        <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '1rem 0 0', borderTop: '1px solid #f3f4f6' }}>
-                            <div style={{ textAlign: 'center' }}>
-                                <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Avg Score</p>
-                                <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.avgScore}%</p>
+                    return (
+                        <div
+                            key={student.id}
+                            className="card cursor-pointer transform hover:scale-105 transition-transform duration-200"
+                            onClick={() => {
+                                setSelectedStudent({ ...student, rank: index + 1 }); // Simple rank based on sorted list
+                                setShowProfileModal(true);
+                            }}
+                            style={{
+                                padding: '1.5rem', position: 'relative', border: 'none',
+                                background: 'white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
+                            }}
+                        >
+                            <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); /* Add menu logic here later */ }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                                >
+                                    <MoreVertical size={20} />
+                                </button>
                             </div>
-                            <div style={{ width: '1px', background: '#f3f4f6' }} />
-                            <div style={{ textAlign: 'center' }}>
-                                <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Homework</p>
-                                <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.homework}%</p>
+
+                            <div style={{
+                                width: '80px', height: '80px', borderRadius: '50%', marginBottom: '1rem',
+                                background: '#f3f4f6', overflow: 'hidden', border: '3px solid white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
+                            }}>
+                                {/* Use generic initials or icon if image fails, but svg api is reliable */}
+                                <img src={student.avatar} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '0.25rem' }}>{student.name}</h3>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem', fontWeight: '500' }}>Roll No: {student.rollNo}</p>
+
+                            <div style={{
+                                padding: '0.5rem 1rem', borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600', width: '100%',
+                                background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
+                                color: student.status === 'present' ? '#166534' : '#991b1b',
+                                marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                            }}>
+                                {student.status === 'present' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                                {student.status === 'present' ? 'Present Today' : 'Absent Today'}
+                            </div>
+
+                            {/* ACTION BUTTONS (If Targeted) */}
+                            {isTargeted && (
+                                <div style={{ width: '100%', marginBottom: '1rem' }} onClick={(e) => e.stopPropagation()}>
+                                    {isPaid ? (
+                                        <button
+                                            onClick={() => togglePaymentStatus(student.id, 'unpaid')}
+                                            style={{
+                                                width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none',
+                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                                            }}
+                                        >
+                                            <CheckCircle size={16} /> Paid: {currentAction.name}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={() => togglePaymentStatus(student.id, 'paid')}
+                                            style={{
+                                                width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #fee2e2',
+                                                background: 'white', color: '#dc2626', fontWeight: '600', cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                                            }}
+                                        >
+                                            <Ban size={16} /> Mark {currentAction.name} Paid
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
+                            <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '1rem 0 0', borderTop: '1px solid #f3f4f6' }}>
+                                <div style={{ textAlign: 'center' }}>
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Avg Score</p>
+                                    <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.avgScore}%</p>
+                                </div>
+                                <div style={{ width: '1px', background: '#f3f4f6' }} />
+                                <div style={{ textAlign: 'center' }}>
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Homework</p>
+                                    <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.homework}%</p>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
 
             {/* Student Profile Modal */}
