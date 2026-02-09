@@ -154,61 +154,70 @@ const ActionModal = ({ isOpen, onClose, onSave, classes }) => {
 
 const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
     const navigate = useNavigate();
+    const [monthlyStats, setMonthlyStats] = useState({ paid: 0, unpaid: 0, total: 0, loading: true });
     const [actionStats, setActionStats] = useState({ paid: 0, unpaid: 0, total: 0, loading: true });
 
     // Is this class targeted by the current action?
     const isTargeted = currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(cls.id)));
 
-    // 1. Calculate Monthly Fee Stats (Simulated/Default for now as per existing logic)
-    const totalStudents = cls.students || 0;
-    const seed = cls.id.charCodeAt(0) || 123;
-    const monthlyPaid = Math.max(0, Math.round(totalStudents * (0.7 + (seed % 20) / 100)));
-    const monthlyUnpaid = totalStudents - monthlyPaid;
-
-    // 2. Fetch Action Stats (Real-time)
+    // Fetch Real-time Stats from Database
     useEffect(() => {
-        if (!isTargeted || !schoolId || !cls.id) {
-            // Revert to simulated or zero if not targeted
-            // Use props data for total when not targeted (as we don't query subcollection)
-            setActionStats({
-                paid: monthlyPaid,
-                unpaid: monthlyUnpaid,
-                total: totalStudents,
-                loading: false
-            });
+        if (!schoolId || !cls.id) {
+            setMonthlyStats({ paid: 0, unpaid: 0, total: 0, loading: false });
+            setActionStats({ paid: 0, unpaid: 0, total: 0, loading: false });
             return;
         }
 
         const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            let paid = 0;
-            let unpaid = 0;
-            const actionName = currentAction.name;
+            let monthlyPaid = 0;
+            let monthlyUnpaid = 0;
+            let actionPaid = 0;
+            let actionUnpaid = 0;
 
             snapshot.docs.forEach(doc => {
                 const data = doc.data();
-                const paymentStatus = data.customPayments?.[actionName]?.status;
-                if (paymentStatus === 'paid') {
-                    paid++;
+
+                // Count Monthly Fee Status
+                const monthlyStatus = data.monthlyFeeStatus || 'unpaid';
+                if (monthlyStatus === 'paid') {
+                    monthlyPaid++;
                 } else {
-                    unpaid++;
+                    monthlyUnpaid++;
+                }
+
+                // Count Action Fee Status (if targeted)
+                if (isTargeted && currentAction) {
+                    const actionStatus = data.customPayments?.[currentAction.name]?.status;
+                    if (actionStatus === 'paid') {
+                        actionPaid++;
+                    } else {
+                        actionUnpaid++;
+                    }
                 }
             });
 
-            // For targeted classes, snapshot.size is the real-time truth for total students
+            setMonthlyStats({
+                paid: monthlyPaid,
+                unpaid: monthlyUnpaid,
+                total: snapshot.size,
+                loading: false
+            });
+
             setActionStats({
-                paid,
-                unpaid,
+                paid: actionPaid,
+                unpaid: actionUnpaid,
                 total: snapshot.size,
                 loading: false
             });
         });
 
         return () => unsubscribe();
-    }, [schoolId, cls.id, currentAction, isTargeted, monthlyPaid, monthlyUnpaid, totalStudents]);
+    }, [schoolId, cls.id, currentAction, isTargeted]);
 
 
     // Dynamic Theme Color
+    const seed = cls.id.charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
     const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
 
@@ -298,13 +307,13 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                         fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-main)'
                     }}>
                         <Users size={16} color="var(--primary)" />
-                        <span>Total Students: {actionStats.total}</span>
+                        <span>Total Students: {monthlyStats.total}</span>
                     </div>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {/* 1. Monthly Fee Stats */}
-                    <StatsRow label="Monthly Fee" paid={monthlyPaid} unpaid={monthlyUnpaid} />
+                    <StatsRow label="Monthly Fee" paid={monthlyStats.paid} unpaid={monthlyStats.unpaid} />
 
                     {/* 2. Action Stats (Calculated & Stacked) */}
                     {isTargeted && (
@@ -495,68 +504,31 @@ const Collections = () => {
     });
 
     useEffect(() => {
-        if (loading || !schoolId) return;
-
-        // A. Calculate Monthly Stats (Simulated Aggregation)
-        let mPaid = 0;
-        let mUnpaid = 0;
-
-        classes.forEach(cls => {
-            const total = cls.students || 0;
-            const seed = cls.id.charCodeAt(0) || 123;
-            const paid = Math.max(0, Math.round(total * (0.7 + (seed % 20) / 100)));
-            mPaid += paid;
-            mUnpaid += (total - paid);
-        });
-
-        // B. Calculate Action Stats (Real-time Aggregation)
-        if (!currentAction) {
-            setGlobalStats({
-                monthlyPaid: mPaid,
-                monthlyUnpaid: mUnpaid,
-                actionPaid: 0,
-                actionUnpaid: 0,
-                loading: false
-            });
+        if (loading || !schoolId || classes.length === 0) {
+            console.log("[Collections] Waiting for initialization - School:", schoolId, "Classes count:", classes.length);
             return;
         }
 
-        // Identify targeted classes
-        const targetedClasses = classes.filter(cls =>
-            currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(cls.id))
-        );
+        console.log("[Collections] Starting Global Aggregation for school:", schoolId);
 
-        if (targetedClasses.length === 0) {
-            setGlobalStats({
-                monthlyPaid: mPaid,
-                monthlyUnpaid: mUnpaid,
-                actionPaid: 0,
-                actionUnpaid: 0,
-                loading: false
-            });
-            return;
-        }
-
-        // We need to listen to students of ALL targeted classes to get the global sum.
-        // This effectively creates N listeners where N is number of classes.
         const unsubscribers = [];
-        let totalActionPaid = 0;
-        let totalActionUnpaid = 0;
-        let classesProcessed = 0;
-
-        // Reset counts for fresh calculation
-        // Note: This approach updates state incrementally or we can wait for all initial loads.
-        // For simplicity/reactivity, we'll map class IDs to their local stats and sum them up.
-
         const classStatsMap = new Map();
 
         const updateAggregates = () => {
+            let mPaid = 0;
+            let mUnpaid = 0;
             let aPaid = 0;
             let aUnpaid = 0;
-            classStatsMap.forEach(stats => {
-                aPaid += stats.paid;
-                aUnpaid += stats.unpaid;
+
+            classStatsMap.forEach((stats, cid) => {
+                mPaid += stats.monthlyPaid;
+                mUnpaid += stats.monthlyUnpaid;
+                aPaid += stats.actionPaid;
+                aUnpaid += stats.actionUnpaid;
             });
+
+            console.log(`[Collections] TOTAL Aggregated - Monthly Paid: ${mPaid}, Unpaid: ${mUnpaid}`);
+
             setGlobalStats({
                 monthlyPaid: mPaid,
                 monthlyUnpaid: mUnpaid,
@@ -566,34 +538,54 @@ const Collections = () => {
             });
         };
 
-        targetedClasses.forEach(cls => {
+        classes.forEach(cls => {
             const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
             const unsub = onSnapshot(q, (snapshot) => {
-                let cPaid = 0;
-                let cUnpaid = 0;
-                const actionName = currentAction.name;
+                let cMonthlyPaid = 0;
+                let cMonthlyUnpaid = 0;
+                let cActionPaid = 0;
+                let cActionUnpaid = 0;
 
                 snapshot.docs.forEach(doc => {
                     const data = doc.data();
-                    const paymentStatus = data.customPayments?.[actionName]?.status;
-                    if (paymentStatus === 'paid') {
-                        cPaid++;
-                    } else {
-                        cUnpaid++;
+                    const monthlyStatus = data.monthlyFeeStatus || 'unpaid';
+                    if (monthlyStatus === 'paid') cMonthlyPaid++;
+                    else cMonthlyUnpaid++;
+
+                    if (currentAction) {
+                        const isTargeted = currentAction.targetAll ||
+                            (currentAction.targetClasses && currentAction.targetClasses.includes(cls.id));
+
+                        if (isTargeted) {
+                            const actionStatus = data.customPayments?.[currentAction.name]?.status;
+                            if (actionStatus === 'paid') cActionPaid++;
+                            else cActionUnpaid++;
+                        }
                     }
                 });
 
-                classStatsMap.set(cls.id, { paid: cPaid, unpaid: cUnpaid });
+                console.log(`[Collections] Class ${cls.name} [${cls.id}] Snapshot: ${snapshot.size} students, Paid: ${cMonthlyPaid}`);
+
+                classStatsMap.set(cls.id, {
+                    monthlyPaid: cMonthlyPaid,
+                    monthlyUnpaid: cMonthlyUnpaid,
+                    actionPaid: cActionPaid,
+                    actionUnpaid: cActionUnpaid
+                });
                 updateAggregates();
             });
             unsubscribers.push(unsub);
         });
 
         return () => {
+            console.log("[Collections] Cleaning up global listeners");
             unsubscribers.forEach(unsub => unsub());
         };
 
-    }, [classes, currentAction, schoolId]); // Re-run if classes list or action changes
+    }, [classes, currentAction, schoolId, loading]);
+    // Re-run if classes list or action changes
+
+
 
     return (
         <div className="animate-fade-in-up">

@@ -570,6 +570,33 @@ const Classes = () => {
         });
     };
 
+    // 3. Stats Aggregation
+    const [totalStudentsCount, setTotalStudentsCount] = useState(0);
+
+    useEffect(() => {
+        if (!schoolId || classes.length === 0) return;
+
+        const unsubscribers = [];
+        const classStudentCounts = new Map();
+
+        const updateGrandTotal = () => {
+            let grandTotal = 0;
+            classStudentCounts.forEach(count => grandTotal += count);
+            setTotalStudentsCount(grandTotal);
+        };
+
+        classes.forEach(cls => {
+            const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+            const unsub = onSnapshot(q, (snapshot) => {
+                classStudentCounts.set(cls.id, snapshot.size);
+                updateGrandTotal();
+            });
+            unsubscribers.push(unsub);
+        });
+
+        return () => unsubscribers.forEach(u => u());
+    }, [schoolId, classes]);
+
     return (
         <div className="animate-fade-in-up">
             {/* ... existing header ... */}
@@ -733,14 +760,14 @@ const Classes = () => {
                     },
                     {
                         label: 'Total Students',
-                        value: classes.reduce((acc, c) => acc + (c.students || 0), 0),
+                        value: totalStudentsCount,
                         icon: Users,
                         gradient: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
                         shadow: 'rgba(16, 185, 129, 0.4)'
                     },
                     {
                         label: 'Avg Class Size',
-                        value: Math.round(classes.reduce((acc, c) => acc + (c.students || 0), 0) / (classes.length || 1)),
+                        value: Math.round(totalStudentsCount / (classes.length || 1)),
                         icon: Users,
                         gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%)',
                         shadow: 'rgba(14, 165, 233, 0.4)'
@@ -752,6 +779,7 @@ const Classes = () => {
                         gradient: 'linear-gradient(135deg, #f59e0b 0%, #b45309 100%)',
                         shadow: 'rgba(245, 158, 11, 0.4)'
                     },
+
                 ].map((stat, idx) => (
                     <div key={idx} className="card" style={{
                         padding: '1.5rem',

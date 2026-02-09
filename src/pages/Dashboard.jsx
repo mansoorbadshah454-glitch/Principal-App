@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
@@ -13,23 +13,26 @@ import {
 
 const Dashboard = () => {
     const navigate = useNavigate();
+
+    // 1. Shared Data State
+    const [schoolId, setSchoolId] = useState(null);
+    const [fetchedClasses, setFetchedClasses] = useState([]);
     const [messages, setMessages] = useState([]);
+    const [teachers, setTeachers] = useState([]);
+    const [collectionStats, setCollectionStats] = useState({ paid: 0, unpaid: 0, total: 0 });
+    const [statsLoaded, setStatsLoaded] = useState(false);
+
+    // 2. UI State
     const [selectedTeacher, setSelectedTeacher] = useState(null);
     const [messageText, setMessageText] = useState('');
     const [isSending, setIsSending] = useState(false);
     const [isBroadcast, setIsBroadcast] = useState(false);
-
-    // School Performance states
     const [performanceTab, setPerformanceTab] = useState('subjects');
     const [selectedClass, setSelectedClass] = useState('all');
     const [showClassDropdown, setShowClassDropdown] = useState(false);
     const [selectedMonth, setSelectedMonth] = useState('February');
     const [showMonthDropdown, setShowMonthDropdown] = useState(false);
     const [rankingPage, setRankingPage] = useState(0);
-
-    // Collection Stats State
-    const [collectionStats, setCollectionStats] = useState({ paid: 0, unpaid: 0, total: 0 });
-    const [statsLoaded, setStatsLoaded] = useState(false);
 
     const getGreeting = () => {
         const hour = new Date().getHours();
@@ -38,24 +41,41 @@ const Dashboard = () => {
         return "Good Evening";
     };
 
+    // 3. Resolve School ID First
     React.useEffect(() => {
-        // Get schoolId from session
-        const session = localStorage.getItem('manual_session');
-        if (session) {
-            const { schoolId } = JSON.parse(session);
-            const q = query(
-                collection(db, `schools/${schoolId}/messages`),
-                where("to", "==", "principal"),
-                orderBy("timestamp", "desc")
-            );
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const list = [];
-                snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-                setMessages(list);
-            });
-            return () => unsubscribe();
+        const manualSession = localStorage.getItem('manual_session');
+        if (manualSession) {
+            try {
+                const sessionData = JSON.parse(manualSession);
+                if (sessionData.schoolId) {
+                    setSchoolId(sessionData.schoolId);
+                }
+            } catch (e) {
+                console.error("[Dashboard] Error parsing session:", e);
+                setStatsLoaded(true);
+            }
+        } else {
+            console.warn("[Dashboard] No manual_session found");
+            setStatsLoaded(true);
         }
     }, []);
+
+
+    React.useEffect(() => {
+        if (!schoolId) return;
+
+        const q = query(
+            collection(db, `schools/${schoolId}/messages`),
+            where("to", "==", "principal"),
+            orderBy("timestamp", "desc")
+        );
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const list = [];
+            snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+            setMessages(list);
+        });
+        return () => unsubscribe();
+    }, [schoolId]);
 
     // Mock Data for Charts
 
@@ -105,94 +125,121 @@ const Dashboard = () => {
         },
     ];
 
-    // Teachers Data State
-    const [teachers, setTeachers] = useState([]);
 
     React.useEffect(() => {
-        const session = localStorage.getItem('manual_session');
-        if (session) {
-            const { schoolId } = JSON.parse(session);
-            const q = query(collection(db, `schools/${schoolId}/teachers`));
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const list = snapshot.docs.map(doc => {
-                    const data = doc.data();
-                    // Simulate dynamic properties for the dashboard since they aren't in DB yet
-                    // Deterministic simulation based on ID to keep it consistent across renders
-                    const seed = doc.id.charCodeAt(0) + (data.name?.length || 0);
-                    return {
-                        id: doc.id,
-                        name: data.name,
-                        class: Array.isArray(data.assignedClasses) && data.assignedClasses.length > 0
-                            ? data.assignedClasses[0]
-                            : (data.assignedClasses || 'Unassigned'),
-                        status: seed % 2 === 0 ? 'on' : 'off', // Simulated status
-                        score: 75 + (seed % 20) // Simulated student impact score (75-95)
-                    };
-                });
-                setTeachers(list);
+        if (!schoolId) return;
+        const q = query(collection(db, `schools/${schoolId}/teachers`));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const list = snapshot.docs.map(doc => {
+                const data = doc.data();
+                const seed = doc.id.charCodeAt(0) + (data.name?.length || 0);
+                return {
+                    id: doc.id,
+                    name: data.name,
+                    class: Array.isArray(data.assignedClasses) && data.assignedClasses.length > 0
+                        ? data.assignedClasses[0]
+                        : (data.assignedClasses || 'Unassigned'),
+                    status: seed % 2 === 0 ? 'on' : 'off',
+                    score: 75 + (seed % 20)
+                };
             });
-            return () => unsubscribe();
-        }
-    }, []);
+            setTeachers(list);
+        });
+        return () => unsubscribe();
+    }, [schoolId]);
 
-    // Dynamic Data Generation based on Selected Class
-    const [fetchedClasses, setFetchedClasses] = React.useState([]);
+
 
     React.useEffect(() => {
-        const session = localStorage.getItem('manual_session');
-        if (session) {
-            const { schoolId } = JSON.parse(session);
-            const q = query(collection(db, `schools/${schoolId}/classes`));
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (!schoolId) return;
 
-                // Sort numerically
-                list.sort((a, b) => {
-                    const nameA = a.name || '';
-                    const nameB = b.name || '';
-                    const numA = parseInt(nameA.replace(/\D/g, '')) || 0;
-                    const numB = parseInt(nameB.replace(/\D/g, '')) || 0;
-                    return numA - numB;
-                });
+        console.log("[Dashboard] Listening for classes for school:", schoolId);
+        const qClasses = query(collection(db, `schools/${schoolId}/classes`));
+        const unsubClasses = onSnapshot(qClasses, (snapshot) => {
+            const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-                setFetchedClasses(list);
+            // Sort numerically
+            list.sort((a, b) => {
+                const nameA = a.name || '';
+                const nameB = b.name || '';
+                const numA = parseInt(nameA.replace(/\D/g, '')) || 0;
+                const numB = parseInt(nameB.replace(/\D/g, '')) || 0;
+                return numA - numB;
+            });
 
-                // Calculate Stats
-                let totalPaid = 0;
-                let totalUnpaid = 0;
-                let totalStudents = 0;
+            console.log(`[Dashboard] Found ${list.length} classes`);
+            setFetchedClasses(list);
 
-                list.forEach(c => {
-                    const total = c.students || 0;
-                    const seed = (c.id && typeof c.id === 'string') ? c.id.charCodeAt(0) : 123;
-                    const p = Math.max(0, Math.round(total * (0.7 + (seed % 20) / 100)));
-                    const u = total - p;
-                    totalPaid += p;
-                    totalUnpaid += u;
-                    totalStudents += total;
-                });
-
-                setCollectionStats({ paid: totalPaid, unpaid: totalUnpaid, total: totalStudents });
+            if (list.length === 0) {
+                setCollectionStats({ paid: 0, unpaid: 0, total: 0 });
                 setStatsLoaded(true);
+            }
+        });
+
+        return () => unsubClasses();
+    }, [schoolId]);
+
+    useEffect(() => {
+        if (!schoolId || fetchedClasses.length === 0) return;
+
+        console.log("[Dashboard] Starting Student Listeners for", fetchedClasses.length, "classes");
+
+        const unsubscribers = [];
+        const classStatsMap = new Map();
+
+        const updateAggregates = () => {
+            let totalPaid = 0;
+            let totalUnpaid = 0;
+            let totalStudents = 0;
+
+            classStatsMap.forEach((stats, cid) => {
+                totalPaid += stats.paid;
+                totalUnpaid += stats.unpaid;
+                totalStudents += stats.total;
             });
 
-            // Safety Timeout: If data doesn't load in 8 seconds, assumes connection issue
-            const safetyTimeout = setTimeout(() => {
-                if (!statsLoaded) {
-                    console.warn("Data loading timed out. Firebase might be stuck.");
-                    setStatsLoaded(true); // Force load to stop spinner
-                }
-            }, 8000);
-
-            return () => {
-                unsubscribe();
-                clearTimeout(safetyTimeout);
-            };
-        } else {
-            console.error("No session found in localStorage");
+            console.log(`[Dashboard] Aggregated Totals - Paid: ${totalPaid}, Unpaid: ${totalUnpaid}, Total: ${totalStudents}`);
+            setCollectionStats({ paid: totalPaid, unpaid: totalUnpaid, total: totalStudents });
             setStatsLoaded(true);
-        }
-    }, []);
+        };
+
+        fetchedClasses.forEach(cls => {
+            const qStudents = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+            const unsubStudents = onSnapshot(qStudents, (snap) => {
+                let cPaid = 0;
+                let cUnpaid = 0;
+
+                snap.docs.forEach(doc => {
+                    const status = doc.data().monthlyFeeStatus || 'unpaid';
+                    if (status === 'paid') cPaid++;
+                    else cUnpaid++;
+                });
+
+                console.log(`[Dashboard] Class ${cls.name} Update - Paid: ${cPaid}, Unpaid: ${cUnpaid}`);
+                classStatsMap.set(cls.id, { paid: cPaid, unpaid: cUnpaid, total: snap.size });
+                updateAggregates();
+            });
+            unsubscribers.push(unsubStudents);
+        });
+
+        return () => {
+            console.log("[Dashboard] Cleaning up student listeners");
+            unsubscribers.forEach(u => u());
+        };
+    }, [schoolId, fetchedClasses]);
+
+    // Safety Timeout
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (!statsLoaded) {
+                console.warn("[Dashboard] Data timeout - forcing loaded state");
+                setStatsLoaded(true);
+            }
+        }, 8000);
+        return () => clearTimeout(timer);
+    }, [statsLoaded]);
+
+
 
     const allPotentialSubjects = [
         'English', 'Urdu', 'Mathematics', 'Islamiyat', 'QURAN',
@@ -234,11 +281,11 @@ const Dashboard = () => {
     const homeworkData = currentData.map(d => ({ name: d.name, completion: d.completion }));
 
     const attendanceData = [
-        { name: 'Week 1', percentage: selectedClass === 'all' ? 96 : 94 + (selectedClass.length % 4) },
-        { name: 'Week 2', percentage: selectedClass === 'all' ? 94 : 92 + (selectedClass.length % 5) },
-        { name: 'Week 3', percentage: selectedClass === 'all' ? 98 : 95 + (selectedClass.length % 3) },
-        { name: 'Week 4', percentage: selectedClass === 'all' ? 92 : 88 + (selectedClass.length % 6) },
-        { name: 'Week 5', percentage: selectedClass === 'all' ? 95 : 91 + (selectedClass.length % 2) },
+        { name: 'Week 1', percentage: selectedClass === 'all' ? 96 : 94 + (selectedClass?.length || 0 % 4) },
+        { name: 'Week 2', percentage: selectedClass === 'all' ? 94 : 92 + (selectedClass?.length || 0 % 5) },
+        { name: 'Week 3', percentage: selectedClass === 'all' ? 98 : 95 + (selectedClass?.length || 0 % 3) },
+        { name: 'Week 4', percentage: selectedClass === 'all' ? 92 : 88 + (selectedClass?.length || 0 % 6) },
+        { name: 'Week 5', percentage: selectedClass === 'all' ? 95 : 91 + (selectedClass?.length || 0 % 2) },
         { name: 'Week 6', percentage: selectedClass === 'all' ? 97 : 96 },
     ];
 
@@ -309,13 +356,58 @@ const Dashboard = () => {
                     <h1 style={{ fontSize: '2rem', fontWeight: '700' }}>{getGreeting()}, Principal</h1>
                     <p style={{ color: 'var(--text-muted)' }}>Here's what's happening in your school today.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                    <div className="card" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    {/* Sync Status Indicator */}
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.6rem',
+                        padding: '0.6rem 1.2rem',
+                        background: 'white',
+                        borderRadius: '12px',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)'
+                    }}>
+                        <div style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: statsLoaded ? '#10b981' : '#f59e0b',
+                            boxShadow: statsLoaded ? '0 0 8px #10b981' : 'none',
+                            animation: statsLoaded ? 'pulse 2s infinite' : 'none'
+                        }} />
+                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                            {statsLoaded ? 'Live Sync Active' : 'Connecting...'}
+                        </span>
+                    </div>
+
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="card"
+                        style={{
+                            padding: '0.6rem 1.2rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.6rem',
+                            cursor: 'pointer',
+                            border: '1px solid #e2e8f0',
+                            transition: 'all 0.2s ease',
+                            background: 'white'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
+                        <Activity size={18} color="var(--primary)" />
+                        <span style={{ fontWeight: '600' }}>Refresh Data</span>
+                    </button>
+
+                    <div className="card" style={{ padding: '0.6rem 1.2rem', display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'white', border: '1px solid #e2e8f0' }}>
                         <Clock size={18} color="var(--primary)" />
                         <span style={{ fontWeight: '600' }}>{new Date().toLocaleDateString()}</span>
                     </div>
                 </div>
             </div>
+
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
                 {/* Left Column Content (Now Full Width) */}

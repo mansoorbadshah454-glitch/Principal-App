@@ -74,18 +74,28 @@ const ClassCollection = () => {
 
     // Toggle Functions
     const toggleMonthlyFee = async (studentId, currentStatus) => {
-        if (!schoolId) return;
+        if (!schoolId) {
+            console.error("[ClassCollection] Cannot toggle fee: schoolId is null");
+            return;
+        }
         const newStatus = currentStatus === 'paid' ? 'unpaid' : 'paid';
         const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
+
+        console.log(`[ClassCollection] Attempting toggle for student ${studentId}`);
+        console.log(`[ClassCollection] Path: schools/${schoolId}/classes/${classId}/students/${studentId}`);
+        console.log(`[ClassCollection] New Status: ${newStatus}`);
+
         try {
             await updateDoc(studentRef, {
                 monthlyFeeStatus: newStatus
             });
+            console.log(`[ClassCollection] Update SUCCESS for student: ${studentId}, monthlyFeeStatus: ${newStatus}`);
         } catch (error) {
-            console.error("Error updating monthly fee:", error);
-            alert("Failed to update status");
+            console.error("[ClassCollection] Update FAILED:", error);
+            alert("Failed to update status. Check console for details.");
         }
     };
+
 
     const toggleActionFee = async (studentId, currentStatus) => {
         if (!schoolId || !currentAction) return;
@@ -98,6 +108,7 @@ const ClassCollection = () => {
                     date: new Date().toISOString()
                 }
             });
+            console.log(`[ClassCollection] Update successful for student: ${studentId}, action: ${currentAction.name}, status: ${newStatus}`);
         } catch (error) {
             console.error("Error updating action fee:", error);
             alert("Failed to update status");
