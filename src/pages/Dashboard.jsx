@@ -356,52 +356,8 @@ const Dashboard = () => {
                     <h1 style={{ fontSize: '2rem', fontWeight: '700' }}>{getGreeting()}, Principal</h1>
                     <p style={{ color: 'var(--text-muted)' }}>Here's what's happening in your school today.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                    {/* Sync Status Indicator */}
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.6rem',
-                        padding: '0.6rem 1.2rem',
-                        background: 'white',
-                        borderRadius: '12px',
-                        border: '1px solid #e2e8f0',
-                        boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)'
-                    }}>
-                        <div style={{
-                            width: '8px',
-                            height: '8px',
-                            borderRadius: '50%',
-                            background: statsLoaded ? '#10b981' : '#f59e0b',
-                            boxShadow: statsLoaded ? '0 0 8px #10b981' : 'none',
-                            animation: statsLoaded ? 'pulse 2s infinite' : 'none'
-                        }} />
-                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
-                            {statsLoaded ? 'Live Sync Active' : 'Connecting...'}
-                        </span>
-                    </div>
-
-                    <button
-                        onClick={() => window.location.reload()}
-                        className="card"
-                        style={{
-                            padding: '0.6rem 1.2rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.6rem',
-                            cursor: 'pointer',
-                            border: '1px solid #e2e8f0',
-                            transition: 'all 0.2s ease',
-                            background: 'white'
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                    >
-                        <Activity size={18} color="var(--primary)" />
-                        <span style={{ fontWeight: '600' }}>Refresh Data</span>
-                    </button>
-
-                    <div className="card" style={{ padding: '0.6rem 1.2rem', display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'white', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                    <div className="card" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <Clock size={18} color="var(--primary)" />
                         <span style={{ fontWeight: '600' }}>{new Date().toLocaleDateString()}</span>
                     </div>
