@@ -8,6 +8,7 @@ import {
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
 import StudentProfileModal from '../components/StudentProfileModal';
+import StudentActionPopup from '../components/StudentActionPopup';
 
 const ClassDetails = () => {
     const { classId } = useParams();
@@ -19,6 +20,8 @@ const ClassDetails = () => {
     const [schoolId, setSchoolId] = useState(null);
     const [selectedStudent, setSelectedStudent] = useState(null);
     const [showProfileModal, setShowProfileModal] = useState(false);
+    const [showSelectionPopup, setShowSelectionPopup] = useState(false);
+    const [actionStudent, setActionStudent] = useState(null);
 
     // Custom Collection Action State
     const [currentAction, setCurrentAction] = useState(null);
@@ -333,7 +336,11 @@ const ClassDetails = () => {
                         >
                             <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
                                 <button
-                                    onClick={(e) => { e.stopPropagation(); /* Add menu logic here later */ }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActionStudent(student);
+                                        setShowSelectionPopup(true);
+                                    }}
                                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
                                 >
                                     <MoreVertical size={20} />
@@ -413,6 +420,15 @@ const ClassDetails = () => {
                 student={selectedStudent}
                 rank={selectedStudent?.rank}
                 classSubjects={classData?.subjects}
+            />
+
+            {/* Student Action Popup */}
+            <StudentActionPopup
+                isOpen={showSelectionPopup}
+                onClose={() => setShowSelectionPopup(false)}
+                student={actionStudent}
+                schoolId={schoolId}
+                classId={classId}
             />
         </div>
     );
