@@ -12,7 +12,7 @@ const UserCard = ({ user, onDelete, onEdit }) => {
                     <div className="flex items-center gap-4">
                         <div className="relative">
                             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-indigo-200 group-hover:scale-105 transition-transform duration-300">
-                                {user.displayName ? user.displayName.charAt(0).toUpperCase() : <User size={28} />}
+                                {(user.name || user.displayName) ? (user.name || user.displayName).charAt(0).toUpperCase() : <User size={28} />}
                             </div>
                             {/* Role Badge overlapping profile */}
                             <div className="absolute -bottom-2 -right-2 bg-white px-2 py-0.5 rounded-md shadow-sm border border-slate-100">
@@ -24,7 +24,7 @@ const UserCard = ({ user, onDelete, onEdit }) => {
 
                         <div>
                             <h3 className="font-bold text-slate-800 text-lg leading-tight group-hover:text-indigo-600 transition-colors">
-                                {user.displayName || 'Admin User'}
+                                {user.name || user.displayName || 'Admin User'}
                             </h3>
                             <p className="text-sm text-slate-500 font-medium mt-1 flex items-center gap-1.5">
                                 {user.email}

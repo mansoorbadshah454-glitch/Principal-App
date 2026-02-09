@@ -70,7 +70,16 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                     permissions: formData.permissions,
                     updatedAt: serverTimestamp()
                 });
-                // Note: We don't update email/password here as that requires Admin SDK or Re-auth
+
+                // Password Reset Logic
+                if (formData.password && formData.password.length >= 6) {
+                    const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
+                    await updatePasswordFn({
+                        targetUid: userToEdit.id,
+                        newPassword: formData.password,
+                        schoolId: schoolId
+                    });
+                }
             }
             // 2. CREATE MODE (Via Cloud Function)
             else {
@@ -172,7 +181,7 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                                     />
                                 </div>
 
-                                {!userToEdit && (
+                                {!userToEdit ? (
                                     <div className="space-y-2 md:col-span-2">
                                         <label className="text-sm font-semibold text-slate-700">Password</label>
                                         <div className="relative">
@@ -187,6 +196,25 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                                             />
                                         </div>
                                         <p className="text-xs text-slate-500 mt-1 pl-1">Min. 6 characters.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2 md:col-span-2 border-t border-slate-100 pt-4 mt-2">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                                                Password Reset
+                                                <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Optional</span>
+                                            </label>
+                                        </div>
+
+                                        <input
+                                            type="password"
+                                            minLength={6}
+                                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-slate-700 placeholder:text-slate-400"
+                                            placeholder="Enter new password to reset (leave empty to keep current)"
+                                            value={formData.password}
+                                            onChange={e => setFormData({ ...formData, password: e.target.value })}
+                                        />
+                                        <p className="text-xs text-slate-400">Only enter if you requested a password reset for this admin.</p>
                                     </div>
                                 )}
                             </div>
