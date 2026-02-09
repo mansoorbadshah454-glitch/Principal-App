@@ -6,28 +6,28 @@
   <link rel="icon" type="image/svg+xml" href="/vite.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MAI SMS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body>
   <div id="root"></div>
   <script>
-    ndow.onerror = function ( message, source, lineno, colno, error) {
-       Ignore benign ResizeObserver error
-      if (typeof message === 'string' &      e.includes('Re    ser    op completed with undelivered notifications')) {
-         return            }
-      // Ignore Script error. (common cross-orig    or)
-  iff message === 'string' && message.includes('Script error.')) {
+    window.onerror = function (message, source, lineno, colno, error) {
+      // Ignore benign ResizeObserver error
+      if (typeof message === 'string' && message.includes('ResizeObserver loop completed with undelivered notifications')) {
+        return true;
+      }
+      // Ignore Script error.
+      if (typeof message === 'string' && message.includes('Script error.')) {
         return false;
       }
-      
+
       console.error('Global Error:', message, source, lineno, error);
-      // Only alert for other errors in development, or log to service in prod
-      // Preventing alert spam for user
-      // alert('Global Error: ' + message + '\nSource: ' + source + ':' + lineno);
       return false;
     };
     window.addEventListener('unhandledrejection', function (event) {
-      alert('Unhandled Promise Rejection: ' + event.reason);
+      // alert('Unhandled Promise Rejection: ' + event.reason);
+      console.error('Unhandled Promise Rejection:', event.reason);
     });
   </script>
   <script type="module" src="/src/main.jsx"></script>

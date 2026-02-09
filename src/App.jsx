@@ -26,6 +26,7 @@ import ClassCollection from './pages/ClassCollection';
 import Promotions from './pages/Promotions';
 import NewsFeed from './pages/NewsFeed';
 import Settings from './pages/Settings';
+import Users from './pages/Users';
 
 // Dummy Components to prevent crash
 // const Dashboard = () => <h1>Dashboard (Mock)</h1>;
@@ -110,7 +111,7 @@ function App() {
         <Route path="promotions" element={<Promotions />} />
         <Route path="news-feed" element={<NewsFeed />} />
         <Route path="settings" element={<Settings />} />
-        <Route path="users" element={<div className="card"><h2>User Admin Page</h2></div>} />
+        <Route path="users" element={<Users />} />
       </Route>
     </Routes>
   );
