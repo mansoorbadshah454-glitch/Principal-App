@@ -2,22 +2,34 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     X, Camera, User, Phone, Briefcase,
-    Loader2, CheckCircle2, AlertCircle
+    Loader2, CheckCircle2, AlertCircle, Trash2, Key
 } from 'lucide-react';
-import { db, storage } from '../firebase';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { db, storage, auth } from '../firebase';
+import { doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => {
     const [uploading, setUploading] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
     const [previewImage, setPreviewImage] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [success, setSuccess] = useState(false);
+    const [error, setError] = useState(null);
+    const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+    const [password, setPassword] = useState('');
+    const [verifying, setVerifying] = useState(false);
 
     // Reset state when modal opens/closes
     useEffect(() => {
         if (isOpen) {
             setPreviewImage(null);
             setMessage({ type: '', text: '' });
+            setError(null);
+            setShowLeaveConfirm(false);
+            setPassword('');
+            setVerifying(false);
+            setSuccess(false);
         }
     }, [isOpen]);
 
@@ -43,19 +55,17 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
         setMessage({ type: '', text: '' });
 
         try {
-            // 1. Upload to Storage
             const storagePath = `schools/${schoolId}/students/${student.id}/profile.jpg`;
             const imageRef = ref(storage, storagePath);
             await uploadString(imageRef, previewImage, 'data_url');
             const downloadURL = await getDownloadURL(imageRef);
 
-            // 2. Update Firestore (Dual Write Strategy)
             const classStudentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, student.id);
             const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.id);
 
             const updateData = {
                 profilePic: downloadURL,
-                avatar: downloadURL // Maintain consistency with current logic
+                avatar: downloadURL
             };
 
             await updateDoc(classStudentRef, updateData);
@@ -63,7 +73,6 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
 
             setMessage({ type: 'success', text: 'Profile updated successfully!' });
 
-            // Auto close after success
             setTimeout(() => {
                 onClose();
             }, 1500);
@@ -73,6 +82,68 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
             setMessage({ type: 'error', text: 'Failed to update profile image.' });
         } finally {
             setUploading(false);
+        }
+    };
+
+    const handleLeave = async () => {
+        if (!password) {
+            setError("Password is required");
+            return;
+        }
+
+        setVerifying(true);
+        setError(null);
+
+        try {
+            let isVerified = false;
+
+            if (auth.currentUser) {
+                try {
+                    const credential = EmailAuthProvider.credential(auth.currentUser.email, password);
+                    await reauthenticateWithCredential(auth.currentUser, credential);
+                    isVerified = true;
+                } catch (err) {
+                    console.error("Re-auth failed", err);
+                }
+            }
+
+            if (!isVerified) {
+                const manualSession = localStorage.getItem('manual_session');
+                if (manualSession) {
+                    const session = JSON.parse(manualSession);
+                    const userRef = doc(db, `schools/${schoolId}/users`, session.uid);
+                    const userSnap = await getDoc(userRef);
+                    if (userSnap.exists() && userSnap.data().manualPassword === password) {
+                        isVerified = true;
+                    }
+                }
+            }
+
+            if (!isVerified) {
+                setError("Incorrect password");
+                setVerifying(false);
+                return;
+            }
+
+            setLoading(true);
+
+            const classStudentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, student.id);
+            await deleteDoc(classStudentRef);
+
+            const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.id);
+            await deleteDoc(masterStudentRef);
+
+            setSuccess(true);
+            setTimeout(() => {
+                onClose();
+            }, 2000);
+
+        } catch (err) {
+            console.error("Error during student leave:", err);
+            setError("Failed to process student leave. Please try again.");
+        } finally {
+            setLoading(false);
+            setVerifying(false);
         }
     };
 
@@ -144,7 +215,6 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
                     exit={{ opacity: 0, scale: 0.9, y: 20 }}
                     onClick={(e) => e.stopPropagation()}
                 >
-                    {/* Background Blur Decor */}
                     <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '200px', height: '200px', borderRadius: '50%', background: 'rgba(99, 102, 241, 0.1)', filter: 'blur(40px)' }} />
 
                     <div style={styles.header}>
@@ -154,7 +224,6 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
                         </button>
                     </div>
 
-                    {/* Image Upload Section */}
                     <div style={styles.avatarWrapper}>
                         <img
                             src={previewImage || student.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.id}`}
@@ -171,7 +240,6 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
                         Click the camera icon to update profile photo
                     </p>
 
-                    {/* Parent Info Section */}
                     <div style={styles.infoSection}>
                         <div style={styles.infoItem}>
                             <div style={styles.iconBox}><User size={18} /></div>
@@ -196,21 +264,19 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
                         </div>
                     </div>
 
-                    {/* Message Display */}
-                    {message.text && (
+                    {(message.text || error || success) && (
                         <div style={{
                             display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', borderRadius: '12px', marginBottom: '1rem',
                             fontSize: '0.85rem', fontWeight: '600',
-                            backgroundColor: message.type === 'success' ? '#dcfce7' : '#fee2e2',
-                            color: message.type === 'success' ? '#166534' : '#991b1b'
+                            backgroundColor: (message.type === 'success' || success) ? '#dcfce7' : '#fee2e2',
+                            color: (message.type === 'success' || success) ? '#166534' : '#991b1b'
                         }}>
-                            {message.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                            {message.text}
+                            {(message.type === 'success' || success) ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                            {message.text || error || (success && "Student deleted successfully")}
                         </div>
                     )}
 
-                    {/* Action Button */}
-                    {previewImage && !message.text && (
+                    {previewImage && !message.text && !success && (
                         <button
                             style={styles.saveBtn}
                             onClick={handleUpload}
@@ -219,6 +285,104 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
                         >
                             {uploading ? <Loader2 size={18} className="animate-spin" /> : 'Save New Profile'}
                         </button>
+                    )}
+
+                    {!success && (
+                        <div style={{ marginTop: '2rem', borderTop: '1px solid #fee2e2', paddingTop: '1.5rem' }}>
+                            {!showLeaveConfirm ? (
+                                <button
+                                    onClick={() => setShowLeaveConfirm(true)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.875rem',
+                                        borderRadius: '16px',
+                                        border: '1px solid #fee2e2',
+                                        background: 'transparent',
+                                        color: '#ef4444',
+                                        fontSize: '0.9rem',
+                                        fontWeight: '700',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '0.75rem',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.background = '#fef2f2';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = 'transparent';
+                                    }}
+                                >
+                                    <Trash2 size={18} />
+                                    Student Leave
+                                </button>
+                            ) : (
+                                <div style={{ animation: 'slideUp 0.3s ease-out' }}>
+                                    <p style={{
+                                        fontSize: '0.8rem',
+                                        color: '#991b1b',
+                                        marginBottom: '0.75rem',
+                                        fontWeight: '600',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem'
+                                    }}>
+                                        <AlertCircle size={14} />
+                                        Principal Password Required:
+                                    </p>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <div style={{ position: 'relative', flex: 1 }}>
+                                            <input
+                                                type="password"
+                                                placeholder="Password"
+                                                value={password}
+                                                onChange={(e) => setPassword(e.target.value)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '0.6rem 0.6rem 0.6rem 2.2rem',
+                                                    borderRadius: '10px',
+                                                    border: '1px solid #fda4af',
+                                                    outline: 'none',
+                                                    fontSize: '0.85rem'
+                                                }}
+                                            />
+                                            <Key size={14} color="#94a3b8" style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)' }} />
+                                        </div>
+                                        <button
+                                            onClick={handleLeave}
+                                            disabled={verifying || loading}
+                                            style={{
+                                                padding: '0.6rem 1rem',
+                                                borderRadius: '10px',
+                                                border: 'none',
+                                                background: '#ef4444',
+                                                color: 'white',
+                                                fontWeight: '700',
+                                                cursor: (verifying || loading) ? 'not-allowed' : 'pointer',
+                                                fontSize: '0.85rem'
+                                            }}
+                                        >
+                                            {(verifying || loading) ? <Loader2 size={16} className="animate-spin" /> : 'Leave'}
+                                        </button>
+                                        <button
+                                            onClick={() => setShowLeaveConfirm(false)}
+                                            style={{
+                                                padding: '0.6rem',
+                                                borderRadius: '10px',
+                                                border: '1px solid #e2e8f0',
+                                                background: 'white',
+                                                color: '#64748b',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            <X size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </motion.div>
             </div>

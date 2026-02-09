@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
     CheckCircle2, XCircle, MoreVertical, Search, Filter,
-    CheckCircle, Ban, Wallet
+    CheckCircle, Ban, Wallet, X
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
@@ -22,6 +22,7 @@ const ClassDetails = () => {
     const [showProfileModal, setShowProfileModal] = useState(false);
     const [showSelectionPopup, setShowSelectionPopup] = useState(false);
     const [actionStudent, setActionStudent] = useState(null);
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Custom Collection Action State
     const [currentAction, setCurrentAction] = useState(null);
@@ -132,10 +133,18 @@ const ClassDetails = () => {
 
     }, [schoolId, classId]);
 
-    const filteredStudents = students.filter(s => {
-        if (filterStatus === 'all') return true;
-        return s.status === filterStatus;
-    });
+    const filteredStudents = useMemo(() => {
+        return students.filter(student => {
+            const matchesStatus = filterStatus === 'all' ||
+                (filterStatus === 'present' ? student.status === 'present' : student.status !== 'present');
+
+            const searchLower = searchTerm.toLowerCase();
+            const matchesSearch = student.name?.toLowerCase().includes(searchLower) ||
+                student.rollNo?.toString().includes(searchTerm);
+
+            return matchesStatus && matchesSearch;
+        });
+    }, [students, filterStatus, searchTerm]);
 
     // Check if this class is targeted by the current action
     const isTargeted = currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(classId)));
@@ -274,11 +283,51 @@ const ClassDetails = () => {
                 </div>
             )}
 
+            {/* Search Bar */}
+            <div style={{ marginBottom: '2rem' }}>
+                <div style={{
+                    position: 'relative',
+                    maxWidth: '100%',
+                    background: 'white',
+                    borderRadius: '16px',
+                    boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
+                    border: '1px solid #e2e8f0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 1rem'
+                }}>
+                    <Search size={20} color="#94a3b8" />
+                    <input
+                        type="text"
+                        placeholder="Search student by name, roll no, or rank..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        style={{
+                            width: '100%',
+                            padding: '1rem',
+                            border: 'none',
+                            outline: 'none',
+                            fontSize: '1rem',
+                            color: 'var(--text-main)',
+                            background: 'transparent'
+                        }}
+                    />
+                    {searchTerm && (
+                        <button
+                            onClick={() => setSearchTerm('')}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                        >
+                            <X size={18} />
+                        </button>
+                    )}
+                </div>
+            </div>
+
             {/* Action Bar & Filters */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: 'var(--text-main)' }}>Student Profiles</h2>
 
-                <div style={{ display: 'flex', gap: '1rem', background: 'white', padding: '0.5rem', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                <div style={{ display: 'flex', gap: '1rem', background: 'white', padding: '0.4rem', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                     <button
                         onClick={() => setFilterStatus('all')}
                         style={{
