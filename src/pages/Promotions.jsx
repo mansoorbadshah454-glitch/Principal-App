@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, AlertCircle
+    Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, AlertCircle,
+    Loader2, GraduationCap, X
 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import {
     collection, getDocs, doc, writeBatch,
-    query, orderBy, addDoc
+    query, orderBy, addDoc, getCountFromServer
 } from 'firebase/firestore';
 
 const Promotions = () => {
@@ -16,9 +17,11 @@ const Promotions = () => {
     const [students, setStudents] = useState([]);
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [studentSearchQuery, setStudentSearchQuery] = useState('');
     const [processing, setProcessing] = useState(false);
     const [promotionStatus, setPromotionStatus] = useState(null);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [confirmLevel, setConfirmLevel] = useState(1); // 1 or 2 for dual confirmation
 
     // Helper: Class Sorting order
     const getClassOrder = (name) => {
@@ -69,36 +72,46 @@ const Promotions = () => {
     }, []);
 
     // 2. Fetch Classes
-    useEffect(() => {
+    const fetchClasses = async () => {
         if (!schoolId) return;
+        try {
+            const q = query(collection(db, `schools/${schoolId}/classes`));
+            const snapshot = await getDocs(q);
 
-        const fetchClasses = async () => {
-            try {
-                const q = query(collection(db, `schools/${schoolId}/classes`));
-                const snapshot = await getDocs(q);
-                const classesData = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                classesData.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
-                setClasses(classesData);
-                setLoading(false);
-            } catch (error) {
-                console.error("Error fetching classes:", error);
-                setLoading(false);
-            }
-        };
+            // Fetch real student counts for each class
+            const classesData = await Promise.all(snapshot.docs.map(async (docSnap) => {
+                const classId = docSnap.id;
+                const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
+                const countSnapshot = await getCountFromServer(studentsRef);
+                return {
+                    id: classId,
+                    ...docSnap.data(),
+                    students: countSnapshot.data().count
+                };
+            }));
 
-        fetchClasses();
+            classesData.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
+            setClasses(classesData);
+            setLoading(false);
+        } catch (error) {
+            console.error("Error fetching classes:", error);
+            setLoading(false);
+        }
+    };
 
-        // Safety Timeout
-        const timeout = setTimeout(() => {
-            if (loading) {
-                console.warn("Loading classes timed out.");
-                setLoading(false);
-            }
-        }, 5000);
-        return () => clearTimeout(timeout);
+    useEffect(() => {
+        if (schoolId) {
+            fetchClasses();
+
+            // Safety Timeout
+            const timeout = setTimeout(() => {
+                if (loading) {
+                    console.warn("Loading classes timed out.");
+                    setLoading(false);
+                }
+            }, 5000);
+            return () => clearTimeout(timeout);
+        }
     }, [schoolId]);
 
     // 3. Handle Class Selection
@@ -122,6 +135,8 @@ const Promotions = () => {
                 id: doc.id,
                 ...doc.data(),
                 promotionStatus: 'promote',
+                examScore: '',
+                result: 'pass', // Default to pass
                 nextClassId: nextClass ? nextClass.id : 'graduate',
                 nextClassName: nextClass ? nextClass.name : 'Graduated',
                 previousClassId: previousClass ? previousClass.id : null,
@@ -135,11 +150,63 @@ const Promotions = () => {
         }
     };
 
-    const handleStatusChange = (studentId, status) => {
+    const handleIndividualAction = (studentId, action) => {
         setStudents(prev => prev.map(s =>
-            s.id === studentId ? { ...s, promotionStatus: status } : s
+            s.id === studentId ? { ...s, promotionStatus: action } : s
         ));
     };
+
+    const handleScoreChange = (studentId, score) => {
+        const numericScore = parseFloat(score);
+        setStudents(prev => prev.map(s => {
+            if (s.id === studentId) {
+                let result = s.result;
+                if (!isNaN(numericScore)) {
+                    result = numericScore >= 33 ? 'pass' : 'fail';
+                }
+                return { ...s, examScore: score, result };
+            }
+            return s;
+        }));
+    };
+
+    const handleResultToggle = (studentId, result) => {
+        setStudents(prev => prev.map(s =>
+            s.id === studentId ? { ...s, result } : s
+        ));
+    };
+
+    const setAllStatus = (status) => {
+        setStudents(prev => prev.map(s => ({ ...s, promotionStatus: status })));
+    };
+
+    const filteredStudents = students.filter(s =>
+        s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
+        s.rollNo?.toString().includes(studentSearchQuery)
+    );
+
+    const classColors = {
+        'nursery': '#F43F5E',
+        'prep': '#F59E0B',
+        '1': '#10B981',
+        '2': '#3B82F6',
+        '3': '#8B5CF6',
+        '4': '#EC4899',
+        '5': '#06B6D4',
+        '6': '#6366F1',
+        '7': '#84CC16',
+        '8': '#D946EF',
+        '9': '#F97316',
+        '10': '#14B8A6'
+    };
+
+    const getClassColor = (name) => {
+        const key = name.toLowerCase().replace('class ', '').trim();
+        return classColors[key] || '#64748B';
+    };
+
+    const row1Classes = classes.filter(c => getClassOrder(c.name) <= 5);
+    const row2Classes = classes.filter(c => getClassOrder(c.name) > 5);
 
     // 4. Process Promotions
     const processPromotions = async () => {
@@ -151,26 +218,34 @@ const Promotions = () => {
 
             for (const student of students) {
                 const status = student.promotionStatus || 'promote';
+                const studentData = {
+                    ...student,
+                    examScore: student.examScore || 0,
+                    result: student.result || 'pass',
+                    updatedAt: new Date()
+                };
 
-                // Logic simplifed for robustness
                 if (status === 'promote') {
                     if (student.nextClassId === 'graduate') {
                         const alumniRef = doc(db, `schools/${schoolId}/alumni`, student.id);
-                        batch.set(alumniRef, { ...student, graduatedAt: new Date(), previousClassId: selectedClass.id });
+                        batch.set(alumniRef, { ...studentData, graduatedAt: new Date(), previousClassId: selectedClass.id });
                         batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
                     } else if (student.nextClassId) {
                         const nextClassRef = doc(db, `schools/${schoolId}/classes/${student.nextClassId}/students`, student.id);
-                        batch.set(nextClassRef, { ...student, promotedAt: new Date(), previousClassId: selectedClass.id });
+                        batch.set(nextClassRef, { ...studentData, promotedAt: new Date(), previousClassId: selectedClass.id });
                         batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
                     }
                 } else if (status === 'demote' && student.previousClassId) {
                     const prevClassRef = doc(db, `schools/${schoolId}/classes/${student.previousClassId}/students`, student.id);
-                    batch.set(prevClassRef, { ...student, demotedAt: new Date(), previousClassId: selectedClass.id });
+                    batch.set(prevClassRef, { ...studentData, demotedAt: new Date(), previousClassId: selectedClass.id });
                     batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                } else if (status === 'leave') {
+                    batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                    batch.delete(doc(db, `schools/${schoolId}/students`, student.id));
                 } else {
                     // Retain
                     const currentStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id);
-                    batch.update(currentStudentRef, { retained: true, retainedAt: new Date() });
+                    batch.update(currentStudentRef, { ...studentData, retained: true, retainedAt: new Date() });
                 }
                 operationCount++;
             }
@@ -179,6 +254,8 @@ const Promotions = () => {
             setPromotionStatus('success');
             setSelectedClass(null);
             setStudents([]);
+            // Refresh counts after processing
+            fetchClasses();
         } catch (error) {
             console.error("Promotion failed:", error);
             setPromotionStatus('error');
@@ -190,145 +267,347 @@ const Promotions = () => {
     // --- RENDER ---
     if (loading) {
         return (
-            <div style={{ padding: '50px', textAlign: 'center' }}>
-                <p>Loading Promotions...</p>
-                <p style={{ fontSize: '12px', color: '#999', marginTop: '10px' }}>
-                    If this takes too long,
-                    <button
-                        onClick={() => setLoading(false)}
-                        style={{ marginLeft: '5px', textDecoration: 'underline', border: 'none', background: 'none', cursor: 'pointer', color: 'blue' }}
-                    >
-                        click here to stop waiting
-                    </button>.
-                </p>
+            <div style={{
+                height: '80vh', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', gap: '20px'
+            }}>
+                <Loader2 size={48} className="animate-spin" color="var(--primary)" />
+                <p style={{ fontWeight: '600', color: '#64748B' }}>Loading Annual Promotions...</p>
             </div>
         );
     }
 
     return (
-        <div style={{ padding: '20px' }}>
+        <div style={{ padding: '30px', maxWidth: '1400px', margin: '0 auto' }} className="animate-fade-in-up">
             {/* Header */}
-            <div style={{ marginBottom: '20px' }}>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Annual Promotions</h1>
-                <p style={{ color: '#666' }}>Promote students to the next class.</p>
+            <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                marginBottom: '40px', background: 'white', padding: '25px', borderRadius: '20px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.05)', border: '1px solid #F1F5F9'
+            }}>
+                <div>
+                    <h1 style={{ fontSize: '28px', fontWeight: '800', color: '#1E293B', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <GraduationCap size={32} color="var(--primary)" />
+                        Annual Promotions
+                    </h1>
+                    <p style={{ color: '#64748B', fontSize: '16px' }}>Verify academic results and promote students to the next grade.</p>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '14px', color: '#94A3B8', marginBottom: '5px' }}>Academic Session</div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--primary)' }}>2025 - 2026</div>
+                </div>
             </div>
 
-            {/* Success Msg */}
-            {promotionStatus === 'success' && (
-                <div style={{ padding: '15px', background: '#ecfdf5', color: '#065f46', marginBottom: '20px', borderRadius: '8px' }}>
-                    Success! Student records updated.
+            {/* Notification */}
+            {promotionStatus && (
+                <div style={{
+                    padding: '15px 20px', borderRadius: '12px', marginBottom: '25px', display: 'flex',
+                    alignItems: 'center', gap: '12px', animation: 'slideDown 0.3s ease-out',
+                    background: promotionStatus === 'success' ? '#DCFCE7' : '#FEE2E2',
+                    color: promotionStatus === 'success' ? '#15803D' : '#B91C1C',
+                    border: `1px solid ${promotionStatus === 'success' ? '#BBF7D0' : '#FECACA'}`
+                }}>
+                    {promotionStatus === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
+                    <span style={{ fontWeight: '600' }}>
+                        {promotionStatus === 'success' ? 'Promotions processed successfully!' : 'Error processing promotions. Please try again.'}
+                    </span>
+                    <button onClick={() => setPromotionStatus(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}>
+                        <X size={18} />
+                    </button>
                 </div>
             )}
 
-            {/* ERROR Msg */}
-            {promotionStatus === 'error' && (
-                <div style={{ padding: '15px', background: '#fef2f2', color: '#991b1b', marginBottom: '20px', borderRadius: '8px' }}>
-                    Error processing promotions. Check console.
-                </div>
-            )}
-
-            {/* Class List */}
-            {classes.length > 0 ? (
-                <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px' }}>
-                    {classes.map(cls => (
+            {/* Class Selection - Two Rows */}
+            <div style={{ marginBottom: '40px' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ChevronRight size={20} color="var(--primary)" />
+                    Select Primary Department (Nursery - 5)
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px', marginBottom: '30px' }}>
+                    {row1Classes.map(cls => (
                         <div
                             key={cls.id}
                             onClick={() => handleClassSelect(cls)}
                             style={{
-                                minWidth: '120px', padding: '15px', borderRadius: '8px', cursor: 'pointer',
-                                border: selectedClass?.id === cls.id ? '2px solid blue' : '1px solid #ddd',
-                                backgroundColor: selectedClass?.id === cls.id ? '#eff6ff' : 'white'
+                                padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
+                                background: getClassColor(cls.name), color: 'white',
+                                border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
+                                boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
+                                transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
+                                position: 'relative'
                             }}
                         >
-                            <div style={{ fontWeight: 'bold', textAlign: 'center' }}>{cls.name}</div>
-                            <div style={{ textAlign: 'center', fontSize: '12px', color: '#666' }}>{cls.students || 0} Students</div>
+                            <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
+                            <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
+                            <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
+                            {selectedClass?.id === cls.id && (
+                                <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
+                                    <CheckCircle size={18} />
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
-            ) : (
-                <div style={{ padding: '20px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
-                    <p style={{ color: '#64748b' }}>No classes found for this school.</p>
-                </div>
-            )}
 
-            {/* Debug Footer */}
-            <div style={{ marginTop: '50px', padding: '10px', fontSize: '10px', color: '#ccc', borderTop: '1px solid #eee' }}>
-                <p>Debug School ID: {schoolId || 'Not Found'}</p>
-                <p>Raw Session: {localStorage.getItem('manual_session') || 'NULL'}</p>
-                <button onClick={() => window.location.reload()} style={{ marginTop: '10px', padding: '4px' }}>Reload</button>
+                <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ChevronRight size={20} color="var(--primary)" />
+                    Secondary & High School (6 - 10)
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px' }}>
+                    {row2Classes.map(cls => (
+                        <div
+                            key={cls.id}
+                            onClick={() => handleClassSelect(cls)}
+                            style={{
+                                padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
+                                background: getClassColor(cls.name), color: 'white',
+                                border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
+                                boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
+                                transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
+                                position: 'relative'
+                            }}
+                        >
+                            <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
+                            <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
+                            <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
+                            {selectedClass?.id === cls.id && (
+                                <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
+                                    <CheckCircle size={18} />
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
             </div>
 
-            {/* Student List */}
+            {/* Student Management Section */}
             {selectedClass && (
-                <div style={{ marginTop: '20px' }}>
-                    <h3 style={{ marginBottom: '10px' }}>Students: {selectedClass.name}</h3>
+                <div className="card animate-fade-in-up" style={{ padding: '30px', borderRadius: '24px', border: '1px solid #E2E8F0', background: 'white' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+                        <div>
+                            <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#1E293B' }}>
+                                Students: {selectedClass.name}
+                            </h2>
+                            <p style={{ color: '#64748B' }}>Set results and promotion status for each student.</p>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '15px' }}>
+                            <div style={{ position: 'relative' }}>
+                                <Search size={18} color="#94A3B8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                                <input
+                                    type="text"
+                                    placeholder="Search by Name/Roll..."
+                                    value={studentSearchQuery}
+                                    onChange={(e) => setStudentSearchQuery(e.target.value)}
+                                    style={{
+                                        padding: '10px 15px 10px 40px', borderRadius: '12px', border: '1px solid #E2E8F0',
+                                        width: '250px', outline: 'none', fontSize: '14px'
+                                    }}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', background: '#F1F5F9', padding: '4px', borderRadius: '12px', gap: '4px' }}>
+                                <button onClick={() => setAllStatus('promote')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'white', fontWeight: '600', color: '#10B981', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', fontSize: '12px' }}>Promote All</button>
+                                <button onClick={() => setAllStatus('retain')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'transparent', fontWeight: '600', color: '#F59E0B', cursor: 'pointer', fontSize: '12px' }}>Retain All</button>
+                                <button onClick={() => setAllStatus('demote')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'transparent', fontWeight: '600', color: '#6366F1', cursor: 'pointer', fontSize: '12px' }}>Demote All</button>
+                                <button onClick={() => setAllStatus('leave')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'transparent', fontWeight: '600', color: '#EF4444', cursor: 'pointer', fontSize: '12px' }}>Leave All</button>
+                            </div>
+                        </div>
+                    </div>
 
                     {loadingStudents ? (
-                        <div>Loading students...</div>
-                    ) : students.length === 0 ? (
-                        <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>No students found.</div>
+                        <div style={{ padding: '50px', textAlign: 'center' }}>
+                            <Loader2 className="animate-spin" size={32} color="var(--primary)" />
+                            <div style={{ marginTop: '10px', fontWeight: '500' }}>Fetching class records...</div>
+                        </div>
+                    ) : filteredStudents.length === 0 ? (
+                        <div style={{ padding: '50px', textAlign: 'center', color: '#94A3B8', border: '2px dashed #F1F5F9', borderRadius: '20px' }}>
+                            <Users size={48} style={{ marginBottom: '15px', opacity: 0.5 }} />
+                            <div>No students matching your search.</div>
+                        </div>
                     ) : (
-                        <div style={{ border: '1px solid #eee', borderRadius: '8px' }}>
-                            {students.map(student => {
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '20px' }}>
+                            {filteredStudents.map(student => {
                                 const status = student.promotionStatus || 'promote';
+                                const isPass = student.result === 'pass';
                                 return (
-                                    <div key={student.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px', borderBottom: '1px solid #eee' }}>
-                                        <div>
-                                            <div style={{ fontWeight: 'bold' }}>{student.name}</div>
-                                            <div style={{ fontSize: '12px', color: '#666' }}>Roll: {student.rollNo || '-'}</div>
+                                    <div key={student.id} style={{
+                                        padding: '20px', borderRadius: '20px', border: '1px solid #F1F5F9',
+                                        background: '#FCFDFF', display: 'flex', flexDirection: 'column', gap: '15px',
+                                        transition: 'all 0.2s hover', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                                    }}>
+                                        <div style={{ display: 'flex', gap: '15px' }}>
+                                            <div style={{
+                                                width: '50px', height: '50px', borderRadius: '15px', background: '#F1F5F9',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+                                                border: '2px solid #F1F5F9'
+                                            }}>
+                                                {(student.avatar || student.profilePic) ? (
+                                                    <img src={student.avatar || student.profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                ) : (
+                                                    <span style={{ fontSize: '20px', fontWeight: '700', color: 'var(--primary)' }}>{student.name?.charAt(0)}</span>
+                                                )}
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: '800', fontSize: '16px', color: '#1E293B' }}>{student.name}</div>
+                                                <div style={{ fontSize: '13px', color: '#64748B' }}>Roll No: {student.rollNo || '-'}</div>
+                                            </div>
+                                            <div style={{ textAlign: 'right' }}>
+                                                <div style={{ fontSize: '12px', color: '#94A3B8', marginBottom: '4px' }}>Exam Score</div>
+                                                <input
+                                                    type="number"
+                                                    value={student.examScore}
+                                                    onChange={(e) => handleScoreChange(student.id, e.target.value)}
+                                                    placeholder="%"
+                                                    style={{
+                                                        width: '60px', padding: '6px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                                                        textAlign: 'center', fontWeight: '700', outline: 'none'
+                                                    }}
+                                                />
+                                            </div>
                                         </div>
 
-                                        <div style={{ display: 'flex', gap: '5px' }}>
-                                            <button
-                                                onClick={() => handleStatusChange(student.id, 'retain')}
-                                                style={{ padding: '5px 10px', background: status === 'retain' ? '#fee2e2' : '#f3f4f6', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                                            >
-                                                Retain
-                                            </button>
-
-                                            {student.previousClassId && (
+                                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                            <div style={{ flex: 1, display: 'flex', gap: '4px' }}>
                                                 <button
-                                                    onClick={() => handleStatusChange(student.id, 'demote')}
-                                                    style={{ padding: '5px 10px', background: status === 'demote' ? '#fef3c7' : '#f3f4f6', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                                                >
-                                                    Demote
-                                                </button>
-                                            )}
-
-                                            <button
-                                                onClick={() => handleStatusChange(student.id, 'promote')}
-                                                style={{ padding: '5px 10px', background: status === 'promote' ? '#d1fae5' : '#f3f4f6', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                                            >
-                                                Promote ({student.nextClassName})
-                                            </button>
+                                                    onClick={() => handleResultToggle(student.id, 'pass')}
+                                                    style={{
+                                                        flex: 1, padding: '8px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                        background: isPass ? '#10B981' : '#F1F5F9', color: isPass ? 'white' : '#64748B',
+                                                        fontWeight: '700', fontSize: '12px', transition: 'all 0.2s'
+                                                    }}
+                                                >PASS</button>
+                                                <button
+                                                    onClick={() => handleResultToggle(student.id, 'fail')}
+                                                    style={{
+                                                        flex: 1, padding: '8px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                        background: !isPass ? '#EF4444' : '#F1F5F9', color: !isPass ? 'white' : '#64748B',
+                                                        fontWeight: '700', fontSize: '12px', transition: 'all 0.2s'
+                                                    }}
+                                                >FAIL</button>
+                                            </div>
+                                            <div style={{ width: '1px', height: '20px', background: '#E2E8F0' }} />
+                                            <div style={{ flex: 2, display: 'flex', gap: '4px' }}>
+                                                <button
+                                                    onClick={() => handleIndividualAction(student.id, 'promote')}
+                                                    title={`To: ${student.nextClassName}`}
+                                                    style={{
+                                                        flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
+                                                        background: status === 'promote' ? '#DCFCE7' : 'white', color: status === 'promote' ? '#15803D' : '#64748B',
+                                                        fontWeight: '700', fontSize: '10px'
+                                                    }}
+                                                >Promote</button>
+                                                <button
+                                                    onClick={() => handleIndividualAction(student.id, 'retain')}
+                                                    style={{
+                                                        flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
+                                                        background: status === 'retain' ? '#FFFBEB' : 'white', color: status === 'retain' ? '#D97706' : '#64748B',
+                                                        fontWeight: '700', fontSize: '10px'
+                                                    }}
+                                                >Retain</button>
+                                                {student.previousClassId && (
+                                                    <button
+                                                        onClick={() => handleIndividualAction(student.id, 'demote')}
+                                                        title={`Back to: ${student.previousClassName}`}
+                                                        style={{
+                                                            flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
+                                                            background: status === 'demote' ? '#EEF2FF' : 'white', color: status === 'demote' ? '#4F46E5' : '#64748B',
+                                                            fontWeight: '700', fontSize: '10px'
+                                                        }}
+                                                    >Demote</button>
+                                                )}
+                                                <button
+                                                    onClick={() => handleIndividualAction(student.id, 'leave')}
+                                                    style={{
+                                                        flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
+                                                        background: status === 'leave' ? '#FEF2F2' : 'white', color: status === 'leave' ? '#DC2626' : '#64748B',
+                                                        fontWeight: '700', fontSize: '10px'
+                                                    }}
+                                                >Leave</button>
+                                            </div>
                                         </div>
                                     </div>
                                 );
                             })}
+                        </div>
+                    )}
 
-                            <div style={{ padding: '20px', textAlign: 'right', background: '#f9fafb' }}>
-                                <button
-                                    onClick={() => setShowConfirmModal(true)}
-                                    disabled={processing}
-                                    style={{ padding: '10px 20px', background: 'blue', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
-                                >
-                                    {processing ? 'Processing...' : 'Confirm All Promotions'}
-                                </button>
+                    {!loadingStudents && filteredStudents.length > 0 && (
+                        <div style={{ marginTop: '40px', padding: '30px', background: '#F8FAFC', borderRadius: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <div style={{ fontSize: '14px', color: '#64748B' }}>Total Ready to Sync</div>
+                                <div style={{ fontSize: '24px', fontWeight: '800', color: '#1E293B' }}>{students.length} Student Records</div>
                             </div>
+                            <button
+                                onClick={() => { setShowConfirmModal(true); setConfirmLevel(1); }}
+                                disabled={processing}
+                                style={{
+                                    padding: '16px 40px', background: 'var(--primary)', color: 'white', border: 'none',
+                                    borderRadius: '16px', fontSize: '18px', fontWeight: '800', cursor: 'pointer',
+                                    boxShadow: '0 10px 15px -3px rgba(99, 102, 241, 0.4)', transition: 'all 0.2s'
+                                }}
+                                className="hover:scale-105 active:scale-95 transition-transform"
+                            >
+                                {processing ? 'Uploading Data...' : 'Confirm & Process All'}
+                            </button>
                         </div>
                     )}
                 </div>
             )}
 
-            {/* Modal */}
+            {/* Hidden Debug Footer (Previous Task) */}
+            {/* Debug Footer
+            <div style={{ marginTop: '50px', padding: '10px', fontSize: '10px', color: '#ccc', borderTop: '1px solid #eee' }}>
+                <p>Debug School ID: {schoolId || 'Not Found'}</p>
+                <p>Raw Session: {localStorage.getItem('manual_session') || 'NULL'}</p>
+                <button onClick={() => window.location.reload()} style={{ marginTop: '10px', padding: '4px' }}>Reload</button>
+            </div>
+            */}
+
+            {/* Confirmation Modal */}
             {showConfirmModal && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ background: 'white', padding: '30px', borderRadius: '8px', minWidth: '300px' }}>
-                        <h3>Confirm Action?</h3>
-                        <p>This will update {students.length} students.</p>
-                        <div style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                            <button onClick={() => setShowConfirmModal(false)} style={{ padding: '8px 16px', cursor: 'pointer' }}>Cancel</button>
-                            <button onClick={processPromotions} style={{ padding: '8px 16px', background: 'blue', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Confirm</button>
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(8px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px'
+                }}>
+                    <div style={{ background: 'white', padding: '40px', borderRadius: '32px', width: '100%', maxWidth: '500px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}>
+                        <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+                            <div style={{
+                                width: '80px', height: '80px', borderRadius: '50%', background: confirmLevel === 1 ? '#E0E7FF' : '#FEE2E2',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', color: confirmLevel === 1 ? 'var(--primary)' : '#EF4444'
+                            }}>
+                                <AlertCircle size={40} />
+                            </div>
+                            <h2 style={{ fontSize: '24px', fontWeight: '800', color: '#1E293B', marginBottom: '10px' }}>
+                                {confirmLevel === 1 ? 'Confirm Promotions?' : 'Final Warning!'}
+                            </h2>
+                            <p style={{ color: '#64748B', lineHeight: '1.6' }}>
+                                {confirmLevel === 1
+                                    ? `You are about to process ${students.length} students from ${selectedClass.name}. This action will move student records across classes. Are you sure?`
+                                    : `This action is irreversible. It will update the database permanently. Do you wish to proceed with the synchronization?`
+                                }
+                            </p>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '15px' }}>
+                            <button
+                                onClick={() => setShowConfirmModal(false)}
+                                style={{ flex: 1, padding: '15px', borderRadius: '14px', border: '1px solid #E2E8F0', background: 'white', fontWeight: '700', cursor: 'pointer' }}
+                            >Cancel</button>
+                            <button
+                                onClick={() => {
+                                    if (confirmLevel === 1) {
+                                        setConfirmLevel(2);
+                                    } else {
+                                        processPromotions();
+                                    }
+                                }}
+                                style={{
+                                    flex: 1, padding: '15px', borderRadius: '14px', border: 'none',
+                                    background: confirmLevel === 1 ? 'var(--primary)' : '#EF4444', color: 'white', fontWeight: '700', cursor: 'pointer'
+                                }}
+                            >
+                                {confirmLevel === 1 ? 'Yes, Confirm' : 'Yes, Process Now'}
+                            </button>
                         </div>
                     </div>
                 </div>
