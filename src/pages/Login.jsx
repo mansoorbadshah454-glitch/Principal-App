@@ -2,10 +2,42 @@ import React, { useState } from 'react';
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { Shield, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { Shield, Mail, Lock, ArrowRight, Loader2, Layout, UserCheck, Users, Zap, Award } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-// import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+
+const InfoCard = ({ icon: Icon, title, description, color }) => (
+    <div style={{
+        background: 'rgba(255, 255, 255, 0.03)',
+        backdropFilter: 'blur(10px)',
+        border: '1px solid rgba(255, 255, 255, 0.05)',
+        borderRadius: '20px',
+        padding: '1.5rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.75rem',
+        transition: 'all 0.3s ease',
+        cursor: 'default'
+    }} className="hover-lift">
+        <div style={{
+            width: '42px',
+            height: '42px',
+            borderRadius: '12px',
+            background: color,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            boxShadow: `0 8px 16px -4px ${color}66`
+        }}>
+            <Icon size={22} />
+        </div>
+        <div>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'white', marginBottom: '0.25rem' }}>{title}</h3>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8', lineHeight: '1.5' }}>{description}</p>
+        </div>
+    </div>
+);
 
 const Login = () => {
     const [email, setEmail] = useState('');
@@ -23,7 +55,6 @@ const Login = () => {
             const normalizedEmail = email.toLowerCase().trim();
 
             // Step 1: Attempt standard Firebase Auth
-            console.log("Attempting standard login...");
             const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
             const user = userCredential.user;
 
@@ -44,11 +75,10 @@ const Login = () => {
                 const schoolSnap = await getDoc(doc(db, "schools", schoolId));
                 if (schoolSnap.exists() && schoolSnap.data().status === 'suspended') {
                     await auth.signOut();
-                    setError('System Access Denied: Your school system has been stopped by the Super Admin. Please contact support.');
+                    setError('System Access Denied: Your school system has been suspended. Please contact support.');
                     return;
                 }
 
-                // SAVE SESSION for persistence (Required for Parents.jsx and other modules)
                 localStorage.setItem('manual_session', JSON.stringify({
                     uid: user.uid,
                     schoolId: schoolId,
@@ -68,8 +98,6 @@ const Login = () => {
             console.log("Auth failed, checking for manual bypass...");
             const normalizedEmail = email.toLowerCase().trim();
 
-            // Step 2: Fallback - Manual Bypass Check
-            // Find user in global_users by email
             try {
                 const q = query(collection(db, "global_users"), where("email", "==", normalizedEmail));
                 const querySnapshot = await getDocs(q);
@@ -79,7 +107,6 @@ const Login = () => {
                     const schoolId = userData.schoolId;
                     const uid = userData.uid;
 
-                    // Now check the school registry for the manual password
                     const schoolUserRef = doc(db, `schools/${schoolId}/users`, uid);
                     const schoolUserDoc = await getDoc(schoolUserRef);
 
@@ -87,14 +114,9 @@ const Login = () => {
                         const storedManualPassword = schoolUserDoc.data().manualPassword;
 
                         if (storedManualPassword && storedManualPassword === password) {
-                            console.log("Manual Bypass Success!");
-                            // Since we can't log in to Firebase Auth without the real password, 
-                            // we'll use a local session flag for this session. 
-                            // Note: For a real production app, you'd use a Cloud Function to handle this properly.
-                            // Check school status before allowing manual bypass
                             const schoolSnap = await getDoc(doc(db, "schools", schoolId));
                             if (schoolSnap.exists() && schoolSnap.data().status === 'suspended') {
-                                setError('System Access Denied: Your school system has been stopped by the Super Admin.');
+                                setError('System Access Denied: Your school system has been suspended.');
                                 return;
                             }
 
@@ -120,173 +142,245 @@ const Login = () => {
         }
     };
 
-    const handleMigration = async () => {
-        alert("Migration disabled temporarily for debugging.");
-        // if (!window.confirm("Run Account Migration? This will fix login for existing users.")) return;
-        // setLoading(true);
-        // try {
-        //     const migrate = httpsCallable(functions, 'adminMigrateUsers');
-        //     const result = await migrate({ secret: "migration_secret_123" });
-        //     alert(`Migration Complete! Fixed ${result.data.migrated} accounts. You can now login.`);
-        // } catch (err) {
-        //     console.error(err);
-        //     alert("Migration Failed: " + err.message);
-        // } finally {
-        //     setLoading(false);
-        // }
-    };
-
     return (
         <div className="login-page" style={{
-            height: '100vh',
+            minHeight: '100vh',
             width: '100vw',
+            background: '#020617',
+            fontFamily: "'Outfit', sans-serif",
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: '#0f172a',
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            overflow: 'hidden',
-            fontFamily: "'Outfit', sans-serif"
+            color: 'white',
+            overflowX: 'hidden'
         }}>
-            {/* Ambient Background Glows */}
-            <div style={{ position: 'absolute', width: '400px', height: '400px', background: '#4f46e5', filter: 'blur(150px)', opacity: 0.15, top: '5%', left: '5%' }}></div>
-            <div style={{ position: 'absolute', width: '400px', height: '400px', background: '#06b6d4', filter: 'blur(150px)', opacity: 0.15, bottom: '5%', right: '5%' }}></div>
+            {/* Background Decorations */}
+            <div style={{ position: 'fixed', top: '-10%', left: '-5%', width: '50%', height: '50%', background: 'radial-gradient(circle, rgba(79, 70, 229, 0.1) 0%, transparent 70%)', zIndex: 1 }} />
+            <div style={{ position: 'fixed', bottom: '-10%', right: '-5%', width: '50%', height: '50%', background: 'radial-gradient(circle, rgba(6, 182, 212, 0.1) 0%, transparent 70%)', zIndex: 1 }} />
 
-            <div className="card animate-fade-in-up" style={{
-                width: '90%',
-                maxWidth: '420px',
-                padding: '2.5rem',
-                background: 'rgba(30, 41, 59, 0.7)',
-                backdropFilter: 'blur(20px)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '24px',
-                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
-                position: 'relative',
-                zIndex: 10
-            }}>
-                <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-                    <div className="brand-icon" style={{ margin: '0 auto 1.25rem', width: '64px', height: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #4f46e5, #06b6d4)', borderRadius: '16px' }}>
-                        <Shield color="white" size={32} />
-                    </div>
-                    <h1 style={{ fontSize: '1.75rem', fontWeight: '700', marginBottom: '0.5rem', color: 'white' }}>Principal Portal</h1>
-                    <p style={{ color: '#94a3b8', fontSize: '0.95rem' }}>Welcome back! Please sign in.</p>
-                </div>
-
-                {error && (
+            {/* Left Content: Info Section (Desktop) */}
+            <div style={{
+                flex: 1.2,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                padding: '4rem 6rem',
+                zIndex: 10,
+                background: 'rgba(2, 6, 23, 0.5)',
+                borderRight: '1px solid rgba(255, 255, 255, 0.05)',
+                position: 'relative'
+            }} className="desktop-info-section">
+                <div style={{ maxWidth: '640px' }}>
                     <div style={{
-                        background: 'rgba(239, 68, 68, 0.1)',
-                        border: '1px solid rgba(239, 68, 68, 0.2)',
-                        color: '#f87171',
-                        padding: '0.875rem',
-                        borderRadius: '12px',
-                        marginBottom: '1.5rem',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        padding: '0.5rem 1.25rem',
+                        background: 'rgba(79, 70, 229, 0.1)',
+                        border: '1px solid rgba(79, 70, 229, 0.2)',
+                        borderRadius: '100px',
+                        marginBottom: '2rem',
+                        color: '#818cf8',
                         fontSize: '0.85rem',
-                        textAlign: 'center'
+                        fontWeight: '600'
                     }}>
-                        {error}
+                        <Zap size={16} fill="currentColor" />
+                        Next-Gen School Management Ecosystem
                     </div>
-                )}
 
-                <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        <label style={{ fontSize: '0.875rem', fontWeight: '500', color: '#94a3b8', marginLeft: '0.2rem' }}>Email Address</label>
+                    <h1 style={{ fontSize: '3.5rem', fontWeight: '800', lineHeight: '1.2', marginBottom: '1.5rem', background: 'linear-gradient(to right, #fff, #94a3b8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                        Empowering Digital <br /> Educational <span style={{ background: 'linear-gradient(to right, #6366f1, #06b6d4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Excellence</span>
+                    </h1>
+
+                    <p style={{ fontSize: '1.1rem', color: '#94a3b8', marginBottom: '3.5rem', lineHeight: '1.7' }}>
+                        A comprehensive PRIME professional suite bridging Principals, Teachers, and Parents for a seamless academic experience.
+                    </p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                        <InfoCard
+                            icon={Layout}
+                            title="Principal Portal"
+                            description="Deep analytical insights, automated finance tracking, and strategic academic oversight."
+                            color="#4f46e5"
+                        />
+                        <InfoCard
+                            icon={UserCheck}
+                            title="Teacher App"
+                            description="Digital attendance reports, instant exam processing, and daily teaching feeds."
+                            color="#8b5cf6"
+                        />
+                        <InfoCard
+                            icon={Users}
+                            title="Parents App"
+                            description="Real-time performance tracking, history fees ledger, and direct branding."
+                            color="#06b6d4"
+                        />
+                        <InfoCard
+                            icon={Award}
+                            title="Premium Branding"
+                            description="Professional ecosystem customized for your school's unique identity."
+                            color="#ec4899"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Right Content: Login Section */}
+            <div style={{
+                flex: 0.8,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: '2rem',
+                zIndex: 10,
+                background: '#020617'
+            }} className="login-form-section">
+                <div style={{ width: '100%', maxWidth: '400px' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
+                        <div style={{
+                            width: '72px',
+                            height: '72px',
+                            background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
+                            borderRadius: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            margin: '0 auto 1.5rem',
+                            boxShadow: '0 20px 40px -8px rgba(79, 70, 229, 0.4)'
+                        }}>
+                            <Shield color="white" size={36} />
+                        </div>
+                        <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'white', marginBottom: '0.5rem' }}>Principal Access</h2>
+                        <p style={{ color: '#64748b' }}>Securely login to your management portal</p>
+                    </div>
+
+                    {error && (
+                        <div style={{
+                            background: 'rgba(239, 68, 68, 0.08)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                            color: '#f87171',
+                            padding: '1rem',
+                            borderRadius: '16px',
+                            marginBottom: '2rem',
+                            fontSize: '0.9rem',
+                            display: 'flex',
+                            gap: '0.75rem'
+                        }}>
+                            <div style={{ fontWeight: '700' }}>!</div>
+                            {error}
+                        </div>
+                    )}
+
+                    <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                         <div style={{ position: 'relative' }}>
-                            <Mail style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} size={18} />
+                            <Mail style={{ position: 'absolute', left: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: '#475569' }} size={20} />
                             <input
                                 type="email"
-                                className="input-field"
                                 style={{
                                     width: '100%',
-                                    padding: '0.8rem 1rem 0.8rem 3rem',
-                                    background: 'rgba(15, 23, 42, 0.6)',
-                                    border: '1px solid rgba(255,255,255,0.1)',
-                                    borderRadius: '12px',
+                                    background: 'rgba(255, 255, 255, 0.02)',
+                                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                                    borderRadius: '16px',
+                                    padding: '1.1rem 1.1rem 1.1rem 3.5rem',
                                     color: 'white',
                                     fontSize: '1rem',
                                     outline: 'none',
                                     transition: 'all 0.3s ease'
                                 }}
-                                placeholder="name@school.com"
+                                className="login-input"
+                                placeholder="Email Address"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                                 required
                             />
                         </div>
-                    </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                        <label style={{ fontSize: '0.875rem', fontWeight: '500', color: '#94a3b8', marginLeft: '0.2rem' }}>Password</label>
                         <div style={{ position: 'relative' }}>
-                            <Lock style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} size={18} />
+                            <Lock style={{ position: 'absolute', left: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: '#475569' }} size={20} />
                             <input
                                 type="password"
-                                className="input-field"
                                 style={{
                                     width: '100%',
-                                    padding: '0.8rem 1rem 0.8rem 3rem',
-                                    background: 'rgba(15, 23, 42, 0.6)',
-                                    border: '1px solid rgba(255,255,255,0.1)',
-                                    borderRadius: '12px',
+                                    background: 'rgba(255, 255, 255, 0.02)',
+                                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                                    borderRadius: '16px',
+                                    padding: '1.1rem 1.1rem 1.1rem 3.5rem',
                                     color: 'white',
                                     fontSize: '1rem',
                                     outline: 'none',
                                     transition: 'all 0.3s ease'
                                 }}
-                                placeholder="••••••••"
+                                className="login-input"
+                                placeholder="Password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 required
                             />
                         </div>
-                    </div>
 
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="btn btn-primary"
-                        style={{
-                            width: '100%',
-                            padding: '0.9rem',
-                            marginTop: '0.5rem',
-                            justifyContent: 'center',
-                            borderRadius: '12px',
-                            fontSize: '1rem',
-                            fontWeight: '600',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.75rem',
-                            border: 'none',
-                            color: 'white',
-                            background: 'linear-gradient(135deg, #4f46e5, #4338ca)'
-                        }}
-                    >
-                        {loading ? <Loader2 className="animate-spin" size={20} /> : (
-                            <>
-                                Sign In
-                                <ArrowRight size={20} />
-                            </>
-                        )}
-                    </button>
-                </form>
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            style={{
+                                width: '100%',
+                                background: 'linear-gradient(to right, #4f46e5, #6366f1)',
+                                border: 'none',
+                                borderRadius: '16px',
+                                padding: '1.1rem',
+                                color: 'white',
+                                fontSize: '1.05rem',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '0.75rem',
+                                boxShadow: '0 10px 20px -6px rgba(79, 70, 229, 0.5)',
+                                transition: 'all 0.3s ease'
+                            }}
+                        >
+                            {loading ? <Loader2 className="animate-spin" size={24} /> : (
+                                <>
+                                    Sign In Portal
+                                    <ArrowRight size={20} />
+                                </>
+                            )}
+                        </button>
+                    </form>
 
-                <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-                    <p style={{ color: '#64748b', fontSize: '0.875rem' }}>
-                        Forgot password? <a href="#" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: '600' }}>Contact Support</a>
-                    </p>
-                    <button
-                        onClick={handleMigration}
-                        style={{ marginTop: '1rem', background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}
-                    >
-                        (Admin) Fix Connection Issues
-                    </button>
-                    <div style={{ marginTop: '0.5rem', color: '#475569', fontSize: '0.7rem' }}>
-                        ver: Blaze-Silo-1.0
+                    <div style={{ textAlign: 'center', marginTop: '3rem' }}>
+                        <p style={{ color: '#64748b' }}>
+                            System issues? <a href="mailto:support@school.com" style={{ color: '#818cf8', fontWeight: '700', textDecoration: 'none' }}>Contact Support</a>
+                        </p>
                     </div>
                 </div>
             </div>
+
+            {/* Custom Styles */}
+            <style>
+                {`
+                    @media (max-width: 1024px) {
+                        .desktop-info-section { display: none !important; }
+                        .login-form-section { flex: 1 !important; }
+                    }
+                    .hover-lift:hover {
+                        transform: translateY(-8px);
+                        background: rgba(255, 255, 255, 0.05) !important;
+                        border-color: rgba(255, 255, 255, 0.1) !important;
+                    }
+                    .login-input:focus {
+                        border-color: rgba(99, 102, 241, 0.5) !important;
+                        background: rgba(255, 255, 255, 0.04) !important;
+                        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+                    }
+                    @keyframes slideUp {
+                        from { opacity: 0; transform: translateY(20px); }
+                        to { opacity: 1; transform: translateY(0); }
+                    }
+                    .animate-fade-in-up {
+                        animation: slideUp 0.6s ease-out forwards;
+                    }
+                `}
+            </style>
         </div>
     );
 };
