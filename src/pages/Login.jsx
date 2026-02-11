@@ -250,38 +250,47 @@ const Login = () => {
                             xmlns="http://www.w3.org/2000/svg"
                         >
                             <defs>
-                                <linearGradient id="iconGradient" x1="160" y1="5" x2="160" y2="85" gradientUnits="userSpaceOnUse">
+                                <linearGradient id="nexusGradient" x1="160" y1="5" x2="160" y2="85" gradientUnits="userSpaceOnUse">
                                     <stop stopColor="#818cf8" />
                                     <stop offset="1" stopColor="#4f46e5" />
                                 </linearGradient>
+                                <filter id="primeGlow" x="-20%" y="-20%" width="140%" height="140%">
+                                    <feGaussianBlur stdDeviation="3" result="blur" />
+                                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                                </filter>
                             </defs>
 
-                            {/* Modern Prime Emblem (Centered at 160) */}
-                            {/* Outer Structure */}
+                            {/* Scholastic Nexus Icon (Study + Tech) */}
+                            {/* Graduation Cap Top (Mortarboard) */}
                             <path
-                                d="M160 5L195 25V65L160 85L125 65V25L160 5Z"
-                                stroke="url(#iconGradient)"
-                                strokeWidth="3"
-                                strokeLinejoin="round"
-                                opacity="0.6"
+                                d="M160 5L215 28L160 51L105 28L160 5Z"
+                                fill="url(#nexusGradient)"
+                                fillOpacity="0.8"
+                                stroke="white"
+                                strokeWidth="2.5"
+                                strokeOpacity="0.5"
                             />
 
-                            {/* Depth Lines */}
-                            <path d="M160 5V45L195 25" stroke="white" strokeWidth="1.2" strokeOpacity="0.1" />
-                            <path d="M160 85V45L125 65" stroke="white" strokeWidth="1.2" strokeOpacity="0.1" />
-                            <path d="M125 25L160 45L195 65" stroke="white" strokeWidth="1.2" strokeOpacity="0.1" />
+                            {/* Tech Tassel with Digital Node */}
+                            <path d="M215 28V55L225 65" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" />
+                            <circle cx="225" cy="65" r="5" fill="white" filter="url(#primeGlow)" />
+
+                            {/* Cap Base / Technology Matrix */}
+                            <path
+                                d="M125 40V65C125 65 145 78 160 78C175 78 195 65 195 65V40"
+                                stroke="white"
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                                strokeOpacity="0.8"
+                            />
+
+                            {/* Internal Tech Facets */}
+                            <path d="M160 5V51" stroke="white" strokeWidth="1" strokeOpacity="0.2" />
+                            <path d="M105 28H215" stroke="white" strokeWidth="1" strokeOpacity="0.2" />
 
                             {/* Central Nexus Core */}
-                            <path
-                                d="M160 25L180 37V53L160 65L140 53V37L160 25Z"
-                                fill="white"
-                                style={{ filter: 'drop-shadow(0 0 10px rgba(129, 140, 248, 0.5))' }}
-                            />
-                            <path
-                                d="M160 32L173 39V51L160 58L147 51V39L160 32Z"
-                                fill="#020617"
-                            />
-                            <circle cx="160" cy="45" r="4" fill="#818cf8" />
+                            <circle cx="160" cy="40" r="12" fill="white" fillOpacity="0.05" stroke="white" strokeWidth="1" strokeDasharray="3 3" />
+                            <circle cx="160" cy="40" r="6" fill="white" filter="url(#primeGlow)" />
 
                             {/* Typography: MAI SMS */}
                             <text
