@@ -20,6 +20,7 @@ const Dashboard = () => {
     const [messages, setMessages] = useState([]);
     const [teachers, setTeachers] = useState([]);
     const [collectionStats, setCollectionStats] = useState({ paid: 0, unpaid: 0, total: 0 });
+    const [attendanceStats, setAttendanceStats] = useState({ present: 0, absent: 0 });
     const [statsLoaded, setStatsLoaded] = useState(false);
 
     // 2. UI State
@@ -80,9 +81,6 @@ const Dashboard = () => {
     // Mock Data for Charts
 
 
-    const presentCount = collectionStats.total > 0 ? Math.round(collectionStats.total * 0.94) : 0;
-    const absentCount = collectionStats.total > 0 ? collectionStats.total - presentCount : 0;
-
     const overviewStats = [
         {
             label: 'Total Students',
@@ -95,7 +93,7 @@ const Dashboard = () => {
         },
         {
             label: 'Present Today',
-            value: statsLoaded ? presentCount.toLocaleString() : '...',
+            value: statsLoaded ? attendanceStats.present.toLocaleString() : '...',
             subValue: null,
             icon: UserCheck,
             gradient: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
@@ -224,6 +222,53 @@ const Dashboard = () => {
 
         return () => {
             console.log("[Dashboard] Cleaning up student listeners");
+            unsubscribers.forEach(u => u());
+        };
+    }, [schoolId, fetchedClasses]);
+
+    // Real-time Attendance Aggregation
+    useEffect(() => {
+        if (!schoolId || fetchedClasses.length === 0) return;
+
+        console.log("[Dashboard] Starting Attendance Listeners for", fetchedClasses.length, "classes");
+
+        const unsubscribers = [];
+        const classAttendanceMap = new Map();
+
+        const updateAttendanceAggregates = () => {
+            let totalPresent = 0;
+            let totalAbsent = 0;
+
+            classAttendanceMap.forEach((stats) => {
+                totalPresent += stats.present;
+                totalAbsent += stats.absent;
+            });
+
+            console.log(`[Dashboard] Attendance Totals - Present: ${totalPresent}, Absent: ${totalAbsent}`);
+            setAttendanceStats({ present: totalPresent, absent: totalAbsent });
+        };
+
+        fetchedClasses.forEach(cls => {
+            const qStudents = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+            const unsubStudents = onSnapshot(qStudents, (snap) => {
+                let cPresent = 0;
+                let cAbsent = 0;
+
+                snap.docs.forEach(doc => {
+                    const status = doc.data().status || 'absent';
+                    if (status === 'present') cPresent++;
+                    else cAbsent++;
+                });
+
+                console.log(`[Dashboard] Class ${cls.name} Attendance - Present: ${cPresent}, Absent: ${cAbsent}`);
+                classAttendanceMap.set(cls.id, { present: cPresent, absent: cAbsent });
+                updateAttendanceAggregates();
+            });
+            unsubscribers.push(unsubStudents);
+        });
+
+        return () => {
+            console.log("[Dashboard] Cleaning up attendance listeners");
             unsubscribers.forEach(u => u());
         };
     }, [schoolId, fetchedClasses]);

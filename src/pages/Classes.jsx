@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2, Edit } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2, Edit, Save } from 'lucide-react';
 import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, writeBatch } from 'firebase/firestore';
 import { auth } from '../firebase';
@@ -11,51 +11,43 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
     const navigate = useNavigate();
     const [showSubjects, setShowSubjects] = useState(false);
     const [showStudents, setShowStudents] = useState(false);
-    const [showCircleView, setShowCircleView] = useState(false);
     const [studentsList, setStudentsList] = useState([]);
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [filter, setFilter] = useState('all'); // 'all', 'present', 'absent'
-
-    // Fetch Students Real-time
-    useEffect(() => {
-        if (showStudents && schoolId) {
-            setLoadingStudents(true);
-            const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const students = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                // Sort by name or roll no? Let's sort by Name for now
-                students.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-                setStudentsList(students);
-                setLoadingStudents(false);
-            }, (error) => {
-                console.error("Error fetching students:", error);
-                setLoadingStudents(false);
-            });
-            return () => unsubscribe();
-        }
-    }, [showStudents, schoolId, cls.id]);
 
     // State for Attendance Stats
     const [realStats, setRealStats] = useState({ present: 0, absent: 0 });
     const [isSaving, setIsSaving] = useState(false);
 
-    // Calculate Real Stats from studentsList
+    // Always fetch students for real-time attendance calculation
     useEffect(() => {
-        const present = studentsList.filter(s => s.status === 'present').length;
-        const absent = studentsList.filter(s => s.status === 'absent').length;
-        // If students list is loaded, use it. Otherwise, use the simulated one if initializing.
-        if (studentsList.length > 0) {
+        if (!schoolId) return;
+
+        const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const students = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+
+            // Calculate real attendance stats
+            const present = students.filter(s => s.status === 'present').length;
+            const absent = students.filter(s => s.status === 'absent').length;
             setRealStats({ present, absent });
-        } else {
-            // Initial/Simulated
-            const total = cls.students || 0;
-            const p = Math.max(0, Math.round(total * 0.9));
-            setRealStats({ present: p, absent: total - p });
-        }
-    }, [studentsList, cls.students]);
+
+            // If student list is expanded, also update the detailed list
+            if (showStudents) {
+                students.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                setStudentsList(students);
+                setLoadingStudents(false);
+            }
+        }, (error) => {
+            console.error("Error fetching students:", error);
+            setLoadingStudents(false);
+        });
+
+        return () => unsubscribe();
+    }, [schoolId, cls.id, showStudents]);
 
     const handleSaveAttendance = async (e) => {
         e.stopPropagation();
@@ -246,9 +238,9 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
 
                 {/* View Options Toggle */}
                 <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: (showStudents || showCircleView) ? '0.75rem' : '1.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: showStudents ? '0.75rem' : '1.5rem' }}>
                         <button
-                            onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); setShowCircleView(false); }}
+                            onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); }}
                             style={{
                                 flex: 1, padding: '0.5rem', borderRadius: '8px',
                                 border: showStudents ? '2px solid var(--primary)' : '1px solid #e2e8f0',
@@ -259,19 +251,6 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                             }}
                         >
                             📋 List View
-                        </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setShowCircleView(!showCircleView); setShowStudents(false); }}
-                            style={{
-                                flex: 1, padding: '0.5rem', borderRadius: '8px',
-                                border: showCircleView ? '2px solid var(--primary)' : '1px solid #e2e8f0',
-                                background: showCircleView ? '#eff6ff' : 'white',
-                                color: showCircleView ? 'var(--primary)' : 'var(--text-secondary)',
-                                fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
-                                transition: 'all 0.2s'
-                            }}
-                        >
-                            ⭕ Circle View
                         </button>
                     </div>
                 </div>
@@ -394,18 +373,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                     </div>
                 )}
 
-                {/* Circle View */}
-                {showCircleView && (
-                    <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
-                        <StudentCircle
-                            classId={cls.id}
-                            schoolId={schoolId}
-                            className={cls.name}
-                            size="medium"
-                            maxStudents={30}
-                        />
-                    </div>
-                )}
+
 
                 <div style={{ display: 'flex', gap: '0.75rem' }}>
 
