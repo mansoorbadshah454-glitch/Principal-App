@@ -5,6 +5,7 @@ import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firesto
 import { Shield, Mail, Lock, ArrowRight, Loader2, Layout, UserCheck, Users, Zap, Award } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { functions } from '../firebase';
+import logo from '../assets/logo.png';
 
 const InfoCard = ({ icon: Icon, title, description, color }) => (
     <div style={{
@@ -237,17 +238,28 @@ const Login = () => {
                 <div style={{ width: '100%', maxWidth: '400px' }}>
                     <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
                         <div style={{
-                            width: '72px',
-                            height: '72px',
-                            background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
-                            borderRadius: '20px',
+                            width: '90px',
+                            height: '90px',
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            borderRadius: '24px',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             margin: '0 auto 1.5rem',
-                            boxShadow: '0 20px 40px -8px rgba(79, 70, 229, 0.4)'
+                            padding: '10px',
+                            boxShadow: '0 20px 40px -8px rgba(0, 0, 0, 0.4)',
+                            border: '1px solid rgba(255, 255, 255, 0.05)'
                         }}>
-                            <Shield color="white" size={36} />
+                            <img
+                                src={logo}
+                                alt="MAI SMS Logo"
+                                style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    objectFit: 'contain',
+                                    mixBlendMode: 'screen'
+                                }}
+                            />
                         </div>
                         <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'white', marginBottom: '0.5rem' }}>Principal Access</h2>
                         <p style={{ color: '#64748b' }}>Securely login to your management portal</p>
