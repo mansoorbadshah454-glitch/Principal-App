@@ -5,7 +5,7 @@ import {
     Loader2, CheckCircle2, AlertCircle, Trash2, Key
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
-import { doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, deleteDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
@@ -55,11 +55,30 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
         setMessage({ type: '', text: '' });
 
         try {
-            const storagePath = `schools/${schoolId}/students/${student.id}/profile.jpg`;
-            const imageRef = ref(storage, storagePath);
-            await uploadString(imageRef, previewImage, 'data_url');
-            const downloadURL = await getDownloadURL(imageRef);
+            // Validate required data
+            if (!schoolId || !student?.id || !classId) {
+                throw new Error('Missing required data: schoolId, studentId, or classId');
+            }
 
+            console.log('Starting upload for student:', student.id);
+            console.log('School ID:', schoolId);
+            console.log('Class ID:', classId);
+
+            const storagePath = `schools/${schoolId}/students/${student.id}/profile.jpg`;
+            console.log('Storage path:', storagePath);
+
+            const imageRef = ref(storage, storagePath);
+
+            // Upload image to Firebase Storage
+            console.log('Uploading to Firebase Storage...');
+            await uploadString(imageRef, previewImage, 'data_url');
+
+            // Get download URL
+            console.log('Getting download URL...');
+            const downloadURL = await getDownloadURL(imageRef);
+            console.log('Download URL:', downloadURL);
+
+            // Update both class-specific and master student records
             const classStudentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, student.id);
             const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.id);
 
@@ -68,9 +87,14 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
                 avatar: downloadURL
             };
 
-            await updateDoc(classStudentRef, updateData);
-            await updateDoc(masterStudentRef, updateData);
+            console.log('Updating Firestore documents...');
 
+            // Use setDoc with merge to create document if it doesn't exist
+            // This prevents "No document to update" errors
+            await setDoc(classStudentRef, updateData, { merge: true });
+            await setDoc(masterStudentRef, updateData, { merge: true });
+
+            console.log('Profile updated successfully!');
             setMessage({ type: 'success', text: 'Profile updated successfully!' });
 
             setTimeout(() => {
@@ -78,8 +102,24 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId }) => 
             }, 1500);
 
         } catch (error) {
-            console.error("Upload error:", error);
-            setMessage({ type: 'error', text: 'Failed to update profile image.' });
+            console.error("Upload error details:", error);
+            console.error("Error code:", error.code);
+            console.error("Error message:", error.message);
+
+            // Provide more specific error messages
+            let errorMessage = 'Failed to update profile image.';
+
+            if (error.code === 'storage/unauthorized') {
+                errorMessage = 'Permission denied. Please check Firebase Storage rules.';
+            } else if (error.code === 'storage/canceled') {
+                errorMessage = 'Upload was canceled.';
+            } else if (error.code === 'storage/unknown') {
+                errorMessage = 'Unknown error occurred. Please try again.';
+            } else if (error.message) {
+                errorMessage = `Error: ${error.message}`;
+            }
+
+            setMessage({ type: 'error', text: errorMessage });
         } finally {
             setUploading(false);
         }

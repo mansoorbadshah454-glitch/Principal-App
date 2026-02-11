@@ -4,12 +4,14 @@ import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDo
 import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, writeBatch } from 'firebase/firestore';
 import { auth } from '../firebase';
+import StudentCircle from '../components/StudentCircle';
 
 // Internal Component for individual Class Card logic
 const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
     const navigate = useNavigate();
     const [showSubjects, setShowSubjects] = useState(false);
     const [showStudents, setShowStudents] = useState(false);
+    const [showCircleView, setShowCircleView] = useState(false);
     const [studentsList, setStudentsList] = useState([]);
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [filter, setFilter] = useState('all'); // 'all', 'present', 'absent'
@@ -242,19 +244,36 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                     </div>
                 )}
 
-                {/* Show Students Toggle */}
-                <div
-                    onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); }}
-                    style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        cursor: 'pointer', marginBottom: showStudents ? '0.75rem' : '1.5rem',
-                        userSelect: 'none', borderTop: '1px dashed #cbd5e1', paddingTop: '0.75rem'
-                    }}
-                >
-                    <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--primary)' }}>
-                        {showStudents ? 'Hide Student List' : 'View Student List'}
-                    </p>
-                    {showStudents ? <ChevronDown size={16} color="var(--primary)" /> : <ChevronRight size={16} color="var(--primary)" />}
+                {/* View Options Toggle */}
+                <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: (showStudents || showCircleView) ? '0.75rem' : '1.5rem' }}>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); setShowCircleView(false); }}
+                            style={{
+                                flex: 1, padding: '0.5rem', borderRadius: '8px',
+                                border: showStudents ? '2px solid var(--primary)' : '1px solid #e2e8f0',
+                                background: showStudents ? '#eff6ff' : 'white',
+                                color: showStudents ? 'var(--primary)' : 'var(--text-secondary)',
+                                fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            📋 List View
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setShowCircleView(!showCircleView); setShowStudents(false); }}
+                            style={{
+                                flex: 1, padding: '0.5rem', borderRadius: '8px',
+                                border: showCircleView ? '2px solid var(--primary)' : '1px solid #e2e8f0',
+                                background: showCircleView ? '#eff6ff' : 'white',
+                                color: showCircleView ? 'var(--primary)' : 'var(--text-secondary)',
+                                fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            ⭕ Circle View
+                        </button>
+                    </div>
                 </div>
 
                 {showStudents && (
@@ -375,6 +394,18 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                     </div>
                 )}
 
+                {/* Circle View */}
+                {showCircleView && (
+                    <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+                        <StudentCircle
+                            classId={cls.id}
+                            schoolId={schoolId}
+                            className={cls.name}
+                            size="medium"
+                            maxStudents={30}
+                        />
+                    </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '0.75rem' }}>
 
