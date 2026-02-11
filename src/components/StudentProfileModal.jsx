@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Trophy, BookOpen, Star, Activity, Heart, Calendar } from 'lucide-react';
 import {
@@ -6,16 +7,54 @@ import {
     Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Cell
 } from 'recharts';
 
-const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects }) => {
+const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, cardRect }) => {
+    // Position Logic
+    const [position, setPosition] = React.useState({ top: 0, left: 0, transformOrigin: 'center' });
+
+    React.useEffect(() => {
+        if (isOpen && cardRect) {
+            const { top, left, width, height } = cardRect;
+            const scrollY = window.scrollY; // Add scrollY for absolute positioning
+            const modalWidth = 500; // Max width from styles
+            const windowWidth = document.documentElement.clientWidth; // Use clientWidth to exclude scrollbar
+            const gap = 20;
+
+            // Try placing to the RIGHT of the card
+            let finalLeft = left + width + gap;
+            let transformOrigin = 'top left';
+
+            // If it overflows right, try LEFT of the card
+            if (finalLeft + modalWidth > windowWidth - 20) {
+                finalLeft = left - modalWidth - gap;
+                transformOrigin = 'top right';
+            }
+
+            // Clamp horizontal
+            if (finalLeft < 10) finalLeft = 10;
+            if (finalLeft + modalWidth > windowWidth) finalLeft = windowWidth - modalWidth - 10;
+
+            // Align TOP of modal with TOP of card
+            let finalTop = top + scrollY; // Absolute position on document
+            const modalHeight = 600; // Estimated height
+            const documentHeight = document.documentElement.scrollHeight;
+
+            // Simple clamp to not go off document bottom (optional, but good)
+            if (finalTop + modalHeight > documentHeight) {
+                finalTop = documentHeight - modalHeight - 20;
+            }
+            if (finalTop < 20) finalTop = 20;
+
+            setPosition({ top: finalTop, left: finalLeft, transformOrigin });
+        }
+    }, [isOpen, cardRect]);
+
     if (!isOpen || !student) return null;
 
     // --- Data Prep ---
     // 1. Subject Scores
-    // Use student.academicScores if available, otherwise generate fallback data
     const subjectData = student.academicScores && student.academicScores.length > 0
         ? student.academicScores
         : (classSubjects && classSubjects.length > 0 ? classSubjects : ['Math', 'Science', 'English', 'Urdu', 'Art']).slice(0, 6).map((sub) => {
-            // Fallback generation
             const seed = student.id ? student.id.charCodeAt(0) : 0;
             return {
                 subject: sub,
@@ -36,33 +75,36 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects }) 
     // 3. Attendance
     const attendanceScore = student.attendance?.percentage || student.attendance || 85;
 
-    // Styles Objects for robustness against CSS issues
+    // Styles
     const styles = {
         overlay: {
-            position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 9999,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '1rem',
-            backgroundColor: 'transparent', // Fully transparent as requested
+            position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 9998,
+            backgroundColor: 'transparent',
+            // Ensure it captures clicks but doesn't block underlying if transparent? 
+            // Actually usually we want it to block so you can't click buttons *under* it.
         },
         card: {
-            background: 'linear-gradient(to bottom right, #ffffff, #eef2ff)', // Theme related tint (Indigo-50)
+            background: 'linear-gradient(to bottom right, #ffffff, #eef2ff)',
             width: '100%', maxWidth: '500px',
             borderRadius: '24px',
             overflow: 'hidden',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            position: 'relative',
+            position: 'absolute', // Absolute to document body
+            top: `${position.top}px`,
+            left: `${position.left}px`,
+            zIndex: 9999,
         },
         blob1: {
             position: 'absolute', top: 0, right: 0, width: '250px', height: '250px',
             borderRadius: '50%', filter: 'blur(64px)',
             transform: 'translate(50%, -50%)', pointerEvents: 'none',
-            background: 'rgba(99, 102, 241, 0.1)' // Indigo
+            background: 'rgba(99, 102, 241, 0.1)'
         },
         blob2: {
             position: 'absolute', bottom: 0, left: 0, width: '200px', height: '200px',
             borderRadius: '50%', filter: 'blur(64px)',
             transform: 'translate(-50%, 50%)', pointerEvents: 'none',
-            background: 'rgba(236, 72, 153, 0.1)' // Pink
+            background: 'rgba(236, 72, 153, 0.1)'
         },
         header: {
             position: 'relative', padding: '1.5rem', paddingBottom: '0.5rem',
@@ -93,10 +135,14 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects }) 
         }
     };
 
-    return (
+    return createPortal(
         <AnimatePresence>
             {isOpen && (
-                <div style={styles.overlay} onClick={onClose}>
+                <>
+                    {/* Fixed Overlay for Dismissal */}
+                    <div style={styles.overlay} onClick={onClose} />
+
+                    {/* Absolute Positioned Card */}
                     <motion.div
                         style={styles.card}
                         initial={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -111,7 +157,6 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects }) 
 
                         {/* --- Header --- */}
                         <div style={styles.header}>
-
                             {/* Avatar */}
                             <div style={styles.avatarContainer}>
                                 <div style={styles.avatarInner}>
@@ -238,9 +283,10 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects }) 
 
                         </div>
                     </motion.div>
-                </div>
+                </>
             )}
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 };
 

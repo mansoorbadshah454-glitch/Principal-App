@@ -9,7 +9,7 @@ import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
 import StudentProfileModal from '../components/StudentProfileModal';
 import StudentActionPopup from '../components/StudentActionPopup';
-import StudentCircle from '../components/StudentCircle';
+
 
 const ClassDetails = () => {
     const { classId } = useParams();
@@ -24,10 +24,14 @@ const ClassDetails = () => {
     const [showSelectionPopup, setShowSelectionPopup] = useState(false);
     const [actionStudent, setActionStudent] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
-    const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'circle'
+
 
     // Custom Collection Action State
     const [currentAction, setCurrentAction] = useState(null);
+
+    // Popup Positioning State
+    const [actionButtonRect, setActionButtonRect] = useState(null);
+    const [selectedCardRect, setSelectedCardRect] = useState(null);
 
     // 1. Resolve School ID
     useEffect(() => {
@@ -365,149 +369,110 @@ const ClassDetails = () => {
                 </div>
             </div>
 
-            {/* View Mode Toggle */}
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', justifyContent: 'center' }}>
-                <button
-                    onClick={() => setViewMode('grid')}
-                    style={{
-                        padding: '0.75rem 1.5rem', borderRadius: '10px',
-                        border: viewMode === 'grid' ? '2px solid var(--primary)' : '1px solid #e2e8f0',
-                        background: viewMode === 'grid' ? '#eff6ff' : 'white',
-                        color: viewMode === 'grid' ? 'var(--primary)' : 'var(--text-secondary)',
-                        fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer',
-                        transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '0.5rem'
-                    }}
-                >
-                    📋 Grid View
-                </button>
-                <button
-                    onClick={() => setViewMode('circle')}
-                    style={{
-                        padding: '0.75rem 1.5rem', borderRadius: '10px',
-                        border: viewMode === 'circle' ? '2px solid var(--primary)' : '1px solid #e2e8f0',
-                        background: viewMode === 'circle' ? '#eff6ff' : 'white',
-                        color: viewMode === 'circle' ? 'var(--primary)' : 'var(--text-secondary)',
-                        fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer',
-                        transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '0.5rem'
-                    }}
-                >
-                    ⭕ Circle View
-                </button>
-            </div>
 
-            {/* Circle View */}
-            {viewMode === 'circle' && (
-                <div className="animate-fade-in-up" style={{ marginBottom: '3rem' }}>
-                    <StudentCircle
-                        classId={classId}
-                        schoolId={schoolId}
-                        className={classData.name}
-                        size="large"
-                        maxStudents={50}
-                    />
-                </div>
-            )}
 
             {/* Students Grid */}
-            {viewMode === 'grid' && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
-                    {filteredStudents.map((student, index) => {
-                        // Check payment status for this student
-                        const isPaid = isTargeted && student.customPayments?.[currentAction.name]?.status === 'paid';
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                {filteredStudents.map((student, index) => {
+                    // Check payment status for this student
+                    const isPaid = isTargeted && student.customPayments?.[currentAction.name]?.status === 'paid';
 
-                        return (
-                            <div
-                                key={student.id}
-                                className="card cursor-pointer transform hover:scale-105 transition-transform duration-200"
-                                onClick={() => {
-                                    setSelectedStudent({ ...student, rank: index + 1 }); // Simple rank based on sorted list
-                                    setShowProfileModal(true);
-                                }}
-                                style={{
-                                    padding: '1.5rem', position: 'relative', border: 'none',
-                                    background: 'white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
-                                }}
-                            >
-                                <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setActionStudent(student);
-                                            setShowSelectionPopup(true);
-                                        }}
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
-                                    >
-                                        <MoreVertical size={20} />
-                                    </button>
+                    return (
+                        <div
+                            key={student.id}
+                            className="card cursor-pointer transform hover:scale-105 transition-transform duration-200"
+                            onClick={(e) => {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setSelectedCardRect(rect);
+                                setSelectedStudent({ ...student, rank: index + 1 });
+                                setShowProfileModal(true);
+                            }}
+                            style={{
+                                padding: '1.5rem', position: 'relative', border: 'none',
+                                background: 'white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
+                            }}
+                        >
+                            <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        setActionButtonRect(rect);
+                                        setActionStudent(student);
+                                        setShowSelectionPopup(true);
+                                    }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                                >
+                                    <MoreVertical size={20} />
+                                </button>
+                            </div>
+
+                            <div style={{
+                                width: '80px', height: '80px', borderRadius: '50%', marginBottom: '1rem',
+                                background: '#f3f4f6', overflow: 'hidden', border: '3px solid white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
+                            }}>
+                                {/* Use generic initials or icon if image fails, but svg api is reliable */}
+                                <img src={student.avatar} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '0.25rem' }}>{student.name}</h3>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem', fontWeight: '500' }}>Roll No: {student.rollNo}</p>
+
+                            <div style={{
+                                padding: '0.5rem 1rem', borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600', width: '100%',
+                                background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
+                                color: student.status === 'present' ? '#166534' : '#991b1b',
+                                marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                            }}>
+                                {student.status === 'present' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                                {student.status === 'present' ? 'Present Today' : 'Absent Today'}
+                            </div>
+
+                            {/* ACTION BUTTONS (If Targeted) */}
+                            {isTargeted && (
+                                <div style={{ width: '100%', marginBottom: '1rem' }} onClick={(e) => e.stopPropagation()}>
+                                    {isPaid ? (
+                                        <button
+                                            onClick={() => togglePaymentStatus(student.id, 'unpaid')}
+                                            style={{
+                                                width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none',
+                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                                            }}
+                                        >
+                                            <CheckCircle size={16} /> Paid: {currentAction.name}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={() => togglePaymentStatus(student.id, 'paid')}
+                                            style={{
+                                                width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #fee2e2',
+                                                background: 'white', color: '#dc2626', fontWeight: '600', cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                                            }}
+                                        >
+                                            <Ban size={16} /> Mark {currentAction.name} Paid
+                                        </button>
+                                    )}
                                 </div>
+                            )}
 
-                                <div style={{
-                                    width: '80px', height: '80px', borderRadius: '50%', marginBottom: '1rem',
-                                    background: '#f3f4f6', overflow: 'hidden', border: '3px solid white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
-                                }}>
-                                    {/* Use generic initials or icon if image fails, but svg api is reliable */}
-                                    <img src={student.avatar} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '1rem 0 0', borderTop: '1px solid #f3f4f6' }}>
+                                <div style={{ textAlign: 'center' }}>
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Avg Score</p>
+                                    <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.avgScore}%</p>
                                 </div>
-
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '0.25rem' }}>{student.name}</h3>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem', fontWeight: '500' }}>Roll No: {student.rollNo}</p>
-
-                                <div style={{
-                                    padding: '0.5rem 1rem', borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600', width: '100%',
-                                    background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
-                                    color: student.status === 'present' ? '#166534' : '#991b1b',
-                                    marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                }}>
-                                    {student.status === 'present' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                                    {student.status === 'present' ? 'Present Today' : 'Absent Today'}
-                                </div>
-
-                                {/* ACTION BUTTONS (If Targeted) */}
-                                {isTargeted && (
-                                    <div style={{ width: '100%', marginBottom: '1rem' }} onClick={(e) => e.stopPropagation()}>
-                                        {isPaid ? (
-                                            <button
-                                                onClick={() => togglePaymentStatus(student.id, 'unpaid')}
-                                                style={{
-                                                    width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none',
-                                                    background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer',
-                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                                }}
-                                            >
-                                                <CheckCircle size={16} /> Paid: {currentAction.name}
-                                            </button>
-                                        ) : (
-                                            <button
-                                                onClick={() => togglePaymentStatus(student.id, 'paid')}
-                                                style={{
-                                                    width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #fee2e2',
-                                                    background: 'white', color: '#dc2626', fontWeight: '600', cursor: 'pointer',
-                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                                }}
-                                            >
-                                                <Ban size={16} /> Mark {currentAction.name} Paid
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-
-                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '1rem 0 0', borderTop: '1px solid #f3f4f6' }}>
-                                    <div style={{ textAlign: 'center' }}>
-                                        <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Avg Score</p>
-                                        <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.avgScore}%</p>
-                                    </div>
-                                    <div style={{ width: '1px', background: '#f3f4f6' }} />
-                                    <div style={{ textAlign: 'center' }}>
-                                        <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Homework</p>
-                                        <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.homework}%</p>
-                                    </div>
+                                <div style={{ width: '1px', background: '#f3f4f6' }} />
+                                <div style={{ textAlign: 'center' }}>
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Homework</p>
+                                    <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.homework}%</p>
                                 </div>
                             </div>
-                        );
-                    })}
-                </div>
-            )}
+                        </div>
+                    );
+                })}
+            </div>
 
             {/* Student Profile Modal */}
             <StudentProfileModal
@@ -516,6 +481,7 @@ const ClassDetails = () => {
                 student={selectedStudent}
                 rank={selectedStudent?.rank}
                 classSubjects={classData?.subjects}
+                cardRect={selectedCardRect}
             />
 
             {/* Student Action Popup */}
@@ -525,6 +491,7 @@ const ClassDetails = () => {
                 student={actionStudent}
                 schoolId={schoolId}
                 classId={classId}
+                buttonRect={actionButtonRect}
             />
         </div>
     );
