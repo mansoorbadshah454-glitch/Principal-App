@@ -239,58 +239,58 @@ const Login = () => {
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
-                        gap: '1.25rem',
-                        marginBottom: '3rem'
+                        gap: '1.5rem',
+                        marginBottom: '4.5rem'
                     }}>
                         <svg
-                            width="200"
-                            height="120"
-                            viewBox="0 0 200 120"
+                            width="280"
+                            height="130"
+                            viewBox="0 0 320 130"
                             fill="none"
                             xmlns="http://www.w3.org/2000/svg"
                         >
-                            {/* Hexagonal Prime Emblem */}
+                            {/* Hexagonal Prime Emblem (Centered at 160) */}
                             <path
-                                d="M100 5L125 20V50L100 65L75 50V20L100 5Z"
+                                d="M160 5L185 20V50L160 65L135 50V20L160 5Z"
                                 stroke="#818cf8"
                                 strokeWidth="2.5"
                                 strokeLinejoin="round"
                             />
                             <path
-                                d="M100 12L118 23V42L100 53L82 42V23L100 12Z"
+                                d="M160 12L178 23V42L160 53L142 42V23L160 12Z"
                                 fill="rgba(129, 140, 248, 0.15)"
                             />
                             <path
-                                d="M100 18L110 24V36L100 42L90 36V24L100 18Z"
+                                d="M160 18L170 24V36L160 42L150 36V24L160 18Z"
                                 fill="white"
                             />
 
                             {/* Typography: MAI SMS */}
                             <text
-                                x="100"
-                                y="90"
+                                x="160"
+                                y="95"
                                 fill="white"
                                 style={{
                                     fontFamily: "'Outfit', sans-serif",
                                     fontWeight: '800',
-                                    fontSize: '28px',
-                                    letterSpacing: '0.1em'
+                                    fontSize: '32px',
+                                    letterSpacing: '0.12em'
                                 }}
                                 textAnchor="middle"
                             >
                                 MAI SMS
                             </text>
 
-                            {/* Typography: Subtitle */}
+                            {/* Typography: Subtitle (Fixed Clipping) */}
                             <text
-                                x="100"
-                                y="110"
+                                x="160"
+                                y="118"
                                 fill="#94a3b8"
                                 style={{
                                     fontFamily: "'Outfit', sans-serif",
                                     fontWeight: '500',
-                                    fontSize: '9px',
-                                    letterSpacing: '0.35em',
+                                    fontSize: '10px',
+                                    letterSpacing: '0.42em',
                                     textTransform: 'uppercase'
                                 }}
                                 textAnchor="middle"
