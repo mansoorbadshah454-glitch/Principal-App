@@ -2,10 +2,9 @@ import React, { useState } from 'react';
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { Shield, Mail, Lock, ArrowRight, Loader2, Layout, UserCheck, Users, Zap, Award } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Loader2, Layout, UserCheck, Users, Zap, Award } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { functions } from '../firebase';
-import logo from '../assets/logo.png';
 
 const InfoCard = ({ icon: Icon, title, description, color }) => (
     <div style={{
@@ -236,33 +235,74 @@ const Login = () => {
                 background: '#020617'
             }} className="login-form-section">
                 <div style={{ width: '100%', maxWidth: '400px' }}>
-                    <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-                        <div style={{
-                            width: '90px',
-                            height: '90px',
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            borderRadius: '24px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            margin: '0 auto 1.5rem',
-                            padding: '10px',
-                            boxShadow: '0 20px 40px -8px rgba(0, 0, 0, 0.4)',
-                            border: '1px solid rgba(255, 255, 255, 0.05)'
-                        }}>
-                            <img
-                                src={logo}
-                                alt="MAI SMS Logo"
-                                style={{
-                                    width: '100%',
-                                    height: '100%',
-                                    objectFit: 'contain',
-                                    mixBlendMode: 'screen'
-                                }}
+                    <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '1.25rem',
+                        marginBottom: '3rem'
+                    }}>
+                        <svg
+                            width="200"
+                            height="120"
+                            viewBox="0 0 200 120"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                        >
+                            {/* Hexagonal Prime Emblem */}
+                            <path
+                                d="M100 5L125 20V50L100 65L75 50V20L100 5Z"
+                                stroke="#818cf8"
+                                strokeWidth="2.5"
+                                strokeLinejoin="round"
                             />
+                            <path
+                                d="M100 12L118 23V42L100 53L82 42V23L100 12Z"
+                                fill="rgba(129, 140, 248, 0.15)"
+                            />
+                            <path
+                                d="M100 18L110 24V36L100 42L90 36V24L100 18Z"
+                                fill="white"
+                            />
+
+                            {/* Typography: MAI SMS */}
+                            <text
+                                x="100"
+                                y="90"
+                                fill="white"
+                                style={{
+                                    fontFamily: "'Outfit', sans-serif",
+                                    fontWeight: '800',
+                                    fontSize: '28px',
+                                    letterSpacing: '0.1em'
+                                }}
+                                textAnchor="middle"
+                            >
+                                MAI SMS
+                            </text>
+
+                            {/* Typography: Subtitle */}
+                            <text
+                                x="100"
+                                y="110"
+                                fill="#94a3b8"
+                                style={{
+                                    fontFamily: "'Outfit', sans-serif",
+                                    fontWeight: '500',
+                                    fontSize: '9px',
+                                    letterSpacing: '0.35em',
+                                    textTransform: 'uppercase'
+                                }}
+                                textAnchor="middle"
+                            >
+                                School Management System
+                            </text>
+                        </svg>
+
+                        <div style={{ textAlign: 'center' }}>
+                            <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'white', marginBottom: '0.25rem' }}>Principal Access</h2>
+                            <p style={{ color: '#64748b' }}>Securely login to your management portal</p>
                         </div>
-                        <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'white', marginBottom: '0.5rem' }}>Principal Access</h2>
-                        <p style={{ color: '#64748b' }}>Securely login to your management portal</p>
                     </div>
 
                     {error && (
