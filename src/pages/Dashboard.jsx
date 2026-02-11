@@ -124,21 +124,52 @@ const Dashboard = () => {
     ];
 
 
+    // Helper function to check if it's a new day (same as Teacher App)
+    const isNewDay = (lastUpdateTimestamp) => {
+        if (!lastUpdateTimestamp) return false; // Return false if null to prevent flickering "Off" on new writes
+
+        const lastUpdate = lastUpdateTimestamp.toDate ? lastUpdateTimestamp.toDate() : new Date(lastUpdateTimestamp);
+        const now = new Date();
+
+        // Compare dates (ignoring time)
+        const lastDate = new Date(lastUpdate.getFullYear(), lastUpdate.getMonth(), lastUpdate.getDate());
+        const currentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        return currentDate > lastDate;
+    };
+
     React.useEffect(() => {
         if (!schoolId) return;
         const q = query(collection(db, `schools/${schoolId}/teachers`));
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const list = snapshot.docs.map(doc => {
                 const data = doc.data();
-                const seed = doc.id.charCodeAt(0) + (data.name?.length || 0);
+
+                // Get duty status from database
+                const dutyStatus = data.isOnDuty || false;
+                const lastDutyUpdate = data.lastDutyUpdate;
+
+                // Debug Log
+                if (data.name) {
+                    console.log(`[Dashboard] Teacher ${data.name}:`, {
+                        isOnDuty: data.isOnDuty,
+                        lastDutyUpdate: lastDutyUpdate ? 'Exists' : 'Null',
+                        dutyStatus,
+                        isNewDay: isNewDay(lastDutyUpdate)
+                    });
+                }
+
+                // Check if it's a new day - if so, consider status as 'off'
+                const isOff = isNewDay(lastDutyUpdate) || !dutyStatus;
+
                 return {
                     id: doc.id,
                     name: data.name,
                     class: Array.isArray(data.assignedClasses) && data.assignedClasses.length > 0
                         ? data.assignedClasses[0]
                         : (data.assignedClasses || 'Unassigned'),
-                    status: seed % 2 === 0 ? 'on' : 'off',
-                    score: 75 + (seed % 20)
+                    status: isOff ? 'off' : 'on',
+                    score: 75 + (doc.id.charCodeAt(0) % 20)
                 };
             });
             setTeachers(list);
