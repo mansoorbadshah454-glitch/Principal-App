@@ -239,41 +239,59 @@ const Login = () => {
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
-                        gap: '1.5rem',
-                        marginBottom: '4.5rem'
+                        gap: '2.5rem',
+                        marginBottom: '6rem'
                     }}>
                         <svg
-                            width="280"
-                            height="130"
-                            viewBox="0 0 320 130"
+                            width="380"
+                            height="200"
+                            viewBox="0 0 320 160"
                             fill="none"
                             xmlns="http://www.w3.org/2000/svg"
                         >
-                            {/* Hexagonal Prime Emblem (Centered at 160) */}
+                            <defs>
+                                <linearGradient id="iconGradient" x1="160" y1="5" x2="160" y2="85" gradientUnits="userSpaceOnUse">
+                                    <stop stopColor="#818cf8" />
+                                    <stop offset="1" stopColor="#4f46e5" />
+                                </linearGradient>
+                            </defs>
+
+                            {/* Modern Prime Emblem (Centered at 160) */}
+                            {/* Outer Structure */}
                             <path
-                                d="M160 5L185 20V50L160 65L135 50V20L160 5Z"
-                                stroke="#818cf8"
-                                strokeWidth="2.5"
+                                d="M160 5L195 25V65L160 85L125 65V25L160 5Z"
+                                stroke="url(#iconGradient)"
+                                strokeWidth="3"
                                 strokeLinejoin="round"
+                                opacity="0.6"
                             />
+
+                            {/* Depth Lines */}
+                            <path d="M160 5V45L195 25" stroke="white" strokeWidth="1.2" strokeOpacity="0.1" />
+                            <path d="M160 85V45L125 65" stroke="white" strokeWidth="1.2" strokeOpacity="0.1" />
+                            <path d="M125 25L160 45L195 65" stroke="white" strokeWidth="1.2" strokeOpacity="0.1" />
+
+                            {/* Central Nexus Core */}
                             <path
-                                d="M160 12L178 23V42L160 53L142 42V23L160 12Z"
-                                fill="rgba(129, 140, 248, 0.15)"
-                            />
-                            <path
-                                d="M160 18L170 24V36L160 42L150 36V24L160 18Z"
+                                d="M160 25L180 37V53L160 65L140 53V37L160 25Z"
                                 fill="white"
+                                style={{ filter: 'drop-shadow(0 0 10px rgba(129, 140, 248, 0.5))' }}
                             />
+                            <path
+                                d="M160 32L173 39V51L160 58L147 51V39L160 32Z"
+                                fill="#020617"
+                            />
+                            <circle cx="160" cy="45" r="4" fill="#818cf8" />
 
                             {/* Typography: MAI SMS */}
                             <text
                                 x="160"
-                                y="95"
+                                y="132"
                                 fill="white"
                                 style={{
                                     fontFamily: "'Outfit', sans-serif",
-                                    fontWeight: '800',
-                                    fontSize: '32px',
+                                    fontWeight: '900',
+                                    fontSize: '46px',
                                     letterSpacing: '0.12em'
                                 }}
                                 textAnchor="middle"
@@ -281,16 +299,16 @@ const Login = () => {
                                 MAI SMS
                             </text>
 
-                            {/* Typography: Subtitle (Fixed Clipping) */}
+                            {/* Typography: Subtitle */}
                             <text
                                 x="160"
-                                y="118"
+                                y="158"
                                 fill="#94a3b8"
                                 style={{
                                     fontFamily: "'Outfit', sans-serif",
-                                    fontWeight: '500',
-                                    fontSize: '10px',
-                                    letterSpacing: '0.42em',
+                                    fontWeight: '600',
+                                    fontSize: '11px',
+                                    letterSpacing: '0.5em',
                                     textTransform: 'uppercase'
                                 }}
                                 textAnchor="middle"
@@ -300,8 +318,8 @@ const Login = () => {
                         </svg>
 
                         <div style={{ textAlign: 'center' }}>
-                            <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'white', marginBottom: '0.25rem' }}>Principal Access</h2>
-                            <p style={{ color: '#64748b' }}>Securely login to your management portal</p>
+                            <h2 style={{ fontSize: '2.25rem', fontWeight: '800', color: 'white', marginBottom: '0.25rem' }}>Principal Access</h2>
+                            <p style={{ color: '#64748b', fontSize: '1rem' }}>Securely login to your management portal</p>
                         </div>
                     </div>
 
