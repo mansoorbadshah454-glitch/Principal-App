@@ -36,11 +36,6 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
         }
     }, [showStudents, schoolId, cls.id]);
 
-    const filteredStudents = studentsList.filter(student => {
-        if (filter === 'all') return true;
-        return (student.status || 'absent') === filter;
-    });
-
     // State for Attendance Stats
     const [realStats, setRealStats] = useState({ present: 0, absent: 0 });
     const [isSaving, setIsSaving] = useState(false);

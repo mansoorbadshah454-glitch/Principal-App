@@ -299,17 +299,23 @@ const Teachers = () => {
                     const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
                     const snap = await getDocs(q);
                     snap.forEach(async (d) => {
-                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), { teacher: 'Unassigned' });
+                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                            teacher: 'Unassigned',
+                            teacherId: null
+                        });
                     });
                 }
 
-                // Added classes: set teacher to New Name
+                // Added classes: set teacher to New Name AND teacherId
                 const addedClasses = newClasses.filter(c => !oldClasses.includes(c));
                 for (const cls of addedClasses) {
                     const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
                     const snap = await getDocs(q);
                     snap.forEach(async (d) => {
-                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), { teacher: newTeacher.name });
+                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                            teacher: newTeacher.name,
+                            teacherId: editingId
+                        });
                     });
                 }
 
@@ -320,7 +326,10 @@ const Teachers = () => {
                         const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
                         const snap = await getDocs(q);
                         snap.forEach(async (d) => {
-                            await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), { teacher: newTeacher.name });
+                            await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                                teacher: newTeacher.name,
+                                teacherId: editingId
+                            });
                         });
                     }
                 }
@@ -748,7 +757,7 @@ const Teachers = () => {
 
                                     <div style={{ marginBottom: '2rem' }}>
                                         <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '1rem', color: 'var(--text-secondary)' }}>
-                                            Assign Classes (Optional)
+                                            Assign Classes
                                         </label>
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
                                             {dbClasses.map((clsName) => {
