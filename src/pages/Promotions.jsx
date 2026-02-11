@@ -216,12 +216,25 @@ const Promotions = () => {
             const batch = writeBatch(db);
             let operationCount = 0;
 
+            // 1. Annual Purge: Delete all attendance history for the school
+            const attendanceRef = collection(db, `schools/${schoolId}/attendance`);
+            const attendanceSnap = await getDocs(attendanceRef);
+            attendanceSnap.docs.forEach(docSnap => {
+                batch.delete(docSnap.ref);
+                operationCount++;
+            });
+
             for (const student of students) {
                 const status = student.promotionStatus || 'promote';
                 const studentData = {
                     ...student,
                     examScore: student.examScore || 0,
                     result: student.result || 'pass',
+                    status: null, // Reset daily attendance status
+                    academicScores: [], // Clear school-year academic history
+                    wellness: { behavior: null, health: null, hygiene: null }, // Reset health/behavior
+                    homework: 0, // Reset homework percentage
+                    attendance: { percentage: 0 }, // Reset historical attendance rate
                     updatedAt: new Date()
                 };
 

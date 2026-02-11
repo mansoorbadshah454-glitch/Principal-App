@@ -41,17 +41,90 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
         return (student.status || 'absent') === filter;
     });
 
-    // Simulate Daily Attendance
+    // State for Attendance Stats
+    const [realStats, setRealStats] = useState({ present: 0, absent: 0 });
+    const [isSaving, setIsSaving] = useState(false);
+
+    // Calculate Real Stats from studentsList
+    useEffect(() => {
+        const present = studentsList.filter(s => s.status === 'present').length;
+        const absent = studentsList.filter(s => s.status === 'absent').length;
+        // If students list is loaded, use it. Otherwise, use the simulated one if initializing.
+        if (studentsList.length > 0) {
+            setRealStats({ present, absent });
+        } else {
+            // Initial/Simulated
+            const total = cls.students || 0;
+            const p = Math.max(0, Math.round(total * 0.9));
+            setRealStats({ present: p, absent: total - p });
+        }
+    }, [studentsList, cls.students]);
+
+    const handleSaveAttendance = async (e) => {
+        e.stopPropagation();
+        if (!schoolId) return;
+        setIsSaving(true);
+        try {
+            const batch = writeBatch(db);
+            const today = new Date().toISOString().split('T')[0];
+
+            // 1. Create historical record
+            const historyRef = doc(collection(db, `schools/${schoolId}/attendance`));
+            batch.set(historyRef, {
+                classId: cls.id,
+                className: cls.name,
+                date: today,
+                timestamp: new Date(),
+                presentCount: realStats.present,
+                absentCount: realStats.absent,
+                totalStudents: cls.students || 0,
+                records: studentsList.map(s => ({
+                    id: s.id,
+                    name: s.name,
+                    status: s.status || 'absent'
+                }))
+            });
+
+            // 2. Sync individual student status to class sub-collection
+            // (Note: Teachers usually mark them individually, but Principal App's "Save" acts as a snapshot confirmer)
+            studentsList.forEach(student => {
+                const sRef = doc(db, `schools/${schoolId}/classes/${cls.id}/students`, student.id);
+                // We ensure 'status' is at least defined as 'absent' if null
+                batch.update(sRef, { status: student.status || 'absent' });
+            });
+
+            await batch.commit();
+            alert(`Attendance for ${cls.name} saved successfully for ${today}`);
+        } catch (error) {
+            console.error("Error saving attendance:", error);
+            alert("Failed to save attendance.");
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleMarkStatus = async (studentId, status) => {
+        try {
+            const sRef = doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId);
+            await updateDoc(sRef, { status });
+        } catch (error) {
+            console.error("Error updating student status:", error);
+        }
+    };
+
+    const filteredStudents = studentsList.filter(student => {
+        if (filter === 'all') return true;
+        return (student.status || 'absent') === filter;
+    });
+
     const totalStudents = cls.students || 0;
-    // Deterministic random for stable demo
-    const seed = cls.id.charCodeAt(0) || 123;
-    const presentCount = Math.max(0, Math.round(totalStudents * (0.85 + (seed % 15) / 100)));
-    const absentCount = totalStudents - presentCount;
+    const { present: presentCount, absent: absentCount } = realStats;
 
     // Dynamic Theme Color based on odd/even id
+    const seed = cls.id.charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
     const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
-    const themeLight = isEven ? '#e0e7ff' : '#ecfeff'; // Light variants
+    const themeLight = isEven ? '#e0e7ff' : '#ecfeff';
 
 
     return (
@@ -60,10 +133,10 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
             className="card" style={{
                 padding: '0',
                 overflow: 'hidden',
-                border: '1px solid #dbeafe', // Subtle blue border
+                border: '1px solid #dbeafe',
                 position: 'relative',
-                background: '#eff6ff', // Light Blue background
-                boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)', // Blue-tinted shadow
+                background: '#eff6ff',
+                boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)',
                 borderRadius: '16px',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease'
@@ -96,22 +169,42 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                         <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
                     </div>
 
-                    {/* Attendance Stats */}
-                    <div style={{ display: 'flex', gap: '1rem', padding: '0.75rem', background: 'white', borderRadius: '8px', border: '1px solid #dbeafe' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }} />
-                            <div>
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>Present</span>
-                                <span style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--text-main)' }}>{presentCount}</span>
-                            </div>
+                    {/* Attendance Stats Cards - Interactive */}
+                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <div
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowStudents(true);
+                                setFilter('present');
+                            }}
+                            style={{
+                                flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
+                                border: '1px solid #dcfce7', cursor: 'pointer',
+                                display: 'flex', flexDirection: 'column', gap: '0.25rem',
+                                transition: 'transform 0.2s',
+                                borderBottom: filter === 'present' ? '3px solid #10b981' : '1px solid #dcfce7'
+                            }}
+                        >
+                            <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#10b981', textTransform: 'uppercase' }}>Present</span>
+                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{presentCount}</span>
                         </div>
-                        <div style={{ width: '1px', background: '#cbd5e1' }} />
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }} />
-                            <div>
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>Absent</span>
-                                <span style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--text-main)' }}>{absentCount}</span>
-                            </div>
+                        <div
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowStudents(true);
+                                setFilter('absent');
+                            }}
+                            style={{
+                                flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
+                                border: '1px solid #fee2e2', cursor: 'pointer',
+                                display: 'flex', flexDirection: 'column', gap: '0.25rem',
+                                transition: 'transform 0.2s',
+                                borderBottom: filter === 'absent' ? '3px solid #ef4444' : '1px solid #fee2e2',
+                                boxShadow: absentCount > 0 ? '0 0 10px rgba(239, 68, 68, 0.1)' : 'none'
+                            }}
+                        >
+                            <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#ef4444', textTransform: 'uppercase' }}>Absent</span>
+                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{absentCount}</span>
                         </div>
                     </div>
                 </div>
@@ -122,7 +215,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                     onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
                     style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0.75rem', // Adjusted margin
+                        cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0.75rem',
                         userSelect: 'none'
                     }}
                 >
@@ -164,33 +257,33 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                     }}
                 >
                     <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--primary)' }}>
-                        View Student List
+                        {showStudents ? 'Hide Student List' : 'View Student List'}
                     </p>
                     {showStudents ? <ChevronDown size={16} color="var(--primary)" /> : <ChevronRight size={16} color="var(--primary)" />}
                 </div>
 
                 {showStudents && (
                     <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }}>
-                        {/* Filter Buttons */}
-                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                        {/* Filter Tabs */}
+                        <div style={{ display: 'flex', background: 'white', padding: '4px', borderRadius: '10px', marginBottom: '1rem', border: '1px solid #e2e8f0' }}>
                             <button
                                 onClick={(e) => { e.stopPropagation(); setFilter('all'); }}
                                 style={{
-                                    flex: 1, padding: '0.4rem 0.75rem', borderRadius: '6px', border: 'none', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
-                                    background: filter === 'all' ? 'var(--primary)' : 'white',
-                                    color: filter === 'all' ? 'white' : 'var(--text-secondary)',
-                                    boxShadow: filter === 'all' ? '0 2px 4px rgba(99, 102, 241, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
+                                    flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                    background: filter === 'all' ? '#f1f5f9' : 'transparent',
+                                    color: filter === 'all' ? 'var(--text-main)' : 'var(--text-muted)',
+                                    transition: 'all 0.2s'
                                 }}
                             >
-                                All Students
+                                All
                             </button>
                             <button
                                 onClick={(e) => { e.stopPropagation(); setFilter('present'); }}
                                 style={{
-                                    flex: 1, padding: '0.4rem 0.75rem', borderRadius: '6px', border: 'none', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
-                                    background: filter === 'present' ? '#10b981' : 'white',
-                                    color: filter === 'present' ? 'white' : 'var(--text-secondary)',
-                                    boxShadow: filter === 'present' ? '0 2px 4px rgba(16, 185, 129, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
+                                    flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                    background: filter === 'present' ? '#dcfce7' : 'transparent',
+                                    color: filter === 'present' ? '#166534' : 'var(--text-muted)',
+                                    transition: 'all 0.2s'
                                 }}
                             >
                                 Present
@@ -198,10 +291,10 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                             <button
                                 onClick={(e) => { e.stopPropagation(); setFilter('absent'); }}
                                 style={{
-                                    flex: 1, padding: '0.4rem 0.75rem', borderRadius: '6px', border: 'none', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
-                                    background: filter === 'absent' ? '#ef4444' : 'white',
-                                    color: filter === 'absent' ? 'white' : 'var(--text-secondary)',
-                                    boxShadow: filter === 'absent' ? '0 2px 4px rgba(239, 68, 68, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
+                                    flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                    background: filter === 'absent' ? '#fee2e2' : 'transparent',
+                                    color: filter === 'absent' ? '#991b1b' : 'var(--text-muted)',
+                                    transition: 'all 0.2s'
                                 }}
                             >
                                 Absent
@@ -214,50 +307,79 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                                 <Loader2 className="animate-spin" size={20} color="var(--primary)" />
                             </div>
                         ) : filteredStudents.length === 0 ? (
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '0.5rem' }}>
-                                No students found for this filter.
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '1rem', background: 'white', borderRadius: '12px' }}>
+                                No students marked as {filter === 'all' ? 'enrolled' : filter}.
                             </p>
                         ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '200px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
                                 {filteredStudents.map(student => (
                                     <div key={student.id} style={{
                                         display: 'flex', alignItems: 'center', gap: '0.75rem',
-                                        background: 'white', padding: '0.5rem', borderRadius: '8px',
-                                        border: '1px solid #e2e8f0'
+                                        background: 'white', padding: '0.6rem', borderRadius: '10px',
+                                        border: '1px solid #e2e8f0', transition: 'all 0.2s'
                                     }}>
                                         <div style={{
-                                            width: '32px', height: '32px', borderRadius: '50%',
-                                            background: '#f1f5f9', overflow: 'hidden', flexShrink: 0,
+                                            width: '36px', height: '36px', borderRadius: '10px',
+                                            background: '#f8fafc', overflow: 'hidden', flexShrink: 0,
                                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                            border: student.status === 'present' ? '2px solid #10b981' : (student.status === 'absent' ? '2px solid #ef4444' : 'none')
+                                            border: '1px solid #f1f5f9'
                                         }}>
                                             {student.profilePic ? (
                                                 <img src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                             ) : (
-                                                <User size={16} color="#94a3b8" />
+                                                <User size={18} color="#94a3b8" />
                                             )}
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
-                                            <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            <p style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                                 {student.name}
                                             </p>
-                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                                Roll: {student.rollNo || 'N/A'}
+                                            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: '500' }}>
+                                                Roll No: {student.rollNo || 'N/A'}
                                             </p>
                                         </div>
-                                        <div style={{
-                                            fontSize: '0.7rem', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px',
-                                            background: student.status === 'present' ? '#dcfce7' : (student.status === 'absent' ? '#fee2e2' : '#f3f4f6'),
-                                            color: student.status === 'present' ? '#166534' : (student.status === 'absent' ? '#991b1b' : '#64748b')
-                                        }}>
-                                            {student.status === 'present' ? 'P' : (student.status === 'absent' ? 'A' : '-')}
+
+                                        {/* Status Toggle (Principal can also mark if needed) */}
+                                        <div
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                const nextStatus = student.status === 'present' ? 'absent' : 'present';
+                                                handleMarkStatus(student.id, nextStatus);
+                                            }}
+                                            style={{
+                                                padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800',
+                                                background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
+                                                color: student.status === 'present' ? '#10b981' : '#ef4444',
+                                                cursor: 'pointer', border: '1px solid transparent',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            {student.status === 'present' ? 'PRESENT' : 'ABSENT'}
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         )}
+
+                        {/* Save Button for Principal */}
+                        <button
+                            onClick={handleSaveAttendance}
+                            disabled={isSaving || studentsList.length === 0}
+                            style={{
+                                width: '100%', marginTop: '1rem', padding: '0.85rem',
+                                borderRadius: '12px', background: 'var(--primary)', color: 'white',
+                                border: 'none', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
+                                opacity: (isSaving || studentsList.length === 0) ? 0.6 : 1
+                            }}
+                        >
+                            {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                            {isSaving ? 'Saving Attendance...' : "Save Today's Attendance"}
+                        </button>
                     </div>
                 )}
+
 
                 <div style={{ display: 'flex', gap: '0.75rem' }}>
 
