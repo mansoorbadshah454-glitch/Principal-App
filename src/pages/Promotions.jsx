@@ -208,21 +208,39 @@ const Promotions = () => {
     const row1Classes = classes.filter(c => getClassOrder(c.name) <= 5);
     const row2Classes = classes.filter(c => getClassOrder(c.name) > 5);
 
-    // 4. Process Promotions
+    // 4. Process Promotions - SAFE CHUNKED VERSION
     const processPromotions = async () => {
         setShowConfirmModal(false);
         setProcessing(true);
         try {
-            const batch = writeBatch(db);
-            let operationCount = 0;
+            // Helper to commit batches in chunks
+            const commitBatchChunks = async (operations, batchSize = 400) => {
+                for (let i = 0; i < operations.length; i += batchSize) {
+                    const batch = writeBatch(db);
+                    const chunk = operations.slice(i, i + batchSize);
+                    chunk.forEach(op => op(batch));
+                    await batch.commit();
+                    console.log(`Committed batch ${Math.floor(i / batchSize) + 1}`);
+                }
+            };
 
-            // 1. Annual Purge: Delete all attendance history for the school
+            // 1. Annual Purge: Delete all attendance history
+            // We fetch and delete in chunks to avoid blowing up memory or batch limits
+            console.log("Starting Attendance Purge...");
             const attendanceRef = collection(db, `schools/${schoolId}/attendance`);
             const attendanceSnap = await getDocs(attendanceRef);
-            attendanceSnap.docs.forEach(docSnap => {
-                batch.delete(docSnap.ref);
-                operationCount++;
-            });
+
+            if (!attendanceSnap.empty) {
+                const deleteOps = attendanceSnap.docs.map(docSnap => (batch) => {
+                    batch.delete(docSnap.ref);
+                });
+                await commitBatchChunks(deleteOps, 400); // Safe limit
+                console.log("Attendance Purge Complete");
+            }
+
+            // 2. Process Student Moves
+            console.log("Starting Student Moves...");
+            const moveOps = [];
 
             for (const student of students) {
                 const status = student.promotionStatus || 'promote';
@@ -238,37 +256,52 @@ const Promotions = () => {
                     updatedAt: new Date()
                 };
 
+                // Define operation based on status
                 if (status === 'promote') {
                     if (student.nextClassId === 'graduate') {
-                        const alumniRef = doc(db, `schools/${schoolId}/alumni`, student.id);
-                        batch.set(alumniRef, { ...studentData, graduatedAt: new Date(), previousClassId: selectedClass.id });
-                        batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                        moveOps.push((batch) => {
+                            const alumniRef = doc(db, `schools/${schoolId}/alumni`, student.id);
+                            batch.set(alumniRef, { ...studentData, graduatedAt: new Date(), previousClassId: selectedClass.id });
+                            batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                        });
                     } else if (student.nextClassId) {
-                        const nextClassRef = doc(db, `schools/${schoolId}/classes/${student.nextClassId}/students`, student.id);
-                        batch.set(nextClassRef, { ...studentData, promotedAt: new Date(), previousClassId: selectedClass.id });
-                        batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                        moveOps.push((batch) => {
+                            const nextClassRef = doc(db, `schools/${schoolId}/classes/${student.nextClassId}/students`, student.id);
+                            batch.set(nextClassRef, { ...studentData, promotedAt: new Date(), previousClassId: selectedClass.id });
+                            batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                        });
                     }
                 } else if (status === 'demote' && student.previousClassId) {
-                    const prevClassRef = doc(db, `schools/${schoolId}/classes/${student.previousClassId}/students`, student.id);
-                    batch.set(prevClassRef, { ...studentData, demotedAt: new Date(), previousClassId: selectedClass.id });
-                    batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                    moveOps.push((batch) => {
+                        const prevClassRef = doc(db, `schools/${schoolId}/classes/${student.previousClassId}/students`, student.id);
+                        batch.set(prevClassRef, { ...studentData, demotedAt: new Date(), previousClassId: selectedClass.id });
+                        batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                    });
                 } else if (status === 'leave') {
-                    batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
-                    batch.delete(doc(db, `schools/${schoolId}/students`, student.id));
+                    moveOps.push((batch) => {
+                        batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                        batch.delete(doc(db, `schools/${schoolId}/students`, student.id));
+                    });
                 } else {
                     // Retain
-                    const currentStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id);
-                    batch.update(currentStudentRef, { ...studentData, retained: true, retainedAt: new Date() });
+                    moveOps.push((batch) => {
+                        const currentStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id);
+                        batch.update(currentStudentRef, { ...studentData, retained: true, retainedAt: new Date() });
+                    });
                 }
-                operationCount++;
             }
 
-            if (operationCount > 0) await batch.commit();
+            if (moveOps.length > 0) {
+                await commitBatchChunks(moveOps, 400); // Safe limit for moves
+                console.log("Student Moves Complete");
+            }
+
             setPromotionStatus('success');
             setSelectedClass(null);
             setStudents([]);
             // Refresh counts after processing
             fetchClasses();
+
         } catch (error) {
             console.error("Promotion failed:", error);
             setPromotionStatus('error');

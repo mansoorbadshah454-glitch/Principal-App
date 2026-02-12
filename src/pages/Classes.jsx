@@ -16,7 +16,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
     const [filter, setFilter] = useState('all'); // 'all', 'present', 'absent'
 
     // State for Attendance Stats
-    const [realStats, setRealStats] = useState({ present: 0, absent: 0 });
+    const [realStats, setRealStats] = useState({ present: 0, absent: 0, total: 0 });
     const [isSaving, setIsSaving] = useState(false);
 
     // Always fetch students for real-time attendance calculation
@@ -33,7 +33,8 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
             // Calculate real attendance stats
             const present = students.filter(s => s.status === 'present').length;
             const absent = students.filter(s => s.status === 'absent').length;
-            setRealStats({ present, absent });
+            const total = students.length;
+            setRealStats({ present, absent, total });
 
             // If student list is expanded, also update the detailed list
             if (showStudents) {
@@ -66,7 +67,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                 timestamp: new Date(),
                 presentCount: realStats.present,
                 absentCount: realStats.absent,
-                totalStudents: cls.students || 0,
+                totalStudents: realStats.total,
                 records: studentsList.map(s => ({
                     id: s.id,
                     name: s.name,
@@ -106,7 +107,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
         return (student.status || 'absent') === filter;
     });
 
-    const totalStudents = cls.students || 0;
+    const totalStudents = realStats.total;
     const { present: presentCount, absent: absentCount } = realStats;
 
     // Dynamic Theme Color based on odd/even id
