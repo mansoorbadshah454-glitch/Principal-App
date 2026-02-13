@@ -369,14 +369,112 @@ const Dashboard = () => {
     const subjectsData = currentData;
     const homeworkData = currentData;
 
-    const attendanceData = [
-        { name: 'Week 1', percentage: selectedClass === 'all' ? 96 : 94 + (selectedClass?.length || 0 % 4) },
-        { name: 'Week 2', percentage: selectedClass === 'all' ? 94 : 92 + (selectedClass?.length || 0 % 5) },
-        { name: 'Week 3', percentage: selectedClass === 'all' ? 98 : 95 + (selectedClass?.length || 0 % 3) },
-        { name: 'Week 4', percentage: selectedClass === 'all' ? 92 : 88 + (selectedClass?.length || 0 % 6) },
-        { name: 'Week 5', percentage: selectedClass === 'all' ? 95 : 91 + (selectedClass?.length || 0 % 2) },
-        { name: 'Week 6', percentage: selectedClass === 'all' ? 97 : 96 },
-    ];
+    // 5. Attendance Chart Data (Real-time)
+    const [attendanceChartData, setAttendanceChartData] = useState([]);
+
+    useEffect(() => {
+        if (!schoolId) return;
+
+        // Calculate date 6 weeks ago to limit query
+        const sixWeeksAgo = new Date();
+        sixWeeksAgo.setDate(sixWeeksAgo.getDate() - 42); // 6 weeks * 7 days
+        const sixWeeksAgoStr = sixWeeksAgo.toISOString().split('T')[0];
+
+        let qAttendance;
+        if (selectedClass === 'all') {
+            qAttendance = query(
+                collection(db, `schools/${schoolId}/attendance`),
+                where("date", ">=", sixWeeksAgoStr),
+                orderBy("date", "asc")
+            );
+        } else {
+            // Find class ID for selected class name
+            const classObj = fetchedClasses.find(c => c.name === selectedClass);
+            if (classObj) {
+                qAttendance = query(
+                    collection(db, `schools/${schoolId}/attendance`),
+                    where("classId", "==", classObj.id),
+                    where("date", ">=", sixWeeksAgoStr),
+                    orderBy("date", "asc")
+                );
+            } else {
+                setAttendanceChartData([]);
+                return;
+            }
+        }
+
+        const unsubscribe = onSnapshot(qAttendance, (snapshot) => {
+            const rawData = [];
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if (data.records && Array.isArray(data.records)) {
+                    // Calculate daily percentage
+                    const total = data.records.length;
+                    const present = data.records.filter(r => r.status === 'present').length;
+                    const percentage = total > 0 ? (present / total) * 100 : 0;
+                    rawData.push({
+                        date: data.date, // "YYYY-MM-DD"
+                        percentage: percentage
+                    });
+                }
+            });
+
+            // Process into Weekly Buckets (Last 6 Weeks)
+            const processWeeklyData = (dailyData) => {
+                const weeks = [];
+                const now = new Date();
+
+                // Initialize last 6 weeks
+                for (let i = 5; i >= 0; i--) {
+                    // Start of the week window
+                    const weekEnd = new Date(now);
+                    weekEnd.setDate(weekEnd.getDate() - (i * 7));
+
+                    const weekStart = new Date(weekEnd);
+                    weekStart.setDate(weekStart.getDate() - 6);
+
+                    // Normalize time for comparison
+                    weekStart.setHours(0, 0, 0, 0);
+                    weekEnd.setHours(23, 59, 59, 999);
+
+                    let sum = 0;
+                    let count = 0;
+
+                    dailyData.forEach(day => {
+                        const dayDate = new Date(day.date);
+                        dayDate.setHours(12, 0, 0, 0); // Avoid timezone edge cases
+
+                        if (dayDate >= weekStart && dayDate <= weekEnd) {
+                            sum += day.percentage;
+                            count++;
+                        }
+                    });
+
+                    weeks.push({
+                        name: `Week ${6 - i}`,
+                        percentage: count > 0 ? Math.round(sum / count) : 0
+                    });
+                }
+                return weeks;
+            };
+
+            const chartData = processWeeklyData(rawData);
+            setAttendanceChartData(chartData);
+        });
+
+        return () => unsubscribe();
+    }, [schoolId, selectedClass, fetchedClasses]);
+
+    const attendanceData = attendanceChartData.length > 0
+        ? attendanceChartData
+        : [
+            { name: 'Week 1', percentage: 0 },
+            { name: 'Week 2', percentage: 0 },
+            { name: 'Week 3', percentage: 0 },
+            { name: 'Week 4', percentage: 0 },
+            { name: 'Week 5', percentage: 0 },
+            { name: 'Week 6', percentage: 0 },
+        ];
 
     const monthsList = [
         'This Year', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -1003,7 +1101,7 @@ const Dashboard = () => {
                                                 axisLine={false}
                                                 tickLine={false}
                                                 tick={{ fill: '#64748b', fontSize: 11 }}
-                                                domain={[85, 100]}
+                                                domain={[0, 100]}
                                             />
                                             <Tooltip
                                                 contentStyle={{
