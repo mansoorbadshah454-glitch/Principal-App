@@ -208,98 +208,92 @@ const Dashboard = () => {
         return () => unsubClasses();
     }, [schoolId]);
 
+    // 4. Consolidated Student Listener (Fees, Attendance, Performance)
+    const [allClassesData, setAllClassesData] = useState(new Map());
+
     useEffect(() => {
         if (!schoolId || fetchedClasses.length === 0) return;
 
-        console.log("[Dashboard] Starting Student Listeners for", fetchedClasses.length, "classes");
+        console.log("[Dashboard] Starting Consolidated Student Listeners for", fetchedClasses.length, "classes");
 
         const unsubscribers = [];
-        const classStatsMap = new Map();
+        const classDataMap = new Map();
 
         const updateAggregates = () => {
-            let totalPaid = 0;
-            let totalUnpaid = 0;
-            let totalStudents = 0;
+            // Recalculate Totals
+            let totalPaid = 0, totalUnpaid = 0, totalStudents = 0;
+            let totalPresent = 0, totalAbsent = 0;
 
-            classStatsMap.forEach((stats, cid) => {
-                totalPaid += stats.paid;
-                totalUnpaid += stats.unpaid;
-                totalStudents += stats.total;
+            classDataMap.forEach((data) => {
+                totalPaid += data.fees.paid;
+                totalUnpaid += data.fees.unpaid;
+                totalStudents += data.total;
+                totalPresent += data.attendance.present;
+                totalAbsent += data.attendance.absent;
             });
 
-            console.log(`[Dashboard] Aggregated Totals - Paid: ${totalPaid}, Unpaid: ${totalUnpaid}, Total: ${totalStudents}`);
+            console.log(`[Dashboard] Aggregated - Students: ${totalStudents}, Paid: ${totalPaid}, Present: ${totalPresent}`);
             setCollectionStats({ paid: totalPaid, unpaid: totalUnpaid, total: totalStudents });
+            setAttendanceStats({ present: totalPresent, absent: totalAbsent });
+
+            // Update the map state for Charts to use
+            setAllClassesData(new Map(classDataMap));
             setStatsLoaded(true);
         };
 
         fetchedClasses.forEach(cls => {
             const qStudents = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
             const unsubStudents = onSnapshot(qStudents, (snap) => {
-                let cPaid = 0;
-                let cUnpaid = 0;
+                const classStats = {
+                    fees: { paid: 0, unpaid: 0 },
+                    attendance: { present: 0, absent: 0 },
+                    subjects: {}, // { "Math": { total: 1560, count: 20 } }
+                    homework: {}, // { "Math": { total: 1800, count: 20 } }
+                    total: snap.size
+                };
 
                 snap.docs.forEach(doc => {
-                    const status = doc.data().monthlyFeeStatus || 'unpaid';
-                    if (status === 'paid') cPaid++;
-                    else cUnpaid++;
+                    const data = doc.data();
+
+                    // 1. Fees
+                    if (data.monthlyFeeStatus === 'paid') classStats.fees.paid++;
+                    else classStats.fees.unpaid++;
+
+                    // 2. Attendance
+                    if (data.status === 'present') classStats.attendance.present++;
+                    else classStats.attendance.absent++;
+
+                    // 3. Subject Scores
+                    if (data.academicScores && Array.isArray(data.academicScores)) {
+                        data.academicScores.forEach(scoreObj => {
+                            const subj = scoreObj.subject;
+                            const val = parseInt(scoreObj.score) || 0;
+                            if (!classStats.subjects[subj]) classStats.subjects[subj] = { total: 0, count: 0 };
+                            classStats.subjects[subj].total += val;
+                            classStats.subjects[subj].count++;
+                        });
+                    }
+
+                    // 4. Homework Scores
+                    if (data.homeworkScores && Array.isArray(data.homeworkScores)) {
+                        data.homeworkScores.forEach(scoreObj => {
+                            const subj = scoreObj.subject;
+                            const val = parseInt(scoreObj.score) || 0;
+                            if (!classStats.homework[subj]) classStats.homework[subj] = { total: 0, count: 0 };
+                            classStats.homework[subj].total += val;
+                            classStats.homework[subj].count++;
+                        });
+                    }
                 });
 
-                console.log(`[Dashboard] Class ${cls.name} Update - Paid: ${cPaid}, Unpaid: ${cUnpaid}`);
-                classStatsMap.set(cls.id, { paid: cPaid, unpaid: cUnpaid, total: snap.size });
+                classDataMap.set(cls.id, classStats);
                 updateAggregates();
             });
             unsubscribers.push(unsubStudents);
         });
 
         return () => {
-            console.log("[Dashboard] Cleaning up student listeners");
-            unsubscribers.forEach(u => u());
-        };
-    }, [schoolId, fetchedClasses]);
-
-    // Real-time Attendance Aggregation
-    useEffect(() => {
-        if (!schoolId || fetchedClasses.length === 0) return;
-
-        console.log("[Dashboard] Starting Attendance Listeners for", fetchedClasses.length, "classes");
-
-        const unsubscribers = [];
-        const classAttendanceMap = new Map();
-
-        const updateAttendanceAggregates = () => {
-            let totalPresent = 0;
-            let totalAbsent = 0;
-
-            classAttendanceMap.forEach((stats) => {
-                totalPresent += stats.present;
-                totalAbsent += stats.absent;
-            });
-
-            console.log(`[Dashboard] Attendance Totals - Present: ${totalPresent}, Absent: ${totalAbsent}`);
-            setAttendanceStats({ present: totalPresent, absent: totalAbsent });
-        };
-
-        fetchedClasses.forEach(cls => {
-            const qStudents = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
-            const unsubStudents = onSnapshot(qStudents, (snap) => {
-                let cPresent = 0;
-                let cAbsent = 0;
-
-                snap.docs.forEach(doc => {
-                    const status = doc.data().status || 'absent';
-                    if (status === 'present') cPresent++;
-                    else cAbsent++;
-                });
-
-                console.log(`[Dashboard] Class ${cls.name} Attendance - Present: ${cPresent}, Absent: ${cAbsent}`);
-                classAttendanceMap.set(cls.id, { present: cPresent, absent: cAbsent });
-                updateAttendanceAggregates();
-            });
-            unsubscribers.push(unsubStudents);
-        });
-
-        return () => {
-            console.log("[Dashboard] Cleaning up attendance listeners");
+            console.log("[Dashboard] Cleaning up consolidated listeners");
             unsubscribers.forEach(u => u());
         };
     }, [schoolId, fetchedClasses]);
@@ -315,46 +309,65 @@ const Dashboard = () => {
         return () => clearTimeout(timer);
     }, [statsLoaded]);
 
-
-
     const allPotentialSubjects = [
         'English', 'Urdu', 'Mathematics', 'Islamiyat', 'QURAN',
         'Social Study', 'Art', 'Science', 'Biology', 'Chemistry', 'Physic'
     ];
 
-    const generateClassData = (clsName) => {
-        let subjectsToShow = [];
+    // Data Derivation for Charts
+    const currentData = React.useMemo(() => {
+        const combinedSubjects = {};
+        const combinedHomework = {};
 
-        if (clsName === 'all') {
-            subjectsToShow = allPotentialSubjects;
+        // Helper to process a single class's data
+        const processClassData = (classData) => {
+            if (!classData) return;
+
+            // Subjects
+            Object.entries(classData.subjects).forEach(([subj, stats]) => {
+                if (!combinedSubjects[subj]) combinedSubjects[subj] = { total: 0, count: 0 };
+                combinedSubjects[subj].total += stats.total;
+                combinedSubjects[subj].count += stats.count;
+            });
+
+            // Homework
+            Object.entries(classData.homework).forEach(([subj, stats]) => {
+                if (!combinedHomework[subj]) combinedHomework[subj] = { total: 0, count: 0 };
+                combinedHomework[subj].total += stats.total;
+                combinedHomework[subj].count += stats.count;
+            });
+        };
+
+        if (selectedClass === 'all') {
+            allClassesData.forEach((data) => processClassData(data));
         } else {
-            const foundClass = fetchedClasses.find(c => c.name === clsName);
-            subjectsToShow = foundClass?.subjects || ['English', 'Urdu', 'Mathematics', 'Science'];
+            const classId = fetchedClasses.find(c => c.name === selectedClass)?.id;
+            if (classId) processClassData(allClassesData.get(classId));
         }
 
-        const seed = clsName === 'all' ? 999 : (clsName.charCodeAt(clsName.length - 1) * 7);
+        // Transform to Array
+        return allPotentialSubjects
+            .filter(subj => combinedSubjects[subj] || combinedHomework[subj]) // Only show subjects with data
+            .map((subject, index) => {
 
-        return subjectsToShow.map((subject, index) => {
-            // Consistent random logic
-            const basevariance = clsName === 'all' ? 0 : ((index % 3 === 0) ? 5 : -3);
-            const randomFactor = (seed * (index + 1) % 20);
-            const baseScore = 75 + randomFactor + basevariance;
-            const score = Math.min(100, Math.max(60, baseScore));
+                const subjStats = combinedSubjects[subject] || { total: 0, count: 1 };
+                const hwStats = combinedHomework[subject] || { total: 0, count: 1 };
 
-            return {
-                name: subject,
-                score: score,
-                fill: `hsl(${220 + (index * 30) % 360}, 80%, 65%)`,
-                completion: Math.min(100, score + (index % 2 === 0 ? 3 : -2))
-            };
-        });
-    };
+                const subjAvg = subjStats.count > 0 ? Math.round(subjStats.total / subjStats.count) : 0;
+                const hwAvg = hwStats.count > 0 ? Math.round(hwStats.total / hwStats.count) : 0;
 
-    const currentData = React.useMemo(() => generateClassData(selectedClass), [selectedClass, fetchedClasses]);
+                return {
+                    name: subject,
+                    score: subjAvg,
+                    completion: hwAvg,
+                    fill: `hsl(${220 + (index * 30) % 360}, 80%, 65%)`
+                };
+            }).sort((a, b) => b.score - a.score); // Sort by performance
 
-    // Derived data for charts
-    const subjectsData = currentData.map(d => ({ name: d.name, score: d.score, fill: d.fill }));
-    const homeworkData = currentData.map(d => ({ name: d.name, completion: d.completion }));
+    }, [selectedClass, allClassesData, fetchedClasses]);
+
+    const subjectsData = currentData;
+    const homeworkData = currentData;
 
     const attendanceData = [
         { name: 'Week 1', percentage: selectedClass === 'all' ? 96 : 94 + (selectedClass?.length || 0 % 4) },
@@ -364,8 +377,6 @@ const Dashboard = () => {
         { name: 'Week 5', percentage: selectedClass === 'all' ? 95 : 91 + (selectedClass?.length || 0 % 2) },
         { name: 'Week 6', percentage: selectedClass === 'all' ? 97 : 96 },
     ];
-
-
 
     const monthsList = [
         'This Year', 'January', 'February', 'March', 'April', 'May', 'June',
