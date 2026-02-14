@@ -526,11 +526,11 @@ const NewsFeed = () => {
                                         style={{
                                             background: 'transparent', border: 'none', cursor: 'pointer',
                                             display: 'flex', alignItems: 'center', gap: '0.4rem',
-                                            color: post.likes?.includes(currentUserId) ? '#ef4444' : '#64748b',
+                                            color: post.likes?.includes(currentUserId) ? '#3b82f6' : '#64748b',
                                             fontSize: '0.9rem', fontWeight: '600'
                                         }}
                                     >
-                                        <ThumbsUp size={18} fill={post.likes?.includes(currentUserId) ? '#ef4444' : 'none'} />
+                                        <ThumbsUp size={18} fill={post.likes?.includes(currentUserId) ? '#3b82f6' : 'none'} />
                                         <span>{post.likes?.length || 0} Likes</span>
                                     </button>
                                     <button

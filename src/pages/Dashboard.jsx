@@ -31,8 +31,6 @@ const Dashboard = () => {
     const [performanceTab, setPerformanceTab] = useState('subjects');
     const [selectedClass, setSelectedClass] = useState('all');
     const [showClassDropdown, setShowClassDropdown] = useState(false);
-    const [selectedMonth, setSelectedMonth] = useState('February');
-    const [showMonthDropdown, setShowMonthDropdown] = useState(false);
     const [rankingPage, setRankingPage] = useState(0);
 
     const getGreeting = () => {
@@ -476,10 +474,54 @@ const Dashboard = () => {
             { name: 'Week 6', percentage: 0 },
         ];
 
-    const monthsList = [
-        'This Year', 'January', 'February', 'March', 'April', 'May', 'June',
-        'July', 'August', 'September', 'October', 'November', 'December'
-    ];
+    // 6. Classes Chart Data (New)
+    const classesChartData = React.useMemo(() => {
+        if (!statsLoaded || fetchedClasses.length === 0) return [];
+
+        const data = fetchedClasses.map(cls => {
+            const classId = cls.id;
+            const stats = allClassesData.get(classId);
+
+            if (!stats) return { name: cls.name, score: 0, fill: '#cbd5e1' };
+
+            // Calculate overall academic score for the class
+            // Aggregate all subject totals and counts
+            let totalScore = 0;
+            let totalCount = 0;
+
+            Object.values(stats.subjects).forEach(subj => {
+                totalScore += subj.total;
+                totalCount += subj.count;
+            });
+
+            const avgScore = totalCount > 0 ? Math.round(totalScore / totalCount) : 0;
+
+            // Determine Color based on Class Name (Department)
+            // Primary (Nursery - 5): Purple #8b5cf6
+            // Secondary (6 - 10): Blue #3b82f6
+            const className = cls.name || '';
+            const lowerName = className.toLowerCase();
+            let color = '#3b82f6'; // Default Blue (Secondary)
+
+            // Check for Primary keywords
+            if (
+                lowerName.includes('nursery') ||
+                lowerName.includes('prep') ||
+                lowerName.includes('kg') ||
+                ['1', '2', '3', '4', '5'].some(num => lowerName.includes(num) && !lowerName.includes('10')) // Avoid matching 10 with 1
+            ) {
+                color = '#8b5cf6'; // Purple (Primary)
+            }
+
+            return {
+                name: cls.name,
+                score: avgScore,
+                fill: color
+            };
+        });
+
+        return data;
+    }, [statsLoaded, fetchedClasses, allClassesData]);
 
     const availableClasses = ['All School', ...fetchedClasses.map(c => c.name)];
 
@@ -851,6 +893,7 @@ const Dashboard = () => {
                             flexWrap: 'wrap'
                         }}>
                             {[
+                                { id: 'classes', label: 'Classes', color: '#06b6d4' },
                                 { id: 'subjects', label: 'Subjects', color: '#ec4899' },
                                 { id: 'homework', label: 'Homework', color: '#f59e0b' },
                                 { id: 'attendance', label: 'Attendance', color: '#10b981' }
@@ -876,74 +919,7 @@ const Dashboard = () => {
                                 </button>
                             ))}
 
-                            {/* Month Selector Button */}
-                            <div style={{ position: 'relative' }}>
-                                <button
-                                    onClick={() => setShowMonthDropdown(!showMonthDropdown)}
-                                    style={{
-                                        padding: '0.5rem 1rem',
-                                        background: 'white',
-                                        color: '#8b5cf6',
-                                        border: 'none',
-                                        borderRadius: '10px',
-                                        fontSize: '0.9rem',
-                                        fontWeight: '700',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.5rem',
-                                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-                                        transition: 'var(--transition)'
-                                    }}
-                                >
-                                    {selectedMonth}
-                                    <ChevronDown size={16} />
-                                </button>
 
-                                {showMonthDropdown && (
-                                    <div style={{
-                                        position: 'absolute',
-                                        top: 'calc(100% + 0.5rem)',
-                                        left: 0,
-                                        background: 'white',
-                                        borderRadius: '12px',
-                                        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.2)',
-                                        minWidth: '150px',
-                                        maxHeight: '250px',
-                                        overflowY: 'auto',
-                                        zIndex: 1000,
-                                        animation: 'slideDown 0.2s ease-out'
-                                    }} className="custom-scrollbar">
-                                        {monthsList.map((month, idx) => (
-                                            <div
-                                                key={idx}
-                                                onClick={() => {
-                                                    setSelectedMonth(month);
-                                                    setShowMonthDropdown(false);
-                                                }}
-                                                style={{
-                                                    padding: '0.6rem 1rem',
-                                                    cursor: 'pointer',
-                                                    fontSize: '0.85rem',
-                                                    transition: 'var(--transition)',
-                                                    borderBottom: idx < monthsList.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                                    background: selectedMonth === month ? '#f8fafc' : 'transparent',
-                                                    color: selectedMonth === month ? '#8b5cf6' : 'var(--text-main)',
-                                                    fontWeight: selectedMonth === month ? '600' : '400'
-                                                }}
-                                                onMouseEnter={(e) => e.target.style.background = '#f8fafc'}
-                                                onMouseLeave={(e) => {
-                                                    if (selectedMonth !== month) {
-                                                        e.target.style.background = 'transparent';
-                                                    }
-                                                }}
-                                            >
-                                                {month}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
                         </div>
 
                         {/* Chart Area */}
@@ -956,6 +932,59 @@ const Dashboard = () => {
                             zIndex: 1,
                             boxShadow: '0 10px 40px rgba(0, 0, 0, 0.1)'
                         }}>
+                            {/* Classes Chart (New) */}
+                            {performanceTab === 'classes' && (
+                                <div style={{ animation: 'fadeIn 0.5s ease-out' }}>
+                                    <h3 style={{
+                                        fontSize: '1rem',
+                                        fontWeight: '700',
+                                        marginBottom: '0.75rem',
+                                        color: 'var(--text-main)'
+                                    }}>
+                                        Class-wise Performance
+                                    </h3>
+                                    <ResponsiveContainer width="100%" height={180}>
+                                        <BarChart data={classesChartData}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                                            <XAxis
+                                                dataKey="name"
+                                                axisLine={false}
+                                                tickLine={false}
+                                                tick={{ fill: '#64748b', fontSize: 11, fontWeight: '600' }}
+                                                dy={10}
+                                            />
+                                            <YAxis
+                                                axisLine={false}
+                                                tickLine={false}
+                                                tick={{ fill: '#64748b', fontSize: 11 }}
+                                                domain={[0, 100]}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{
+                                                    background: 'white',
+                                                    border: 'none',
+                                                    borderRadius: '12px',
+                                                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+                                                    padding: '12px'
+                                                }}
+                                                cursor={{ fill: '#fef3c7' }}
+                                            />
+                                            <Bar
+                                                dataKey="score"
+                                                radius={[6, 6, 0, 0]}
+                                                animationDuration={1500}
+                                                animationEasing="ease-out"
+                                                barSize={40}
+                                            >
+                                                {classesChartData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.fill} />
+                                                ))}
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            )}
+
                             {/* Subjects Chart - Bar Chart */}
                             {performanceTab === 'subjects' && (
                                 <div style={{ animation: 'fadeIn 0.5s ease-out' }}>
