@@ -98,15 +98,34 @@ const ClassDetails = () => {
             const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
             const q = query(studentsRef);
             unsubStudents = onSnapshot(q, (snapshot) => {
-                const realStudents = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data(),
-                    rollNo: doc.data().rollNo || 'N/A',
-                    status: doc.data().status || 'absent',
-                    avgScore: doc.data().avgScore || 0,
-                    homework: doc.data().homework || 0,
-                    avatar: doc.data().profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
-                }));
+                const realStudents = snapshot.docs.map(doc => {
+                    const data = doc.data();
+
+                    // Helper to calculate average from score arrays
+                    const calculateAverage = (scores) => {
+                        if (!scores || !Array.isArray(scores) || scores.length === 0) return 0;
+                        const validScores = scores.filter(s => s.score !== undefined && s.score !== null);
+                        if (validScores.length === 0) return 0;
+                        const total = validScores.reduce((sum, item) => sum + (parseInt(item.score) || 0), 0);
+                        return Math.round(total / validScores.length);
+                    };
+
+                    const avgScore = calculateAverage(data.academicScores) || data.avgScore || 0;
+                    const homework = calculateAverage(data.homeworkScores) || data.homework || 0;
+                    // Attendance is stored as a direct percentage (0-100) in 'attendance' field by Teacher App
+                    const attendanceScore = typeof data.attendance === 'object' ? (data.attendance.percentage || 0) : (parseInt(data.attendance) || 0);
+
+                    return {
+                        id: doc.id,
+                        ...data,
+                        rollNo: data.rollNo || 'N/A',
+                        status: data.status || 'absent',
+                        avgScore: avgScore,
+                        homework: homework,
+                        attendanceScore: attendanceScore, // Passed to modal
+                        avatar: data.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
+                    };
+                });
                 realStudents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 setStudents(realStudents);
                 setLoading(false);

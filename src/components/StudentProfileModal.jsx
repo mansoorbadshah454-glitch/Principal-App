@@ -51,7 +51,7 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
     if (!isOpen || !student) return null;
 
     // --- Data Prep ---
-    // 1. Subject Scores
+    // 1. Subject Scores (Academic)
     const subjectData = student.academicScores && student.academicScores.length > 0
         ? student.academicScores
         : (classSubjects && classSubjects.length > 0 ? classSubjects : ['Math', 'Science', 'English', 'Urdu', 'Art']).slice(0, 6).map((sub) => {
@@ -61,6 +61,11 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                 score: Math.min(100, Math.max(50, Math.floor(Math.random() * 40) + 60 + (seed % 10)))
             };
         });
+
+    // 2. Homework Scores
+    const homeworkData = student.homeworkScores && student.homeworkScores.length > 0
+        ? student.homeworkScores
+        : []; // If empty, we might show a "No Data" message or similar, or just hide the chart
 
     // 2. Behavior Metrics
     const rawWellness = student.wellness || {};
@@ -73,7 +78,8 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
     ];
 
     // 3. Attendance
-    const attendanceScore = student.attendance?.percentage || student.attendance || 85;
+    // Use attendanceScore if available (calculated in parent), else fallback
+    const attendanceScore = student.attendanceScore !== undefined ? student.attendanceScore : (student.attendance?.percentage || student.attendance || 0);
 
     // Styles
     const styles = {
@@ -254,6 +260,8 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                                     </ResponsiveContainer>
                                 </div>
                             </div>
+
+
 
                             {/* Chart 2: Behavior Bars */}
                             <div>
