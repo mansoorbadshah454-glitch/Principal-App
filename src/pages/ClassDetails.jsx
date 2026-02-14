@@ -126,6 +126,15 @@ const ClassDetails = () => {
                         avatar: data.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
                     };
                 });
+
+                // Calculate Rank based on avgScore (Descending)
+                // We sort a copy to determine rank, then assign it back
+                const sortedByScore = [...realStudents].sort((a, b) => b.avgScore - a.avgScore);
+                sortedByScore.forEach((student, index) => {
+                    student.classRank = index + 1;
+                });
+
+                // Sort by Name for display
                 realStudents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 setStudents(realStudents);
                 setLoading(false);
@@ -403,7 +412,7 @@ const ClassDetails = () => {
                             onClick={(e) => {
                                 const rect = e.currentTarget.getBoundingClientRect();
                                 setSelectedCardRect(rect);
-                                setSelectedStudent({ ...student, rank: index + 1 });
+                                setSelectedStudent({ ...student, rank: student.classRank }); // Use pre-calculated rank
                                 setShowProfileModal(true);
                             }}
                             style={{
