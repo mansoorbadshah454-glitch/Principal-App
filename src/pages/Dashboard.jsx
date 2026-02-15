@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
-    Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap
+    Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap, MessageCircle, Trash2, Paperclip
 } from 'lucide-react';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
     ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
@@ -65,13 +65,21 @@ const Dashboard = () => {
 
         const q = query(
             collection(db, `schools/${schoolId}/messages`),
-            where("to", "==", "principal"),
-            orderBy("timestamp", "desc")
+            where("to", "==", "principal")
+            // orderBy("timestamp", "desc") // Checking if Index is the issue
         );
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const list = [];
             snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+
+            // Client-side sort
+            list.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+
+            console.log("Dashboard: Real-time messages:", list.length);
             setMessages(list);
+        }, (error) => {
+            console.error("Dashboard: Message Listener Error:", error);
+            // alert("Message Listener Error: " + error.message);
         });
         return () => unsubscribe();
     }, [schoolId]);
@@ -538,14 +546,21 @@ const Dashboard = () => {
             const session = localStorage.getItem('manual_session');
             if (session) {
                 const { schoolId } = JSON.parse(session);
+                console.log("Dashboard: Sending Message...");
+                console.log("Dashboard: School ID:", schoolId);
+                console.log("Dashboard: Selected Teacher:", selectedTeacher);
+                console.log("Dashboard: Message Text:", messageText);
+                console.log("Dashboard: Is Broadcast?", isBroadcast);
 
                 if (isBroadcast) {
                     // Send to all teachers
                     const promises = teachers.map(teacher =>
                         addDoc(collection(db, `schools/${schoolId}/messages`), {
                             to: teacher.name,
+                            toId: teacher.id, // Add UID for reliable filtering
                             from: 'principal',
                             fromName: 'Principal',
+                            fromId: auth.currentUser.uid, // Required for 'sender can read' rule
                             text: messageText,
                             timestamp: serverTimestamp(),
                             read: false
@@ -556,8 +571,10 @@ const Dashboard = () => {
                     // Send to single teacher
                     await addDoc(collection(db, `schools/${schoolId}/messages`), {
                         to: selectedTeacher.name,
+                        toId: selectedTeacher.id, // Add UID for reliable filtering
                         from: 'principal',
                         fromName: 'Principal',
+                        fromId: auth.currentUser.uid, // Required for 'sender can read' rule
                         text: messageText,
                         timestamp: serverTimestamp(),
                         read: false
@@ -567,11 +584,23 @@ const Dashboard = () => {
                 setMessageText('');
                 setSelectedTeacher(null);
                 setIsBroadcast(false);
+                // alert("Message Sent Query Successfully!"); 
             }
         } catch (error) {
             console.error('Error sending message:', error);
+            alert("FAILED TO SEND MESSAGE: " + error.message);
         } finally {
             setIsSending(false);
+        }
+    };
+
+    const handleDeleteFeedback = async (msgId) => {
+        if (!confirm("Delete this feedback?")) return;
+        try {
+            const { deleteDoc, doc } = await import('firebase/firestore');
+            await deleteDoc(doc(db, `schools/${schoolId}/messages`, msgId));
+        } catch (error) {
+            console.error("Error deleting feedback:", error);
         }
     };
 
@@ -1271,23 +1300,7 @@ const Dashboard = () => {
                         {/* Quick Notes */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
-                            {/* Messages from Teachers */}
-                            <div className="card">
-                                <h3 style={{ fontSize: '1.125rem', marginBottom: '1rem' }}>Teacher Feedback</h3>
-                                <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                    {messages.length === 0 ? (
-                                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No messages yet.</p>
-                                    ) : messages.map(msg => (
-                                        <div key={msg.id} style={{ padding: '0.75rem', borderRadius: '10px', background: '#f8fafc', border: '1px solid #f1f5f9' }}>
-                                            <p style={{ fontWeight: '600', fontSize: '0.85rem', color: 'var(--primary)', marginBottom: '0.25rem' }}>{msg.fromName}</p>
-                                            <p style={{ fontSize: '0.8rem', color: '#1e293b' }}>{msg.text}</p>
-                                            <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
-                                                {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+
 
                             {/* Teacher Performance Ranking Card */}
                             <div className="card" style={{
@@ -1397,6 +1410,111 @@ const Dashboard = () => {
                                     </button>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    {/* Teacher Feedback Card */}
+                    <div className="card" style={{
+                        background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+                        padding: '1.5rem',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        marginBottom: '2rem',
+                        borderRadius: '24px',
+                        position: 'relative',
+                        overflow: 'hidden',
+                        boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <div style={{
+                                    width: '40px', height: '40px', borderRadius: '12px',
+                                    background: 'rgba(249, 115, 22, 0.2)', color: '#f97316',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                    <MessageCircle size={22} />
+                                </div>
+                                <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white', margin: 0 }}>
+                                    Teacher Feedback
+                                </h2>
+                            </div>
+                            <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', fontWeight: '600' }}>
+                                {messages.filter(m => m.type === 'teacher-reply').length} Messages
+                            </span>
+                        </div>
+
+                        <div className="custom-scrollbar" style={{ maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '0.5rem' }}>
+                            {messages.filter(m => m.type === 'teacher-reply').length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '2rem', color: 'rgba(255,255,255,0.4)' }}>
+                                    <p>No feedback from teachers yet.</p>
+                                </div>
+                            ) : (
+                                messages.filter(m => m.type === 'teacher-reply').map(msg => (
+                                    <div key={msg.id} style={{
+                                        background: 'rgba(255,255,255,0.05)',
+                                        borderRadius: '16px',
+                                        padding: '1rem',
+                                        border: '1px solid rgba(255,255,255,0.1)'
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <span style={{ fontWeight: '700', color: 'white', fontSize: '0.95rem' }}>
+                                                    {msg.fromName || 'Teacher'}
+                                                </span>
+                                                <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)' }}>
+                                                    • {msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleDateString() : 'Now'}
+                                                </span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleDeleteFeedback(msg.id)}
+                                                style={{
+                                                    background: 'rgba(239, 68, 68, 0.1)',
+                                                    border: 'none',
+                                                    color: '#ef4444',
+                                                    padding: '6px',
+                                                    borderRadius: '8px',
+                                                    cursor: 'pointer',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    transition: 'background 0.2s'
+                                                }}
+                                                className="hover-bg-red"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                        <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.9rem', lineHeight: '1.5', margin: 0 }}>
+                                            {msg.text || msg.message}
+                                        </p>
+
+                                        {/* Attachment Button */}
+                                        {msg.attachment && (
+                                            <div style={{ marginTop: '0.75rem' }}>
+                                                <a
+                                                    href={msg.attachment.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{
+                                                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                                                        background: 'rgba(255, 255, 255, 0.1)',
+                                                        border: '1px solid rgba(255, 255, 255, 0.2)',
+                                                        borderRadius: '8px',
+                                                        padding: '0.5rem 1rem',
+                                                        color: 'white',
+                                                        fontSize: '0.85rem',
+                                                        textDecoration: 'none',
+                                                        fontWeight: '500',
+                                                        transition: 'background 0.2s'
+                                                    }}
+                                                    onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
+                                                    onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.1)'}
+                                                >
+                                                    <Paperclip size={16} />
+                                                    Download Attachment
+                                                </a>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
                 </div>
