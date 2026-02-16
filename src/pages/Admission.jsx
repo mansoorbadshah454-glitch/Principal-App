@@ -41,6 +41,7 @@ const Admission = () => {
             admissionClass: '', // This will now store the Class ID
             previousSchool: '',
             rollNo: '',
+            admissionNo: '', // New Field
             profilePic: null
         }
     ]);
@@ -210,6 +211,7 @@ const Admission = () => {
             admissionClass: '',
             previousSchool: '',
             rollNo: '',
+            admissionNo: '',
             profilePic: null
         }]);
     };
@@ -294,6 +296,7 @@ const Admission = () => {
                     profilePic: student.profilePic || null,
                     parentDetails: { ...parentDetails, parentId: finalParentId }, // Link Ref in Student Doc
                     rollNo: student.rollNo || `TPP-${Math.floor(1000 + Math.random() * 9000)}`,
+                    admissionNo: student.admissionNo || '', // Save Admission No
                     status: 'present',
                     avgScore: 0,
                     homework: 0,
@@ -355,7 +358,7 @@ const Admission = () => {
 
             // Reset
             setParentDetails({ fatherName: '', occupation: '', phone: '', email: '', address: '', username: '', password: '' });
-            setStudents([{ firstName: '', lastName: '', dob: '', gender: 'select', admissionClass: '', previousSchool: '', profilePic: null }]);
+            setStudents([{ firstName: '', lastName: '', dob: '', gender: 'select', admissionClass: '', previousSchool: '', admissionNo: '', profilePic: null }]);
             setExistingParent(null);
             setSearchPhone('');
             setLinkedSiblings([]);
@@ -721,6 +724,20 @@ const Admission = () => {
                                                 onChange={(e) => handleStudentChange(index, e)}
                                                 className="modern-input"
                                                 required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="input-group">
+                                        <label className="input-label">Admission No</label>
+                                        <div className="input-wrapper">
+                                            <input
+                                                type="text"
+                                                name="admissionNo"
+                                                value={student.admissionNo}
+                                                onChange={(e) => handleStudentChange(index, e)}
+                                                className="modern-input"
+                                                placeholder="e.g. ADM-001"
                                             />
                                         </div>
                                     </div>
