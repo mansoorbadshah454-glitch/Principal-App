@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
@@ -41,7 +41,7 @@ const Dashboard = () => {
     };
 
     // 3. Resolve School ID First
-    React.useEffect(() => {
+    useEffect(() => {
         const manualSession = localStorage.getItem('manual_session');
         if (manualSession) {
             try {
@@ -60,7 +60,7 @@ const Dashboard = () => {
     }, []);
 
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (!schoolId) return;
 
         const q = query(
@@ -144,7 +144,7 @@ const Dashboard = () => {
         return currentDate > lastDate;
     };
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (!schoolId) return;
         const q = query(collection(db, `schools/${schoolId}/teachers`));
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -185,7 +185,7 @@ const Dashboard = () => {
 
 
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (!schoolId) return;
 
         console.log("[Dashboard] Listening for classes for school:", schoolId);
@@ -321,7 +321,7 @@ const Dashboard = () => {
     ];
 
     // Data Derivation for Charts
-    const currentData = React.useMemo(() => {
+    const currentData = useMemo(() => {
         const combinedSubjects = {};
         const combinedHomework = {};
 
@@ -483,7 +483,7 @@ const Dashboard = () => {
         ];
 
     // 6. Classes Chart Data (New)
-    const classesChartData = React.useMemo(() => {
+    const classesChartData = useMemo(() => {
         if (!statsLoaded || fetchedClasses.length === 0) return [];
 
         const data = fetchedClasses.map(cls => {

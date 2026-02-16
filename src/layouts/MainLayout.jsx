@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { db, auth } from '../firebase';
@@ -6,12 +6,12 @@ import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info } from 'lucide-react';
 
 const MainLayout = () => {
-    const [isSuspended, setIsSuspended] = React.useState(false);
-    const [loading, setLoading] = React.useState(true);
-    const [announcement, setAnnouncement] = React.useState(null);
-    const [schoolId, setSchoolId] = React.useState('');
+    const [isSuspended, setIsSuspended] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [announcement, setAnnouncement] = useState(null);
+    const [schoolId, setSchoolId] = useState('');
 
-    React.useEffect(() => {
+    useEffect(() => {
         const session = localStorage.getItem('manual_session');
         let currentSchoolId = '';
         if (session) {

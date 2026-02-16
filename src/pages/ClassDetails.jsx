@@ -184,7 +184,7 @@ const ClassDetails = () => {
     const isTargeted = currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(classId)));
 
     // Calculate Action Stats
-    const actionStats = React.useMemo(() => {
+    const actionStats = useMemo(() => {
         if (!isTargeted || !currentAction) return { paid: 0, unpaid: 0 };
         let paid = 0;
         let unpaid = 0;

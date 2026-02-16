@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Trophy, BookOpen, Star, Activity, Heart, Calendar } from 'lucide-react';
@@ -9,9 +9,9 @@ import {
 
 const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, cardRect }) => {
     // Position Logic
-    const [position, setPosition] = React.useState({ top: 0, left: 0, transformOrigin: 'center' });
+    const [position, setPosition] = useState({ top: 0, left: 0, transformOrigin: 'center' });
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (isOpen && cardRect) {
             const { top, left, width, height } = cardRect;
             const scrollY = window.scrollY; // Add scrollY for absolute positioning
