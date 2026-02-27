@@ -42,21 +42,43 @@ const Dashboard = () => {
 
     // 3. Resolve School ID First
     useEffect(() => {
-        const manualSession = localStorage.getItem('manual_session');
-        if (manualSession) {
-            try {
-                const sessionData = JSON.parse(manualSession);
-                if (sessionData.schoolId) {
-                    setSchoolId(sessionData.schoolId);
+        const resolveUser = async () => {
+            // Priority 1: Manual Session
+            const manualSession = localStorage.getItem('manual_session');
+            if (manualSession) {
+                try {
+                    const data = JSON.parse(manualSession);
+                    if (data.schoolId) {
+                        setSchoolId(data.schoolId);
+                        return; // Found it, stop checking
+                    }
+                } catch (e) {
+                    console.error("[Dashboard] Error parsing session:", e);
                 }
-            } catch (e) {
-                console.error("[Dashboard] Error parsing session:", e);
-                setStatsLoaded(true);
             }
-        } else {
-            console.warn("[Dashboard] No manual_session found");
-            setStatsLoaded(true);
-        }
+
+            // Priority 2: Firebase Auth Token Claims
+            const unsubscribe = auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    try {
+                        const token = await user.getIdTokenResult();
+                        if (token.claims.schoolId) {
+                            setSchoolId(token.claims.schoolId);
+                        } else {
+                            console.warn("[Dashboard] User authenticated but no schoolId claim found.");
+                            setStatsLoaded(true); // Don't hang on Loading...
+                        }
+                    } catch (e) {
+                        console.error("[Dashboard] Token err:", e);
+                        setStatsLoaded(true);
+                    }
+                } else {
+                    setStatsLoaded(true); // Not logged in
+                }
+            });
+            return () => unsubscribe();
+        };
+        resolveUser();
     }, []);
 
 
