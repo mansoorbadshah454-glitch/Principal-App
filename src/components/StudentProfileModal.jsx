@@ -48,11 +48,10 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
         }
     }, [isOpen, cardRect]);
 
-    if (!isOpen || !student) return null;
-
     // --- Data Prep ---
     // 1. Subject Scores (Academic)
     const subjectData = React.useMemo(() => {
+        if (!student) return [];
         return student.academicScores && student.academicScores.length > 0
             ? student.academicScores.map(item => ({
                 ...item,
@@ -65,17 +64,19 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                     score: Math.min(100, Math.max(50, Math.floor(Math.random() * 40) + 60 + (seed % 10)))
                 };
             });
-    }, [student.academicScores, classSubjects, student.id]);
+    }, [student?.academicScores, classSubjects, student?.id]);
 
     // 2. Homework Scores
     const homeworkData = React.useMemo(() => {
+        if (!student) return [];
         return student.homeworkScores && student.homeworkScores.length > 0
             ? student.homeworkScores
             : []; // If empty, we might show a "No Data" message or similar, or just hide the chart
-    }, [student.homeworkScores]);
+    }, [student?.homeworkScores]);
 
     // 3. Behavior Metrics
     const behaviorData = React.useMemo(() => {
+        if (!student) return [];
         const rawWellness = student.wellness || {};
         const seed = student.id ? student.id.charCodeAt(0) : 0;
 
@@ -84,7 +85,9 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
             { name: 'Health', score: rawWellness.health || (92 + (seed % 8)), color: '#ec4899' },
             { name: 'Hygiene', score: rawWellness.hygiene || (88 + (seed % 10)), color: '#10b981' },
         ];
-    }, [student.wellness, student.id]);
+    }, [student?.wellness, student?.id]);
+
+    if (!isOpen || !student) return null;
 
     // 3. Attendance
     // Use attendanceScore if available (calculated in parent), else fallback
