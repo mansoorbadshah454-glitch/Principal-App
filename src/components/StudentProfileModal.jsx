@@ -52,30 +52,39 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
 
     // --- Data Prep ---
     // 1. Subject Scores (Academic)
-    const subjectData = student.academicScores && student.academicScores.length > 0
-        ? student.academicScores
-        : (classSubjects && classSubjects.length > 0 ? classSubjects : ['Math', 'Science', 'English', 'Urdu', 'Art']).slice(0, 6).map((sub) => {
-            const seed = student.id ? student.id.charCodeAt(0) : 0;
-            return {
-                subject: sub,
-                score: Math.min(100, Math.max(50, Math.floor(Math.random() * 40) + 60 + (seed % 10)))
-            };
-        });
+    const subjectData = React.useMemo(() => {
+        return student.academicScores && student.academicScores.length > 0
+            ? student.academicScores.map(item => ({
+                ...item,
+                score: parseInt(item.score, 10) || 0
+            }))
+            : (classSubjects && classSubjects.length > 0 ? classSubjects : ['Math', 'Science', 'English', 'Urdu', 'Art']).slice(0, 6).map((sub) => {
+                const seed = student.id ? student.id.charCodeAt(0) : 0;
+                return {
+                    subject: sub,
+                    score: Math.min(100, Math.max(50, Math.floor(Math.random() * 40) + 60 + (seed % 10)))
+                };
+            });
+    }, [student.academicScores, classSubjects, student.id]);
 
     // 2. Homework Scores
-    const homeworkData = student.homeworkScores && student.homeworkScores.length > 0
-        ? student.homeworkScores
-        : []; // If empty, we might show a "No Data" message or similar, or just hide the chart
+    const homeworkData = React.useMemo(() => {
+        return student.homeworkScores && student.homeworkScores.length > 0
+            ? student.homeworkScores
+            : []; // If empty, we might show a "No Data" message or similar, or just hide the chart
+    }, [student.homeworkScores]);
 
-    // 2. Behavior Metrics
-    const rawWellness = student.wellness || {};
-    const seed = student.id ? student.id.charCodeAt(0) : 0;
+    // 3. Behavior Metrics
+    const behaviorData = React.useMemo(() => {
+        const rawWellness = student.wellness || {};
+        const seed = student.id ? student.id.charCodeAt(0) : 0;
 
-    const behaviorData = [
-        { name: 'Behavior', score: rawWellness.behavior || (85 + (seed % 15)), color: '#8b5cf6' },
-        { name: 'Health', score: rawWellness.health || (92 + (seed % 8)), color: '#ec4899' },
-        { name: 'Hygiene', score: rawWellness.hygiene || (88 + (seed % 10)), color: '#10b981' },
-    ];
+        return [
+            { name: 'Behavior', score: rawWellness.behavior || (85 + (seed % 15)), color: '#8b5cf6' },
+            { name: 'Health', score: rawWellness.health || (92 + (seed % 8)), color: '#ec4899' },
+            { name: 'Hygiene', score: rawWellness.hygiene || (88 + (seed % 10)), color: '#10b981' },
+        ];
+    }, [student.wellness, student.id]);
 
     // 3. Attendance
     // Use attendanceScore if available (calculated in parent), else fallback
