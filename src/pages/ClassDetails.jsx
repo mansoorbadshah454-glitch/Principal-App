@@ -180,6 +180,17 @@ const ClassDetails = () => {
         });
     }, [students, filterStatus, searchTerm]);
 
+    // Sync selectedStudent with live data for real-time modal updates
+    useEffect(() => {
+        if (selectedStudent && students.length > 0) {
+            const liveStudentData = students.find(s => s.id === selectedStudent.id);
+            if (liveStudentData && JSON.stringify(liveStudentData) !== JSON.stringify(selectedStudent)) {
+                // Keep the existing rank, which was set when opening the modal
+                setSelectedStudent({ ...liveStudentData, rank: selectedStudent.rank });
+            }
+        }
+    }, [students, selectedStudent]);
+
     // Check if this class is targeted by the current action
     const isTargeted = currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(classId)));
 
@@ -227,11 +238,69 @@ const ClassDetails = () => {
     };
 
 
+    // Calculate Live Class Metrics
+    const classMetrics = useMemo(() => {
+        if (!students || students.length === 0) return { classScore: 0, avgSubject: 0, homework: 0, attendance: 0 };
+
+        let totalSubjectScoresSum = 0;
+        let totalSubjectScoresCount = 0;
+
+        let totalHomeworkScoresSum = 0;
+        let totalHomeworkScoresCount = 0;
+
+        let totalAttendance = 0;
+        const currentSubjects = classData?.subjects || [];
+
+        students.forEach(s => {
+            // Subject Scores
+            const subScoresRaw = s.academicScores || [];
+            // We only look at subjects explicitly assigned to this class
+            const validSubScores = subScoresRaw
+                .filter(i => currentSubjects.includes(i.subject))
+                .map(i => parseInt(i.score) || 0);
+
+            validSubScores.forEach(score => {
+                totalSubjectScoresSum += score;
+                totalSubjectScoresCount++;
+            });
+
+            // Homework Scores
+            const hwScoresRaw = s.homeworkScores || [];
+            const validHwScores = hwScoresRaw
+                .filter(i => currentSubjects.includes(i.subject))
+                .map(i => parseInt(i.score) || 0);
+
+            validHwScores.forEach(score => {
+                totalHomeworkScoresSum += score;
+                totalHomeworkScoresCount++;
+            });
+
+            // Attendance
+            const attVal = typeof s.attendance === 'object' ? s.attendance.percentage : s.attendance;
+            totalAttendance += (parseInt(attVal) || 85);
+        });
+
+        const avgSubject = totalSubjectScoresCount > 0 ? Math.round(totalSubjectScoresSum / totalSubjectScoresCount) : 0;
+        const avgHomework = totalHomeworkScoresCount > 0 ? Math.round(totalHomeworkScoresSum / totalHomeworkScoresCount) : 0;
+        const avgAttendance = students.length > 0 ? Math.round(totalAttendance / students.length) : 0;
+
+        const classScore = Math.round((avgSubject + avgHomework) / 2);
+
+        return {
+            classScore,
+            avgSubject,
+            homework: avgHomework,
+            attendance: avgAttendance
+        };
+
+    }, [students, classData]);
+
+
     const stats = [
-        { label: 'Class Score %', value: '82%', icon: Activity, color: '#6366f1', bg: '#e0e7ff' },
-        { label: 'Avg Subject Score', value: '78%', icon: BookOpen, color: '#ec4899', bg: '#fce7f3' },
-        { label: 'Homework', value: '94%', icon: Calendar, color: '#f59e0b', bg: '#fef3c7' }, // Using Calendar as placeholder or CheckCircle
-        { label: 'Attendance', value: '85%', icon: Users, color: '#10b981', bg: '#d1fae5' },
+        { label: 'Class Score %', value: `${classMetrics.classScore}%`, icon: Activity, color: '#6366f1', bg: '#e0e7ff' },
+        { label: 'Avg Subject Score', value: `${classMetrics.avgSubject}%`, icon: BookOpen, color: '#ec4899', bg: '#fce7f3' },
+        { label: 'Homework', value: `${classMetrics.homework}%`, icon: Calendar, color: '#f59e0b', bg: '#fef3c7' },
+        { label: 'Attendance', value: `${classMetrics.attendance}%`, icon: Users, color: '#10b981', bg: '#d1fae5' },
     ];
 
     if (loading) {
