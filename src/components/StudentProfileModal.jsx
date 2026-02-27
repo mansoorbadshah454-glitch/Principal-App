@@ -66,6 +66,8 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
             });
     }, [student?.academicScores, classSubjects, student?.id]);
 
+    console.log("[StudentProfileModal] Derived subjectData:", subjectData);
+
     // 2. Homework Scores
     const homeworkData = React.useMemo(() => {
         if (!student) return [];
@@ -263,11 +265,7 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                                                 cursor={{ fill: '#f8fafc' }}
                                                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px', padding: '8px' }}
                                             />
-                                            <Bar dataKey="score" radius={[4, 4, 0, 0]} barSize={24}>
-                                                {subjectData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#eab308'][index % 6]} />
-                                                ))}
-                                            </Bar>
+                                            <Bar dataKey="score" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={24} />
                                         </BarChart>
                                     </ResponsiveContainer>
                                 </div>
