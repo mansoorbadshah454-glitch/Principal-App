@@ -193,11 +193,8 @@ const ClassDetails = () => {
             student.classRank = index + 1;
         });
 
-        // 4. Sort back by Name for display logic
-        const restoredNameOrder = sortedForRanks.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-        // 5. Apply UI Filters (Search & Present/Absent)
-        return restoredNameOrder.filter(student => {
+        // 4. Apply UI Filters (Search & Present/Absent)
+        return sortedForRanks.filter(student => {
             const matchesStatus = filterStatus === 'all' ||
                 (filterStatus === 'present' ? student.status === 'present' : student.status !== 'present');
 
@@ -611,17 +608,6 @@ const ClassDetails = () => {
                                 </div>
                             )}
 
-                            <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '1rem 0 0', borderTop: '1px solid #f3f4f6' }}>
-                                <div style={{ textAlign: 'center' }}>
-                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Avg Score</p>
-                                    <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.avgScore}%</p>
-                                </div>
-                                <div style={{ width: '1px', background: '#f3f4f6' }} />
-                                <div style={{ textAlign: 'center' }}>
-                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Homework</p>
-                                    <p style={{ fontWeight: '700', color: 'var(--text-main)' }}>{student.homework}%</p>
-                                </div>
-                            </div>
                         </div>
                     );
                 })}
