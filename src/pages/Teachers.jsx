@@ -345,7 +345,7 @@ const Teachers = () => {
                     console.log("Calling Cloud Function: createSchoolUser");
 
                     const result = await createSchoolUserFn({
-                        email: newTeacher.email.trim(),
+                        email: newTeacher.username.trim() || newTeacher.email.trim(),
                         password: newTeacher.password,
                         name: newTeacher.name.trim(),
                         role: 'teacher',
@@ -819,10 +819,10 @@ const Teachers = () => {
 
                                     <div style={{ marginBottom: '1.5rem' }}>
                                         <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                            Username
+                                            Email Address
                                         </label>
                                         <input
-                                            type="text" placeholder="e.g. sarah.connor"
+                                            type="email" placeholder="e.g. sarah.connor@school.com"
                                             value={newTeacher.username}
                                             onChange={(e) => setNewTeacher({ ...newTeacher, username: e.target.value })}
                                             style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
