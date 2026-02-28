@@ -207,7 +207,7 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.875rem', fontWeight: '500', color: '#64748b' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: '#d97706' }}>
                                         <Trophy size={16} fill="currentColor" />
-                                        <span>Rank #{rank || '-'}</span>
+                                        <span>Rank no: {rank || '-'}</span>
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: '#3b82f6' }}>
                                         <BookOpen size={16} />

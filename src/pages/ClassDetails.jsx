@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
     CheckCircle2, XCircle, MoreVertical, Search, Filter,
-    CheckCircle, Ban, Wallet, X
+    CheckCircle, Ban, Wallet, X, Trophy
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
@@ -127,13 +127,6 @@ const ClassDetails = () => {
                     };
                 });
 
-                // Calculate Rank based on avgScore (Descending)
-                // We sort a copy to determine rank, then assign it back
-                const sortedByScore = [...realStudents].sort((a, b) => b.avgScore - a.avgScore);
-                sortedByScore.forEach((student, index) => {
-                    student.classRank = index + 1;
-                });
-
                 // Sort by Name for display
                 realStudents.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                 setStudents(realStudents);
@@ -167,8 +160,44 @@ const ClassDetails = () => {
 
     }, [schoolId, classId]);
 
-    const filteredStudents = useMemo(() => {
-        return students.filter(student => {
+    const rankedAndFilteredStudents = useMemo(() => {
+        if (!students) return [];
+
+        const currentSubjects = classData?.subjects || [];
+
+        // 1. Calculate the true average score based ONLY on explicitly assigned class subjects
+        const studentsWithTrueAverages = students.map(student => {
+            const subScoresRaw = student.academicScores || [];
+
+            // Only aggregate if we have defined subjects, otherwise fallback to all subjects (raw avgScore)
+            if (currentSubjects.length > 0) {
+                const validSubScores = subScoresRaw
+                    .filter(i => currentSubjects.includes(i.subject))
+                    .map(i => parseInt(i.score) || 0);
+
+                let trueAvg = 0;
+                if (validSubScores.length > 0) {
+                    const total = validSubScores.reduce((sum, score) => sum + score, 0);
+                    trueAvg = Math.round(total / validSubScores.length);
+                }
+                return { ...student, trueAvgScore: trueAvg };
+            }
+            return { ...student, trueAvgScore: student.avgScore || 0 };
+        });
+
+        // 2. Sort by True Average Descending to assign ranks
+        const sortedForRanks = [...studentsWithTrueAverages].sort((a, b) => b.trueAvgScore - a.trueAvgScore);
+
+        // 3. Assign Ranks
+        sortedForRanks.forEach((student, index) => {
+            student.classRank = index + 1;
+        });
+
+        // 4. Sort back by Name for display logic
+        const restoredNameOrder = sortedForRanks.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+        // 5. Apply UI Filters (Search & Present/Absent)
+        return restoredNameOrder.filter(student => {
             const matchesStatus = filterStatus === 'all' ||
                 (filterStatus === 'present' ? student.status === 'present' : student.status !== 'present');
 
@@ -178,7 +207,7 @@ const ClassDetails = () => {
 
             return matchesStatus && matchesSearch;
         });
-    }, [students, filterStatus, searchTerm]);
+    }, [students, filterStatus, searchTerm, classData]);
 
     // Sync selectedStudent with live data for real-time modal updates
     useEffect(() => {
@@ -470,7 +499,7 @@ const ClassDetails = () => {
 
             {/* Students Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
-                {filteredStudents.map((student, index) => {
+                {rankedAndFilteredStudents.map((student, index) => {
                     // Check payment status for this student
                     const isPaid = isTargeted && student.customPayments?.[currentAction.name]?.status === 'paid';
 
@@ -490,6 +519,33 @@ const ClassDetails = () => {
                                 display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
                             }}
                         >
+                            {/* Rank Badge - Top Left */}
+                            <div style={{
+                                position: 'absolute',
+                                top: '1rem',
+                                left: '1rem',
+                                padding: '0.25rem 0.5rem',
+                                borderRadius: '12px',
+                                fontSize: '0.75rem',
+                                fontWeight: '800',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                background: student.classRank === 1 ? '#fef08a' :
+                                    student.classRank === 2 ? '#f1f5f9' :
+                                        student.classRank === 3 ? '#ffedd5' : '#f8fafc',
+                                color: student.classRank === 1 ? '#a16207' :
+                                    student.classRank === 2 ? '#475569' :
+                                        student.classRank === 3 ? '#9a3412' : '#64748b',
+                                border: '1px solid',
+                                borderColor: student.classRank === 1 ? '#fde047' :
+                                    student.classRank === 2 ? '#e2e8f0' :
+                                        student.classRank === 3 ? '#fed7aa' : '#f1f5f9',
+                            }}>
+                                <Trophy size={12} />
+                                #{student.classRank}
+                            </div>
+
                             <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
                                 <button
                                     onClick={(e) => {
