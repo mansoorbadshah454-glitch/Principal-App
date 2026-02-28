@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useTransition } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
@@ -14,6 +14,7 @@ import StudentActionPopup from '../components/StudentActionPopup';
 const ClassDetails = () => {
     const { classId } = useParams();
     const navigate = useNavigate();
+    const [isPending, startTransition] = useTransition();
     const [classData, setClassData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'present', 'absent'
@@ -342,9 +343,13 @@ const ClassDetails = () => {
     return (
         <div className="animate-fade-in-up" style={{ maxWidth: '1200px', margin: '0 auto' }}>
             {/* Header */}
-            <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem', opacity: isPending ? 0.7 : 1, transition: 'opacity 0.2s' }}>
                 <button
-                    onClick={() => navigate('/classes')}
+                    onClick={() => {
+                        startTransition(() => {
+                            navigate('/classes');
+                        });
+                    }}
                     style={{
                         background: 'white', border: '1px solid #e2e8f0', padding: '0.75rem',
                         borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'

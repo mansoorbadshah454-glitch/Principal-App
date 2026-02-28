@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
+import React, { useTransition } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText
@@ -7,8 +7,9 @@ import {
 import { auth } from '../firebase';
 
 const Sidebar = () => {
-    // const navigate = useNavigate();
-
+    const navigate = useNavigate();
+    const location = useLocation();
+    const [isPending, startTransition] = useTransition();
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
         { icon: FileText, label: 'News Feeds', path: '/news-feed' },
@@ -44,17 +45,28 @@ const Sidebar = () => {
                 </div>
             </div>
 
-            <nav className="sidebar-nav">
-                {menuItems.map((item) => (
-                    <NavLink
-                        key={item.path}
-                        to={item.path}
-                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-                    >
-                        <item.icon size={20} />
-                        <span>{item.label}</span>
-                    </NavLink>
-                ))}
+            <nav className="sidebar-nav" style={{ opacity: isPending ? 0.7 : 1, transition: 'opacity 0.2s' }}>
+                {menuItems.map((item) => {
+                    const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
+                    return (
+                        <a
+                            key={item.path}
+                            href={item.path}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                if (location.pathname !== item.path) {
+                                    startTransition(() => {
+                                        navigate(item.path);
+                                    });
+                                }
+                            }}
+                            className={`nav-link ${isActive ? 'active' : ''}`}
+                        >
+                            <item.icon size={20} />
+                            <span>{item.label}</span>
+                        </a>
+                    );
+                })}
             </nav>
 
             <div style={{ padding: '1rem', marginTop: 'auto' }}>
