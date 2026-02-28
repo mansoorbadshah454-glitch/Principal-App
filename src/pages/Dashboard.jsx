@@ -272,6 +272,7 @@ const Dashboard = () => {
         fetchedClasses.forEach(cls => {
             const qStudents = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
             const unsubStudents = onSnapshot(qStudents, (snap) => {
+                const todayStr = new Date().toISOString().split('T')[0];
                 const classStats = {
                     fees: { paid: 0, unpaid: 0 },
                     attendance: { present: 0, absent: 0 },
@@ -288,7 +289,7 @@ const Dashboard = () => {
                     else classStats.fees.unpaid++;
 
                     // 2. Attendance
-                    if (data.status === 'present') classStats.attendance.present++;
+                    if (data.status === 'present' && data.lastAttendanceDate === todayStr) classStats.attendance.present++;
                     else classStats.attendance.absent++;
 
                     // 3. Subject Scores
