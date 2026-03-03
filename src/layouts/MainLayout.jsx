@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
-import { db, auth } from '../firebase';
+import { db, auth, messaging } from '../firebase';
 import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
+import { getToken } from 'firebase/messaging';
 import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info } from 'lucide-react';
 
 const MainLayout = () => {
@@ -20,6 +21,29 @@ const MainLayout = () => {
         }
 
         if (currentSchoolId) {
+            // Request push notification permissions
+            const requestAdminNotificationPermission = async () => {
+                if (!messaging) return;
+                try {
+                    const permission = await Notification.requestPermission();
+                    if (permission === 'granted') {
+                        const token = await getToken(messaging);
+                        if (token) {
+                            const sessionData = localStorage.getItem('manual_session');
+                            const uid = sessionData ? JSON.parse(sessionData).uid : null;
+                            if (uid) {
+                                await updateDoc(doc(db, `schools/${currentSchoolId}/users`, uid), {
+                                    fcmToken: arrayUnion(token)
+                                });
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.log('FCM Error (Web push might need VAPID key configuring in console):', err);
+                }
+            };
+            requestAdminNotificationPermission();
+
             // Listen for status
             const unsubStatus = onSnapshot(doc(db, "schools", currentSchoolId), (docSnap) => {
                 if (docSnap.exists()) {

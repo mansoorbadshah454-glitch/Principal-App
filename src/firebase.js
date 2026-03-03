@@ -3,6 +3,7 @@ import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 import { getFunctions } from "firebase/functions";
+import { getMessaging } from "firebase/messaging";
 
 const firebaseConfig = {
     apiKey: "AIzaSyARAU5c_8nJd4KcVWsAVBDV529nObmW9Vs",
@@ -24,3 +25,12 @@ export const db = initializeFirestore(app, {
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app);
+
+// Messaging may not be supported in all environments (e.g., Safari private mode)
+let messagingInstance = null;
+try {
+    messagingInstance = getMessaging(app);
+} catch (e) {
+    console.warn("Firebase Messaging not supported in this environment", e);
+}
+export const messaging = messagingInstance;

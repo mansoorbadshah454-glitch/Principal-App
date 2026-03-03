@@ -18,6 +18,7 @@ const Promotions = lazy(() => import('./pages/Promotions'));
 const NewsFeed = lazy(() => import('./pages/NewsFeed'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Users = lazy(() => import('./pages/Users'));
+const Inbox = lazy(() => import('./pages/Inbox'));
 
 const PageLoader = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100%' }}>
@@ -94,6 +95,7 @@ function App() {
           <Route path="collections/:classId" element={<ClassCollection />} />
           <Route path="promotions" element={<Promotions />} />
           <Route path="news-feed" element={<NewsFeed />} />
+          <Route path="inbox" element={<Inbox />} />
           <Route path="settings" element={<Settings />} />
           <Route path="users" element={<Users />} />
         </Route>

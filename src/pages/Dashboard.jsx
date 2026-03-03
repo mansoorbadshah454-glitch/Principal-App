@@ -1211,110 +1211,7 @@ const Dashboard = () => {
                     </div>
 
 
-                    {/* Teacher Feedback Card */}
-                    <div className="card" style={{
-                        background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
-                        padding: '1.5rem',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        marginBottom: '2rem',
-                        borderRadius: '24px',
-                        position: 'relative',
-                        overflow: 'hidden',
-                        boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                <div style={{
-                                    width: '40px', height: '40px', borderRadius: '12px',
-                                    background: 'rgba(249, 115, 22, 0.2)', color: '#f97316',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                }}>
-                                    <MessageCircle size={22} />
-                                </div>
-                                <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white', margin: 0 }}>
-                                    Teacher Feedback
-                                </h2>
-                            </div>
-                            <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', fontWeight: '600' }}>
-                                {messages.filter(m => m.type === 'teacher-reply').length} Messages
-                            </span>
-                        </div>
-
-                        <div className="custom-scrollbar" style={{ maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '0.5rem' }}>
-                            {messages.filter(m => m.type === 'teacher-reply').length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '2rem', color: 'rgba(255,255,255,0.4)' }}>
-                                    <p>No feedback from teachers yet.</p>
-                                </div>
-                            ) : (
-                                messages.filter(m => m.type === 'teacher-reply').map(msg => (
-                                    <div key={msg.id} style={{
-                                        background: 'rgba(255,255,255,0.05)',
-                                        borderRadius: '16px',
-                                        padding: '1rem',
-                                        border: '1px solid rgba(255,255,255,0.1)'
-                                    }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                <span style={{ fontWeight: '700', color: 'white', fontSize: '0.95rem' }}>
-                                                    {msg.fromName || 'Teacher'}
-                                                </span>
-                                                <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)' }}>
-                                                    • {msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleDateString() : 'Now'}
-                                                </span>
-                                            </div>
-                                            <button
-                                                onClick={() => handleDeleteFeedback(msg.id)}
-                                                style={{
-                                                    background: 'rgba(239, 68, 68, 0.1)',
-                                                    border: 'none',
-                                                    color: '#ef4444',
-                                                    padding: '6px',
-                                                    borderRadius: '8px',
-                                                    cursor: 'pointer',
-                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                    transition: 'background 0.2s'
-                                                }}
-                                                className="hover-bg-red"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                        <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.9rem', lineHeight: '1.5', margin: 0 }}>
-                                            {msg.text || msg.message}
-                                        </p>
-
-                                        {/* Attachment Button */}
-                                        {msg.attachment && (
-                                            <div style={{ marginTop: '0.75rem' }}>
-                                                <a
-                                                    href={msg.attachment.url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    style={{
-                                                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                                                        background: 'rgba(255, 255, 255, 0.1)',
-                                                        border: '1px solid rgba(255, 255, 255, 0.2)',
-                                                        borderRadius: '8px',
-                                                        padding: '0.5rem 1rem',
-                                                        color: 'white',
-                                                        fontSize: '0.85rem',
-                                                        textDecoration: 'none',
-                                                        fontWeight: '500',
-                                                        transition: 'background 0.2s'
-                                                    }}
-                                                    onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
-                                                    onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.1)'}
-                                                >
-                                                    <Paperclip size={16} />
-                                                    Download Attachment
-                                                </a>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
+                    {/* Teacher Feedback Card Removed */}
 
                     {/* Teachers Performance */}
                     <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: '2rem' }}>
@@ -1350,39 +1247,88 @@ const Dashboard = () => {
                                 background: 'linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.6), rgba(6, 182, 212, 0.6), transparent)',
                                 zIndex: 1
                             }} />
-                            <div style={{ padding: '1.5rem', borderBottom: '1px solid rgba(241, 245, 249, 0.6)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 2 }}>
-                                <h3 style={{ fontSize: '1.125rem' }}>Teachers Live</h3>
-                                <button
-                                    onClick={handleSendBroadcast}
-                                    style={{
-                                        padding: '0.5rem 1rem',
-                                        background: 'var(--primary)',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '8px',
-                                        fontSize: '0.85rem',
-                                        fontWeight: '600',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.5rem',
-                                        transition: 'var(--transition)',
-                                        boxShadow: '0 2px 8px rgba(79, 70, 229, 0.2)'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        e.target.style.background = '#4338ca';
-                                        e.target.style.transform = 'translateY(-1px)';
-                                        e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.3)';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.target.style.background = 'var(--primary)';
-                                        e.target.style.transform = 'translateY(0)';
-                                        e.target.style.boxShadow = '0 2px 8px rgba(79, 70, 229, 0.2)';
-                                    }}
-                                >
-                                    <Send size={16} />
-                                    Send Note to All
-                                </button>
+                            <div style={{ padding: '1.5rem', borderBottom: '1px solid rgba(241, 245, 249, 0.6)', display: 'flex', flexDirection: 'column', gap: '1rem', position: 'relative', zIndex: 2 }}>
+                                <h3 style={{ fontSize: '1.125rem', margin: 0 }}>Teachers Live</h3>
+
+                                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <button
+                                        onClick={handleSendBroadcast}
+                                        style={{
+                                            padding: '0.5rem 1rem',
+                                            background: 'var(--primary)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            fontSize: '0.85rem',
+                                            fontWeight: '600',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            transition: 'var(--transition)',
+                                            boxShadow: '0 2px 8px rgba(79, 70, 229, 0.2)'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.target.style.background = '#4338ca';
+                                            e.target.style.transform = 'translateY(-1px)';
+                                            e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.3)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.target.style.background = 'var(--primary)';
+                                            e.target.style.transform = 'translateY(0)';
+                                            e.target.style.boxShadow = '0 2px 8px rgba(79, 70, 229, 0.2)';
+                                        }}
+                                    >
+                                        <Send size={16} />
+                                        Send Note to All
+                                    </button>
+
+                                    {/* New Inbox Badge Button */}
+                                    <button
+                                        onClick={() => navigate('/inbox')}
+                                        style={{
+                                            padding: '0.5rem 1rem',
+                                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            fontSize: '0.85rem',
+                                            fontWeight: '600',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            transition: 'var(--transition)',
+                                            boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                                            position: 'relative'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.3)';
+                                        }}
+                                    >
+                                        <MessageCircle size={16} />
+                                        Inbox
+
+                                        {messages.filter(m => m.type === 'teacher-reply').length > 0 && (
+                                            <span style={{
+                                                background: '#ef4444',
+                                                color: 'white',
+                                                fontSize: '0.7rem',
+                                                fontWeight: 'bold',
+                                                padding: '2px 6px',
+                                                borderRadius: '10px',
+                                                marginLeft: '4px'
+                                            }}>
+                                                {messages.filter(m => m.type === 'teacher-reply').length}
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                             <div className="custom-scrollbar" style={{ padding: '1rem', maxHeight: '400px', overflowY: 'auto', position: 'relative', zIndex: 2 }}>
                                 {teachers.map((teacher, i) => (
