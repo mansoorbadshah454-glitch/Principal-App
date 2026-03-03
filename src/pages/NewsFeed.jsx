@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
     Image as ImageIcon, Send, MoreHorizontal, Trash2,
-    Shield, Clock, Loader2, Calendar, ThumbsUp, Share2, Users
+    Shield, Clock, Loader2, Calendar, ThumbsUp, MessageCircle, Users
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
+import CommentsSection from '../components/CommentsSection';
 import {
     collection, addDoc, query, orderBy, onSnapshot,
     deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment
@@ -18,6 +19,7 @@ const NewsFeed = () => {
     const [loading, setLoading] = useState(false);
     const [schoolProfile, setSchoolProfile] = useState({ name: 'Principal', image: '' });
     const [menuOpenId, setMenuOpenId] = useState(null);
+    const [openCommentPostId, setOpenCommentPostId] = useState(null);
 
     // Audience State
     const [audience, setAudience] = useState('all'); // 'all' or 'class'
@@ -196,7 +198,7 @@ const NewsFeed = () => {
                 targetClassId: audience === 'class' ? selectedClass : null,
                 targetClassName: targetClassName,
                 likes: [],
-                shares: 0
+                commentCount: 0
             });
 
             setPostText('');
@@ -254,22 +256,6 @@ const NewsFeed = () => {
             }
         } catch (error) {
             console.error("Error liking post:", error);
-        }
-    };
-
-    const handleShare = async (post) => {
-
-        if (!schoolId) return;
-
-        try {
-            // Just increment count for now
-            const postRef = doc(db, `schools/${schoolId}/posts`, post.id);
-            await updateDoc(postRef, {
-                shares: increment(1)
-            });
-            alert("Post shared!");
-        } catch (error) {
-            console.error("Error sharing post:", error);
         }
     };
 
@@ -534,15 +520,16 @@ const NewsFeed = () => {
                                         <span>{post.likes?.length || 0} Likes</span>
                                     </button>
                                     <button
-                                        onClick={() => handleShare(post)}
+                                        onClick={() => setOpenCommentPostId(openCommentPostId === post.id ? null : post.id)}
                                         style={{
                                             background: 'transparent', border: 'none', cursor: 'pointer',
                                             display: 'flex', alignItems: 'center', gap: '0.4rem',
-                                            color: '#64748b', fontSize: '0.9rem', fontWeight: '600'
+                                            color: openCommentPostId === post.id ? '#3b82f6' : '#64748b',
+                                            fontSize: '0.9rem', fontWeight: '600'
                                         }}
                                     >
-                                        <Share2 size={18} />
-                                        <span>{post.shares || 0} Shares</span>
+                                        <MessageCircle size={18} fill={openCommentPostId === post.id ? '#3b82f6' : 'none'} />
+                                        <span>{post.commentCount || 0} Comments</span>
                                     </button>
                                 </div>
 
@@ -551,6 +538,15 @@ const NewsFeed = () => {
                                     <span>Expires in {Math.max(0, 7 - Math.floor((new Date() - (post.timestamp?.toDate() || new Date())) / (1000 * 60 * 60 * 24)))} days</span>
                                 </div>
                             </div>
+
+                            {openCommentPostId === post.id && (
+                                <CommentsSection
+                                    schoolId={schoolId}
+                                    postId={post.id}
+                                    currentUserId={currentUserId}
+                                    schoolProfile={schoolProfile}
+                                />
+                            )}
                         </div>
                     ))}
 
