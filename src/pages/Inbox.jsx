@@ -12,8 +12,21 @@ const Inbox = () => {
     const [messageText, setMessageText] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [isSending, setIsSending] = useState(false);
+    const [showMenu, setShowMenu] = useState(false);
 
     const messagesEndRef = useRef(null);
+    const menuRef = useRef(null);
+
+    // Close menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (menuRef.current && !menuRef.current.contains(event.target)) {
+                setShowMenu(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
 
     // 1. Resolve School ID First
     useEffect(() => {
@@ -129,6 +142,28 @@ const Inbox = () => {
         }, 100);
     };
 
+    // 4. Handle Clear History
+    const handleClearHistory = async () => {
+        if (!schoolId || !selectedTeacher || messages.length === 0) return;
+
+        if (window.confirm(`Are you sure you want to clear the entire chat history with ${selectedTeacher.name}? This action cannot be undone.`)) {
+            try {
+                // Delete all current active messages shown on screen
+                const { deleteDoc, doc } = await import('firebase/firestore');
+
+                // Process deletions in parallel
+                await Promise.all(messages.map(msg =>
+                    deleteDoc(doc(db, `schools/${schoolId}/messages`, msg.id))
+                ));
+
+                setShowMenu(false);
+            } catch (error) {
+                console.error("Error clearing history:", error);
+                alert("Failed to clear history: " + error.message);
+            }
+        }
+    };
+
     const handleSendMessage = async (e) => {
         e.preventDefault();
         if (!messageText.trim() || !schoolId || !selectedTeacher || isSending) return;
@@ -233,10 +268,50 @@ const Inbox = () => {
                                     <span>{selectedTeacher.class} {selectedTeacher.status === 'on' ? '• Online' : ''}</span>
                                 </div>
                             </div>
-                            <div className="chat-header-actions">
-                                <button title="Call" className="icon-btn"><Phone size={18} /></button>
-                                <button title="Video Call" className="icon-btn"><Video size={18} /></button>
-                                <button title="More" className="icon-btn"><MoreVertical size={18} /></button>
+                            <div className="chat-header-actions" ref={menuRef} style={{ position: 'relative' }}>
+                                <button
+                                    title="Menu"
+                                    className="icon-btn"
+                                    onClick={() => setShowMenu(!showMenu)}
+                                >
+                                    <MoreVertical size={18} />
+                                </button>
+
+                                {showMenu && (
+                                    <div className="action-dropdown" style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        right: '0',
+                                        marginTop: '0.5rem',
+                                        background: 'var(--wa-search-bg)',
+                                        borderRadius: '8px',
+                                        boxShadow: '0 4px 15px rgba(0, 0, 0, 0.1)',
+                                        zIndex: 50,
+                                        width: '180px',
+                                        overflow: 'hidden'
+                                    }}>
+                                        <button
+                                            onClick={handleClearHistory}
+                                            style={{
+                                                width: '100%',
+                                                padding: '0.75rem 1rem',
+                                                border: 'none',
+                                                background: 'transparent',
+                                                color: '#ef4444',
+                                                textAlign: 'left',
+                                                cursor: 'pointer',
+                                                fontSize: '0.95rem',
+                                                transition: 'background 0.2s ease',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                            }}
+                                            onMouseEnter={(e) => e.target.style.background = 'var(--wa-hover)'}
+                                            onMouseLeave={(e) => e.target.style.background = 'transparent'}
+                                        >
+                                            Clear chat history
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
