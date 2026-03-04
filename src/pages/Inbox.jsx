@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, auth } from '../firebase';
-import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs } from 'firebase/firestore';
-import { Search, Send, ArrowLeft, MoreVertical, Phone, Video, MessageSquare, Clock, Check, CheckCheck, Paperclip } from 'lucide-react';
+import { db, auth, storage } from '../firebase';
+import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import {
+    ref as storageRef,
+    uploadBytes,
+    getDownloadURL,
+    deleteObject // Added
+} from 'firebase/storage';
+import { Search, Send, ArrowLeft, MoreVertical, Phone, Video, MessageSquare, Clock, Check, CheckCheck, Paperclip, Plus } from 'lucide-react';
 import './Inbox.css'; // We will create this or use inline styles
 
 const Inbox = () => {
@@ -12,6 +18,7 @@ const Inbox = () => {
     const [messageText, setMessageText] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [isSending, setIsSending] = useState(false);
+    const [unreadCounts, setUnreadCounts] = useState({});
     const [showMenu, setShowMenu] = useState(false);
 
     const messagesEndRef = useRef(null);
@@ -103,12 +110,35 @@ const Inbox = () => {
         return () => unsubscribe();
     }, [schoolId]);
 
+    // 2.5 Fetch Global Unread Counts
+    useEffect(() => {
+        if (!schoolId) return;
+
+        const q = query(
+            collection(db, `schools/${schoolId}/messages`),
+            where('read', '==', false),
+            where('to', 'in', ['principal', 'admin']) // Messages to principal or admin
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const counts = {};
+            snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                const senderId = data.fromId || data.from;
+                if (senderId && senderId !== 'principal') {
+                    counts[senderId] = (counts[senderId] || 0) + 1;
+                }
+            });
+            setUnreadCounts(counts);
+        });
+
+        return () => unsubscribe();
+    }, [schoolId]);
+
     // 3. Fetch Messages for Selected Teacher
     useEffect(() => {
         if (!schoolId || !selectedTeacher) return;
 
-        // In a real app, you might want a thread ID or query by both sender/receiver
-        // Here we query all messages and filter in client (or use a better query if indexed)
         const q = query(
             collection(db, `schools/${schoolId}/messages`),
             orderBy("timestamp", "asc")
@@ -116,16 +146,26 @@ const Inbox = () => {
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const msgs = [];
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                // A message matches if it's from the principal to the teacher, OR from that teacher to the principal
-                if (
-                    (data.from === 'principal' && data.to === selectedTeacher.id) ||
-                    (data.from === selectedTeacher.id && data.to === 'principal') ||
-                    (data.type === 'teacher-reply' && data.from === selectedTeacher.id) ||
-                    (data.type === 'principal-broadcast' && data.to === 'all')
-                ) {
-                    msgs.push({ id: doc.id, ...data });
+            snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                // Improved Filtering:
+                // 1. From Principal to this Teacher
+                // 2. From this Teacher to Principal
+                // 3. Teacher reply to Principal (using formId/toId)
+                const isFromMe = data.from === 'principal' && data.to === selectedTeacher.id;
+                const isToMe = (data.from === selectedTeacher.id || data.fromId === selectedTeacher.id) &&
+                    (data.to === 'principal' || data.toId === 'admin'); // Assuming 'admin' is the generic toId for principal
+                const isBroadcast = data.type === 'principal-broadcast' && data.to === 'all';
+
+                if (isFromMe || isToMe || isBroadcast) {
+                    msgs.push({ id: docSnap.id, ...data });
+
+                    // Mark as read if it's incoming and unread
+                    if (isToMe && data.read === false) {
+                        updateDoc(doc(db, `schools/${schoolId}/messages`, docSnap.id), {
+                            read: true
+                        }).catch(err => console.error("Error marking as read:", err));
+                    }
                 }
             });
 
@@ -148,13 +188,20 @@ const Inbox = () => {
 
         if (window.confirm(`Are you sure you want to clear the entire chat history with ${selectedTeacher.name}? This action cannot be undone.`)) {
             try {
-                // Delete all current active messages shown on screen
-                const { deleteDoc, doc } = await import('firebase/firestore');
-
-                // Process deletions in parallel
-                await Promise.all(messages.map(msg =>
-                    deleteDoc(doc(db, `schools/${schoolId}/messages`, msg.id))
-                ));
+                // Process deletions
+                for (const msg of messages) {
+                    // 1. Delete matching storage file if it exists
+                    if (msg.attachment && msg.attachment.fullPath) {
+                        try {
+                            const fileRef = storageRef(storage, msg.attachment.fullPath);
+                            await deleteObject(fileRef);
+                        } catch (err) {
+                            console.warn("Storage file delete failed (may not exist):", err);
+                        }
+                    }
+                    // 2. Delete Firestore document
+                    await deleteDoc(doc(db, `schools/${schoolId}/messages`, msg.id));
+                }
 
                 setShowMenu(false);
             } catch (error) {
@@ -165,16 +212,18 @@ const Inbox = () => {
     };
 
     const handleSendMessage = async (e) => {
-        e.preventDefault();
+        if (e) e.preventDefault();
         if (!messageText.trim() || !schoolId || !selectedTeacher || isSending) return;
 
         setIsSending(true);
         try {
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
-                text: messageText,
+                text: messageText.trim(),
                 from: 'principal',
+                fromId: 'principal',
                 fromName: 'Principal',
                 to: selectedTeacher.id,
+                toId: selectedTeacher.id,
                 toName: selectedTeacher.name,
                 timestamp: serverTimestamp(),
                 read: false,
@@ -185,6 +234,44 @@ const Inbox = () => {
         } catch (error) {
             console.error("Error sending message:", error);
             alert("Failed to send message: " + error.message);
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file || !schoolId || !selectedTeacher) return;
+
+        setIsSending(true);
+        try {
+            const path = `schools/${schoolId}/messages/attachments/${Date.now()}_${file.name}`;
+            const fileRef = storageRef(storage, path);
+            await uploadBytes(fileRef, file);
+            const url = await getDownloadURL(fileRef);
+
+            await addDoc(collection(db, `schools/${schoolId}/messages`), {
+                text: `Sent an attachment: ${file.name}`,
+                from: 'principal',
+                fromId: 'principal',
+                fromName: 'Principal',
+                to: selectedTeacher.id,
+                toId: selectedTeacher.id,
+                toName: selectedTeacher.name,
+                timestamp: serverTimestamp(),
+                read: false,
+                type: 'direct-message',
+                attachment: {
+                    url: url,
+                    fullPath: path, // Added for easy deletion
+                    name: file.name,
+                    type: file.type.split('/')[1] || 'file'
+                },
+            });
+            scrollToBottom();
+        } catch (error) {
+            console.error("Error uploading file:", error);
+            alert("Failed to upload: " + error.message);
         } finally {
             setIsSending(false);
         }
@@ -238,7 +325,9 @@ const Inbox = () => {
                             <div className="teacher-info">
                                 <div className="teacher-name-row">
                                     <span className="teacher-name">{teacher.name || 'Unnamed Teacher'}</span>
-                                    {/* Optional: Show last message time here if available in data model */}
+                                    {unreadCounts[teacher.id] > 0 && (
+                                        <span className="unread-badge">{unreadCounts[teacher.id]}</span>
+                                    )}
                                 </div>
                                 <span className="teacher-class">{teacher.class || 'No Class'}</span>
                             </div>
@@ -341,16 +430,38 @@ const Inbox = () => {
                                                     <p className="message-text">{msg.text || msg.message}</p>
 
                                                     {msg.attachment && (
-                                                        <a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" className="message-attachment">
-                                                            <Paperclip size={14} /> Attachment
-                                                        </a>
+                                                        <div className="attachment-container">
+                                                            {['jpg', 'jpeg', 'png', 'webp'].includes(msg.attachment.type?.toLowerCase()) ? (
+                                                                <img
+                                                                    src={msg.attachment.url}
+                                                                    alt={msg.attachment.name}
+                                                                    className="media-preview"
+                                                                    onClick={() => window.open(msg.attachment.url, '_blank')}
+                                                                    style={{
+                                                                        maxWidth: '100%',
+                                                                        borderRadius: '8px',
+                                                                        cursor: 'pointer',
+                                                                        marginTop: '0.5rem',
+                                                                        display: 'block'
+                                                                    }}
+                                                                />
+                                                            ) : (
+                                                                <a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" className="message-attachment">
+                                                                    <Paperclip size={14} /> {msg.attachment.name}
+                                                                </a>
+                                                            )}
+                                                        </div>
                                                     )}
 
                                                     <div className="message-meta">
                                                         <span className="message-time">{formatMessageTime(msg.timestamp)}</span>
                                                         {isPrincipal && (
                                                             <span className="message-status">
-                                                                <Check size={12} /> {/* Using single check for sent, double for read in real app */}
+                                                                {msg.read ? (
+                                                                    <CheckCheck size={14} color="#3b82f6" />
+                                                                ) : (
+                                                                    <CheckCheck size={14} color="gray" />
+                                                                )}
                                                             </span>
                                                         )}
                                                     </div>
@@ -364,22 +475,28 @@ const Inbox = () => {
                         </div>
 
                         {/* Chat Input */}
-                        <form className="chat-input-area" onSubmit={handleSendMessage}>
-                            <input
-                                type="text"
-                                placeholder="Type a message..."
-                                value={messageText}
-                                onChange={(e) => setMessageText(e.target.value)}
-                                className="chat-input"
-                            />
-                            <button
-                                type="submit"
-                                className="send-btn"
-                                disabled={!messageText.trim() || isSending}
-                            >
-                                <Send size={20} />
-                            </button>
-                        </form>
+                        <div className="chat-input-area">
+                            <label className="attach-btn" title="Attach file">
+                                <Plus size={20} />
+                                <input type="file" onChange={handleFileUpload} style={{ display: 'none' }} />
+                            </label>
+                            <form className="chat-input-wrapper" onSubmit={handleSendMessage} style={{ flex: 1, display: 'flex' }}>
+                                <input
+                                    type="text"
+                                    placeholder="Type a message..."
+                                    value={messageText}
+                                    onChange={(e) => setMessageText(e.target.value)}
+                                    className="chat-input"
+                                />
+                                <button
+                                    type="submit"
+                                    className="send-btn"
+                                    disabled={!messageText.trim() || isSending}
+                                >
+                                    <Send size={20} />
+                                </button>
+                            </form>
+                        </div>
                     </>
                 ) : (
                     <div className="no-chat-selected">
