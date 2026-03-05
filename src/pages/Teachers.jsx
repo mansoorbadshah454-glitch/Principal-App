@@ -155,6 +155,16 @@ const Teachers = () => {
         'Social Study', 'Art', 'Science', 'Biology', 'Chemistry', 'Physic'
     ];
 
+    // Helper function to check if it's a new day (same as Teacher App)
+    const isNewDay = (lastUpdateTimestamp) => {
+        if (!lastUpdateTimestamp) return false;
+        const lastUpdate = lastUpdateTimestamp.toDate ? lastUpdateTimestamp.toDate() : new Date(lastUpdateTimestamp);
+        const now = new Date();
+        const lastDate = new Date(lastUpdate.getFullYear(), lastUpdate.getMonth(), lastUpdate.getDate());
+        const currentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return currentDate > lastDate;
+    };
+
     // Initialize User & School ID
     useEffect(() => {
         let unsubscribeAuth = null;
@@ -508,7 +518,7 @@ const Teachers = () => {
             </div>
 
             {/* Stats Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
                 {[
                     {
                         label: 'Total Teachers',
@@ -519,21 +529,14 @@ const Teachers = () => {
                     },
                     {
                         label: 'Active Today',
-                        value: Math.round(teachers.length * 0.9), // Simulated
+                        value: teachers.filter(t => t.isOnDuty && !isNewDay(t.lastDutyUpdate)).length,
                         icon: User,
                         gradient: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
                         shadow: 'rgba(16, 185, 129, 0.4)'
                     },
                     {
-                        label: 'Subjects Covered',
-                        value: new Set(teachers.map(t => t.subject)).size || 0,
-                        icon: BookOpen,
-                        gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%)',
-                        shadow: 'rgba(14, 165, 233, 0.4)'
-                    },
-                    {
                         label: 'Staff On Leave',
-                        value: Math.max(0, teachers.length - Math.round(teachers.length * 0.9)), // Simulated
+                        value: teachers.filter(t => !t.isOnDuty || isNewDay(t.lastDutyUpdate)).length,
                         icon: Phone, // Placeholder icon
                         gradient: 'linear-gradient(135deg, #f59e0b 0%, #b45309 100%)',
                         shadow: 'rgba(245, 158, 11, 0.4)'
