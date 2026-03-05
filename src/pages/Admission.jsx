@@ -372,522 +372,538 @@ const Admission = () => {
     };
 
     return (
-        <div className="admission-container">
-            {/* Header */}
-            <header className="page-header">
-                <div>
-                    <h1 className="page-title">New Admission</h1>
-                    <p className="page-subtitle">Enroll one or more students for the academic year</p>
+        <div className="admission-page">
+            <div className="header-wrapper">
+                <div className="header-decor">
+                    <School size={160} />
                 </div>
-                <button className="submit-btn" onClick={handleSubmit} disabled={isLoading}>
-                    {isLoading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
-                    <span>{isLoading ? 'Processing...' : 'Complete Admission'}</span>
-                </button>
-            </header>
-
-            <form onSubmit={handleSubmit}>
-                {/* Parent Details Section */}
-                <section className="form-section">
-                    <div className="bg-decor-icon">
-                        <Users size={200} />
+                <header className="page-header">
+                    <div>
+                        <h1 className="page-title">New Admission</h1>
+                        <p className="page-subtitle">Enroll one or more students for the academic year</p>
                     </div>
+                    <button className="submit-btn" onClick={handleSubmit} disabled={isLoading}>
+                        {isLoading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
+                        <span>{isLoading ? 'Processing...' : 'Complete Admission'}</span>
+                    </button>
+                </header>
+            </div>
 
-                    <div className="section-header" style={{ justifyContent: 'space-between', paddingRight: '1rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                            <div className="section-icon-box">
-                                <Users size={24} />
-                            </div>
-                            <h2 className="section-title-text">
-                                {parentInputStep === 1 ? 'Parent / Guardian Details' : 'Account Setup & Linking'}
-                            </h2>
+            <div className="admission-container">
+                <form onSubmit={handleSubmit}>
+                    {/* Parent Details Section */}
+                    <section className="form-section" style={{
+                        background: '#f0f9ff',
+                        border: '2px solid #bae6fd',
+                        boxShadow: '8px 8px 0px #bae6fd'
+                    }}>
+                        <div className="bg-decor-icon">
+                            <Users size={200} />
                         </div>
-                        {parentInputStep === 1 ? (
-                            <button type="button" onClick={handleParentNext} className="submit-btn" style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', gap: '0.5rem' }}>
-                                Next <ChevronRight size={18} />
-                            </button>
-                        ) : (
-                            <button type="button" onClick={() => setParentInputStep(1)} className="submit-btn" style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', gap: '0.5rem', background: '#64748b' }}>
-                                <ChevronLeft size={18} /> Back
-                            </button>
-                        )}
-                    </div>
 
-                    {parentInputStep === 1 && (
-                        <>
-                            <div className="form-grid">
-                                <div className="input-group">
-                                    <label className="input-label">Father's Name</label>
-                                    <div className="input-wrapper">
-                                        <input
-                                            type="text"
-                                            name="fatherName"
-                                            value={parentDetails.fatherName}
-                                            onChange={handleParentChange}
-                                            className="modern-input"
-                                            placeholder="Enter father's name"
-                                            required
-                                        />
-                                        <User className="input-icon" size={20} />
-                                    </div>
+                        <div className="section-header" style={{ justifyContent: 'space-between', paddingRight: '1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                <div className="section-icon-box">
+                                    <Users size={24} />
                                 </div>
-
-                                <div className="input-group">
-                                    <label className="input-label">Parent's Occupation</label>
-                                    <div className="input-wrapper">
-                                        <input
-                                            type="text"
-                                            name="occupation"
-                                            value={parentDetails.occupation}
-                                            onChange={handleParentChange}
-                                            className="modern-input"
-                                            placeholder="Enter occupation"
-                                            required
-                                        />
-                                        <Briefcase className="input-icon" size={20} />
-                                    </div>
-                                </div>
-
-                                <div className="input-group">
-                                    <label className="input-label">Phone Number</label>
-                                    <div className="input-wrapper">
-                                        <input
-                                            type="tel"
-                                            name="phone"
-                                            value={parentDetails.phone}
-                                            onChange={handleParentChange}
-                                            className="modern-input"
-                                            placeholder="Enter primary contact"
-                                            required
-                                        />
-                                        <Phone className="input-icon" size={20} />
-                                    </div>
-                                </div>
-
-                                <div className="input-group">
-                                    <label className="input-label">Email Address</label>
-                                    <div className="input-wrapper">
-                                        <input
-                                            type="email"
-                                            name="email"
-                                            value={parentDetails.email}
-                                            onChange={handleParentChange}
-                                            className="modern-input"
-                                            placeholder="Enter email address"
-                                        />
-                                        <Mail className="input-icon" size={20} />
-                                    </div>
-                                </div>
-
-                                <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                                    <label className="input-label">Residential Address</label>
-                                    <div className="input-wrapper">
-                                        <textarea
-                                            name="address"
-                                            value={parentDetails.address}
-                                            onChange={handleParentChange}
-                                            className="modern-input modern-textarea"
-                                            placeholder="Enter full address"
-                                            required
-                                        />
-                                        <MapPin className="input-icon" size={20} style={{ top: '1.5rem', transform: 'none' }} />
-                                    </div>
-                                </div>
+                                <h2 className="section-title-text">
+                                    {parentInputStep === 1 ? 'Parent / Guardian Details' : 'Account Setup & Linking'}
+                                </h2>
                             </div>
-                        </>
-                    )}
-
-                    {parentInputStep === 2 && (
-                        <>
-                            <div className="parent-search-box" style={{
-                                margin: '0 1.5rem 2rem', background: '#f8fafc', padding: '1.5rem',
-                                borderRadius: '12px', border: existingParent ? '2px solid #10b981' : '1px solid #e2e8f0'
-                            }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
-                                    Check for Existing Parent Account
-                                </label>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Enter Phone Number..."
-                                        value={searchPhone}
-                                        onChange={(e) => setSearchPhone(e.target.value)}
-                                        style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                                        disabled={existingParent !== null}
-                                    />
-                                    {existingParent ? (
-                                        <button type="button" onClick={handleResetParent} style={{
-                                            padding: '0 1.5rem', background: '#ef4444', color: 'white',
-                                            border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600'
-                                        }}>
-                                            Reset
-                                        </button>
-                                    ) : (
-                                        <button type="button" onClick={handleSearchParent} style={{
-                                            padding: '0 1.5rem', background: 'var(--primary)', color: 'white',
-                                            border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600'
-                                        }}>
-                                            {isSearchingParent ? 'Searching...' : 'Search'}
-                                        </button>
-                                    )}
-                                </div>
-                                {existingParent && (
-                                    <div style={{ marginTop: '1rem', color: '#047857', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <div style={{ width: 20, height: 20, background: '#10b981', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px' }}>✓</div>
-                                        Existing Account Found: {existingParent.name} (Linked Students: {existingParent.linkedStudents ? existingParent.linkedStudents.length : 0})
-                                    </div>
-                                )}
-                                {!existingParent && searchPhone.length > 5 && !isSearchingParent && (
-                                    <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                        No account pulled yet. Fill below to create a new one.
-                                    </div>
-                                )}
-                            </div>
-
-                            {!existingParent && (
-                                <>
-                                    <div className="form-grid" style={{ marginTop: '1.5rem' }}>
-                                        <div className="input-group">
-                                            <label className="input-label">Create Username</label>
-                                            <div className="input-wrapper">
-                                                <input
-                                                    type="text"
-                                                    name="username"
-                                                    value={parentDetails.username}
-                                                    onChange={handleParentChange}
-                                                    className="modern-input"
-                                                    placeholder="e.g. john.doe"
-                                                    required={!existingParent}
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="input-group">
-                                            <label className="input-label">Create Password</label>
-                                            <div className="input-wrapper">
-                                                <input
-                                                    type="text"
-                                                    name="password"
-                                                    value={parentDetails.password}
-                                                    onChange={handleParentChange}
-                                                    className="modern-input"
-                                                    placeholder="Set secure password"
-                                                    required={!existingParent}
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-                                </>
+                            {parentInputStep === 1 ? (
+                                <button type="button" onClick={handleParentNext} className="submit-btn" style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', gap: '0.5rem' }}>
+                                    Next <ChevronRight size={18} />
+                                </button>
+                            ) : (
+                                <button type="button" onClick={() => setParentInputStep(1)} className="submit-btn" style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', gap: '0.5rem', background: '#64748b' }}>
+                                    <ChevronLeft size={18} /> Back
+                                </button>
                             )}
-
-                            {/* Link Sibling Widget */}
-                            <div style={{ marginTop: '2rem', background: '#eff6ff', padding: '1.5rem', borderRadius: '16px', border: '1px dashed #6366f1' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setShowLinkSibling(!showLinkSibling)}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
-                                            <Plus size={16} color="var(--primary)" />
-                                        </div>
-                                        <label className="input-label" style={{ marginBottom: 0, cursor: 'pointer', color: 'var(--primary)', fontSize: '1rem' }}>
-                                            Link Existing Siblings (Optional)
-                                        </label>
-                                    </div>
-                                    <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{showLinkSibling ? '▲' : '▼'}</span>
-                                </div>
-
-                                {showLinkSibling && (
-                                    <div className="animate-fade-in-up" style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid rgba(99, 102, 241, 0.1)' }}>
-                                        <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
-                                            If this family already has other children in our school, find and add them here. This ensures all children appear under the same parent account.
-                                        </p>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '1rem', marginBottom: '1rem' }}>
-                                            <select
-                                                value={siblingClassId}
-                                                onChange={(e) => setSiblingClassId(e.target.value)}
-                                                style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
-                                            >
-                                                <option value="">Select Sibling's Class</option>
-                                                {availableClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                            </select>
-                                            <select
-                                                value={selectedSiblingId}
-                                                onChange={(e) => setSelectedSiblingId(e.target.value)}
-                                                disabled={!siblingClassId}
-                                                style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', opacity: siblingClassId ? 1 : 0.6 }}
-                                            >
-                                                <option value="">Select Student</option>
-                                                {availableSiblings.map(s => <option key={s.id} value={s.id}>{s.name} ({s.rollNo})</option>)}
-                                            </select>
-                                            <button
-                                                type="button"
-                                                onClick={addSiblingLink}
-                                                disabled={!selectedSiblingId}
-                                                style={{
-                                                    background: 'var(--primary)', color: 'white', border: 'none',
-                                                    padding: '0 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: '600',
-                                                    opacity: selectedSiblingId ? 1 : 0.6
-                                                }}
-                                            >
-                                                Link
-                                            </button>
-                                        </div>
-
-                                        {linkedSiblings.length > 0 && (
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
-                                                {linkedSiblings.map(sib => (
-                                                    <div key={sib.studentId} style={{
-                                                        background: 'white', border: '1px solid #e2e8f0', padding: '0.5rem 1rem',
-                                                        borderRadius: '24px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.75rem',
-                                                        color: 'var(--text-main)', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
-                                                    }}>
-                                                        <span style={{ fontWeight: '600', color: 'var(--primary)' }}>{sib.studentName}</span>
-                                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.85em' }}>{sib.className}</span>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => removeSiblingLink(sib.studentId)}
-                                                            style={{
-                                                                background: '#fee2e2', border: 'none', borderRadius: '50%',
-                                                                width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                                cursor: 'pointer', color: '#ef4444'
-                                                            }}
-                                                        >
-                                                            <X size={12} />
-                                                        </button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </>
-                    )}
-                </section>
-
-                {/* Dynamic Students Section */}
-                <div style={{ paddingBottom: '3rem' }}>
-                    <div className="section-header" style={{ marginBottom: '1rem' }}>
-                        <div className="section-icon-box" style={{ background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(59, 130, 246, 0.1))', color: 'var(--secondary)' }}>
-                            <School size={24} />
                         </div>
-                        <h2 className="section-title-text">Student Details</h2>
-                    </div>
 
-                    <AnimatePresence>
-                        {students.map((student, index) => (
-                            <motion.div
-                                key={index}
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                                transition={{ duration: 0.3 }}
-                                className="student-card"
-                            >
-                                <div className="student-header">
-                                    <h3 className="section-title-text" style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center' }}>
-                                        <span className="student-number-badge">
-                                            {index + 1}
-                                        </span>
-                                        Student Information
-                                    </h3>
-                                    {students.length > 1 && (
-                                        <button
-                                            type="button"
-                                            onClick={() => removeStudent(index)}
-                                            className="remove-btn"
-                                            title="Remove Student"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
-                                    )}
-                                </div>
-
+                        {parentInputStep === 1 && (
+                            <>
                                 <div className="form-grid">
                                     <div className="input-group">
-                                        <label className="input-label">First Name</label>
+                                        <label className="input-label">Father's Name</label>
                                         <div className="input-wrapper">
                                             <input
                                                 type="text"
-                                                name="firstName"
-                                                value={student.firstName}
-                                                onChange={(e) => handleStudentChange(index, e)}
+                                                name="fatherName"
+                                                value={parentDetails.fatherName}
+                                                onChange={handleParentChange}
                                                 className="modern-input"
+                                                placeholder="Enter father's name"
                                                 required
                                             />
+                                            <User className="input-icon" size={20} />
                                         </div>
                                     </div>
 
                                     <div className="input-group">
-                                        <label className="input-label">Last Name</label>
+                                        <label className="input-label">Parent's Occupation</label>
                                         <div className="input-wrapper">
                                             <input
                                                 type="text"
-                                                name="lastName"
-                                                value={student.lastName}
-                                                onChange={(e) => handleStudentChange(index, e)}
+                                                name="occupation"
+                                                value={parentDetails.occupation}
+                                                onChange={handleParentChange}
                                                 className="modern-input"
+                                                placeholder="Enter occupation"
                                                 required
                                             />
+                                            <Briefcase className="input-icon" size={20} />
                                         </div>
                                     </div>
 
                                     <div className="input-group">
-                                        <label className="input-label">Admission No</label>
+                                        <label className="input-label">Phone Number</label>
                                         <div className="input-wrapper">
                                             <input
-                                                type="text"
-                                                name="admissionNo"
-                                                value={student.admissionNo}
-                                                onChange={(e) => handleStudentChange(index, e)}
+                                                type="tel"
+                                                name="phone"
+                                                value={parentDetails.phone}
+                                                onChange={handleParentChange}
                                                 className="modern-input"
-                                                placeholder="e.g. ADM-001"
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="input-group">
-                                        <label className="input-label">Roll Number</label>
-                                        <div className="input-wrapper">
-                                            <input
-                                                type="text"
-                                                name="rollNo"
-                                                value={student.rollNo}
-                                                onChange={(e) => handleStudentChange(index, e)}
-                                                className="modern-input"
-                                                placeholder="e.g. 101"
+                                                placeholder="Enter primary contact"
                                                 required
                                             />
+                                            <Phone className="input-icon" size={20} />
                                         </div>
                                     </div>
 
                                     <div className="input-group">
-                                        <label className="input-label">Date of Birth</label>
+                                        <label className="input-label">Email Address</label>
                                         <div className="input-wrapper">
                                             <input
-                                                type="date"
-                                                name="dob"
-                                                value={student.dob}
-                                                onChange={(e) => handleStudentChange(index, e)}
+                                                type="email"
+                                                name="email"
+                                                value={parentDetails.email}
+                                                onChange={handleParentChange}
                                                 className="modern-input"
-                                                required
+                                                placeholder="Enter email address"
                                             />
-                                            <Calendar className="input-icon" size={20} />
-                                        </div>
-                                    </div>
-
-                                    <div className="input-group">
-                                        <label className="input-label">Gender</label>
-                                        <div className="input-wrapper">
-                                            <select
-                                                name="gender"
-                                                value={student.gender}
-                                                onChange={(e) => handleStudentChange(index, e)}
-                                                className="modern-input modern-select"
-                                            >
-                                                <option value="select" disabled>Select Gender</option>
-                                                <option value="Male">Male</option>
-                                                <option value="Female">Female</option>
-                                                <option value="Other">Other</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <div className="input-group">
-                                        <label className="input-label">Admission Class</label>
-                                        <div className="input-wrapper">
-                                            <select
-                                                name="admissionClass"
-                                                value={student.admissionClass}
-                                                onChange={(e) => handleStudentChange(index, e)}
-                                                className="modern-input modern-select"
-                                                required
-                                            >
-                                                <option value="" disabled>Select Class</option>
-                                                {availableClasses.length > 0 ? (
-                                                    availableClasses.map((cls) => (
-                                                        <option key={cls.id} value={cls.id}>
-                                                            {cls.name}
-                                                        </option>
-                                                    ))
-                                                ) : (
-                                                    <option value="" disabled>Loading classes...</option>
-                                                )}
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <div className="input-group">
-                                        <label className="input-label">Previous School</label>
-                                        <div className="input-wrapper">
-                                            <input
-                                                type="text"
-                                                name="previousSchool"
-                                                value={student.previousSchool}
-                                                onChange={(e) => handleStudentChange(index, e)}
-                                                className="modern-input"
-                                                placeholder="Optional"
-                                            />
+                                            <Mail className="input-icon" size={20} />
                                         </div>
                                     </div>
 
                                     <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                                        <label className="input-label">Student Photo</label>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginTop: '0.5rem' }}>
-                                            <div style={{
-                                                width: '80px', height: '80px', borderRadius: '50%',
-                                                background: '#f1f5f9', border: '2px dashed #cbd5e1',
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                overflow: 'hidden', position: 'relative'
-                                            }}>
-                                                {student.profilePic ? (
-                                                    <img src={student.profilePic} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                ) : (
-                                                    <Camera size={32} color="#94a3b8" />
-                                                )}
-                                            </div>
-                                            <div>
-                                                <input
-                                                    type="file"
-                                                    accept="image/*"
-                                                    onChange={(e) => handleImageUpload(index, e)}
-                                                    id={`photo-upload-${index}`}
-                                                    style={{ display: 'none' }}
-                                                />
-                                                <label
-                                                    htmlFor={`photo-upload-${index}`}
-                                                    style={{
-                                                        display: 'inline-block',
-                                                        padding: '0.6rem 1.2rem',
-                                                        background: 'white',
-                                                        border: '1px solid #e2e8f0',
-                                                        borderRadius: '8px',
-                                                        cursor: 'pointer',
-                                                        fontSize: '0.9rem',
-                                                        fontWeight: '600',
-                                                        color: 'var(--text-main)',
-                                                        transition: 'all 0.2s'
-                                                    }}
-                                                >
-                                                    Upload Photo
-                                                </label>
-                                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                                                    JPG, PNG up to 2MB
-                                                </p>
-                                            </div>
+                                        <label className="input-label">Residential Address</label>
+                                        <div className="input-wrapper">
+                                            <textarea
+                                                name="address"
+                                                value={parentDetails.address}
+                                                onChange={handleParentChange}
+                                                className="modern-input modern-textarea"
+                                                placeholder="Enter full address"
+                                                required
+                                            />
+                                            <MapPin className="input-icon" size={20} style={{ top: '1.5rem', transform: 'none' }} />
                                         </div>
                                     </div>
                                 </div>
-                            </motion.div>
-                        ))}
-                    </AnimatePresence>
+                            </>
+                        )}
 
-                    <button
-                        type="button"
-                        onClick={addStudent}
-                        className="add-sibling-btn"
-                    >
-                        <Plus size={24} />
-                        Add Another Sibling
-                    </button>
-                </div>
-            </form>
+                        {parentInputStep === 2 && (
+                            <>
+                                <div className="parent-search-box" style={{
+                                    margin: '0 1.5rem 2rem', background: '#f8fafc', padding: '1.5rem',
+                                    borderRadius: '12px', border: existingParent ? '2px solid #10b981' : '1px solid #e2e8f0'
+                                }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                                        Check for Existing Parent Account
+                                    </label>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <input
+                                            type="text"
+                                            placeholder="Enter Phone Number..."
+                                            value={searchPhone}
+                                            onChange={(e) => setSearchPhone(e.target.value)}
+                                            style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                                            disabled={existingParent !== null}
+                                        />
+                                        {existingParent ? (
+                                            <button type="button" onClick={handleResetParent} style={{
+                                                padding: '0 1.5rem', background: '#ef4444', color: 'white',
+                                                border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600'
+                                            }}>
+                                                Reset
+                                            </button>
+                                        ) : (
+                                            <button type="button" onClick={handleSearchParent} style={{
+                                                padding: '0 1.5rem', background: 'var(--primary)', color: 'white',
+                                                border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600'
+                                            }}>
+                                                {isSearchingParent ? 'Searching...' : 'Search'}
+                                            </button>
+                                        )}
+                                    </div>
+                                    {existingParent && (
+                                        <div style={{ marginTop: '1rem', color: '#047857', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <div style={{ width: 20, height: 20, background: '#10b981', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px' }}>✓</div>
+                                            Existing Account Found: {existingParent.name} (Linked Students: {existingParent.linkedStudents ? existingParent.linkedStudents.length : 0})
+                                        </div>
+                                    )}
+                                    {!existingParent && searchPhone.length > 5 && !isSearchingParent && (
+                                        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                            No account pulled yet. Fill below to create a new one.
+                                        </div>
+                                    )}
+                                </div>
+
+                                {!existingParent && (
+                                    <>
+                                        <div className="form-grid" style={{ marginTop: '1.5rem' }}>
+                                            <div className="input-group">
+                                                <label className="input-label">Create Username</label>
+                                                <div className="input-wrapper">
+                                                    <input
+                                                        type="text"
+                                                        name="username"
+                                                        value={parentDetails.username}
+                                                        onChange={handleParentChange}
+                                                        className="modern-input"
+                                                        placeholder="e.g. john.doe"
+                                                        required={!existingParent}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="input-group">
+                                                <label className="input-label">Create Password</label>
+                                                <div className="input-wrapper">
+                                                    <input
+                                                        type="text"
+                                                        name="password"
+                                                        value={parentDetails.password}
+                                                        onChange={handleParentChange}
+                                                        className="modern-input"
+                                                        placeholder="Set secure password"
+                                                        required={!existingParent}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+
+                                {/* Link Sibling Widget */}
+                                <div style={{ marginTop: '2rem', background: '#eff6ff', padding: '1.5rem', borderRadius: '16px', border: '1px dashed #6366f1' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setShowLinkSibling(!showLinkSibling)}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
+                                                <Plus size={16} color="var(--primary)" />
+                                            </div>
+                                            <label className="input-label" style={{ marginBottom: 0, cursor: 'pointer', color: 'var(--primary)', fontSize: '1rem' }}>
+                                                Link Existing Siblings (Optional)
+                                            </label>
+                                        </div>
+                                        <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{showLinkSibling ? '▲' : '▼'}</span>
+                                    </div>
+
+                                    {showLinkSibling && (
+                                        <div className="animate-fade-in-up" style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid rgba(99, 102, 241, 0.1)' }}>
+                                            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
+                                                If this family already has other children in our school, find and add them here. This ensures all children appear under the same parent account.
+                                            </p>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '1rem', marginBottom: '1rem' }}>
+                                                <select
+                                                    value={siblingClassId}
+                                                    onChange={(e) => setSiblingClassId(e.target.value)}
+                                                    style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                                >
+                                                    <option value="">Select Sibling's Class</option>
+                                                    {availableClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                                </select>
+                                                <select
+                                                    value={selectedSiblingId}
+                                                    onChange={(e) => setSelectedSiblingId(e.target.value)}
+                                                    disabled={!siblingClassId}
+                                                    style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', opacity: siblingClassId ? 1 : 0.6 }}
+                                                >
+                                                    <option value="">Select Student</option>
+                                                    {availableSiblings.map(s => <option key={s.id} value={s.id}>{s.name} ({s.rollNo})</option>)}
+                                                </select>
+                                                <button
+                                                    type="button"
+                                                    onClick={addSiblingLink}
+                                                    disabled={!selectedSiblingId}
+                                                    style={{
+                                                        background: 'var(--primary)', color: 'white', border: 'none',
+                                                        padding: '0 1.5rem', borderRadius: '8px', cursor: 'pointer', fontWeight: '600',
+                                                        opacity: selectedSiblingId ? 1 : 0.6
+                                                    }}
+                                                >
+                                                    Link
+                                                </button>
+                                            </div>
+
+                                            {linkedSiblings.length > 0 && (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+                                                    {linkedSiblings.map(sib => (
+                                                        <div key={sib.studentId} style={{
+                                                            background: 'white', border: '1px solid #e2e8f0', padding: '0.5rem 1rem',
+                                                            borderRadius: '24px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                                            color: 'var(--text-main)', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                                                        }}>
+                                                            <span style={{ fontWeight: '600', color: 'var(--primary)' }}>{sib.studentName}</span>
+                                                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85em' }}>{sib.className}</span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => removeSiblingLink(sib.studentId)}
+                                                                style={{
+                                                                    background: '#fee2e2', border: 'none', borderRadius: '50%',
+                                                                    width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                                    cursor: 'pointer', color: '#ef4444'
+                                                                }}
+                                                            >
+                                                                <X size={12} />
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </section>
+
+                    {/* Dynamic Students Section */}
+                    <div style={{ paddingBottom: '3rem' }}>
+                        <div className="section-header" style={{ marginBottom: '1rem' }}>
+                            <div className="section-icon-box" style={{ background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(59, 130, 246, 0.1))', color: 'var(--secondary)' }}>
+                                <School size={24} />
+                            </div>
+                            <h2 className="section-title-text">Student Details</h2>
+                        </div>
+
+                        <AnimatePresence>
+                            {students.map((student, index) => (
+                                <motion.div
+                                    key={index}
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="student-card"
+                                    style={{
+                                        background: '#3b82f6',
+                                        border: '2px solid #1e40af',
+                                        boxShadow: '8px 8px 0px #1e40af',
+                                        color: 'white'
+                                    }}
+                                >
+                                    <div className="student-header" style={{ borderBottom: '1px solid rgba(255,255,255,0.2)' }}>
+                                        <h3 className="section-title-text" style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', color: 'white' }}>
+                                            <span className="student-number-badge" style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}>
+                                                {index + 1}
+                                            </span>
+                                            Student Information
+                                        </h3>
+                                        {students.length > 1 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => removeStudent(index)}
+                                                className="remove-btn"
+                                                title="Remove Student"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    <div className="form-grid">
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>First Name</label>
+                                            <div className="input-wrapper">
+                                                <input
+                                                    type="text"
+                                                    name="firstName"
+                                                    value={student.firstName}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Last Name</label>
+                                            <div className="input-wrapper">
+                                                <input
+                                                    type="text"
+                                                    name="lastName"
+                                                    value={student.lastName}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Admission No</label>
+                                            <div className="input-wrapper">
+                                                <input
+                                                    type="text"
+                                                    name="admissionNo"
+                                                    value={student.admissionNo}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input"
+                                                    placeholder="e.g. ADM-001"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Roll Number</label>
+                                            <div className="input-wrapper">
+                                                <input
+                                                    type="text"
+                                                    name="rollNo"
+                                                    value={student.rollNo}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input"
+                                                    placeholder="e.g. 101"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Date of Birth</label>
+                                            <div className="input-wrapper">
+                                                <input
+                                                    type="date"
+                                                    name="dob"
+                                                    value={student.dob}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input"
+                                                    required
+                                                />
+                                                <Calendar className="input-icon" size={20} style={{ color: 'white' }} />
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Gender</label>
+                                            <div className="input-wrapper">
+                                                <select
+                                                    name="gender"
+                                                    value={student.gender}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input modern-select"
+                                                >
+                                                    <option value="select" disabled>Select Gender</option>
+                                                    <option value="Male">Male</option>
+                                                    <option value="Female">Female</option>
+                                                    <option value="Other">Other</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Admission Class</label>
+                                            <div className="input-wrapper">
+                                                <select
+                                                    name="admissionClass"
+                                                    value={student.admissionClass}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input modern-select"
+                                                    required
+                                                >
+                                                    <option value="" disabled>Select Class</option>
+                                                    {availableClasses.length > 0 ? (
+                                                        availableClasses.map((cls) => (
+                                                            <option key={cls.id} value={cls.id}>
+                                                                {cls.name}
+                                                            </option>
+                                                        ))
+                                                    ) : (
+                                                        <option value="" disabled>Loading classes...</option>
+                                                    )}
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Previous School</label>
+                                            <div className="input-wrapper">
+                                                <input
+                                                    type="text"
+                                                    name="previousSchool"
+                                                    value={student.previousSchool}
+                                                    onChange={(e) => handleStudentChange(index, e)}
+                                                    className="modern-input"
+                                                    placeholder="Optional"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                                            <label className="input-label" style={{ color: 'rgba(255,255,255,0.8)' }}>Student Photo</label>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginTop: '0.5rem' }}>
+                                                <div style={{
+                                                    width: '80px', height: '80px', borderRadius: '50%',
+                                                    background: 'rgba(255,255,255,0.1)', border: '2px dashed rgba(255,255,255,0.3)',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    overflow: 'hidden', position: 'relative'
+                                                }}>
+                                                    {student.profilePic ? (
+                                                        <img src={student.profilePic} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                    ) : (
+                                                        <Camera size={32} color="rgba(255,255,255,0.5)" />
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <input
+                                                        type="file"
+                                                        accept="image/*"
+                                                        onChange={(e) => handleImageUpload(index, e)}
+                                                        id={`photo-upload-${index}`}
+                                                        style={{ display: 'none' }}
+                                                    />
+                                                    <label
+                                                        htmlFor={`photo-upload-${index}`}
+                                                        style={{
+                                                            display: 'inline-block',
+                                                            padding: '0.6rem 1.2rem',
+                                                            background: 'white',
+                                                            border: '1px solid #e2e8f0',
+                                                            borderRadius: '8px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '0.9rem',
+                                                            fontWeight: '600',
+                                                            color: 'var(--text-main)',
+                                                            transition: 'all 0.2s'
+                                                        }}
+                                                    >
+                                                        Upload Photo
+                                                    </label>
+                                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                                        JPG, PNG up to 2MB
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            ))}
+                        </AnimatePresence>
+
+                        <button
+                            type="button"
+                            onClick={addStudent}
+                            className="add-sibling-btn"
+                        >
+                            <Plus size={24} />
+                            Add Another Sibling
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     );
 };
