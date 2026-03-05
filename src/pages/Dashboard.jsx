@@ -28,6 +28,7 @@ const Dashboard = () => {
     const [messageText, setMessageText] = useState('');
     const [isSending, setIsSending] = useState(false);
     const [isBroadcast, setIsBroadcast] = useState(false);
+    const [modalPos, setModalPos] = useState(null); // New state for popup position
     const [performanceTab, setPerformanceTab] = useState('subjects');
     const [selectedClass, setSelectedClass] = useState('all');
     const [showClassDropdown, setShowClassDropdown] = useState(false);
@@ -556,9 +557,20 @@ const Dashboard = () => {
 
     const availableClasses = ['All School', ...fetchedClasses.map(c => c.name)];
 
-    const handleSendBroadcast = () => {
+    const handleSendBroadcast = (e) => {
         setIsBroadcast(true);
         setSelectedTeacher({ name: 'All Teachers', class: 'Broadcast Message' });
+
+        // Calculate position relative to the button
+        if (e && e.currentTarget) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setModalPos({
+                top: rect.bottom + 10, // 10px below the button
+                left: Math.min(rect.left, window.innerWidth - 420) // Keep within screen (400px width + 20px padding)
+            });
+        } else {
+            setModalPos(null); // Fallback to center if no event
+        }
     };
 
     const handleSendMessage = async () => {
@@ -606,6 +618,7 @@ const Dashboard = () => {
 
                 setMessageText('');
                 setSelectedTeacher(null);
+                setModalPos(null);
                 setIsBroadcast(false);
                 // alert("Message Sent Query Successfully!"); 
             }
@@ -1250,79 +1263,83 @@ const Dashboard = () => {
                             <div style={{ padding: '1.5rem', borderBottom: '1px solid rgba(241, 245, 249, 0.6)', display: 'flex', flexDirection: 'column', gap: '1rem', position: 'relative', zIndex: 2 }}>
                                 <h3 style={{ fontSize: '1.125rem', margin: 0 }}>Teachers Live</h3>
 
-                                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', width: '100%' }}>
                                     <button
                                         onClick={handleSendBroadcast}
                                         style={{
-                                            padding: '0.5rem 1rem',
-                                            background: 'var(--primary)',
+                                            flex: 1,
+                                            padding: '0.75rem 1rem',
+                                            background: 'linear-gradient(135deg, var(--primary) 0%, #4338ca 100%)',
                                             color: 'white',
                                             border: 'none',
-                                            borderRadius: '8px',
-                                            fontSize: '0.85rem',
+                                            borderRadius: '12px',
+                                            fontSize: '0.875rem',
                                             fontWeight: '600',
                                             cursor: 'pointer',
                                             display: 'flex',
                                             alignItems: 'center',
-                                            gap: '0.5rem',
+                                            justifyContent: 'center',
+                                            gap: '0.625rem',
                                             transition: 'var(--transition)',
-                                            boxShadow: '0 2px 8px rgba(79, 70, 229, 0.2)'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            e.target.style.background = '#4338ca';
-                                            e.target.style.transform = 'translateY(-1px)';
-                                            e.target.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.3)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            e.target.style.background = 'var(--primary)';
-                                            e.target.style.transform = 'translateY(0)';
-                                            e.target.style.boxShadow = '0 2px 8px rgba(79, 70, 229, 0.2)';
-                                        }}
-                                    >
-                                        <Send size={16} />
-                                        Send Note to All
-                                    </button>
-
-                                    {/* New Inbox Badge Button */}
-                                    <button
-                                        onClick={() => navigate('/inbox')}
-                                        style={{
-                                            padding: '0.5rem 1rem',
-                                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '8px',
-                                            fontSize: '0.85rem',
-                                            fontWeight: '600',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '0.5rem',
-                                            transition: 'var(--transition)',
-                                            boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                                            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.15)',
                                             position: 'relative'
                                         }}
                                         onMouseEnter={(e) => {
-                                            e.currentTarget.style.transform = 'translateY(-1px)';
-                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
+                                            e.currentTarget.style.transform = 'translateY(-2px)';
+                                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(79, 70, 229, 0.25)';
                                         }}
                                         onMouseLeave={(e) => {
                                             e.currentTarget.style.transform = 'translateY(0)';
-                                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.3)';
+                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.15)';
                                         }}
                                     >
-                                        <MessageCircle size={16} />
-                                        Inbox
+                                        <Send size={18} />
+                                        <span>Send Note to All</span>
+                                    </button>
+
+                                    <button
+                                        onClick={() => navigate('/inbox')}
+                                        style={{
+                                            flex: 1,
+                                            padding: '0.75rem 1rem',
+                                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '12px',
+                                            fontSize: '0.875rem',
+                                            fontWeight: '600',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '0.625rem',
+                                            transition: 'var(--transition)',
+                                            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)',
+                                            position: 'relative'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(-2px)';
+                                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.25)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.15)';
+                                        }}
+                                    >
+                                        <MessageCircle size={18} />
+                                        <span>Inbox</span>
 
                                         {messages.filter(m => m.type === 'teacher-reply').length > 0 && (
                                             <span style={{
                                                 background: '#ef4444',
                                                 color: 'white',
-                                                fontSize: '0.7rem',
-                                                fontWeight: 'bold',
-                                                padding: '2px 6px',
-                                                borderRadius: '10px',
-                                                marginLeft: '4px'
+                                                fontSize: '0.75rem',
+                                                fontWeight: '800',
+                                                padding: '2px 8px',
+                                                borderRadius: '20px',
+                                                marginLeft: '0.5rem',
+                                                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                                border: '1.5px solid rgba(255,255,255,0.3)'
                                             }}>
                                                 {messages.filter(m => m.type === 'teacher-reply').length}
                                             </span>
@@ -1346,7 +1363,19 @@ const Dashboard = () => {
                                             </div>
                                             <div>
                                                 <p
-                                                    onClick={() => setSelectedTeacher(teacher)}
+                                                    onClick={(e) => {
+                                                        setSelectedTeacher(teacher);
+                                                        setIsBroadcast(false);
+                                                        if (e && e.currentTarget) {
+                                                            const rect = e.currentTarget.getBoundingClientRect();
+                                                            setModalPos({
+                                                                top: rect.bottom + 10,
+                                                                left: Math.min(rect.left, window.innerWidth - 420)
+                                                            });
+                                                        } else {
+                                                            setModalPos(null);
+                                                        }
+                                                    }}
                                                     style={{
                                                         fontWeight: '600',
                                                         fontSize: '0.9rem',
@@ -1500,29 +1529,29 @@ const Dashboard = () => {
                         left: 0,
                         right: 0,
                         bottom: 0,
-                        background: 'rgba(0, 0, 0, 0.5)',
-                        backdropFilter: 'blur(8px)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
+                        background: 'transparent', // Removed dark overlay
                         zIndex: 1000,
-                        animation: 'fadeIn 0.2s ease-out'
                     }}
-                    onClick={() => setSelectedTeacher(null)}
+                    onClick={() => {
+                        setSelectedTeacher(null);
+                        setModalPos(null);
+                    }}
                 >
                     <div
                         style={{
-                            background: 'rgba(255, 255, 255, 0.95)',
+                            position: modalPos ? 'absolute' : 'relative',
+                            top: modalPos ? `${modalPos.top}px` : 'auto',
+                            left: modalPos ? `${modalPos.left}px` : 'auto',
+                            background: 'rgba(255, 255, 255, 0.98)', // Less transparent
                             backdropFilter: 'blur(20px)',
                             WebkitBackdropFilter: 'blur(20px)',
-                            borderRadius: '24px',
-                            padding: '2rem',
+                            borderRadius: '16px', // Slightly smaller radius
+                            padding: '1.5rem', // Reduced padding
                             width: '90%',
-                            maxWidth: '500px',
-                            boxShadow: '0 20px 60px rgba(79, 70, 229, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.8), inset 0 1px 0 rgba(255, 255, 255, 1)',
-                            border: '1px solid rgba(255, 255, 255, 0.8)',
-                            position: 'relative',
-                            animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
+                            maxWidth: '400px', // Smaller max width
+                            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05)', // Professional shadow
+                            animation: 'slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                            ...(modalPos ? {} : { margin: '15vh auto' }) // Fallback centering
                         }}
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -1539,7 +1568,10 @@ const Dashboard = () => {
 
                         {/* Close button */}
                         <button
-                            onClick={() => setSelectedTeacher(null)}
+                            onClick={() => {
+                                setSelectedTeacher(null);
+                                setModalPos(null);
+                            }}
                             style={{
                                 position: 'absolute',
                                 top: '1rem',
