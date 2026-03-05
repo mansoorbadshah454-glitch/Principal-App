@@ -208,7 +208,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                 background: isEditing ? 'white' : 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)',
                 boxShadow: isEditing
                     ? '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)'
-                    : `0 6px 0 #1d4ed8, 0 10px 0 #1a47c0, 0 13px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.3)`,
+                    : `4px 4px 0 rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.3)`,
                 borderRadius: '16px',
                 cursor: isEditing ? 'default' : 'pointer',
                 transition: 'all 0.2s ease',
@@ -321,7 +321,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                     {/* Theme Decoration Strip */}
                     <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
 
-                    <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 0 rgba(0,0,0,0.25), 0 6px 8px rgba(0,0,0,0.2)' }}>
+                    <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white' }}>{cls.name}</h3>
                             <div style={{
@@ -334,7 +334,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                         </div>
                     </div>
 
-                    <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', background: 'rgba(255,255,255,0.08)' }}>
                         <div
                             onClick={(e) => e.stopPropagation()}
                             style={{
@@ -401,7 +401,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                         </div>
                     </div>
 
-                    <div style={{ padding: '1.5rem', background: 'transparent' }}>
+                    <div style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.08)' }}>
                         <div
                             onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
                             style={{

@@ -271,7 +271,7 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                 border: '1px solid rgba(255,255,255,0.25)',
                 position: 'relative',
                 background: 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)',
-                boxShadow: `0 6px 0 #1d4ed8, 0 10px 0 #1a47c0, 0 13px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.3)`,
+                boxShadow: `4px 4px 0 rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.3)`,
                 borderRadius: '16px',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
@@ -281,7 +281,7 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
             <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
 
             <div style={{ padding: '0', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 0 rgba(0,0,0,0.25), 0 6px 8px rgba(0,0,0,0.2)' }}>
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div>
                             <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white' }}>{cls.name}</h3>
@@ -307,7 +307,7 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                     </div>
                 </div>
 
-                <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', background: 'rgba(255,255,255,0.08)' }}>
                     {/* Total Students Badge */}
                     <div style={{ marginBottom: '0.25rem' }}>
                         <div style={{
