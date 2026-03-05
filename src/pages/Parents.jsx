@@ -8,6 +8,7 @@ import { httpsCallable } from 'firebase/functions';
 
 // Internal Component for individual Parent Card logic
 const ParentCard = ({ parent, onDelete, onEdit, onMessage }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
     // Dynamic Theme Color based on name char code for variety
     const seed = parent.name.charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
@@ -75,6 +76,16 @@ const ParentCard = ({ parent, onDelete, onEdit, onMessage }) => {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+                    <div style={{
+                        fontSize: '0.7rem',
+                        fontWeight: '800',
+                        color: themeColor,
+                        letterSpacing: '0.05em',
+                        marginBottom: '0.25rem',
+                        opacity: 0.8
+                    }}>
+                        PARENT INFORMATION
+                    </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                         <Phone size={16} color="#64748b" />
                         <span>{parent.phone || 'N/A'}</span>
@@ -98,21 +109,42 @@ const ParentCard = ({ parent, onDelete, onEdit, onMessage }) => {
 
             <div style={{ padding: '1rem 1.5rem', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '100%' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.2rem' }}>Linked Children</span>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        {parent.linkedStudents && parent.linkedStudents.length > 0 ? (
-                            parent.linkedStudents.map((child, idx) => (
-                                <span key={idx} style={{
-                                    fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-main)',
-                                    background: 'white', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: '12px'
-                                }}>
-                                    {child.studentName} <span style={{ opacity: 0.5, fontSize: '0.7em' }}>({child.className})</span>
-                                </span>
-                            ))
-                        ) : (
-                            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>None</span>
-                        )}
+                    <div
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            cursor: 'pointer',
+                            userSelect: 'none'
+                        }}
+                    >
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Linked Children</span>
+                        <ChevronRight
+                            size={14}
+                            color="#94a3b8"
+                            style={{
+                                transition: 'transform 0.2s',
+                                transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'
+                            }}
+                        />
                     </div>
+                    {isExpanded && (
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                            {parent.linkedStudents && parent.linkedStudents.length > 0 ? (
+                                parent.linkedStudents.map((child, idx) => (
+                                    <span key={idx} style={{
+                                        fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-main)',
+                                        background: 'white', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: '12px'
+                                    }}>
+                                        {child.studentName} <span style={{ opacity: 0.5, fontSize: '0.7em' }}>({child.className})</span>
+                                    </span>
+                                ))
+                            ) : (
+                                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>None</span>
+                            )}
+                        </div>
+                    )}
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button
@@ -582,7 +614,7 @@ const Parents = () => {
             </div>
 
             {/* Stats Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
                 {[
                     {
                         label: 'Total Parents',
@@ -604,18 +636,6 @@ const Parents = () => {
                         icon: User,
                         gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%)',
                         shadow: 'rgba(14, 165, 233, 0.4)'
-                    },
-                    {
-                        label: 'New This Month',
-                        value: parents.filter(p => {
-                            if (!p.createdAt) return false;
-                            const date = p.createdAt.seconds ? new Date(p.createdAt.seconds * 1000) : new Date(p.createdAt);
-                            const now = new Date();
-                            return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-                        }).length,
-                        icon: Star,
-                        gradient: 'linear-gradient(135deg, #f59e0b 0%, #b45309 100%)',
-                        shadow: 'rgba(245, 158, 11, 0.4)'
                     },
                 ].map((stat, idx) => (
                     <div key={idx} className="card" style={{
