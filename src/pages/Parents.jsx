@@ -1074,56 +1074,60 @@ const Parents = () => {
                         label: 'Total Parents',
                         value: parents.length,
                         icon: Users,
-                        gradient: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
-                        shadow: 'rgba(99, 102, 241, 0.4)'
+                        bg: 'linear-gradient(135deg, #ffffff 0%, #f5f7ff 100%)',
+                        border: '#e0e7ff',
+                        iconBg: '#e0e7ff',
+                        iconColor: '#4f46e5'
                     },
                     {
                         label: 'Linked Students',
                         value: parents.reduce((acc, p) => acc + (p.linkedStudents?.length || 0), 0),
                         icon: Baby,
-                        gradient: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
-                        shadow: 'rgba(16, 185, 129, 0.4)'
+                        bg: 'linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%)',
+                        border: '#dcfce7',
+                        iconBg: '#dcfce7',
+                        iconColor: '#10b981'
                     },
                     {
                         label: 'App Users',
                         value: parents.filter(p => p.username && p.password).length,
                         icon: User,
-                        gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%)',
-                        shadow: 'rgba(14, 165, 233, 0.4)'
+                        bg: 'linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%)',
+                        border: '#e0f2fe',
+                        iconBg: '#e0f2fe',
+                        iconColor: '#0ea5e9'
                     },
                 ].map((stat, idx) => (
                     <div key={idx} className="card" style={{
-                        padding: '1.5rem',
-                        position: 'relative',
-                        overflow: 'hidden',
-                        border: 'none',
+                        padding: '1.25rem',
+                        border: `1px solid ${stat.border}`,
+                        background: stat.bg,
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '1rem',
-                        background: stat.gradient,
-                        color: 'white',
-                        boxShadow: `0 10px 20px -5px ${stat.shadow}`,
+                        gap: '0.5rem',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
                         transition: 'all 0.3s ease'
                     }}>
-                        <div style={{
-                            position: 'absolute', top: '-15%', right: '-10%',
-                            width: '100px', height: '100px',
-                            background: 'rgba(255, 255, 255, 0.12)',
-                            borderRadius: '20px', transform: 'rotate(20deg)', zIndex: 1
-                        }} />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', position: 'relative', zIndex: 2 }}>
-                            <div>
-                                <p style={{ fontSize: '0.9rem', opacity: 0.9, marginBottom: '0.25rem', fontWeight: '500' }}>{stat.label}</p>
-                                <h3 style={{ fontSize: '1.75rem', fontWeight: '700' }}>{stat.value}</h3>
-                            </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                             <div style={{
-                                width: '40px', height: '40px', borderRadius: '10px',
-                                background: 'rgba(255, 255, 255, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                backdropFilter: 'blur(4px)'
+                                padding: '0.5rem', borderRadius: '10px',
+                                background: stat.iconBg, color: stat.iconColor,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
-                                <stat.icon size={22} color="white" />
+                                <stat.icon size={20} />
                             </div>
+                            <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                                {stat.label}
+                            </span>
                         </div>
+                        <span style={{
+                            fontSize: '1.75rem',
+                            fontWeight: '700',
+                            color: 'var(--text-main)',
+                            marginLeft: '0.25rem'
+                        }}>
+                            {typeof stat.value === 'number' ? stat.value.toLocaleString() : stat.value}
+                        </span>
                     </div>
                 ))}
             </div>
