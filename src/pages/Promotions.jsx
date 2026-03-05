@@ -320,6 +320,9 @@ const Promotions = () => {
                 console.log("Student Moves Complete");
             }
 
+            // Auto-generate and download the PDF report before clearing data
+            await generatePDF();
+
             setPromotionStatus('success');
             setSelectedClass(null);
             setStudents([]);
@@ -470,8 +473,25 @@ const Promotions = () => {
                 doc.text(`Page ${i} of ${pageCount}`, doc.internal.pageSize.getWidth() - 20, doc.internal.pageSize.getHeight() - 10, { align: 'right' });
             }
 
+            // --- Dynamic Naming Logic ---
+            // Format example: "class 1st to 2nd class exam 2026.pdf"
+            const currentYear = new Date().getFullYear();
+            const fromClass = selectedClass.name.toLowerCase().replace('class', '').trim();
+
+            // Determine "to class" based on the first promoted student, or fallback
+            const promotedStudent = students.find(s => (s.promotionStatus || 'promote') === 'promote');
+            let toClass = 'graduated';
+            if (promotedStudent && promotedStudent.nextClassName) {
+                toClass = promotedStudent.nextClassName.toLowerCase().replace('class', '').trim();
+            }
+
+            let fileName = `class ${fromClass} to ${toClass} class exam ${currentYear}.pdf`;
+
+            // Clean up any double spaces if 'fromClass' or 'toClass' logic went weird
+            fileName = fileName.replace(/\s+/g, ' ').trim();
+
             // Save PDF
-            doc.save(`Promotion_Report_${selectedClass.name.replace(/\s+/g, '_')}_2025-26.pdf`);
+            doc.save(fileName);
 
         } catch (error) {
             console.error("Error generating PDF:", error);
@@ -506,7 +526,15 @@ const Promotions = () => {
                         <GraduationCap size={32} color="var(--primary)" />
                         Annual Promotions
                     </h1>
-                    <p style={{ color: '#64748B', fontSize: '16px' }}>Verify academic results and promote students to the next grade.</p>
+                    <div style={{ color: '#64748B', fontSize: '16px' }}>
+                        Verify academic results and promote students to the next grade.
+                        {classes.length > 0 && (
+                            <div style={{ marginTop: '6px', color: '#F59E0B', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <AlertCircle size={16} />
+                                Please start promotions from Class {classes[classes.length - 1]?.name?.replace(/class/i, '').trim() || ''}
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '14px', color: '#94A3B8', marginBottom: '5px' }}>Academic Session</div>
