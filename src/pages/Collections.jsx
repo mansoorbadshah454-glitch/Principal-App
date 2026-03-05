@@ -233,10 +233,10 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                     <CheckCircle size={16} />
                 </div>
                 <div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block' }}>
                         {label} Paid
                     </span>
-                    <span style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--text-main)' }}>
+                    <span style={{ fontSize: '1rem', fontWeight: '700', color: '#1e293b' }}>
                         {paid}
                     </span>
                 </div>
@@ -246,10 +246,10 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                     <Ban size={16} />
                 </div>
                 <div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', display: 'block' }}>
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block' }}>
                         {label} Unpaid
                     </span>
-                    <span style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--text-main)' }}>
+                    <span style={{ fontSize: '1rem', fontWeight: '700', color: '#1e293b' }}>
                         {unpaid}
                     </span>
                 </div>
@@ -268,56 +268,58 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                 opacity: isPending ? 0.7 : 1,
                 padding: '0',
                 overflow: 'hidden',
-                border: isTargeted ? '2px solid var(--primary)' : '1px solid #dbeafe',
+                border: '1px solid rgba(255,255,255,0.25)',
                 position: 'relative',
-                background: '#eff6ff',
-                boxShadow: isTargeted ? '0 10px 20px -5px rgba(99, 102, 241, 0.2)' : '0 4px 6px -1px rgba(59, 130, 246, 0.1)',
+                background: 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)',
+                boxShadow: `0 6px 0 #1d4ed8, 0 10px 0 #1a47c0, 0 13px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.3)`,
                 borderRadius: '16px',
                 cursor: 'pointer',
-                transition: 'all 0.3s ease'
+                transition: 'all 0.3s ease',
+                color: 'white'
             }}>
             {/* Decoration Strip */}
             <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
 
-            <div style={{ padding: '1.25rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                    <div>
-                        <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)' }}>{cls.name}</h3>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{cls.teacher || 'No Teacher'}</p>
-                    </div>
-                    {isTargeted ? (
-                        <div style={{
-                            padding: '0.25rem 0.75rem', background: 'var(--primary)', borderRadius: '20px',
-                            fontSize: '0.7rem', fontWeight: '600', color: 'white',
-                            boxShadow: '0 2px 4px rgba(99, 102, 241, 0.3)'
-                        }}>
-                            Action Active
+            <div style={{ padding: '0', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 0 rgba(0,0,0,0.25), 0 6px 8px rgba(0,0,0,0.2)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                            <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white' }}>{cls.name}</h3>
+                            <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)' }}>{cls.teacher || 'No Teacher'}</p>
                         </div>
-                    ) : (
-                        <div style={{
-                            padding: '0.25rem 0.75rem', background: 'white', borderRadius: '20px',
-                            fontSize: '0.7rem', fontWeight: '600', color: 'var(--text-secondary)',
-                            border: '1px solid #e2e8f0'
-                        }}>
-                            Standard
-                        </div>
-                    )}
-                </div>
-
-                {/* Total Students Badge */}
-                <div style={{ marginBottom: '1rem' }}>
-                    <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                        padding: '0.4rem 0.75rem', background: 'white',
-                        borderRadius: '8px', border: '1px solid #e2e8f0',
-                        fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-main)'
-                    }}>
-                        <Users size={16} color="var(--primary)" />
-                        <span>Total Students: {monthlyStats.total}</span>
+                        {isTargeted ? (
+                            <div style={{
+                                padding: '0.25rem 0.75rem', background: 'var(--primary)', borderRadius: '20px',
+                                fontSize: '0.7rem', fontWeight: '600', color: 'white',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.2)'
+                            }}>
+                                Action Active
+                            </div>
+                        ) : (
+                            <div style={{
+                                padding: '0.25rem 0.75rem', background: 'rgba(255,255,255,0.15)', borderRadius: '20px',
+                                fontSize: '0.7rem', fontWeight: '600', color: 'white',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)'
+                            }}>
+                                Standard
+                            </div>
+                        )}
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {/* Total Students Badge */}
+                    <div style={{ marginBottom: '0.25rem' }}>
+                        <div style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.4rem 0.75rem', background: 'rgba(255,255,255,0.15)',
+                            borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600', color: 'white',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                        }}>
+                            <Users size={16} color="white" />
+                            <span>{monthlyStats.total} Students</span>
+                        </div>
+                    </div>
                     {/* 1. Monthly Fee Stats */}
                     <StatsRow label="Monthly Fee" paid={monthlyStats.paid} unpaid={monthlyStats.unpaid} />
 
@@ -329,9 +331,9 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                     )}
                 </div>
 
-                <div style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end' }}>
+                <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
                     <span style={{
-                        fontSize: '0.8rem', color: themeColor, fontWeight: '600',
+                        fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)', fontWeight: '600',
                         display: 'flex', alignItems: 'center', gap: '0.25rem'
                     }}>
                         View Details <ChevronRight size={16} />
