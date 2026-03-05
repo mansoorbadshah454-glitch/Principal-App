@@ -10,11 +10,10 @@ import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 // Internal Component for individual Teacher Card logic
 // Internal Component for individual Teacher Card logic
 const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
-    // Dynamic Theme Color based on name char code for variety
-    const seed = teacher.name.charCodeAt(0) || 123;
-    const isEven = seed % 2 === 0;
-    const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
-    const themeLight = isEven ? '#e0e7ff' : '#ecfeff';
+    // Colors based on user request: Purple theme
+    const purpleHeader = '#5b21b6'; // Darker purple
+    const purpleBody = '#ede9fe';   // Light purple
+    const purpleAccent = '#8b5cf6'; // Main purple
 
     return (
         <div
@@ -23,33 +22,34 @@ const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
             style={{
                 padding: '0',
                 overflow: 'hidden',
-                border: isHighlighted ? '2px solid var(--primary)' : '1px solid #dbeafe',
+                border: isHighlighted ? `2px solid ${purpleAccent}` : '1px solid #d8b4fe',
                 position: 'relative',
-                background: 'white',
-                boxShadow: isHighlighted ? '0 0 0 4px rgba(99, 102, 241, 0.2)' : '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)',
+                background: purpleBody,
+                boxShadow: isHighlighted ? `0 0 0 4px rgba(139, 92, 246, 0.2)` : '0 4px 6px -1px rgba(139, 92, 246, 0.1), 0 2px 4px -1px rgba(139, 92, 246, 0.06)',
                 borderRadius: '16px',
                 transition: 'all 0.3s ease',
                 transform: isHighlighted ? 'scale(1.02)' : 'scale(1)',
                 zIndex: isHighlighted ? 10 : 1
             }}>
-            <div style={{ padding: '1.5rem', borderBottom: '1px solid #f1f5f9' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+            {/* Header: Darker Purple */}
+            <div style={{ padding: '1.5rem', background: purpleHeader, color: 'white' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                         <div style={{
                             width: '50px', height: '50px', borderRadius: '50%',
-                            background: `linear-gradient(135deg, ${themeColor}, ${isEven ? '#4338ca' : '#0891b2'})`,
+                            background: 'white',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'white', fontWeight: '700', fontSize: '1.2rem'
+                            color: purpleHeader, fontWeight: '700', fontSize: '1.2rem'
                         }}>
                             {teacher.name.charAt(0).toUpperCase()}
                         </div>
                         <div>
-                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '0.2rem' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'white', marginBottom: '0.2rem' }}>
                                 {teacher.name}
                             </h3>
                             <span style={{
-                                fontSize: '0.8rem', color: themeColor,
-                                background: themeLight, padding: '0.2rem 0.6rem',
+                                fontSize: '0.8rem', color: 'white',
+                                background: 'rgba(255, 255, 255, 0.2)', padding: '0.2rem 0.6rem',
                                 borderRadius: '12px', fontWeight: '600'
                             }}>
                                 {teacher.subject || 'Teacher'}
@@ -61,8 +61,8 @@ const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
                         <button
                             onClick={() => onEdit(teacher)}
                             style={{
-                                background: '#f0f9ff', border: 'none', padding: '0.5rem',
-                                borderRadius: '8px', color: '#0ea5e9', cursor: 'pointer',
+                                background: 'rgba(255, 255, 255, 0.1)', border: 'none', padding: '0.5rem',
+                                borderRadius: '8px', color: 'white', cursor: 'pointer',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}
                         >
@@ -71,8 +71,8 @@ const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
                         <button
                             onClick={() => onDelete(teacher.id)}
                             style={{
-                                background: '#fef2f2', border: 'none', padding: '0.5rem',
-                                borderRadius: '8px', color: '#ef4444', cursor: 'pointer',
+                                background: 'rgba(239, 68, 68, 0.2)', border: 'none', padding: '0.5rem',
+                                borderRadius: '8px', color: '#fecaca', cursor: 'pointer',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}
                         >
@@ -80,42 +80,52 @@ const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
                         </button>
                     </div>
                 </div>
+            </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        <BookOpen size={16} color="#64748b" />
-                        <span>Subjects: <strong style={{ color: 'var(--text-main)' }}>
+            {/* Body: Light Purple */}
+            <div style={{ padding: '1.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#5b21b6', fontSize: '0.9rem' }}>
+                        <BookOpen size={16} color="#7c3aed" />
+                        <span>Subjects: <strong style={{ color: '#4c1d95' }}>
                             {Array.isArray(teacher.subjects) ? teacher.subjects.join(', ') : teacher.subjects || teacher.subject || 'None'}
                         </strong></span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        <Phone size={16} color="#64748b" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#5b21b6', fontSize: '0.9rem' }}>
+                        <Phone size={16} color="#7c3aed" />
                         <span>{teacher.phone || 'N/A'}</span>
                     </div>
                     {teacher.email && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            <Mail size={16} color="#64748b" />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#5b21b6', fontSize: '0.9rem' }}>
+                            <Mail size={16} color="#7c3aed" />
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{teacher.email}</span>
                         </div>
                     )}
                 </div>
-            </div>
 
-            <div style={{ padding: '1rem 1.5rem', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '100%' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.2rem' }}>Assigned Classes</span>
-                    <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {Array.isArray(teacher.assignedClasses)
-                            ? teacher.assignedClasses.join(', ')
-                            : teacher.assignedClasses || teacher.assignedClass || 'None'}
-                    </span>
-                </div>
                 <div style={{
-                    width: '32px', height: '32px', borderRadius: '8px',
-                    background: 'white', border: '1px solid #e2e8f0',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    marginTop: '1.5rem',
+                    paddingTop: '1rem',
+                    borderTop: '1px solid rgba(139, 92, 246, 0.1)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
                 }}>
-                    <Star size={16} color="#fbbf24" fill="#fbbf24" />
+                    <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '80%' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#7c3aed', marginBottom: '0.2rem' }}>Assigned Classes</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#4c1d95', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {Array.isArray(teacher.assignedClasses)
+                                ? teacher.assignedClasses.join(', ')
+                                : teacher.assignedClasses || teacher.assignedClass || 'None'}
+                        </span>
+                    </div>
+                    <div style={{
+                        width: '32px', height: '32px', borderRadius: '8px',
+                        background: 'white', border: '1px solid #ddd6fe',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                        <Star size={16} color="#f59e0b" fill="#f59e0b" />
+                    </div>
                 </div>
             </div>
         </div>
