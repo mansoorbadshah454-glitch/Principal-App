@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useTransition } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2, Edit, Save } from 'lucide-react';
 import { db } from '../firebase';
@@ -9,7 +9,6 @@ import StudentCircle from '../components/StudentCircle';
 // Internal Component for individual Class Card logic
 const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subjectOptions, onCancel, onSave }) => {
     const navigate = useNavigate();
-    const [isPending, startTransition] = useTransition();
     const [showSubjects, setShowSubjects] = useState(false);
     const [showStudents, setShowStudents] = useState(false);
     const [studentsList, setStudentsList] = useState([]);
@@ -200,7 +199,6 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
         <div
             className="card"
             style={{
-                opacity: isPending ? 0.7 : 1,
                 padding: '0',
                 overflow: 'hidden',
                 border: '1px solid rgba(255,255,255,0.25)',
@@ -217,9 +215,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
             }}
             onClick={() => {
                 if (!isEditing) {
-                    startTransition(() => {
-                        navigate(`/classes/${cls.id}`);
-                    });
+                    navigate(`/classes/${cls.id}`);
                 }
             }}
         >
@@ -567,9 +563,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    startTransition(() => {
-                                        navigate(`/classes/${cls.id}`);
-                                    });
+                                    navigate(`/classes/${cls.id}`);
                                 }}
                                 style={{
                                     flex: 1, padding: '0.75rem',

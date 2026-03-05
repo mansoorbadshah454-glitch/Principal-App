@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useTransition } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Wallet, Users, ChevronRight, Ban, CheckCircle, Plus, Trash2, X, CheckSquare, Square } from 'lucide-react';
 import { db, auth } from '../firebase';
@@ -154,7 +154,6 @@ const ActionModal = ({ isOpen, onClose, onSave, classes }) => {
 
 const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
     const navigate = useNavigate();
-    const [isPending, startTransition] = useTransition();
     const [monthlyStats, setMonthlyStats] = useState({ paid: 0, unpaid: 0, total: 0, loading: true });
     const [actionStats, setActionStats] = useState({ paid: 0, unpaid: 0, total: 0, loading: true });
 
@@ -260,12 +259,9 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
     return (
         <div
             onClick={() => {
-                startTransition(() => {
-                    navigate(`/collections/${cls.id}`);
-                });
+                navigate(`/collections/${cls.id}`);
             }}
             className="card" style={{
-                opacity: isPending ? 0.7 : 1,
                 padding: '0',
                 overflow: 'hidden',
                 border: '1px solid rgba(255,255,255,0.25)',

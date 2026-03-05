@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useTransition } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
@@ -14,7 +14,6 @@ import StudentActionPopup from '../components/StudentActionPopup';
 const ClassDetails = () => {
     const { classId } = useParams();
     const navigate = useNavigate();
-    const [isPending, startTransition] = useTransition();
     const [classData, setClassData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'present', 'absent'
@@ -211,9 +210,14 @@ const ClassDetails = () => {
     useEffect(() => {
         if (selectedStudent && students.length > 0) {
             const liveStudentData = students.find(s => s.id === selectedStudent.id);
-            if (liveStudentData && JSON.stringify(liveStudentData) !== JSON.stringify(selectedStudent)) {
-                // Keep the existing rank, which was set when opening the modal
-                setSelectedStudent({ ...liveStudentData, rank: selectedStudent.rank });
+            if (liveStudentData) {
+                // Only trigger update if the actual data from the database changed, not our injected 'rank' prop
+                const cleanSelected = {};
+                Object.keys(liveStudentData).forEach(k => cleanSelected[k] = selectedStudent[k]);
+                if (JSON.stringify(liveStudentData) !== JSON.stringify(cleanSelected)) {
+                    // Keep the existing rank info which was set when opening the modal
+                    setSelectedStudent({ ...liveStudentData, classRank: selectedStudent.classRank, trueAvgScore: selectedStudent.trueAvgScore, rank: selectedStudent.rank });
+                }
             }
         }
     }, [students, selectedStudent]);
@@ -341,14 +345,12 @@ const ClassDetails = () => {
     if (!classData) return <div style={{ padding: '2rem' }}>Class not found</div>;
 
     return (
-        <div className="animate-fade-in-up" style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        <div className="animate-fade-in-up" style={{ width: '100%', margin: '0 auto' }}>
             {/* Header */}
-            <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem', opacity: isPending ? 0.7 : 1, transition: 'opacity 0.2s' }}>
+            <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <button
                     onClick={() => {
-                        startTransition(() => {
-                            navigate('/classes');
-                        });
+                        navigate('/classes');
                     }}
                     style={{
                         background: 'white', border: '1px solid #e2e8f0', padding: '0.75rem',

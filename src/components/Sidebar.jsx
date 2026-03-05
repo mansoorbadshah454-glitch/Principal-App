@@ -1,4 +1,4 @@
-import React, { useTransition } from 'react';
+import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
@@ -9,7 +9,6 @@ import { auth } from '../firebase';
 const Sidebar = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const [isPending, startTransition] = useTransition();
     const menuItems = [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
         { icon: FileText, label: 'News Feeds', path: '/news-feed' },
@@ -45,7 +44,7 @@ const Sidebar = () => {
                 </div>
             </div>
 
-            <nav className="sidebar-nav" style={{ opacity: isPending ? 0.7 : 1, transition: 'opacity 0.2s' }}>
+            <nav className="sidebar-nav">
                 {menuItems.map((item) => {
                     const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
                     return (
@@ -55,9 +54,7 @@ const Sidebar = () => {
                             onClick={(e) => {
                                 e.preventDefault();
                                 if (location.pathname !== item.path) {
-                                    startTransition(() => {
-                                        navigate(item.path);
-                                    });
+                                    navigate(item.path);
                                 }
                             }}
                             className={`nav-link ${isActive ? 'active' : ''}`}
