@@ -1,19 +1,287 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, Edit } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck } from 'lucide-react';
 import { db, functions, auth } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 // Internal Component for individual Teacher Card logic
-// Internal Component for individual Teacher Card logic
-const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
-    // Colors based on user request: Purple theme
+const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [editStep, setEditStep] = useState(1);
+    const [editedTeacher, setEditedTeacher] = useState({
+        ...teacher,
+        subjects: Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : []),
+        assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
+    });
+
+    const cardRef = useRef(null);
+
     const purpleHeader = '#5b21b6'; // Darker purple
     const purpleBody = '#ede9fe';   // Light purple
     const purpleAccent = '#8b5cf6'; // Main purple
+    const subjectOptions = [
+        'English', 'Urdu', 'Mathematics', 'Islamiyat', 'QURAN',
+        'Social Study', 'Art', 'Science', 'Biology', 'Chemistry', 'Physic'
+    ];
+
+    // Click outside logic
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (cardRef.current && !cardRef.current.contains(event.target)) {
+                setIsEditing(false);
+                setEditStep(1);
+                setEditedTeacher({
+                    ...teacher,
+                    subjects: Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : []),
+                    assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
+                });
+            }
+        };
+
+        if (isEditing) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isEditing, teacher]);
+
+    const handleSave = async (e) => {
+        if (e) e.preventDefault();
+        try {
+            await onUpdate(teacher.id, editedTeacher);
+            setIsEditing(false);
+            setEditStep(1);
+        } catch (error) {
+            console.error("Error updating teacher:", error);
+            alert("Failed to update teacher.");
+        }
+    };
+
+    if (isEditing) {
+        return (
+            <div ref={cardRef} className="card animate-scale-in" style={{
+                padding: '0',
+                overflow: 'hidden',
+                border: `2px solid ${purpleAccent}`,
+                position: 'relative',
+                background: purpleBody,
+                boxShadow: '0 10px 25px -5px rgba(139, 92, 246, 0.3)',
+                borderRadius: '16px',
+                zIndex: 50
+            }}>
+                <div style={{
+                    padding: '1.2rem 1.5rem',
+                    background: purpleHeader,
+                    color: 'white'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            {editStep > 1 && (
+                                <button
+                                    onClick={() => setEditStep(prev => prev - 1)}
+                                    style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}
+                                >
+                                    <ChevronLeft size={18} />
+                                </button>
+                            )}
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>
+                                {editStep === 1 ? 'Teacher Info' : 'Update Credentials'}
+                            </h3>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '0.2rem 0.5rem', background: 'rgba(255, 255, 255, 0.2)', borderRadius: '10px' }}>
+                                {editStep}/2
+                            </span>
+                            <button onClick={() => setIsEditing(false)} style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}>
+                                <X size={18} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div style={{
+                    padding: '1.5rem',
+                    maxHeight: '450px',
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1.25rem'
+                }} className="custom-scrollbar">
+                    {editStep === 1 && (
+                        <>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Full Name</label>
+                                    <input
+                                        type="text"
+                                        value={editedTeacher.name}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, name: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Phone</label>
+                                    <input
+                                        type="tel"
+                                        value={editedTeacher.phone}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, phone: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Subjects</label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', background: 'white', padding: '0.75rem', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
+                                    {subjectOptions.map((subj) => {
+                                        const isSelected = editedTeacher.subjects.includes(subj);
+                                        return (
+                                            <div
+                                                key={subj}
+                                                onClick={() => {
+                                                    setEditedTeacher(prev => ({
+                                                        ...prev,
+                                                        subjects: isSelected
+                                                            ? prev.subjects.filter(s => s !== subj)
+                                                            : [...prev.subjects, subj]
+                                                    }));
+                                                }}
+                                                style={{
+                                                    padding: '0.3rem 0.6rem',
+                                                    borderRadius: '6px',
+                                                    border: isSelected ? `1px solid ${purpleAccent}` : '1px solid #e2e8f0',
+                                                    background: isSelected ? '#f5f3ff' : 'white',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '600',
+                                                    color: isSelected ? purpleAccent : '#64748b'
+                                                }}
+                                            >
+                                                {subj}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Assign Classes</label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', background: 'white', padding: '0.75rem', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
+                                    {dbClasses.map((clsName) => {
+                                        const isSelected = editedTeacher.assignedClasses.includes(clsName);
+                                        return (
+                                            <div
+                                                key={clsName}
+                                                onClick={() => {
+                                                    setEditedTeacher(prev => ({
+                                                        ...prev,
+                                                        assignedClasses: isSelected ? [] : [clsName]
+                                                    }));
+                                                }}
+                                                style={{
+                                                    padding: '0.3rem 0.6rem',
+                                                    borderRadius: '6px',
+                                                    border: isSelected ? `1px solid ${purpleAccent}` : '1px solid #e2e8f0',
+                                                    background: isSelected ? '#f5f3ff' : 'white',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '600',
+                                                    color: isSelected ? purpleAccent : '#64748b'
+                                                }}
+                                            >
+                                                {clsName}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Email</label>
+                                <input
+                                    type="email"
+                                    value={editedTeacher.email || ''}
+                                    onChange={(e) => setEditedTeacher({ ...editedTeacher, email: e.target.value })}
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                />
+                            </div>
+                        </>
+                    )}
+
+                    {editStep === 2 && (
+                        <>
+                            <div style={{ background: 'white', padding: '1.25rem', borderRadius: '16px', border: '1px solid #ddd6fe' }}>
+                                <div style={{ marginBottom: '1.25rem' }}>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Username</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                                        <User size={16} color={purpleAccent} />
+                                        <input
+                                            type="text"
+                                            value={editedTeacher.username || ''}
+                                            onChange={(e) => setEditedTeacher({ ...editedTeacher, username: e.target.value })}
+                                            style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Password</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                                        <ShieldCheck size={16} color={purpleAccent} />
+                                        <input
+                                            type="text"
+                                            placeholder="Leave empty to keep same"
+                                            value={editedTeacher.password || ''}
+                                            onChange={(e) => setEditedTeacher({ ...editedTeacher, password: e.target.value })}
+                                            style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <div style={{ padding: '0.5rem', background: '#fff7ed', borderRadius: '12px', border: '1px dashed #fdba74', color: '#9a3412', fontSize: '0.8rem', fontWeight: '500' }}>
+                                <p>Updating credentials will take effect immediately. Password is only updated if you type a new one.</p>
+                            </div>
+                        </>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (editStep > 1) {
+                                    setEditStep(prev => prev - 1);
+                                } else {
+                                    setIsEditing(false);
+                                }
+                            }}
+                            style={{ flex: 1, padding: '0.8rem', borderRadius: '12px', background: 'white', border: `1px solid ${purpleAccent}`, color: purpleAccent, fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem' }}
+                        >
+                            {editStep === 1 ? 'Cancel' : 'Back'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (editStep < 2) {
+                                    setEditStep(prev => prev + 1);
+                                } else {
+                                    handleSave();
+                                }
+                            }}
+                            style={{ flex: 1.5, padding: '0.8rem', borderRadius: '12px', background: purpleAccent, border: 'none', color: 'white', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem', boxShadow: `0 4px 12px rgba(139, 92, 246, 0.2)` }}
+                        >
+                            {editStep < 2 ? 'Next Step' : 'Save Changes'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div
@@ -59,7 +327,7 @@ const TeacherCard = ({ teacher, onDelete, onEdit, isHighlighted }) => {
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
-                            onClick={() => onEdit(teacher)}
+                            onClick={() => setIsEditing(true)}
                             style={{
                                 background: 'rgba(255, 255, 255, 0.1)', border: 'none', padding: '0.5rem',
                                 borderRadius: '8px', color: 'white', cursor: 'pointer',
@@ -275,7 +543,68 @@ const Teachers = () => {
     const [isEditing, setIsEditing] = useState(false);
     const [editingId, setEditingId] = useState(null);
 
+    const handleUpdateTeacher = async (id, updatedTeacher) => {
+        try {
+            const teacherRef = doc(db, `schools/${schoolId}/teachers`, id);
+            const updateData = { ...updatedTeacher };
+            if (!updateData.password) delete updateData.password; // Don't overwrite if empty
+            if (!updateData.username) delete updateData.username;
+
+            await updateDoc(teacherRef, updateData);
+
+            // Handle Class Re-assignments
+            const oldTeacher = teachers.find(t => t.id === id);
+            const oldClasses = oldTeacher?.assignedClasses || (oldTeacher?.assignedClass ? [oldTeacher.assignedClass] : []);
+            const newClasses = updatedTeacher.assignedClasses || [];
+
+            // Removed classes: set teacher to 'Unassigned'
+            const removedMessages = oldClasses.filter(c => !newClasses.includes(c));
+            for (const cls of removedMessages) {
+                const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
+                const snap = await getDocs(q);
+                snap.forEach(async (d) => {
+                    await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                        teacher: 'Unassigned',
+                        teacherId: null
+                    });
+                });
+            }
+
+            // Added classes: set teacher to New Name AND teacherId
+            const addedClasses = newClasses.filter(c => !oldClasses.includes(c));
+            for (const cls of addedClasses) {
+                const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
+                const snap = await getDocs(q);
+                snap.forEach(async (d) => {
+                    await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                        teacher: updatedTeacher.name,
+                        teacherId: id
+                    });
+                });
+            }
+
+            // Also update Name in KEPT classes if name changed
+            if (oldTeacher.name !== updatedTeacher.name) {
+                const keptClasses = newClasses.filter(c => oldClasses.includes(c));
+                for (const cls of keptClasses) {
+                    const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
+                    const snap = await getDocs(q);
+                    snap.forEach(async (d) => {
+                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                            teacher: updatedTeacher.name,
+                            teacherId: id
+                        });
+                    });
+                }
+            }
+        } catch (error) {
+            console.error("Error updating teacher in Teachers component:", error);
+            throw error;
+        }
+    };
+
     const handleEditClick = (teacher) => {
+        // Fallback for global modal if needed, but TeacherCard handles its own isEditing now
         setNewTeacher({
             ...teacher,
             password: '', // Clear password field for security/edit mode
@@ -595,7 +924,9 @@ const Teachers = () => {
                             key={t.id}
                             teacher={t}
                             onDelete={handleDeleteClick}
-                            onEdit={handleEditClick}
+                            onUpdate={handleUpdateTeacher}
+                            schoolId={schoolId}
+                            dbClasses={dbClasses}
                             isHighlighted={highlightedTeacherId === t.id}
                         />
                     ))}
@@ -781,9 +1112,7 @@ const Teachers = () => {
                                                         onClick={() => {
                                                             setNewTeacher(prev => ({
                                                                 ...prev,
-                                                                assignedClasses: isSelected
-                                                                    ? prev.assignedClasses.filter(c => c !== clsName)
-                                                                    : [...prev.assignedClasses, clsName]
+                                                                assignedClasses: isSelected ? [] : [clsName]
                                                             }));
                                                         }}
                                                         style={{
