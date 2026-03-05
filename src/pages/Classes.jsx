@@ -7,7 +7,7 @@ import { auth } from '../firebase';
 import StudentCircle from '../components/StudentCircle';
 
 // Internal Component for individual Class Card logic
-const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
+const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subjectOptions, onCancel, onSave }) => {
     const navigate = useNavigate();
     const [isPending, startTransition] = useTransition();
     const [showSubjects, setShowSubjects] = useState(false);
@@ -21,6 +21,44 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
     //         'pending'   = no history yet today, falling back to raw student status
     const [realStats, setRealStats] = useState({ present: 0, absent: 0, total: 0, source: 'pending' });
     const [isSaving, setIsSaving] = useState(false);
+
+    // Edit State (Inline)
+    const [editForm, setEditForm] = useState({
+        teacher: cls.teacher || '',
+        teacherId: cls.teacherId || null,
+        subjects: cls.subjects || []
+    });
+
+    useEffect(() => {
+        if (isEditing) {
+            setEditForm({
+                teacher: cls.teacher || '',
+                teacherId: cls.teacherId || null,
+                subjects: cls.subjects || []
+            });
+        }
+    }, [isEditing, cls]);
+
+    const handleSubjectToggle = (subject) => {
+        setEditForm(prev => {
+            const subjects = prev.subjects.includes(subject)
+                ? prev.subjects.filter(s => s !== subject)
+                : [...prev.subjects, subject];
+            return { ...prev, subjects };
+        });
+    };
+
+    const handleTeacherChange = (e) => {
+        const selectedId = e.target.value;
+        if (!selectedId) {
+            setEditForm({ ...editForm, teacher: '', teacherId: null });
+            return;
+        }
+        const selectedTeacher = teachers.find(t => t.id === selectedId);
+        if (selectedTeacher) {
+            setEditForm({ ...editForm, teacher: selectedTeacher.name, teacherId: selectedTeacher.id });
+        }
+    };
 
     // Layer 1 (Priority): Listen to today's confirmed attendance history record
     useEffect(() => {
@@ -160,330 +198,428 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
 
     return (
         <div
-            onClick={() => {
-                startTransition(() => {
-                    navigate(`/classes/${cls.id}`);
-                });
-            }}
-            className="card" style={{
+            className="card"
+            style={{
                 opacity: isPending ? 0.7 : 1,
                 padding: '0',
                 overflow: 'hidden',
                 border: '1px solid rgba(255,255,255,0.25)',
                 position: 'relative',
-                background: 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)',
-                boxShadow: `
-                    0 6px 0 #1d4ed8,
-                    0 10px 0 #1a47c0,
-                    0 13px 20px rgba(0,0,0,0.45),
-                    inset 0 1px 0 rgba(255,255,255,0.3)
-                `,
+                background: isEditing ? 'white' : 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)',
+                boxShadow: isEditing
+                    ? '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)'
+                    : `0 6px 0 #1d4ed8, 0 10px 0 #1a47c0, 0 13px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.3)`,
                 borderRadius: '16px',
-                cursor: 'pointer',
+                cursor: isEditing ? 'default' : 'pointer',
                 transition: 'all 0.2s ease',
                 transform: 'translateY(0)',
-            }}>
-            <div>
-                {/* Theme Decoration Strip */}
-                <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
-
-                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 0 rgba(0,0,0,0.25), 0 6px 8px rgba(0,0,0,0.2)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white' }}>{cls.name}</h3>
-                        <div style={{
-                            padding: '0.25rem 0.75rem', background: 'rgba(255,255,255,0.15)', borderRadius: '20px',
-                            fontSize: '0.85rem', fontWeight: '600', color: 'white',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
-                        }}>
-                            {totalStudents} Students
-                        </div>
-                    </div>
-                </div>
-
-                <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <div
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                            display: 'flex', alignItems: 'center', gap: '0.5rem',
-                            color: 'rgba(255,255,255,0.7)', fontSize: '0.9rem',
-                            cursor: 'default'
-                        }}
-                    >
-                        <User size={16} color="white" />
-                        <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
+                color: isEditing ? 'var(--text-main)' : 'white'
+            }}
+            onClick={() => {
+                if (!isEditing) {
+                    startTransition(() => {
+                        navigate(`/classes/${cls.id}`);
+                    });
+                }
+            }}
+        >
+            {isEditing ? (
+                <div style={{ padding: '2rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)' }}>Edit: {cls.name}</h3>
+                        <button onClick={(e) => { e.stopPropagation(); onCancel(); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                            <X size={20} color="var(--text-secondary)" />
+                        </button>
                     </div>
 
-                    {/* Attendance Status Badge — only shown once teacher confirms */}
-                    {realStats.source === 'confirmed' && (
-                        <div style={{ display: 'flex', alignItems: 'center' }}>
-                            <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                fontSize: '0.7rem', fontWeight: '700', color: '#059669',
-                                background: '#d1fae5', padding: '2px 8px', borderRadius: '20px',
-                                border: '1px solid #6ee7b7'
-                            }}>
-                                ✓ Confirmed Today
-                            </span>
-                        </div>
-                    )}
-
-                    {/* Attendance Stats Cards - Interactive */}
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
-                        <div
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setShowStudents(true);
-                                setFilter('present');
-                            }}
-                            style={{
-                                flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
-                                border: '1px solid #dcfce7', cursor: 'pointer',
-                                display: 'flex', flexDirection: 'column', gap: '0.25rem',
-                                transition: 'transform 0.2s',
-                                borderBottom: filter === 'present' ? '3px solid #10b981' : '1px solid #dcfce7'
-                            }}
-                        >
-                            <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#10b981', textTransform: 'uppercase' }}>Present</span>
-                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{presentCount}</span>
-                        </div>
-                        <div
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setShowStudents(true);
-                                setFilter('absent');
-                            }}
-                            style={{
-                                flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
-                                border: '1px solid #fee2e2', cursor: 'pointer',
-                                display: 'flex', flexDirection: 'column', gap: '0.25rem',
-                                transition: 'transform 0.2s',
-                                borderBottom: filter === 'absent' ? '3px solid #ef4444' : '1px solid #fee2e2',
-                                boxShadow: absentCount > 0 ? '0 0 10px rgba(239, 68, 68, 0.1)' : 'none'
-                            }}
-                        >
-                            <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#ef4444', textTransform: 'uppercase' }}>Absent</span>
-                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{absentCount}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div style={{ padding: '1.5rem', background: 'transparent' }}>
-                    <div
-                        onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
-                        style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0.75rem',
-                            userSelect: 'none'
-                        }}
-                    >
-                        <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>
-                            Subjects ({cls.subjects?.length || 0})
-                        </p>
-                        {showSubjects ? <ChevronDown size={16} color="rgba(255,255,255,0.5)" /> : <ChevronRight size={16} color="rgba(255,255,255,0.5)" />}
-                    </div>
-
-                    {showSubjects && (
-                        <div className="animate-fade-in-up" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                            {cls.subjects?.slice(0, 5).map((subj, idx) => (
-                                <span key={idx} style={{
-                                    fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '6px',
-                                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
-                                    boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
-                                }}>
-                                    {subj}
-                                </span>
-                            ))}
-                            {cls.subjects?.length > 5 && (
-                                <span style={{
-                                    fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '6px',
-                                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'
-                                }}>
-                                    +{cls.subjects.length - 5}
-                                </span>
-                            )}
-                        </div>
-                    )}
-
-                    {/* View Options Toggle */}
-                    <div style={{ borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: showStudents ? '0.75rem' : '1.5rem' }}>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); }}
+                    <div style={{ marginBottom: '1.25rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
+                            Assign Teacher
+                        </label>
+                        <div style={{ position: 'relative' }}>
+                            <select
+                                value={editForm.teacherId || ''}
+                                onChange={handleTeacherChange}
+                                onClick={(e) => e.stopPropagation()}
                                 style={{
-                                    flex: 1, padding: '0.5rem', borderRadius: '8px',
-                                    border: showStudents ? '2px solid var(--primary)' : '1px solid #e2e8f0',
-                                    background: 'white',
-                                    color: showStudents ? 'var(--primary)' : '#1e293b',
-                                    fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
-                                    transition: 'all 0.2s'
+                                    width: '100%', padding: '0.6rem', borderRadius: '8px',
+                                    border: '1px solid #e2e8f0', outline: 'none',
+                                    fontSize: '0.9rem', appearance: 'none',
+                                    backgroundColor: 'white', cursor: 'pointer'
                                 }}
                             >
-                                📋 List View
+                                <option value="">Select a Teacher</option>
+                                {teachers.map(t => (
+                                    <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                            </select>
+                            <ChevronDown size={14} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#64748b' }} />
+                        </div>
+                    </div>
+
+                    <div style={{ marginBottom: '1.5rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>
+                            Manage Subjects
+                        </label>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', maxHeight: '150px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
+                            {subjectOptions.map((subj) => (
+                                <div
+                                    key={subj}
+                                    onClick={(e) => { e.stopPropagation(); handleSubjectToggle(subj); }}
+                                    style={{
+                                        padding: '0.5rem',
+                                        borderRadius: '6px',
+                                        border: editForm.subjects.includes(subj) ? '1px solid var(--primary)' : '1px solid #e2e8f0',
+                                        background: editForm.subjects.includes(subj) ? '#eff6ff' : 'white',
+                                        cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    <div style={{
+                                        width: '16px', height: '16px', borderRadius: '3px',
+                                        border: editForm.subjects.includes(subj) ? 'none' : '2px solid #cbd5e1',
+                                        background: editForm.subjects.includes(subj) ? 'var(--primary)' : 'transparent',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                    }}>
+                                        {editForm.subjects.includes(subj) && <span style={{ color: 'white', fontSize: '10px' }}>✓</span>}
+                                    </div>
+                                    <span style={{ fontSize: '0.8rem', color: editForm.subjects.includes(subj) ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: '500' }}>
+                                        {subj}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: 'auto' }}>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                            style={{
+                                flex: 1, padding: '0.6rem', borderRadius: '8px',
+                                background: 'transparent', border: '1px solid #e2e8f0',
+                                cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)', fontSize: '0.85rem'
+                            }}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onSave(cls.id, editForm); }}
+                            style={{
+                                flex: 1, padding: '0.6rem', borderRadius: '8px',
+                                background: 'var(--primary)', border: 'none',
+                                cursor: 'pointer', fontWeight: '600', color: 'white', fontSize: '0.85rem',
+                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                            }}
+                        >
+                            Save
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <div>
+                    {/* Theme Decoration Strip */}
+                    <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
+
+                    <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 0 rgba(0,0,0,0.25), 0 6px 8px rgba(0,0,0,0.2)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white' }}>{cls.name}</h3>
+                            <div style={{
+                                padding: '0.25rem 0.75rem', background: 'rgba(255,255,255,0.15)', borderRadius: '20px',
+                                fontSize: '0.85rem', fontWeight: '600', color: 'white',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                            }}>
+                                {totalStudents} Students
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                color: 'rgba(255,255,255,0.7)', fontSize: '0.9rem',
+                                cursor: 'default'
+                            }}
+                        >
+                            <User size={16} color="white" />
+                            <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
+                        </div>
+
+                        {/* Attendance Status Badge — only shown once teacher confirms */}
+                        {realStats.source === 'confirmed' && (
+                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                                <span style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                    fontSize: '0.7rem', fontWeight: '700', color: '#059669',
+                                    background: '#d1fae5', padding: '2px 8px', borderRadius: '20px',
+                                    border: '1px solid #6ee7b7'
+                                }}>
+                                    ✓ Confirmed Today
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Attendance Stats Cards - Interactive */}
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                            <div
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowStudents(true);
+                                    setFilter('present');
+                                }}
+                                style={{
+                                    flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
+                                    border: '1px solid #dcfce7', cursor: 'pointer',
+                                    display: 'flex', flexDirection: 'column', gap: '0.25rem',
+                                    transition: 'transform 0.2s',
+                                    borderBottom: filter === 'present' ? '3px solid #10b981' : '1px solid #dcfce7'
+                                }}
+                            >
+                                <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#10b981', textTransform: 'uppercase' }}>Present</span>
+                                <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{presentCount}</span>
+                            </div>
+                            <div
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowStudents(true);
+                                    setFilter('absent');
+                                }}
+                                style={{
+                                    flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
+                                    border: '1px solid #fee2e2', cursor: 'pointer',
+                                    display: 'flex', flexDirection: 'column', gap: '0.25rem',
+                                    transition: 'transform 0.2s',
+                                    borderBottom: filter === 'absent' ? '3px solid #ef4444' : '1px solid #fee2e2',
+                                    boxShadow: absentCount > 0 ? '0 0 10px rgba(239, 68, 68, 0.1)' : 'none'
+                                }}
+                            >
+                                <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#ef4444', textTransform: 'uppercase' }}>Absent</span>
+                                <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{absentCount}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={{ padding: '1.5rem', background: 'transparent' }}>
+                        <div
+                            onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
+                            style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0.75rem',
+                                userSelect: 'none'
+                            }}
+                        >
+                            <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>
+                                Subjects ({cls.subjects?.length || 0})
+                            </p>
+                            {showSubjects ? <ChevronDown size={16} color="rgba(255,255,255,0.5)" /> : <ChevronRight size={16} color="rgba(255,255,255,0.5)" />}
+                        </div>
+
+                        {showSubjects && (
+                            <div className="animate-fade-in-up" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                                {cls.subjects?.slice(0, 5).map((subj, idx) => (
+                                    <span key={idx} style={{
+                                        fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '6px',
+                                        background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
+                                        boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                                    }}>
+                                        {subj}
+                                    </span>
+                                ))}
+                                {cls.subjects?.length > 5 && (
+                                    <span style={{
+                                        fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '6px',
+                                        background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'
+                                    }}>
+                                        +{cls.subjects.length - 5}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+
+                        {/* View Options Toggle */}
+                        <div style={{ borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: showStudents ? '0.75rem' : '1.5rem' }}>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); }}
+                                    style={{
+                                        flex: 1, padding: '0.5rem', borderRadius: '8px',
+                                        border: showStudents ? '2px solid var(--primary)' : '1px solid #e2e8f0',
+                                        background: 'white',
+                                        color: showStudents ? 'var(--primary)' : '#1e293b',
+                                        fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    📋 List View
+                                </button>
+                            </div>
+                        </div>
+
+                        {showStudents && (
+                            <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }}>
+                                {/* Filter Tabs */}
+                                <div style={{ display: 'flex', background: 'white', padding: '4px', borderRadius: '10px', marginBottom: '1rem', border: '1px solid #e2e8f0' }}>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setFilter('all'); }}
+                                        style={{
+                                            flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                            background: filter === 'all' ? '#f1f5f9' : 'transparent',
+                                            color: filter === 'all' ? 'var(--text-main)' : 'var(--text-muted)',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        All
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setFilter('present'); }}
+                                        style={{
+                                            flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                            background: filter === 'present' ? '#dcfce7' : 'transparent',
+                                            color: filter === 'present' ? '#166534' : 'var(--text-muted)',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        Present
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setFilter('absent'); }}
+                                        style={{
+                                            flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                            background: filter === 'absent' ? '#fee2e2' : 'transparent',
+                                            color: filter === 'absent' ? '#991b1b' : 'var(--text-muted)',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        Absent
+                                    </button>
+                                </div>
+
+
+                                {loadingStudents ? (
+                                    <div style={{ display: 'flex', justifyContent: 'center', padding: '1rem' }}>
+                                        <Loader2 className="animate-spin" size={20} color="var(--primary)" />
+                                    </div>
+                                ) : filteredStudents.length === 0 ? (
+                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '1rem', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                        No students marked as {filter === 'all' ? 'enrolled' : filter}.
+                                    </p>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
+                                        {filteredStudents.map(student => (
+                                            <div key={student.id} style={{
+                                                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                                background: 'white', padding: '0.6rem', borderRadius: '10px',
+                                                border: '1px solid #e2e8f0', transition: 'all 0.2s'
+                                            }}>
+                                                <div style={{
+                                                    width: '36px', height: '36px', borderRadius: '10px',
+                                                    background: '#f8fafc', overflow: 'hidden', flexShrink: 0,
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    border: '1px solid #f1f5f9'
+                                                }}>
+                                                    {student.profilePic ? (
+                                                        <img src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                    ) : (
+                                                        <User size={18} color="#94a3b8" />
+                                                    )}
+                                                </div>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <p style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {student.name}
+                                                    </p>
+                                                    <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: '500' }}>
+                                                        Roll No: {student.rollNo || 'N/A'}
+                                                    </p>
+                                                </div>
+
+                                                {/* Status Toggle (Principal can also mark if needed) */}
+                                                <div
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        const nextStatus = student.status === 'present' ? 'absent' : 'present';
+                                                        handleMarkStatus(student.id, nextStatus);
+                                                    }}
+                                                    style={{
+                                                        padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800',
+                                                        background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
+                                                        color: student.status === 'present' ? '#10b981' : '#ef4444',
+                                                        cursor: 'pointer', border: '1px solid transparent',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                >
+                                                    {student.status === 'present' ? 'PRESENT' : 'ABSENT'}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+
+                            </div>
+                        )}
+
+
+
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    startTransition(() => {
+                                        navigate(`/classes/${cls.id}`);
+                                    });
+                                }}
+                                style={{
+                                    flex: 1, padding: '0.75rem',
+                                    background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px',
+                                    color: '#1e293b', fontWeight: '600', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                    transition: 'all 0.2s',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.08)'
+                                }}>
+                                Details <ChevronRight size={16} />
+                            </button>
+
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onEdit(cls.id); }}
+                                style={{
+                                    padding: '0.75rem',
+                                    background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px',
+                                    color: '#1e293b', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    transition: 'all 0.2s'
+                                }}
+                                title="Edit Class (Teacher/Subjects)"
+                            >
+                                <Edit size={16} />
+                            </button>
+
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onDelete(cls.id); }}
+                                style={{
+                                    padding: '0.75rem',
+                                    background: 'white', border: '1px solid #fecaca', borderRadius: '8px',
+                                    color: '#ef4444', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    transition: 'all 0.2s'
+                                }}
+                                title="Delete Class"
+                            >
+                                <Trash2 size={16} />
                             </button>
                         </div>
                     </div>
-
-                    {showStudents && (
-                        <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }}>
-                            {/* Filter Tabs */}
-                            <div style={{ display: 'flex', background: 'white', padding: '4px', borderRadius: '10px', marginBottom: '1rem', border: '1px solid #e2e8f0' }}>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); setFilter('all'); }}
-                                    style={{
-                                        flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
-                                        background: filter === 'all' ? '#f1f5f9' : 'transparent',
-                                        color: filter === 'all' ? 'var(--text-main)' : 'var(--text-muted)',
-                                        transition: 'all 0.2s'
-                                    }}
-                                >
-                                    All
-                                </button>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); setFilter('present'); }}
-                                    style={{
-                                        flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
-                                        background: filter === 'present' ? '#dcfce7' : 'transparent',
-                                        color: filter === 'present' ? '#166534' : 'var(--text-muted)',
-                                        transition: 'all 0.2s'
-                                    }}
-                                >
-                                    Present
-                                </button>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); setFilter('absent'); }}
-                                    style={{
-                                        flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
-                                        background: filter === 'absent' ? '#fee2e2' : 'transparent',
-                                        color: filter === 'absent' ? '#991b1b' : 'var(--text-muted)',
-                                        transition: 'all 0.2s'
-                                    }}
-                                >
-                                    Absent
-                                </button>
-                            </div>
-
-
-                            {loadingStudents ? (
-                                <div style={{ display: 'flex', justifyContent: 'center', padding: '1rem' }}>
-                                    <Loader2 className="animate-spin" size={20} color="var(--primary)" />
-                                </div>
-                            ) : filteredStudents.length === 0 ? (
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '1rem', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                                    No students marked as {filter === 'all' ? 'enrolled' : filter}.
-                                </p>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
-                                    {filteredStudents.map(student => (
-                                        <div key={student.id} style={{
-                                            display: 'flex', alignItems: 'center', gap: '0.75rem',
-                                            background: 'white', padding: '0.6rem', borderRadius: '10px',
-                                            border: '1px solid #e2e8f0', transition: 'all 0.2s'
-                                        }}>
-                                            <div style={{
-                                                width: '36px', height: '36px', borderRadius: '10px',
-                                                background: '#f8fafc', overflow: 'hidden', flexShrink: 0,
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                border: '1px solid #f1f5f9'
-                                            }}>
-                                                {student.profilePic ? (
-                                                    <img src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                ) : (
-                                                    <User size={18} color="#94a3b8" />
-                                                )}
-                                            </div>
-                                            <div style={{ flex: 1, minWidth: 0 }}>
-                                                <p style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {student.name}
-                                                </p>
-                                                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: '500' }}>
-                                                    Roll No: {student.rollNo || 'N/A'}
-                                                </p>
-                                            </div>
-
-                                            {/* Status Toggle (Principal can also mark if needed) */}
-                                            <div
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    const nextStatus = student.status === 'present' ? 'absent' : 'present';
-                                                    handleMarkStatus(student.id, nextStatus);
-                                                }}
-                                                style={{
-                                                    padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800',
-                                                    background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
-                                                    color: student.status === 'present' ? '#10b981' : '#ef4444',
-                                                    cursor: 'pointer', border: '1px solid transparent',
-                                                    transition: 'all 0.2s'
-                                                }}
-                                            >
-                                                {student.status === 'present' ? 'PRESENT' : 'ABSENT'}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-
-                        </div>
-                    )}
-
-
-
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
-
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                startTransition(() => {
-                                    navigate(`/classes/${cls.id}`);
-                                });
-                            }}
-                            style={{
-                                flex: 1, padding: '0.75rem',
-                                background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px',
-                                color: '#1e293b', fontWeight: '600', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                                transition: 'all 0.2s',
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.08)'
-                            }}>
-                            Details <ChevronRight size={16} />
-                        </button>
-
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onEdit(cls); }}
-                            style={{
-                                padding: '0.75rem',
-                                background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px',
-                                color: '#1e293b', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                transition: 'all 0.2s'
-                            }}
-                            title="Edit Class (Teacher/Subjects)"
-                        >
-                            <Edit size={16} />
-                        </button>
-
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onDelete(cls.id); }}
-                            style={{
-                                padding: '0.75rem',
-                                background: 'white', border: '1px solid #fecaca', borderRadius: '8px',
-                                color: '#ef4444', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                transition: 'all 0.2s'
-                            }}
-                            title="Delete Class"
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                    </div>
                 </div>
-            </div>{/* end content wrapper */}
+            )}
         </div>
     );
 };
 
 const Classes = () => {
     const [showAddClass, setShowAddClass] = useState(false);
+
     const [newClass, setNewClass] = useState({
         name: '',
         teacher: '',
@@ -678,13 +814,18 @@ const Classes = () => {
         }
     };
 
-    const [showEditClass, setShowEditClass] = useState(false);
-    const [editingClass, setEditingClass] = useState(null);
+    const [editingClassId, setEditingClassId] = useState(null);
 
-    const handleEditClick = (cls) => {
-        setEditingClass({ ...cls });
-        setShowEditClass(true);
+
+    const handleEditClick = (id) => {
+        setEditingClassId(id);
     };
+
+    const handleCancelEdit = () => {
+        setEditingClassId(null);
+    };
+
+
 
     const [teachers, setTeachers] = useState([]);
 
@@ -705,45 +846,25 @@ const Classes = () => {
         return () => unsubscribe();
     }, [schoolId]);
 
-    const handleUpdateClass = async (e) => {
-        e.preventDefault();
-        if (!schoolId || !editingClass) return;
+    const handleUpdateClass = async (id, updatedData) => {
+        if (!schoolId) return;
 
         try {
-            const classRef = doc(db, `schools/${schoolId}/classes`, editingClass.id);
+            const classRef = doc(db, `schools/${schoolId}/classes`, id);
             await updateDoc(classRef, {
-                teacher: editingClass.teacher, // Name (Legacy/UI)
-                teacherId: editingClass.teacherId || null, // ID (Safe/Backend)
-                subjects: editingClass.subjects
+                teacher: updatedData.teacher,
+                teacherId: updatedData.teacherId || null,
+                subjects: updatedData.subjects
             });
-            setShowEditClass(false);
-            setEditingClass(null);
+            setEditingClassId(null);
+            toast.success('Class updated successfully!');
         } catch (error) {
             console.error("Error updating class:", error);
-            alert("Failed to update class.");
+            toast.error("Failed to update class.");
         }
     };
 
-    const handleTeacherChange = (e) => {
-        const selectedId = e.target.value;
-        if (!selectedId) {
-            setEditingClass({ ...editingClass, teacher: '', teacherId: null });
-            return;
-        }
-        const selectedTeacher = teachers.find(t => t.id === selectedId);
-        if (selectedTeacher) {
-            setEditingClass({ ...editingClass, teacher: selectedTeacher.name, teacherId: selectedTeacher.id });
-        }
-    };
 
-    const handleEditSubjectToggle = (subject) => {
-        setEditingClass(prev => {
-            const subjects = prev.subjects.includes(subject)
-                ? prev.subjects.filter(s => s !== subject)
-                : [...prev.subjects, subject];
-            return { ...prev, subjects };
-        });
-    };
 
     // 3. Stats Aggregation
     const [totalStudentsCount, setTotalStudentsCount] = useState(0);
@@ -776,122 +897,7 @@ const Classes = () => {
         <div className="animate-fade-in-up">
             {/* ... existing header ... */}
 
-            {/* Edit Class Modal */}
-            {showEditClass && editingClass && (
-                <div style={{
-                    position: 'fixed', inset: 0,
-                    zIndex: 1000,
-                    background: 'rgba(0,0,0,0.6)',
-                    backdropFilter: 'blur(3px)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    padding: '1rem'
-                }}>
-                    <div className="card custom-scrollbar" style={{
-                        width: '100%', maxWidth: '600px', maxHeight: '80vh', overflowY: 'auto',
-                        padding: '2rem', background: 'white', borderRadius: '24px',
-                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: '700' }}>Edit Class: {editingClass.name}</h2>
-                            <button onClick={() => setShowEditClass(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                                <X size={24} color="var(--text-secondary)" />
-                            </button>
-                        </div>
 
-                        <form onSubmit={handleUpdateClass}>
-                            <div style={{ marginBottom: '1.5rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                    Assign Teacher
-                                </label>
-                                <div style={{ position: 'relative' }}>
-                                    <select
-                                        value={editingClass.teacherId || ''}
-                                        onChange={handleTeacherChange}
-                                        style={{
-                                            width: '100%', padding: '0.75rem', borderRadius: '8px',
-                                            border: '1px solid #e2e8f0', outline: 'none',
-                                            fontSize: '0.95rem', appearance: 'none',
-                                            backgroundColor: 'white', cursor: 'pointer'
-                                        }}
-                                    >
-                                        <option value="">Select a Teacher</option>
-                                        {teachers.map(t => (
-                                            <option key={t.id} value={t.id}>{t.name}</option>
-                                        ))}
-                                    </select>
-                                    <ChevronDown size={16} style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#64748b' }} />
-                                </div>
-                                {(!teachers || teachers.length === 0) && (
-                                    <p style={{ fontSize: '0.8rem', color: '#f59e0b', marginTop: '0.5rem' }}>
-                                        No teachers found. Please add teachers in the Teachers section first.
-                                    </p>
-                                )}
-                            </div>
-
-                            <div style={{ marginBottom: '2rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '1rem', color: 'var(--text-secondary)' }}>
-                                    Manage Subjects
-                                </label>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-                                    {subjectOptions.map((subj) => (
-                                        <div
-                                            key={subj}
-                                            onClick={() => handleEditSubjectToggle(subj)}
-                                            style={{
-                                                padding: '0.75rem',
-                                                borderRadius: '8px',
-                                                border: editingClass.subjects.includes(subj) ? '1px solid var(--primary)' : '1px solid #e2e8f0',
-                                                background: editingClass.subjects.includes(subj) ? '#eff6ff' : 'white',
-                                                cursor: 'pointer',
-                                                display: 'flex', alignItems: 'center', gap: '0.75rem',
-                                                transition: 'all 0.2s'
-                                            }}
-                                        >
-                                            <div style={{
-                                                width: '20px', height: '20px', borderRadius: '4px',
-                                                border: editingClass.subjects.includes(subj) ? 'none' : '2px solid #cbd5e1',
-                                                background: editingClass.subjects.includes(subj) ? 'var(--primary)' : 'transparent',
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                            }}>
-                                                {editingClass.subjects.includes(subj) && <span style={{ color: 'white', fontSize: '14px' }}>✓</span>}
-                                            </div>
-                                            <span style={{ fontSize: '0.9rem', color: editingClass.subjects.includes(subj) ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: '500' }}>
-                                                {subj}
-                                            </span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowEditClass(false)}
-                                    style={{
-                                        padding: '0.75rem 1.5rem', borderRadius: '8px',
-                                        background: 'transparent', border: '1px solid #e2e8f0',
-                                        cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
-                                    }}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="btn-primary"
-                                    style={{
-                                        padding: '0.75rem 1.5rem', borderRadius: '8px',
-                                        background: 'var(--primary)', border: 'none',
-                                        cursor: 'pointer', fontWeight: '600', color: 'white',
-                                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
-                                    }}
-                                >
-                                    Save Changes
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
 
             {/* Header */}
             <div style={{
@@ -1074,7 +1080,18 @@ const Classes = () => {
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
                     {classes.map((cls) => (
-                        <ClassCard key={cls.id} cls={cls} onDelete={handleDeleteClick} onEdit={handleEditClick} schoolId={schoolId} />
+                        <ClassCard
+                            key={cls.id}
+                            cls={cls}
+                            onDelete={handleDeleteClick}
+                            onEdit={handleEditClick}
+                            isEditing={editingClassId === cls.id}
+                            teachers={teachers}
+                            subjectOptions={subjectOptions}
+                            onCancel={handleCancelEdit}
+                            onSave={handleUpdateClass}
+                            schoolId={schoolId}
+                        />
                     ))}
                 </div>
             )}
