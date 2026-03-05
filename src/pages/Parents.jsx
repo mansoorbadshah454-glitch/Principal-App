@@ -1,172 +1,624 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, Edit, ShieldCheck, Baby } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby } from 'lucide-react';
 import { db, functions } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import { auth } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 
 // Internal Component for individual Parent Card logic
-const ParentCard = ({ parent, onDelete, onEdit, onMessage }) => {
+const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbClasses, schoolId }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [isMessaging, setIsMessaging] = useState(false);
+    const [editStep, setEditStep] = useState(1);
+    const [editedParent, setEditedParent] = useState({ ...parent });
+    const [localMessageText, setLocalMessageText] = useState('');
+
+    // Step 3 Student Linking State
+    const [selectedStepClassId, setSelectedStepClassId] = useState('');
+    const [selectedStepStudentId, setSelectedStepStudentId] = useState('');
+    const [availableStepStudents, setAvailableStepStudents] = useState([]);
+
+    const cardRef = React.useRef(null);
+
+    // Click outside logic
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (cardRef.current && !cardRef.current.contains(event.target)) {
+                setIsEditing(false);
+                setIsMessaging(false);
+                setEditStep(1);
+                setEditedParent({ ...parent }); // Reset on cancel
+            }
+        };
+
+        if (isEditing || isMessaging) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isEditing, parent]);
+
+    // Fetch students for Step 3 within Card
+    useEffect(() => {
+        if (!schoolId || !selectedStepClassId) {
+            setAvailableStepStudents([]);
+            return;
+        }
+
+        const fetchStudents = async () => {
+            try {
+                const q = query(collection(db, `schools/${schoolId}/classes/${selectedStepClassId}/students`));
+                const snapshot = await getDocs(q);
+                const studentsList = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    name: doc.data().name || `${doc.data().firstName} ${doc.data().lastName}`,
+                    rollNo: doc.data().rollNo
+                }));
+                setAvailableStepStudents(studentsList);
+            } catch (err) {
+                console.error("Error fetching students in card:", err);
+            }
+        };
+        fetchStudents();
+    }, [schoolId, selectedStepClassId]);
+
+    const handleLinkStudent = () => {
+        if (!selectedStepClassId || !selectedStepStudentId) return;
+
+        const classObj = dbClasses.find(c => c.id === selectedStepClassId);
+        const studentObj = availableStepStudents.find(s => s.id === selectedStepStudentId);
+
+        if (classObj && studentObj) {
+            const exists = editedParent.linkedStudents?.some(s => s.studentId === studentObj.id);
+            if (!exists) {
+                setEditedParent(prev => ({
+                    ...prev,
+                    linkedStudents: [...(prev.linkedStudents || []), {
+                        studentId: studentObj.id,
+                        studentName: studentObj.name,
+                        classId: classObj.id,
+                        className: classObj.name,
+                        rollNo: studentObj.rollNo || ''
+                    }]
+                }));
+            }
+        }
+        setSelectedStepStudentId('');
+    };
+
+    const handleUnlinkStudent = (studentId) => {
+        setEditedParent(prev => ({
+            ...prev,
+            linkedStudents: prev.linkedStudents.filter(s => s.studentId !== studentId)
+        }));
+    };
+
+    const handleSave = async (e) => {
+        if (e) e.preventDefault();
+        try {
+            await onUpdate(parent.id, editedParent);
+            setIsEditing(false);
+            setEditStep(1);
+        } catch (error) {
+            console.error("Error updating parent:", error);
+            alert("Failed to update parent.");
+        }
+    };
+
     // Dynamic Theme Color based on name char code for variety
     const seed = parent.name.charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
-    const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
-    const themeLight = isEven ? '#e0e7ff' : '#ecfeff';
+    const themeColor = isEven ? '#bc1888' : '#e6683c'; // Use IG palette colors
+
+    const handleInlineSendMessage = async () => {
+        if (!localMessageText.trim()) return;
+        try {
+            await onSendMessage(parent.id, localMessageText.trim());
+            setIsMessaging(false);
+            setLocalMessageText('');
+        } catch (error) {
+            console.error("Error sending message:", error);
+            alert("Failed to send message.");
+        }
+    };
+
+    if (isMessaging) {
+        return (
+            <div ref={cardRef} className="card animate-scale-in" style={{
+                padding: '0',
+                overflow: 'hidden',
+                border: 'none',
+                position: 'relative',
+                background: '#fffaff',
+                boxShadow: '12px 12px 0px 0px rgba(188, 24, 136, 0.2)',
+                borderRadius: '24px',
+                zIndex: 50
+            }}>
+                <div style={{
+                    padding: '1.2rem 1.5rem',
+                    background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                    color: 'white'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '800' }}>Message Parent</h3>
+                        </div>
+                        <button onClick={() => setIsMessaging(false)} style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '10px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}>
+                            <X size={18} />
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.75rem', background: 'white', borderRadius: '16px', border: '1px solid #fdf2ff' }}>
+                        <div style={{
+                            width: '40px', height: '40px', borderRadius: '50%',
+                            background: '#bc1888', color: 'white',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem'
+                        }}>
+                            {parent.name.charAt(0)}
+                        </div>
+                        <div>
+                            <h4 style={{ fontWeight: '700', margin: 0, fontSize: '0.95rem' }}>{parent.name}</h4>
+                            <p style={{ fontSize: '0.75rem', color: '#64748b', margin: 0 }}>Write your private message below</p>
+                        </div>
+                    </div>
+
+                    <textarea
+                        placeholder="Type your message here..."
+                        rows="5"
+                        value={localMessageText}
+                        onChange={(e) => setLocalMessageText(e.target.value)}
+                        style={{
+                            width: '100%', padding: '1rem', borderRadius: '16px',
+                            border: '1px solid #fdf2ff', resize: 'none', outline: 'none',
+                            fontSize: '0.9rem', background: 'white', fontFamily: 'inherit'
+                        }}
+                    />
+
+                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <button
+                            type="button"
+                            onClick={() => setIsMessaging(false)}
+                            style={{ flex: 1, padding: '0.85rem', borderRadius: '14px', background: 'white', border: '2px solid #fdf2ff', color: '#64748b', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem' }}
+                        >
+                            Back
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleInlineSendMessage}
+                            disabled={!localMessageText.trim()}
+                            style={{
+                                flex: 1.5, padding: '0.85rem', borderRadius: '14px',
+                                background: '#bc1888', border: 'none', color: 'white',
+                                fontWeight: '700', cursor: localMessageText.trim() ? 'pointer' : 'not-allowed',
+                                fontSize: '0.9rem', boxShadow: '0 4px 15px rgba(188, 24, 136, 0.25)',
+                                opacity: localMessageText.trim() ? 1 : 0.6
+                            }}
+                        >
+                            Send Message
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (isEditing) {
+        return (
+            <div ref={cardRef} className="card animate-scale-in" style={{
+                padding: '0',
+                overflow: 'hidden',
+                border: 'none',
+                position: 'relative',
+                background: '#fffaff',
+                boxShadow: '12px 12px 0px 0px rgba(188, 24, 136, 0.2)',
+                borderRadius: '24px',
+                zIndex: 50
+            }}>
+                <div style={{
+                    padding: '1.2rem 1.5rem',
+                    background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                    color: 'white'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            {editStep > 1 && (
+                                <button
+                                    onClick={() => setEditStep(prev => prev - 1)}
+                                    style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '10px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}
+                                >
+                                    <ChevronLeft size={18} />
+                                </button>
+                            )}
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '800' }}>
+                                {editStep === 1 ? 'Personal Info' : editStep === 2 ? 'Account Login' : 'Manage Students'}
+                            </h3>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '0.2rem 0.5rem', background: 'rgba(255, 255, 255, 0.2)', borderRadius: '10px' }}>
+                                {editStep}/3
+                            </span>
+                            {editStep < 3 && (
+                                <button
+                                    onClick={() => setEditStep(prev => prev + 1)}
+                                    style={{ background: 'white', border: 'none', borderRadius: '10px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#bc1888' }}
+                                >
+                                    <ChevronRight size={18} />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div style={{
+                    padding: '1.5rem',
+                    maxHeight: '420px',
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1.25rem'
+                }}>
+                    {editStep === 1 && (
+                        <>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Name</label>
+                                    <input
+                                        type="text"
+                                        value={editedParent.name}
+                                        onChange={(e) => setEditedParent({ ...editedParent, name: e.target.value })}
+                                        style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Phone</label>
+                                    <input
+                                        type="tel"
+                                        value={editedParent.phone}
+                                        onChange={(e) => setEditedParent({ ...editedParent, phone: e.target.value })}
+                                        style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Occupation</label>
+                                <input
+                                    type="text"
+                                    value={editedParent.occupation || ''}
+                                    onChange={(e) => setEditedParent({ ...editedParent, occupation: e.target.value })}
+                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                />
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Address</label>
+                                <textarea
+                                    value={editedParent.address}
+                                    onChange={(e) => setEditedParent({ ...editedParent, address: e.target.value })}
+                                    rows="3"
+                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', resize: 'none', background: 'white' }}
+                                    required
+                                />
+                            </div>
+                        </>
+                    )}
+
+                    {editStep === 2 && (
+                        <>
+                            <div style={{ background: 'white', padding: '1.25rem', borderRadius: '16px', border: '1px solid #fdf2ff' }}>
+                                <div style={{ marginBottom: '1.25rem' }}>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Username</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#fffaff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                                        <User size={16} color="#bc1888" />
+                                        <input
+                                            type="text"
+                                            value={editedParent.username || ''}
+                                            onChange={(e) => setEditedParent({ ...editedParent, username: e.target.value })}
+                                            style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Password</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#fffaff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                                        <ShieldCheck size={16} color="#bc1888" />
+                                        <input
+                                            type="text"
+                                            value={editedParent.password || ''}
+                                            onChange={(e) => setEditedParent({ ...editedParent, password: e.target.value })}
+                                            style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <div style={{ padding: '0.5rem', background: '#fff7ed', borderRadius: '12px', border: '1px dashed #fdba74', color: '#9a3412', fontSize: '0.8rem', fontWeight: '500' }}>
+                                <p>Provide these credentials to the parent to log in to the Parent App.</p>
+                            </div>
+                        </>
+                    )}
+
+                    {editStep === 3 && (
+                        <>
+                            <div style={{ background: 'white', padding: '1.25rem', borderRadius: '16px', border: '1px solid #fdf2ff' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <select
+                                            value={selectedStepClassId}
+                                            onChange={(e) => setSelectedStepClassId(e.target.value)}
+                                            style={{ flex: 1, padding: '0.6rem', borderRadius: '10px', border: '1px solid #f1f5f9', fontSize: '0.85rem', outline: 'none' }}
+                                        >
+                                            <option value="">Class</option>
+                                            {dbClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                        <select
+                                            value={selectedStepStudentId}
+                                            onChange={(e) => setSelectedStepStudentId(e.target.value)}
+                                            disabled={!selectedStepClassId}
+                                            style={{ flex: 1.5, padding: '0.6rem', borderRadius: '10px', border: '1px solid #f1f5f9', fontSize: '0.85rem', outline: 'none' }}
+                                        >
+                                            <option value="">Student</option>
+                                            {availableStepStudents.map(s => <option key={s.id} value={s.id}>{s.name} ({s.rollNo})</option>)}
+                                        </select>
+                                        <button
+                                            type="button"
+                                            onClick={handleLinkStudent}
+                                            disabled={!selectedStepStudentId}
+                                            style={{ background: '#bc1888', color: 'white', border: 'none', borderRadius: '10px', padding: '0.5rem', cursor: selectedStepStudentId ? 'pointer' : 'not-allowed', opacity: selectedStepStudentId ? 1 : 0.5 }}
+                                        >
+                                            <Plus size={18} />
+                                        </button>
+                                    </div>
+
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                        <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#64748b' }}>LINKED STUDENTS</label>
+                                        {editedParent.linkedStudents?.map((child, idx) => (
+                                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fffaff', padding: '0.5rem 0.75rem', borderRadius: '10px', border: '1px solid #fdf2ff' }}>
+                                                <div>
+                                                    <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>{child.studentName}</span>
+                                                    <span style={{ fontSize: '0.7rem', color: '#64748b', marginLeft: '0.5rem', background: 'white', padding: '1px 6px', borderRadius: '6px' }}>{child.className}</span>
+                                                </div>
+                                                <button onClick={() => handleUnlinkStudent(child.studentId)} type="button" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                                                    <X size={14} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (editStep > 1) {
+                                    setEditStep(prev => prev - 1);
+                                } else {
+                                    setIsEditing(false);
+                                    setEditedParent({ ...parent });
+                                }
+                            }}
+                            style={{ flex: 1, padding: '0.85rem', borderRadius: '14px', background: 'white', border: '2px solid #fdf2ff', color: '#64748b', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem' }}
+                        >
+                            {editStep === 1 ? 'Back' : 'Back Step'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (editStep < 3) {
+                                    setEditStep(prev => prev + 1);
+                                } else {
+                                    handleSave();
+                                }
+                            }}
+                            style={{ flex: 1.5, padding: '0.85rem', borderRadius: '14px', background: '#bc1888', border: 'none', color: 'white', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem', boxShadow: '0 4px 15px rgba(188, 24, 136, 0.25)' }}
+                        >
+                            {editStep < 3 ? 'Next Step' : 'Save Changes'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="card" style={{
             padding: '0',
             overflow: 'hidden',
-            border: '1px solid #dbeafe',
+            border: 'none',
             position: 'relative',
-            background: 'white',
-            boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)',
-            borderRadius: '16px',
-            transition: 'all 0.3s ease'
+            background: '#fffaff', // Light Neon Background
+            boxShadow: '8px 8px 0px 0px rgba(188, 24, 136, 0.15)', // Sharp 2D Shadow
+            borderRadius: '24px',
+            transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
         }}>
-            <div style={{ padding: '1.5rem', borderBottom: '1px solid #f1f5f9' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+            {/* Header with Instagram Gradient */}
+            <div style={{
+                padding: '1.5rem',
+                background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                color: 'white'
+            }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                     <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                         <div style={{
-                            width: '50px', height: '50px', borderRadius: '50%',
-                            background: `linear-gradient(135deg, ${themeColor}, ${isEven ? '#4338ca' : '#0891b2'})`,
+                            width: '56px', height: '56px', borderRadius: '50%',
+                            background: 'white',
+                            border: '3px solid rgba(255, 255, 255, 0.3)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'white', fontWeight: '700', fontSize: '1.2rem'
+                            color: '#dc2743', fontWeight: '800', fontSize: '1.4rem',
+                            boxShadow: '0 4px 10px rgba(0,0,0,0.1)'
                         }}>
                             {parent.name.charAt(0).toUpperCase()}
                         </div>
                         <div>
-                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '0.2rem' }}>
+                            <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'white', marginBottom: '0.1rem' }}>
                                 {parent.name}
                             </h3>
                             <span style={{
-                                fontSize: '0.8rem', color: themeColor,
-                                background: themeLight, padding: '0.2rem 0.6rem',
-                                borderRadius: '12px', fontWeight: '600'
+                                fontSize: '0.75rem', color: 'white',
+                                background: 'rgba(255, 255, 255, 0.2)', padding: '0.2rem 0.6rem',
+                                borderRadius: '12px', fontWeight: '600',
+                                backdropFilter: 'blur(4px)',
+                                border: '1px solid rgba(255, 255, 255, 0.3)'
                             }}>
-                                {parent.username || 'No Username'}
+                                @{parent.username || 'parent'}
                             </span>
                         </div>
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
-                            onClick={() => onEdit(parent)}
+                            onClick={() => setIsEditing(true)}
                             style={{
-                                background: '#f0f9ff', border: 'none', padding: '0.5rem',
-                                borderRadius: '8px', color: '#0ea5e9', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                background: 'rgba(255, 255, 255, 0.2)', border: '1px solid rgba(255, 255, 255, 0.3)',
+                                padding: '0.5rem', borderRadius: '12px', color: 'white', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                transition: 'all 0.2s',
+                                backdropFilter: 'blur(4px)'
                             }}
+                            className="hover:scale-110"
                         >
                             <Edit size={16} />
                         </button>
                         <button
                             onClick={() => onDelete(parent.id)}
                             style={{
-                                background: '#fef2f2', border: 'none', padding: '0.5rem',
-                                borderRadius: '8px', color: '#ef4444', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.3)',
+                                padding: '0.5rem', borderRadius: '12px', color: 'white', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                transition: 'all 0.2s',
+                                backdropFilter: 'blur(4px)'
                             }}
+                            className="hover:scale-110"
                         >
                             <Trash2 size={16} />
                         </button>
                     </div>
                 </div>
+            </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+            {/* Body with Light Neon Background */}
+            <div style={{ padding: '1.5rem', background: 'rgba(255, 255, 255, 0.6)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                     <div style={{
                         fontSize: '0.7rem',
-                        fontWeight: '800',
-                        color: themeColor,
-                        letterSpacing: '0.05em',
+                        fontWeight: '900',
+                        color: '#bc1888',
+                        letterSpacing: '0.1em',
                         marginBottom: '0.25rem',
-                        opacity: 0.8
+                        textTransform: 'uppercase'
                     }}>
-                        PARENT INFORMATION
+                        Contact Information
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        <Phone size={16} color="#64748b" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#1e293b', fontSize: '0.95rem', fontWeight: '500' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Phone size={16} color="#e11d48" />
+                        </div>
                         <span>{parent.phone || 'N/A'}</span>
                     </div>
                     {parent.email && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            <Mail size={16} color="#64748b" />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#1e293b', fontSize: '0.95rem', fontWeight: '500' }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#f5f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <Mail size={16} color="#7c3aed" />
+                            </div>
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{parent.email}</span>
                         </div>
                     )}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        <ShieldCheck size={16} color="#64748b" />
-                        <span>Password: <span style={{ fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px' }}>{parent.password}</span></span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        <BookOpen size={16} color="#64748b" /> {/* Using BookOpen as placeholder for Briefcase if not avail, but let's try to import Briefcase at top or use User */}
-                        <span>{parent.occupation || 'Occupation: N/A'}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#1e293b', fontSize: '0.95rem', fontWeight: '500' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <ShieldCheck size={16} color="#16a34a" />
+                        </div>
+                        <span>Pass: <span style={{ fontFamily: 'monospace', color: '#bc1888', background: 'white', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fdf2ff' }}>{parent.password}</span></span>
                     </div>
                 </div>
-            </div>
 
-            <div style={{ padding: '1rem 1.5rem', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '100%' }}>
+                <div style={{ marginTop: '1.5rem', borderTop: '1px dashed #e2e8f0', paddingTop: '1rem' }}>
                     <div
                         onClick={() => setIsExpanded(!isExpanded)}
                         style={{
                             display: 'flex',
+                            justifyContent: 'space-between',
                             alignItems: 'center',
-                            gap: '0.4rem',
                             cursor: 'pointer',
-                            userSelect: 'none'
+                            padding: '0.5rem 0.75rem',
+                            background: '#f8fafc',
+                            borderRadius: '12px',
+                            border: '1px solid #f1f5f9'
                         }}
                     >
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Linked Children</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <Baby size={16} color="#f59e0b" />
+                            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#64748b' }}>Linked Children</span>
+                        </div>
                         <ChevronRight
-                            size={14}
+                            size={16}
                             color="#94a3b8"
                             style={{
-                                transition: 'transform 0.2s',
+                                transition: 'transform 0.3s',
                                 transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'
                             }}
                         />
                     </div>
+
                     {isExpanded && (
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem', paddingLeft: '0.5rem' }}>
                             {parent.linkedStudents && parent.linkedStudents.length > 0 ? (
                                 parent.linkedStudents.map((child, idx) => (
-                                    <span key={idx} style={{
-                                        fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-main)',
-                                        background: 'white', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: '12px'
+                                    <div key={idx} style={{
+                                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                        padding: '0.4rem 0.8rem', background: 'white', borderRadius: '10px',
+                                        border: '1px solid #f1f5f9', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
                                     }}>
-                                        {child.studentName} <span style={{ opacity: 0.5, fontSize: '0.7em' }}>({child.className})</span>
-                                    </span>
+                                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#bc1888' }} />
+                                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#1e293b' }}>
+                                            {child.studentName}
+                                        </span>
+                                        <span style={{ fontSize: '0.7rem', color: '#94a3b8', background: '#f8fafc', padding: '1px 6px', borderRadius: '6px' }}>
+                                            {child.className}
+                                        </span>
+                                    </div>
                                 ))
                             ) : (
-                                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>None</span>
+                                <span style={{ fontSize: '0.85rem', color: '#94a3b8', textAlign: 'center', padding: '0.5rem' }}>No children linked</span>
                             )}
                         </div>
                     )}
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                        onClick={() => onMessage(parent)}
-                        style={{
-                            width: '32px', height: '32px', borderRadius: '8px',
-                            background: 'white', border: '1px solid #e2e8f0',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            cursor: 'pointer', color: '#8b5cf6'
-                        }}
-                        title="Send Message"
-                    >
-                        <Mail size={16} />
-                    </button>
-                    <div style={{
-                        width: '32px', height: '32px', borderRadius: '8px',
-                        background: 'white', border: '1px solid #e2e8f0',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                    }}>
-                        <Baby size={16} color="#fbbf24" fill="#fbbf24" />
-                    </div>
-                </div>
+            </div>
+
+            {/* Action Bar */}
+            <div style={{
+                padding: '0.75rem 1.5rem',
+                background: '#fffaff',
+                borderTop: '1px solid #fdf2ff',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                gap: '0.75rem'
+            }}>
+                <button
+                    onClick={() => setIsMessaging(true)}
+                    style={{
+                        padding: '0.5rem 1rem', borderRadius: '12px',
+                        background: 'white', border: '2px solid #fdf2ff',
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        cursor: 'pointer', color: '#bc1888', fontWeight: '700',
+                        fontSize: '0.85rem',
+                        boxShadow: '0 2px 4px rgba(188, 24, 136, 0.05)'
+                    }}
+                >
+                    <Mail size={16} />
+                    Message
+                </button>
             </div>
         </div>
     );
@@ -389,7 +841,18 @@ const Parents = () => {
     const [isEditing, setIsEditing] = useState(false);
     const [editingId, setEditingId] = useState(null);
 
+    const handleUpdateParent = async (id, updatedData) => {
+        try {
+            const parentRef = doc(db, `schools/${schoolId}/parents`, id);
+            await updateDoc(parentRef, updatedData);
+        } catch (error) {
+            console.error("Error updating parent:", error);
+            throw error;
+        }
+    };
+
     const handleEditClick = (parent) => {
+        // This is now legacy/unused for cards but kept for external triggers if any
         setNewParent({
             ...parent,
             password: parent.password || '', // Keep password visible for edit or empty
@@ -475,10 +938,6 @@ const Parents = () => {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [deleteError, setDeleteError] = useState('');
 
-    // Message Logic
-    const [showMessageModal, setShowMessageModal] = useState(false);
-    const [selectedParentForMessage, setSelectedParentForMessage] = useState(null);
-    const [messageText, setMessageText] = useState('');
 
     const handleDeleteClick = (id) => {
         setParentToDelete(id);
@@ -487,29 +946,24 @@ const Parents = () => {
         setDeleteError('');
     };
 
-    const handleSendMessage = async () => {
-        if (!selectedParentForMessage || !messageText.trim()) return;
+    const handleSendMessage = async (parentId, text) => {
+        if (!text.trim()) return;
 
         try {
-            // Write to notifications subcollection of the parent
-            // Path: schools/{schoolId}/parents/{parentId}/notifications
-            const notifRef = collection(db, `schools/${schoolId}/parents/${selectedParentForMessage.id}/notifications`);
+            const notifRef = collection(db, `schools/${schoolId}/parents/${parentId}/notifications`);
             await addDoc(notifRef, {
                 title: "Message from Principal",
-                message: messageText.trim(),
-                timestamp: new Date(), // Using client date for now, ideally serverTimestamp
+                message: text.trim(),
+                timestamp: new Date(),
                 read: false,
                 type: 'private_message',
                 sender: 'Principal'
             });
 
             alert("Message sent successfully!");
-            setShowMessageModal(false);
-            setMessageText('');
-            setSelectedParentForMessage(null);
         } catch (error) {
             console.error("Error sending message:", error);
-            alert("Failed to send message.");
+            throw error;
         }
     };
 
@@ -748,90 +1202,16 @@ const Parents = () => {
                             key={p.id}
                             parent={p}
                             onDelete={handleDeleteClick}
-                            onEdit={handleEditClick}
-                            onMessage={(parent) => {
-                                setSelectedParentForMessage(parent);
-                                setShowMessageModal(true);
-                            }}
+                            onUpdate={handleUpdateParent}
+                            onSendMessage={handleSendMessage}
+                            dbClasses={dbClasses}
+                            schoolId={schoolId}
                         />
                     ))}
                 </div>
             )}
 
-            {/* Message Modal */}
-            {showMessageModal && selectedParentForMessage && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    zIndex: 1000 // No background overlay as requested (transparent)
-                }}>
-                    <div className="animate-scale-in" style={{
-                        background: 'white', borderRadius: '24px', padding: '2rem',
-                        width: '90%', maxWidth: '500px',
-                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: 'var(--text-main)' }}>
-                                Message Parent
-                            </h2>
-                            <button onClick={() => setShowMessageModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
-                                <X size={24} />
-                            </button>
-                        </div>
-
-                        <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem', background: '#f8fafc', borderRadius: '16px' }}>
-                            <div style={{
-                                width: '48px', height: '48px', borderRadius: '50%',
-                                background: 'var(--primary)', color: 'white',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold'
-                            }}>
-                                {selectedParentForMessage.name.charAt(0)}
-                            </div>
-                            <div>
-                                <h3 style={{ fontWeight: '600', margin: 0 }}>{selectedParentForMessage.name}</h3>
-                                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>Send a private notification</p>
-                            </div>
-                        </div>
-
-                        <textarea
-                            placeholder="Write your message here..."
-                            rows="5"
-                            value={messageText}
-                            onChange={(e) => setMessageText(e.target.value)}
-                            style={{
-                                width: '100%', padding: '1rem', borderRadius: '12px',
-                                border: '1px solid #e2e8f0', resize: 'none', outline: 'none',
-                                fontSize: '1rem', marginBottom: '1.5rem', fontFamily: 'inherit'
-                            }}
-                        />
-
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                            <button
-                                onClick={() => setShowMessageModal(false)}
-                                style={{
-                                    padding: '0.75rem 1.5rem', borderRadius: '12px',
-                                    background: '#f1f5f9', color: '#64748b', border: 'none',
-                                    fontWeight: '600', cursor: 'pointer'
-                                }}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleSendMessage}
-                                disabled={!messageText.trim()}
-                                style={{
-                                    padding: '0.75rem 1.5rem', borderRadius: '12px',
-                                    background: 'var(--primary)', color: 'white', border: 'none',
-                                    fontWeight: '600', cursor: 'pointer', opacity: !messageText.trim() ? 0.7 : 1,
-                                    display: 'flex', alignItems: 'center', gap: '0.5rem'
-                                }}
-                            >
-                                <Mail size={18} /> Send Message
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* Removed legacy Message Modal */}
 
 
             {/* Add Parent Modal */}
