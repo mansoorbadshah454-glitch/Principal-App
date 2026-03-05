@@ -622,6 +622,7 @@ const ClassDetails = () => {
 
             {/* Student Profile Modal */}
             <StudentProfileModal
+                key={selectedStudent?.id || 'profile-modal'}
                 isOpen={showProfileModal}
                 onClose={() => setShowProfileModal(false)}
                 student={selectedStudent}

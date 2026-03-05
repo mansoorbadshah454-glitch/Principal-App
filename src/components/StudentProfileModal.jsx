@@ -57,11 +57,13 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                 ...item,
                 score: parseInt(item.score, 10) || 0
             }))
-            : (classSubjects && classSubjects.length > 0 ? classSubjects : ['Math', 'Science', 'English', 'Urdu', 'Art']).slice(0, 6).map((sub) => {
-                const seed = student.id ? student.id.charCodeAt(0) : 0;
+            : (classSubjects && classSubjects.length > 0 ? classSubjects : ['Math', 'Science', 'English', 'Urdu', 'Art']).slice(0, 6).map((sub, index) => {
+                const seed = student.id ? student.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) : 0;
+                // Pseudo-random but consistent based on student ID and subject index
+                const pseudoRandom = Math.abs(Math.sin(seed + index)) * 40;
                 return {
                     subject: sub,
-                    score: Math.min(100, Math.max(50, Math.floor(Math.random() * 40) + 60 + (seed % 10)))
+                    score: Math.min(100, Math.max(50, Math.floor(pseudoRandom) + 60))
                 };
             });
     }, [student?.academicScores, classSubjects, student?.id]);
@@ -80,12 +82,12 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
     const behaviorData = React.useMemo(() => {
         if (!student) return [];
         const rawWellness = student.wellness || {};
-        const seed = student.id ? student.id.charCodeAt(0) : 0;
+        const seed = student.id ? student.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) : 0;
 
         return [
             { name: 'Behavior', score: rawWellness.behavior || (85 + (seed % 15)), color: '#8b5cf6' },
-            { name: 'Health', score: rawWellness.health || (92 + (seed % 8)), color: '#ec4899' },
-            { name: 'Hygiene', score: rawWellness.hygiene || (88 + (seed % 10)), color: '#10b981' },
+            { name: 'Health', score: rawWellness.health || (92 + ((seed + 1) % 8)), color: '#ec4899' },
+            { name: 'Hygiene', score: rawWellness.hygiene || (88 + ((seed + 2) % 10)), color: '#10b981' },
         ];
     }, [student?.wellness, student?.id]);
 
