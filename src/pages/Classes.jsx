@@ -1151,29 +1151,33 @@ const Classes = () => {
                 </div>
             )}
 
-            {/* Add Class Modal */}
             {showAddClass && (
-                <div style={{
-                    position: 'fixed', inset: 0,
-                    zIndex: 1000,
-                    background: 'rgba(0,0,0,0.6)',
-                    backdropFilter: 'blur(3px)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    padding: '1rem'
-                }}>
+                <div
+                    style={{
+                        position: 'fixed', inset: 0,
+                        zIndex: 1000,
+                        background: 'transparent',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        justifyContent: 'center',
+                        padding: '5rem 1rem'
+                    }}
+                    onClick={() => setShowAddClass(false)}
+                >
                     <div className="card custom-scrollbar" style={{
                         width: '100%',
-                        maxWidth: '600px',
-                        maxHeight: '80vh',
-                        marginTop: '4rem',
+                        maxWidth: 'min(600px, 95vw)',
+                        maxHeight: '90vh',
                         overflowY: 'auto',
                         padding: '2rem',
                         animation: 'slideUp 0.3s ease-out',
-                        position: 'relative',
                         background: 'white',
                         borderRadius: '24px',
-                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
-                    }}>
+                        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                        boxSizing: 'border-box'
+                    }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
                             <h2 style={{ fontSize: '1.5rem', fontWeight: '700' }}>Add New Class</h2>
                             <button onClick={() => setShowAddClass(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
