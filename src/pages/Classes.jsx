@@ -2,7 +2,7 @@ import React, { useState, useEffect, useTransition } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2, Edit, Save } from 'lucide-react';
 import { db } from '../firebase';
-import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, writeBatch, where } from 'firebase/firestore';
 import { auth } from '../firebase';
 import StudentCircle from '../components/StudentCircle';
 
@@ -17,10 +17,44 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
     const [filter, setFilter] = useState('all'); // 'all', 'present', 'absent'
 
     // State for Attendance Stats
-    const [realStats, setRealStats] = useState({ present: 0, absent: 0, total: 0 });
+    // source: 'confirmed' = reading from today's saved history record
+    //         'pending'   = no history yet today, falling back to raw student status
+    const [realStats, setRealStats] = useState({ present: 0, absent: 0, total: 0, source: 'pending' });
     const [isSaving, setIsSaving] = useState(false);
 
-    // Always fetch students for real-time attendance calculation
+    // Layer 1 (Priority): Listen to today's confirmed attendance history record
+    useEffect(() => {
+        if (!schoolId) return;
+        const today = new Date().toISOString().split('T')[0];
+
+        const q = query(
+            collection(db, `schools/${schoolId}/attendance`),
+            where('classId', '==', cls.id),
+            where('date', '==', today)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            if (!snapshot.empty) {
+                // A confirmed record for today exists — use it as the source of truth
+                const record = snapshot.docs[0].data();
+                setRealStats({
+                    present: record.presentCount ?? 0,
+                    absent: record.absentCount ?? 0,
+                    total: record.totalStudents ?? 0,
+                    source: 'confirmed'
+                });
+            } else {
+                // No confirmed record yet — signal that the fallback (Layer 2) should drive the stats
+                setRealStats(prev => ({ ...prev, source: 'pending' }));
+            }
+        }, (error) => {
+            console.error("Error fetching attendance history:", error);
+        });
+
+        return () => unsubscribe();
+    }, [schoolId, cls.id]);
+
+    // Layer 2 (Fallback): Listen to raw student sub-collection for live student list + pending stats
     useEffect(() => {
         if (!schoolId) return;
 
@@ -31,11 +65,17 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                 ...doc.data()
             }));
 
-            // Calculate real attendance stats
-            const present = students.filter(s => s.status === 'present').length;
-            const absent = students.filter(s => s.status === 'absent').length;
-            const total = students.length;
-            setRealStats({ present, absent, total });
+            // Only use raw counts when there is no confirmed history record for today
+            setRealStats(prev => {
+                if (prev.source === 'confirmed') {
+                    // A confirmed record is driving stats — only update the total so the
+                    // student-list panel stays functional, but don't override the counts
+                    return { ...prev, total: students.length };
+                }
+                const present = students.filter(s => s.status === 'present').length;
+                const absent = students.filter(s => s.status === 'absent').length;
+                return { present, absent, total: students.length, source: 'pending' };
+            });
 
             // If student list is expanded, also update the detailed list
             if (showStudents) {
@@ -164,6 +204,20 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                         <User size={16} color={themeColor} />
                         <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
                     </div>
+
+                    {/* Attendance Status Badge — only shown once teacher confirms */}
+                    {realStats.source === 'confirmed' && (
+                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                            <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                fontSize: '0.7rem', fontWeight: '700', color: '#059669',
+                                background: '#d1fae5', padding: '2px 8px', borderRadius: '20px',
+                                border: '1px solid #6ee7b7'
+                            }}>
+                                ✓ Confirmed Today
+                            </span>
+                        </div>
+                    )}
 
                     {/* Attendance Stats Cards - Interactive */}
                     <div style={{ display: 'flex', gap: '0.75rem' }}>
