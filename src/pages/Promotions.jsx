@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, AlertCircle,
-    Loader2, GraduationCap, X
+    Loader2, GraduationCap, X, UploadCloud, FileCheck, Eye, Upload
 } from 'lucide-react';
-import { db, auth } from '../firebase';
+import { db, auth, storage } from '../firebase';
 import {
-    collection, getDocs, doc, writeBatch, getDoc,
+    collection, getDocs, doc, writeBatch, getDoc, updateDoc,
     query, orderBy, addDoc, getCountFromServer
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -25,6 +26,9 @@ const Promotions = () => {
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [confirmLevel, setConfirmLevel] = useState(1); // 1 or 2 for dual confirmation
     const [schoolDetails, setSchoolDetails] = useState({ name: '', logo: '' });
+    const [uploadingResultId, setUploadingResultId] = useState(null); // Tracks student ID for upload spinner
+    const fileInputRefs = useRef({}); // Refs for hidden file inputs
+
 
 
     // Helper: Class Sorting order
@@ -198,6 +202,57 @@ const Promotions = () => {
         setStudents(prev => prev.map(s =>
             s.id === studentId ? { ...s, result } : s
         ));
+    };
+
+    const handleResultUpload = async (studentId, file) => {
+        if (!file || !schoolId || !selectedClass) return;
+
+        setUploadingResultId(studentId);
+        try {
+            const fileExtension = file.name.split('.').pop();
+            const timestamp = Date.now();
+            const storagePath = `schools/${schoolId}/students/${studentId}/results/result_${timestamp}.${fileExtension}`;
+
+            // Upload to Storage
+            const storageRef = ref(storage, storagePath);
+            const snapshot = await uploadBytes(storageRef, file);
+            const downloadUrl = await getDownloadURL(snapshot.ref);
+
+            // Update state immediately for UI
+            setStudents(prev => prev.map(s =>
+                s.id === studentId ? {
+                    ...s,
+                    uploadedResultUrl: downloadUrl,
+                    uploadedResultType: fileExtension
+                } : s
+            ));
+
+            // Update Firestore for student in class
+            const classStudentRef = doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, studentId);
+            await updateDoc(classStudentRef, {
+                uploadedResultUrl: downloadUrl,
+                uploadedResultType: fileExtension,
+                uploadedResultAt: new Date()
+            });
+
+            // Update Firestore for master student record
+            const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
+            await updateDoc(masterStudentRef, {
+                uploadedResultUrl: downloadUrl,
+                uploadedResultType: fileExtension,
+                uploadedResultAt: new Date()
+            });
+
+        } catch (error) {
+            console.error("Error uploading result:", error);
+            alert("Failed to upload result file.");
+        } finally {
+            setUploadingResultId(null);
+            // Reset input so same file can be uploaded again if needed
+            if (fileInputRefs.current[studentId]) {
+                fileInputRefs.current[studentId].value = '';
+            }
+        }
     };
 
     const setAllStatus = (status) => {
@@ -784,6 +839,91 @@ const Promotions = () => {
                                                             fontWeight: '700', fontSize: '10px'
                                                         }}
                                                     >Leave</button>
+                                                </div>
+                                            </div>
+
+                                            {/* Result File Upload Section */}
+                                            <div style={{
+                                                marginTop: '5px',
+                                                padding: '10px 12px',
+                                                background: '#F8FAFC',
+                                                borderRadius: '12px',
+                                                border: '1px dashed #E2E8F0',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between'
+                                            }}>
+                                                <input
+                                                    type="file"
+                                                    accept=".pdf,image/*"
+                                                    style={{ display: 'none' }}
+                                                    ref={el => fileInputRefs.current[student.id] = el}
+                                                    onChange={(e) => {
+                                                        if (e.target.files?.[0]) {
+                                                            handleResultUpload(student.id, e.target.files[0]);
+                                                        }
+                                                    }}
+                                                />
+
+                                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    {student.uploadedResultUrl ? (
+                                                        <FileCheck size={16} color="#10B981" />
+                                                    ) : (
+                                                        <UploadCloud size={16} color="#94A3B8" />
+                                                    )}
+                                                    <span style={{
+                                                        fontSize: '12px',
+                                                        fontWeight: '600',
+                                                        color: student.uploadedResultUrl ? '#10B981' : '#64748B'
+                                                    }}>
+                                                        {student.uploadedResultUrl ? 'Result Uploaded' : 'No Result File'}
+                                                    </span>
+                                                </div>
+
+                                                <div style={{ display: 'flex', gap: '6px' }}>
+                                                    {uploadingResultId === student.id ? (
+                                                        <button style={{
+                                                            display: 'flex', alignItems: 'center', gap: '4px',
+                                                            padding: '6px 10px', borderRadius: '8px', border: 'none',
+                                                            background: '#F1F5F9', color: '#64748B', fontWeight: '600', fontSize: '11px'
+                                                        }} disabled>
+                                                            <Loader2 size={12} className="animate-spin" /> Uploading...
+                                                        </button>
+                                                    ) : student.uploadedResultUrl ? (
+                                                        <>
+                                                            <button
+                                                                onClick={() => window.open(student.uploadedResultUrl, '_blank')}
+                                                                style={{
+                                                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                                                    padding: '6px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                                    background: '#DCFCE7', color: '#15803D', fontWeight: '700', fontSize: '11px'
+                                                                }}
+                                                            >
+                                                                <Eye size={12} /> View
+                                                            </button>
+                                                            <button
+                                                                onClick={() => fileInputRefs.current[student.id]?.click()}
+                                                                style={{
+                                                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                                                    padding: '6px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                                    background: '#F1F5F9', color: '#64748B', fontWeight: '600', fontSize: '11px'
+                                                                }}
+                                                            >
+                                                                <Upload size={12} /> Update
+                                                            </button>
+                                                        </>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => fileInputRefs.current[student.id]?.click()}
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: '4px',
+                                                                padding: '6px 12px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                                background: '#EFF6FF', color: '#2563EB', fontWeight: '600', fontSize: '11px'
+                                                            }}
+                                                        >
+                                                            <Upload size={12} /> Upload File
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
