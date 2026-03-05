@@ -1,7 +1,7 @@
 import React from 'react';
 import { User, Trash2, Edit2, Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
 
-const UserCard = ({ user, onDelete, onEdit }) => {
+const UserCard = ({ user, onDelete, onEdit, isPrincipal = true }) => {
     return (
         <div className="card hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-slate-100 bg-white overflow-hidden group relative">
             {/* Top decorative gradient line */}
@@ -32,22 +32,24 @@ const UserCard = ({ user, onDelete, onEdit }) => {
                         </div>
                     </div>
 
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        <button
-                            onClick={() => onEdit(user)}
-                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                            title="Edit Permissions"
-                        >
-                            <Edit2 size={18} />
-                        </button>
-                        <button
-                            onClick={() => onDelete(user.id)}
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title="Remove Admin"
-                        >
-                            <Trash2 size={18} />
-                        </button>
-                    </div>
+                    {isPrincipal && (
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                            <button
+                                onClick={() => onEdit(user)}
+                                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                title="Edit Permissions"
+                            >
+                                <Edit2 size={18} />
+                            </button>
+                            <button
+                                onClick={() => onDelete(user.id)}
+                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                title="Remove Admin"
+                            >
+                                <Trash2 size={18} />
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="border-t border-slate-50 pt-4 mt-2">

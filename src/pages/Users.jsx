@@ -11,13 +11,15 @@ const Users = () => {
     const [showModal, setShowModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingUser, setEditingUser] = useState(null);
+    const [currentUserRole, setCurrentUserRole] = useState('principal');
 
     const fetchUsers = async () => {
         setLoading(true);
         try {
             const session = localStorage.getItem('manual_session');
             if (session) {
-                const { schoolId } = JSON.parse(session);
+                const { schoolId, role } = JSON.parse(session);
+                setCurrentUserRole(role || 'principal');
                 // Fetch from school-specific collection
                 const querySnapshot = await getDocs(collection(db, `schools/${schoolId}/admin_users`));
                 const usersList = querySnapshot.docs
@@ -91,13 +93,15 @@ const Users = () => {
                         <p className="text-slate-500 mt-1">Manage system access and permissions for administrative staff.</p>
                     </div>
 
-                    <button
-                        onClick={handleAddUser}
-                        className="btn btn-primary"
-                    >
-                        <Plus size={20} />
-                        Add New Admin
-                    </button>
+                    {currentUserRole !== 'school Admin' && (
+                        <button
+                            onClick={handleAddUser}
+                            className="btn btn-primary"
+                        >
+                            <Plus size={20} />
+                            Add New Admin
+                        </button>
+                    )}
                 </div>
 
                 {/* Search and Filter Bar */}
@@ -128,6 +132,7 @@ const Users = () => {
                                         user={user}
                                         onDelete={handleDelete}
                                         onEdit={handleEdit}
+                                        isPrincipal={currentUserRole !== 'school Admin'}
                                     />
                                 ))}
                             </div>
@@ -140,7 +145,7 @@ const Users = () => {
                                 <p className="text-slate-500 max-w-md mx-auto mt-2">
                                     {searchTerm ? `No results found for "${searchTerm}"` : "Get started by adding your first administrative user."}
                                 </p>
-                                {!searchTerm && (
+                                {(!searchTerm && currentUserRole !== 'school Admin') && (
                                     <button
                                         onClick={handleAddUser}
                                         className="mt-4 text-indigo-600 font-medium hover:text-indigo-700 hover:underline"

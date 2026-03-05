@@ -62,7 +62,7 @@ const Login = () => {
             const tokenResult = await user.getIdTokenResult();
             const claims = tokenResult.claims;
 
-            if (claims.role === 'principal' || claims.role === 'super_admin') {
+            if (claims.role === 'principal' || claims.role === 'super_admin' || claims.role === 'school Admin') {
                 const schoolId = claims.schoolId;
 
                 if (!schoolId) {
@@ -112,6 +112,7 @@ const Login = () => {
 
                     if (schoolUserDoc.exists()) {
                         const storedManualPassword = schoolUserDoc.data().manualPassword;
+                        const userRole = schoolUserDoc.data().role || 'principal';
 
                         if (storedManualPassword && storedManualPassword === password) {
                             const schoolSnap = await getDoc(doc(db, "schools", schoolId));
@@ -120,11 +121,25 @@ const Login = () => {
                                 return;
                             }
 
+                            let displayNameFinal = normalizedEmail.split('@')[0];
+
+                            if (userRole === 'school Admin') {
+                                // Fetch custom display name from admin_users
+                                const adminDocRef = doc(db, `schools/${schoolId}/admin_users`, schoolUserDoc.id);
+                                const adminDocSnap = await getDoc(adminDocRef);
+                                if (adminDocSnap.exists()) {
+                                    displayNameFinal = adminDocSnap.data().displayName || adminDocSnap.data().name || displayNameFinal;
+                                }
+                            } else {
+                                displayNameFinal = schoolUserDoc.data().displayName || schoolUserDoc.data().name || displayNameFinal;
+                            }
+
                             localStorage.setItem('manual_session', JSON.stringify({
                                 uid: uid,
                                 schoolId: schoolId,
-                                role: 'principal',
+                                role: userRole,
                                 email: normalizedEmail,
+                                displayName: displayNameFinal,
                                 isManual: true
                             }));
                             window.location.href = '/';

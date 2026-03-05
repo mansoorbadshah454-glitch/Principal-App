@@ -12,8 +12,14 @@ import './Inbox.css'; // We will create this or use inline styles
 
 const Inbox = () => {
     const [schoolId, setSchoolId] = useState(null);
+    const [currentUserId, setCurrentUserId] = useState('principal');
+    const [currentUserRole, setCurrentUserRole] = useState('principal');
+    const [currentUserName, setCurrentUserName] = useState('Principal');
+
     const [teachers, setTeachers] = useState([]);
-    const [selectedTeacher, setSelectedTeacher] = useState(null);
+    const [admins, setAdmins] = useState([]);
+    const [principalContact, setPrincipalContact] = useState([]); // Array to map alongside teachers
+    const [selectedTeacher, setSelectedTeacher] = useState(null); // Now represents any selected contact
     const [messages, setMessages] = useState([]);
     const [messageText, setMessageText] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
@@ -44,6 +50,9 @@ const Inbox = () => {
                     const data = JSON.parse(manualSession);
                     if (data.schoolId) {
                         setSchoolId(data.schoolId);
+                        setCurrentUserRole(data.role || 'principal');
+                        setCurrentUserId(data.uid || 'principal');
+                        setCurrentUserName(data.displayName || data.name || (data.role === 'school Admin' ? 'Admin' : 'Principal'));
                         return;
                     }
                 } catch (e) {
@@ -57,6 +66,9 @@ const Inbox = () => {
                         const token = await user.getIdTokenResult();
                         if (token.claims.schoolId) {
                             setSchoolId(token.claims.schoolId);
+                            setCurrentUserRole(token.claims.role || 'principal');
+                            setCurrentUserId(user.uid);
+                            setCurrentUserName(user.displayName || (token.claims.role === 'school Admin' ? 'Admin' : 'Principal'));
                         }
                     } catch (e) {
                         console.error("[Inbox] Token err:", e);
@@ -101,6 +113,7 @@ const Inbox = () => {
                         ? data.assignedClasses[0]
                         : (data.assignedClasses || 'Unassigned'),
                     status: isOff ? 'off' : 'on',
+                    role: 'Teacher',
                     ...data
                 };
             });
@@ -110,14 +123,69 @@ const Inbox = () => {
         return () => unsubscribe();
     }, [schoolId]);
 
-    // 2.5 Fetch Global Unread Counts
+    // 2.2 Fetch Admins (If logged in as Principal or Admin)
     useEffect(() => {
         if (!schoolId) return;
+
+        // If I am an Admin, I should see the Principal, not other Admins (or maybe other admins too? Decided to just show Principal and Teachers based on requirements)
+        if (currentUserRole === 'school Admin') {
+            setPrincipalContact([{
+                id: 'principal',
+                name: 'Principal',
+                class: 'School Principal',
+                status: 'on',
+                role: 'Principal'
+            }]);
+
+            // Still fetch other admins to chat with them if needed? The user requested to msg Teachers and Principal.
+            const q = query(collection(db, `schools/${schoolId}/admin_users`), where('role', '==', 'school Admin'));
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const list = snapshot.docs
+                    .filter(doc => doc.id !== currentUserId)
+                    .map(doc => {
+                        const data = doc.data();
+                        return {
+                            id: doc.id,
+                            name: data.displayName || data.name || 'Unknown Admin',
+                            class: 'School Admin',
+                            status: 'on',
+                            role: 'Admin',
+                            ...data
+                        };
+                    });
+                setAdmins(list);
+            });
+            return () => unsubscribe();
+        } else {
+            // I am the Principal, fetch all Admins
+            const q = query(collection(db, `schools/${schoolId}/admin_users`), where('role', '==', 'school Admin'));
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const list = snapshot.docs
+                    .map(doc => {
+                        const data = doc.data();
+                        return {
+                            id: doc.id,
+                            name: data.displayName || data.name || 'Unknown Admin',
+                            class: 'School Admin',
+                            status: 'on',
+                            role: 'Admin',
+                            ...data
+                        };
+                    });
+                setAdmins(list);
+            });
+            return () => unsubscribe();
+        }
+    }, [schoolId, currentUserRole, currentUserId]);
+
+    // 2.5 Fetch Global Unread Counts
+    useEffect(() => {
+        if (!schoolId || !currentUserId) return;
 
         const q = query(
             collection(db, `schools/${schoolId}/messages`),
             where('read', '==', false),
-            where('to', 'in', ['principal', 'admin']) // Messages to principal or admin
+            where('toId', '==', currentUserId) // Messages to me
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -125,7 +193,7 @@ const Inbox = () => {
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
                 const senderId = data.fromId || data.from;
-                if (senderId && senderId !== 'principal') {
+                if (senderId && senderId !== currentUserId) {
                     counts[senderId] = (counts[senderId] || 0) + 1;
                 }
             });
@@ -133,7 +201,7 @@ const Inbox = () => {
         });
 
         return () => unsubscribe();
-    }, [schoolId]);
+    }, [schoolId, currentUserId]);
 
     // 3. Fetch Messages for Selected Teacher
     useEffect(() => {
@@ -149,13 +217,13 @@ const Inbox = () => {
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
                 // Improved Filtering:
-                // 1. From Principal to this Teacher
-                // 2. From this Teacher to Principal
-                // 3. Teacher reply to Principal (using formId/toId)
-                const isFromMe = data.from === 'principal' && data.to === selectedTeacher.id;
-                const isToMe = (data.from === selectedTeacher.id || data.fromId === selectedTeacher.id) &&
-                    (data.to === 'principal' || data.toId === 'admin'); // Assuming 'admin' is the generic toId for principal
-                const isBroadcast = data.type === 'principal-broadcast' && data.to === 'all';
+                // 1. From Me to Selected
+                // 2. From Selected to Me
+                const isFromMe = (data.from === currentUserId || data.fromId === currentUserId) && (data.to === selectedTeacher.id || data.toId === selectedTeacher.id);
+                const isToMe = (data.from === selectedTeacher.id || data.fromId === selectedTeacher.id) && (data.to === currentUserId || data.toId === currentUserId);
+
+                // Keep broadcast visibility if Principal
+                const isBroadcast = currentUserRole === 'principal' && data.type === 'principal-broadcast' && data.to === 'all';
 
                 if (isFromMe || isToMe || isBroadcast) {
                     msgs.push({ id: docSnap.id, ...data });
@@ -219,9 +287,9 @@ const Inbox = () => {
         try {
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
                 text: messageText.trim(),
-                from: 'principal',
-                fromId: 'principal',
-                fromName: 'Principal',
+                from: currentUserId,
+                fromId: currentUserId,
+                fromName: currentUserName,
                 to: selectedTeacher.id,
                 toId: selectedTeacher.id,
                 toName: selectedTeacher.name,
@@ -252,9 +320,9 @@ const Inbox = () => {
 
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
                 text: `Sent an attachment: ${file.name}`,
-                from: 'principal',
-                fromId: 'principal',
-                fromName: 'Principal',
+                from: currentUserId,
+                fromId: currentUserId,
+                fromName: currentUserName,
                 to: selectedTeacher.id,
                 toId: selectedTeacher.id,
                 toName: selectedTeacher.name,
@@ -277,7 +345,9 @@ const Inbox = () => {
         }
     };
 
-    const filteredTeachers = teachers.filter(t =>
+    const allContacts = [...principalContact, ...admins, ...teachers];
+
+    const filteredTeachers = allContacts.filter(t =>
         t.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         t.class?.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -304,7 +374,7 @@ const Inbox = () => {
                         <Search size={18} className="search-icon" />
                         <input
                             type="text"
-                            placeholder="Search teachers..."
+                            placeholder="Search contacts..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
@@ -334,7 +404,7 @@ const Inbox = () => {
                         </div>
                     ))}
                     {filteredTeachers.length === 0 && (
-                        <div className="no-results">No teachers found.</div>
+                        <div className="no-results">No contacts found.</div>
                     )}
                 </div>
             </div>
@@ -354,7 +424,10 @@ const Inbox = () => {
                                 </div>
                                 <div className="chat-header-info">
                                     <h3>{selectedTeacher.name}</h3>
-                                    <span>{selectedTeacher.class} {selectedTeacher.status === 'on' ? '• Online' : ''}</span>
+                                    <span>
+                                        {selectedTeacher.role === 'Admin' ? 'School Admin' : selectedTeacher.class}
+                                        {selectedTeacher.status === 'on' ? ' • Online' : ''}
+                                    </span>
                                 </div>
                             </div>
                             <div className="chat-header-actions" ref={menuRef} style={{ position: 'relative' }}>
@@ -414,7 +487,7 @@ const Inbox = () => {
                                 </div>
                             ) : (
                                 messages.map((msg, index) => {
-                                    const isPrincipal = msg.from === 'principal';
+                                    const isMe = msg.fromId === currentUserId || msg.from === currentUserId || (currentUserId === 'principal' && msg.from === 'principal');
                                     const showDateSeparator = index === 0 ||
                                         formatMessageDate(msg.timestamp) !== formatMessageDate(messages[index - 1]?.timestamp);
 
@@ -425,7 +498,7 @@ const Inbox = () => {
                                                     <span>{formatMessageDate(msg.timestamp)}</span>
                                                 </div>
                                             )}
-                                            <div className={`message-wrapper ${isPrincipal ? 'sent' : 'received'}`}>
+                                            <div className={`message-wrapper ${isMe ? 'sent' : 'received'}`}>
                                                 <div className="message-bubble">
                                                     <p className="message-text">{msg.text || msg.message}</p>
 
@@ -455,7 +528,7 @@ const Inbox = () => {
 
                                                     <div className="message-meta">
                                                         <span className="message-time">{formatMessageTime(msg.timestamp)}</span>
-                                                        {isPrincipal && (
+                                                        {isMe && (
                                                             <span className="message-status">
                                                                 {msg.read ? (
                                                                     <CheckCheck size={14} color="#3b82f6" />
@@ -504,7 +577,7 @@ const Inbox = () => {
                             <MessageSquare size={64} className="illustration-icon" />
                         </div>
                         <h3>Your Messages</h3>
-                        <p>Select a teacher from the sidebar to view conversations.</p>
+                        <p>Select a contact from the sidebar to view conversations.</p>
                     </div>
                 )}
             </div>

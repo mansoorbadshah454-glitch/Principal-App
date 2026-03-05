@@ -16,6 +16,9 @@ const Dashboard = () => {
 
     // 1. Shared Data State
     const [schoolId, setSchoolId] = useState(null);
+    const [currentUserId, setCurrentUserId] = useState('principal');
+    const [currentUserRole, setCurrentUserRole] = useState('principal');
+    const [currentUserName, setCurrentUserName] = useState('');
     const [fetchedClasses, setFetchedClasses] = useState([]);
     const [messages, setMessages] = useState([]);
     const [teachers, setTeachers] = useState([]);
@@ -51,6 +54,20 @@ const Dashboard = () => {
                     const data = JSON.parse(manualSession);
                     if (data.schoolId) {
                         setSchoolId(data.schoolId);
+                        setCurrentUserRole(data.role || 'principal');
+                        setCurrentUserId(data.uid || 'principal');
+                        // In manual bypass, email is usually saved. Let's extract name from it if no displayName
+                        let name = 'Principal';
+                        if (data.role === 'school Admin') {
+                            if (data.email) {
+                                name = data.email.split('@')[0];
+                                // Capitalize first letter
+                                name = name.charAt(0).toUpperCase() + name.slice(1);
+                            } else {
+                                name = 'Admin';
+                            }
+                        }
+                        setCurrentUserName(data.displayName || name);
                         return; // Found it, stop checking
                     }
                 } catch (e) {
@@ -65,6 +82,9 @@ const Dashboard = () => {
                         const token = await user.getIdTokenResult();
                         if (token.claims.schoolId) {
                             setSchoolId(token.claims.schoolId);
+                            setCurrentUserRole(token.claims.role || 'principal');
+                            setCurrentUserId(user.uid);
+                            setCurrentUserName(user.displayName || (token.claims.role === 'school Admin' ? 'Admin' : 'Principal'));
                         } else {
                             console.warn("[Dashboard] User authenticated but no schoolId claim found.");
                             setStatsLoaded(true); // Don't hang on Loading...
@@ -84,12 +104,11 @@ const Dashboard = () => {
 
 
     useEffect(() => {
-        if (!schoolId) return;
+        if (!schoolId || !currentUserId) return;
 
         const q = query(
             collection(db, `schools/${schoolId}/messages`),
-            where("to", "==", "principal")
-            // orderBy("timestamp", "desc") // Checking if Index is the issue
+            where("toId", "==", currentUserId)
         );
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const list = [];
@@ -666,7 +685,7 @@ const Dashboard = () => {
             {/* Header Area */}
             <div className="flex-between" style={{ marginBottom: '2.5rem' }}>
                 <div>
-                    <h1 style={{ fontSize: '2rem', fontWeight: '700' }}>{getGreeting()}, Principal</h1>
+                    <h1 style={{ fontSize: '2rem', fontWeight: '700' }}>{getGreeting()}, {currentUserName}</h1>
                     <p style={{ color: 'var(--text-muted)' }}>Here's what's happening in your school today.</p>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
@@ -1364,7 +1383,7 @@ const Dashboard = () => {
                                         <MessageCircle size={18} />
                                         <span>Inbox</span>
 
-                                        {messages.filter(m => m.type === 'teacher-reply').length > 0 && (
+                                        {messages.filter(m => m.read === false).length > 0 && (
                                             <span style={{
                                                 background: '#ef4444',
                                                 color: 'white',
@@ -1376,7 +1395,7 @@ const Dashboard = () => {
                                                 boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                                                 border: '1.5px solid rgba(255,255,255,0.3)'
                                             }}>
-                                                {messages.filter(m => m.type === 'teacher-reply').length}
+                                                {messages.filter(m => m.read === false).length}
                                             </span>
                                         )}
                                     </button>
