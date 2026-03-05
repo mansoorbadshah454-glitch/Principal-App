@@ -169,45 +169,53 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                 opacity: isPending ? 0.7 : 1,
                 padding: '0',
                 overflow: 'hidden',
-                border: '1px solid #dbeafe',
+                border: '1px solid rgba(255,255,255,0.25)',
                 position: 'relative',
-                background: '#eff6ff',
-                boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06)',
+                background: 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)',
+                boxShadow: `
+                    0 6px 0 #1d4ed8,
+                    0 10px 0 #1a47c0,
+                    0 13px 20px rgba(0,0,0,0.45),
+                    inset 0 1px 0 rgba(255,255,255,0.3)
+                `,
                 borderRadius: '16px',
                 cursor: 'pointer',
-                transition: 'all 0.3s ease'
+                transition: 'all 0.2s ease',
+                transform: 'translateY(0)',
             }}>
-            {/* Theme Decoration Strip */}
-            <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
+            <div>
+                {/* Theme Decoration Strip */}
+                <div style={{ height: '6px', width: '100%', background: `linear-gradient(90deg, ${themeColor}, transparent)` }} />
 
-            <div style={{ padding: '1.5rem', borderBottom: '1px solid #dbeafe' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)' }}>{cls.name}</h3>
-                    <div style={{
-                        padding: '0.25rem 0.75rem', background: 'white', borderRadius: '20px',
-                        fontSize: '0.85rem', fontWeight: '600', color: themeColor,
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                    }}>
-                        {totalStudents} Students
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.18)', boxShadow: '0 4px 0 rgba(0,0,0,0.25), 0 6px 8px rgba(0,0,0,0.2)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'white' }}>{cls.name}</h3>
+                        <div style={{
+                            padding: '0.25rem 0.75rem', background: 'rgba(255,255,255,0.15)', borderRadius: '20px',
+                            fontSize: '0.85rem', fontWeight: '600', color: 'white',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                        }}>
+                            {totalStudents} Students
+                        </div>
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     <div
                         onClick={(e) => e.stopPropagation()}
                         style={{
                             display: 'flex', alignItems: 'center', gap: '0.5rem',
-                            color: 'var(--text-secondary)', fontSize: '0.9rem',
+                            color: 'rgba(255,255,255,0.7)', fontSize: '0.9rem',
                             cursor: 'default'
                         }}
                     >
-                        <User size={16} color={themeColor} />
+                        <User size={16} color="white" />
                         <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
                     </div>
 
                     {/* Attendance Status Badge — only shown once teacher confirms */}
                     {realStats.source === 'confirmed' && (
-                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '0.25rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
                             <span style={{
                                 display: 'inline-flex', alignItems: 'center', gap: '4px',
                                 fontSize: '0.7rem', fontWeight: '700', color: '#059669',
@@ -236,7 +244,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                             }}
                         >
                             <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#10b981', textTransform: 'uppercase' }}>Present</span>
-                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{presentCount}</span>
+                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{presentCount}</span>
                         </div>
                         <div
                             onClick={(e) => {
@@ -254,237 +262,222 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId }) => {
                             }}
                         >
                             <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#ef4444', textTransform: 'uppercase' }}>Absent</span>
-                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{absentCount}</span>
+                            <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{absentCount}</span>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <div style={{ padding: '1.5rem', background: 'transparent' }}>
-                <div
-                    onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
-                    style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0.75rem',
-                        userSelect: 'none'
-                    }}
-                >
-                    <p style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>
-                        Subjects ({cls.subjects?.length || 0})
-                    </p>
-                    {showSubjects ? <ChevronDown size={16} color="#64748b" /> : <ChevronRight size={16} color="#64748b" />}
-                </div>
-
-                {showSubjects && (
-                    <div className="animate-fade-in-up" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                        {cls.subjects?.slice(0, 5).map((subj, idx) => (
-                            <span key={idx} style={{
-                                fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '6px',
-                                background: 'white', border: '1px solid #dbeafe', color: 'var(--text-secondary)',
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                            }}>
-                                {subj}
-                            </span>
-                        ))}
-                        {cls.subjects?.length > 5 && (
-                            <span style={{
-                                fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '6px',
-                                background: 'white', border: '1px solid #dbeafe', color: 'var(--text-secondary)'
-                            }}>
-                                +{cls.subjects.length - 5}
-                            </span>
-                        )}
+                <div style={{ padding: '1.5rem', background: 'transparent' }}>
+                    <div
+                        onClick={(e) => { e.stopPropagation(); setShowSubjects(!showSubjects); }}
+                        style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            cursor: 'pointer', marginBottom: showSubjects ? '0.75rem' : '0.75rem',
+                            userSelect: 'none'
+                        }}
+                    >
+                        <p style={{ fontSize: '0.85rem', fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>
+                            Subjects ({cls.subjects?.length || 0})
+                        </p>
+                        {showSubjects ? <ChevronDown size={16} color="rgba(255,255,255,0.5)" /> : <ChevronRight size={16} color="rgba(255,255,255,0.5)" />}
                     </div>
-                )}
 
-                {/* View Options Toggle */}
-                <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: showStudents ? '0.75rem' : '1.5rem' }}>
+                    {showSubjects && (
+                        <div className="animate-fade-in-up" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                            {cls.subjects?.slice(0, 5).map((subj, idx) => (
+                                <span key={idx} style={{
+                                    fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '6px',
+                                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                                }}>
+                                    {subj}
+                                </span>
+                            ))}
+                            {cls.subjects?.length > 5 && (
+                                <span style={{
+                                    fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '6px',
+                                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'
+                                }}>
+                                    +{cls.subjects.length - 5}
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    {/* View Options Toggle */}
+                    <div style={{ borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: showStudents ? '0.75rem' : '1.5rem' }}>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); }}
+                                style={{
+                                    flex: 1, padding: '0.5rem', borderRadius: '8px',
+                                    border: showStudents ? '2px solid var(--primary)' : '1px solid #e2e8f0',
+                                    background: 'white',
+                                    color: showStudents ? 'var(--primary)' : '#1e293b',
+                                    fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                📋 List View
+                            </button>
+                        </div>
+                    </div>
+
+                    {showStudents && (
+                        <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }}>
+                            {/* Filter Tabs */}
+                            <div style={{ display: 'flex', background: 'white', padding: '4px', borderRadius: '10px', marginBottom: '1rem', border: '1px solid #e2e8f0' }}>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); setFilter('all'); }}
+                                    style={{
+                                        flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                        background: filter === 'all' ? '#f1f5f9' : 'transparent',
+                                        color: filter === 'all' ? 'var(--text-main)' : 'var(--text-muted)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    All
+                                </button>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); setFilter('present'); }}
+                                    style={{
+                                        flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                        background: filter === 'present' ? '#dcfce7' : 'transparent',
+                                        color: filter === 'present' ? '#166534' : 'var(--text-muted)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    Present
+                                </button>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); setFilter('absent'); }}
+                                    style={{
+                                        flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
+                                        background: filter === 'absent' ? '#fee2e2' : 'transparent',
+                                        color: filter === 'absent' ? '#991b1b' : 'var(--text-muted)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    Absent
+                                </button>
+                            </div>
+
+
+                            {loadingStudents ? (
+                                <div style={{ display: 'flex', justifyContent: 'center', padding: '1rem' }}>
+                                    <Loader2 className="animate-spin" size={20} color="var(--primary)" />
+                                </div>
+                            ) : filteredStudents.length === 0 ? (
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '1rem', background: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                    No students marked as {filter === 'all' ? 'enrolled' : filter}.
+                                </p>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
+                                    {filteredStudents.map(student => (
+                                        <div key={student.id} style={{
+                                            display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                            background: 'white', padding: '0.6rem', borderRadius: '10px',
+                                            border: '1px solid #e2e8f0', transition: 'all 0.2s'
+                                        }}>
+                                            <div style={{
+                                                width: '36px', height: '36px', borderRadius: '10px',
+                                                background: '#f8fafc', overflow: 'hidden', flexShrink: 0,
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                border: '1px solid #f1f5f9'
+                                            }}>
+                                                {student.profilePic ? (
+                                                    <img src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                ) : (
+                                                    <User size={18} color="#94a3b8" />
+                                                )}
+                                            </div>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <p style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                    {student.name}
+                                                </p>
+                                                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: '500' }}>
+                                                    Roll No: {student.rollNo || 'N/A'}
+                                                </p>
+                                            </div>
+
+                                            {/* Status Toggle (Principal can also mark if needed) */}
+                                            <div
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const nextStatus = student.status === 'present' ? 'absent' : 'present';
+                                                    handleMarkStatus(student.id, nextStatus);
+                                                }}
+                                                style={{
+                                                    padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800',
+                                                    background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
+                                                    color: student.status === 'present' ? '#10b981' : '#ef4444',
+                                                    cursor: 'pointer', border: '1px solid transparent',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                            >
+                                                {student.status === 'present' ? 'PRESENT' : 'ABSENT'}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+
+                        </div>
+                    )}
+
+
+
+                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+
                         <button
-                            onClick={(e) => { e.stopPropagation(); setShowStudents(!showStudents); }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                startTransition(() => {
+                                    navigate(`/classes/${cls.id}`);
+                                });
+                            }}
                             style={{
-                                flex: 1, padding: '0.5rem', borderRadius: '8px',
-                                border: showStudents ? '2px solid var(--primary)' : '1px solid #e2e8f0',
-                                background: showStudents ? '#eff6ff' : 'white',
-                                color: showStudents ? 'var(--primary)' : 'var(--text-secondary)',
-                                fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer',
+                                flex: 1, padding: '0.75rem',
+                                background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px',
+                                color: '#1e293b', fontWeight: '600', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                transition: 'all 0.2s',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.08)'
+                            }}>
+                            Details <ChevronRight size={16} />
+                        </button>
+
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onEdit(cls); }}
+                            style={{
+                                padding: '0.75rem',
+                                background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px',
+                                color: '#1e293b', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 transition: 'all 0.2s'
                             }}
+                            title="Edit Class (Teacher/Subjects)"
                         >
-                            📋 List View
+                            <Edit size={16} />
                         </button>
-                    </div>
-                </div>
 
-                {showStudents && (
-                    <div className="animate-fade-in-up" style={{ marginBottom: '1.5rem' }}>
-                        {/* Filter Tabs */}
-                        <div style={{ display: 'flex', background: 'white', padding: '4px', borderRadius: '10px', marginBottom: '1rem', border: '1px solid #e2e8f0' }}>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setFilter('all'); }}
-                                style={{
-                                    flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
-                                    background: filter === 'all' ? '#f1f5f9' : 'transparent',
-                                    color: filter === 'all' ? 'var(--text-main)' : 'var(--text-muted)',
-                                    transition: 'all 0.2s'
-                                }}
-                            >
-                                All
-                            </button>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setFilter('present'); }}
-                                style={{
-                                    flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
-                                    background: filter === 'present' ? '#dcfce7' : 'transparent',
-                                    color: filter === 'present' ? '#166534' : 'var(--text-muted)',
-                                    transition: 'all 0.2s'
-                                }}
-                            >
-                                Present
-                            </button>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setFilter('absent'); }}
-                                style={{
-                                    flex: 1, padding: '0.5rem', borderRadius: '8px', border: 'none', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer',
-                                    background: filter === 'absent' ? '#fee2e2' : 'transparent',
-                                    color: filter === 'absent' ? '#991b1b' : 'var(--text-muted)',
-                                    transition: 'all 0.2s'
-                                }}
-                            >
-                                Absent
-                            </button>
-                        </div>
-
-
-                        {loadingStudents ? (
-                            <div style={{ display: 'flex', justifyContent: 'center', padding: '1rem' }}>
-                                <Loader2 className="animate-spin" size={20} color="var(--primary)" />
-                            </div>
-                        ) : filteredStudents.length === 0 ? (
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '1rem', background: 'white', borderRadius: '12px' }}>
-                                No students marked as {filter === 'all' ? 'enrolled' : filter}.
-                            </p>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
-                                {filteredStudents.map(student => (
-                                    <div key={student.id} style={{
-                                        display: 'flex', alignItems: 'center', gap: '0.75rem',
-                                        background: 'white', padding: '0.6rem', borderRadius: '10px',
-                                        border: '1px solid #e2e8f0', transition: 'all 0.2s'
-                                    }}>
-                                        <div style={{
-                                            width: '36px', height: '36px', borderRadius: '10px',
-                                            background: '#f8fafc', overflow: 'hidden', flexShrink: 0,
-                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                            border: '1px solid #f1f5f9'
-                                        }}>
-                                            {student.profilePic ? (
-                                                <img src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                            ) : (
-                                                <User size={18} color="#94a3b8" />
-                                            )}
-                                        </div>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <p style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                {student.name}
-                                            </p>
-                                            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: '500' }}>
-                                                Roll No: {student.rollNo || 'N/A'}
-                                            </p>
-                                        </div>
-
-                                        {/* Status Toggle (Principal can also mark if needed) */}
-                                        <div
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                const nextStatus = student.status === 'present' ? 'absent' : 'present';
-                                                handleMarkStatus(student.id, nextStatus);
-                                            }}
-                                            style={{
-                                                padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800',
-                                                background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
-                                                color: student.status === 'present' ? '#10b981' : '#ef4444',
-                                                cursor: 'pointer', border: '1px solid transparent',
-                                                transition: 'all 0.2s'
-                                            }}
-                                        >
-                                            {student.status === 'present' ? 'PRESENT' : 'ABSENT'}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Save Button for Principal */}
                         <button
-                            onClick={handleSaveAttendance}
-                            disabled={isSaving || studentsList.length === 0}
+                            onClick={(e) => { e.stopPropagation(); onDelete(cls.id); }}
                             style={{
-                                width: '100%', marginTop: '1rem', padding: '0.85rem',
-                                borderRadius: '12px', background: 'var(--primary)', color: 'white',
-                                border: 'none', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
-                                opacity: (isSaving || studentsList.length === 0) ? 0.6 : 1
+                                padding: '0.75rem',
+                                background: 'white', border: '1px solid #fecaca', borderRadius: '8px',
+                                color: '#ef4444', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                transition: 'all 0.2s'
                             }}
+                            title="Delete Class"
                         >
-                            {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-                            {isSaving ? 'Saving Attendance...' : "Save Today's Attendance"}
+                            <Trash2 size={16} />
                         </button>
                     </div>
-                )}
-
-
-
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
-
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            startTransition(() => {
-                                navigate(`/classes/${cls.id}`);
-                            });
-                        }}
-                        style={{
-                            flex: 1, padding: '0.75rem',
-                            background: 'white', border: `1px solid ${themeLight}`, borderRadius: '8px',
-                            color: themeColor, fontWeight: '600', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                            transition: 'all 0.2s',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.03)'
-                        }}>
-                        Details <ChevronRight size={16} />
-                    </button>
-
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onEdit(cls); }}
-                        style={{
-                            padding: '0.75rem',
-                            background: 'white', border: `1px solid ${themeLight}`, borderRadius: '8px',
-                            color: themeColor, cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            transition: 'all 0.2s'
-                        }}
-                        title="Edit Class (Teacher/Subjects)"
-                    >
-                        <Edit size={16} />
-                    </button>
-
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onDelete(cls.id); }}
-                        style={{
-                            padding: '0.75rem',
-                            background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px',
-                            color: '#ef4444', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            transition: 'all 0.2s'
-                        }}
-                        title="Delete Class"
-                    >
-                        <Trash2 size={16} />
-                    </button>
                 </div>
-            </div>
+            </div>{/* end content wrapper */}
         </div>
     );
 };
