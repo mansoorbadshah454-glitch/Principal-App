@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { Camera, Save, Loader2, Shield } from 'lucide-react';
+import { Camera, Save, Loader2, Shield, Copy, CheckCircle2 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -17,6 +17,15 @@ const Settings = () => {
     });
     const [previewImage, setPreviewImage] = useState(null);
     const [imageFile, setImageFile] = useState(null);
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+        if (schoolId) {
+            navigator.clipboard.writeText(schoolId);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
+    };
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -148,7 +157,53 @@ const Settings = () => {
     // Using inline styles for strict component isolation
     return (
         <div style={{ animation: 'fadeIn 0.5s ease-out' }}>
-            <h1 style={{ fontSize: '2rem', fontWeight: '800', marginBottom: '2rem' }}>School Settings</h1>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                <h1 style={{ fontSize: '2rem', fontWeight: '800', margin: 0 }}>School Settings</h1>
+
+                {/* School ID Badge */}
+                {schoolId && (
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        padding: '0.5rem 1rem',
+                        background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                        borderRadius: '12px',
+                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
+                        color: 'white',
+                        border: '1px solid rgba(255, 255, 255, 0.1)'
+                    }}>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ fontSize: '0.7rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.9 }}>
+                                School ID
+                            </span>
+                            <span style={{ fontSize: '1rem', fontWeight: '700', fontFamily: 'monospace' }}>
+                                {schoolId}
+                            </span>
+                        </div>
+                        <button
+                            onClick={handleCopy}
+                            style={{
+                                background: 'rgba(255, 255, 255, 0.15)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '6px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.2s',
+                                color: 'white'
+                            }}
+                            title="Copy School ID"
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'}
+                        >
+                            {copied ? <CheckCircle2 size={18} /> : <Copy size={18} />}
+                        </button>
+                    </div>
+                )}
+            </div>
 
             <div style={{
                 display: 'grid',

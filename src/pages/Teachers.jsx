@@ -547,11 +547,25 @@ const Teachers = () => {
         try {
             const teacherRef = doc(db, `schools/${schoolId}/teachers`, id);
             const updateData = { ...updatedTeacher };
-            if (!updateData.password) delete updateData.password; // Don't overwrite if empty
+
+            // 1. If password is provided, update Firebase Auth via Cloud Function
+            if (updateData.password && updateData.password.trim() !== '') {
+                console.log("Updating password for teacher:", id);
+                const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
+                await updatePasswordFn({
+                    targetUid: id,
+                    newPassword: updateData.password.trim(),
+                    schoolId: schoolId
+                });
+                console.log("Auth password updated successfully");
+            }
+
+            if (!updateData.password) delete updateData.password; // Don't overwrite in FS if empty
             if (!updateData.username) delete updateData.username;
 
             await updateDoc(teacherRef, updateData);
 
+            // ... (rest of the class re-assignment logic)
             // Handle Class Re-assignments
             const oldTeacher = teachers.find(t => t.id === id);
             const oldClasses = oldTeacher?.assignedClasses || (oldTeacher?.assignedClass ? [oldTeacher.assignedClass] : []);
@@ -632,11 +646,25 @@ const Teachers = () => {
                 // Update Logic
                 const teacherRef = doc(db, `schools/${schoolId}/teachers`, editingId);
                 const updateData = { ...newTeacher };
+
+                // 1. If password is provided, update Firebase Auth via Cloud Function
+                if (updateData.password && updateData.password.trim() !== '') {
+                    console.log("Updating password for teacher during edit:", editingId);
+                    const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
+                    await updatePasswordFn({
+                        targetUid: editingId,
+                        newPassword: updateData.password.trim(),
+                        schoolId: schoolId
+                    });
+                    console.log("Auth password updated successfully");
+                }
+
                 if (!updateData.password) delete updateData.password; // Don't overwrite if empty
                 if (!updateData.username) delete updateData.username;
 
                 await updateDoc(teacherRef, updateData);
 
+                // ... (rest of class assignment logic)
                 // Handle Class Re-assignments
                 const oldTeacher = teachers.find(t => t.id === editingId);
                 const oldClasses = oldTeacher?.assignedClasses || (oldTeacher?.assignedClass ? [oldTeacher.assignedClass] : []);
@@ -683,6 +711,12 @@ const Teachers = () => {
                     }
                 }
 
+                // Clean up state after successful update
+                setShowAddTeacher(false);
+                setNewTeacher({ name: '', email: '', phone: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
+                setStep(1);
+                setIsEditing(false);
+                setEditingId(null);
 
             } else {
                 // Add Logic - VIA CLOUD FUNCTION (Secure)
