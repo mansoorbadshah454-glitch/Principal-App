@@ -39,13 +39,14 @@ const ActionModal = ({ isOpen, onClose, onSave, classes }) => {
 
     return (
         <div style={{
-            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-            background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000, backdropFilter: 'blur(4px)'
+            position: 'fixed', top: '20px', left: 0, width: '100%',
+            background: 'transparent', display: 'flex', justifyContent: 'center',
+            zIndex: 1000, pointerEvents: 'none'
         }}>
             <div className="card" style={{
                 width: '90%', maxWidth: '500px', background: 'white', borderRadius: '24px',
-                padding: '2rem', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+                padding: '2rem', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                pointerEvents: 'auto'
             }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                     <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: 'var(--text-main)' }}>New Collection Action</h2>
