@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { db, auth, storage } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 import {
@@ -19,8 +19,14 @@ const Inbox = () => {
     const [teachers, setTeachers] = useState([]);
     const [admins, setAdmins] = useState([]);
     const [principalContact, setPrincipalContact] = useState([]); // Array to map alongside teachers
+
+    // messagingId is 'principal' for the principal, and UID for admins.
+    // This matches the Teacher App's expectations.
+    const messagingId = (currentUserRole === 'principal') ? 'principal' : currentUserId;
+
     const [selectedTeacher, setSelectedTeacher] = useState(null); // Now represents any selected contact
     const [messages, setMessages] = useState([]);
+    const [legacyMessages, setLegacyMessages] = useState([]);
     const [messageText, setMessageText] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [isSending, setIsSending] = useState(false);
@@ -180,12 +186,12 @@ const Inbox = () => {
 
     // 2.5 Fetch Global Unread Counts
     useEffect(() => {
-        if (!schoolId || !currentUserId) return;
+        if (!schoolId || !messagingId) return;
 
         const q = query(
             collection(db, `schools/${schoolId}/messages`),
             where('read', '==', false),
-            where('toId', '==', currentUserId) // Messages to me
+            where('participants', 'array-contains', messagingId)
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -193,42 +199,49 @@ const Inbox = () => {
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
                 const senderId = data.fromId || data.from;
-                if (senderId && senderId !== currentUserId) {
-                    counts[senderId] = (counts[senderId] || 0) + 1;
+                if (senderId && senderId !== messagingId) {
+                    // Check if it's meant for me (either via UID or alias)
+                    if (data.toId === messagingId || data.to === messagingId || data.toId === currentUserId) {
+                        counts[senderId] = (counts[senderId] || 0) + 1;
+                    }
                 }
             });
             setUnreadCounts(counts);
         });
 
         return () => unsubscribe();
-    }, [schoolId, currentUserId]);
+    }, [schoolId, messagingId, currentUserId]);
 
-    // 3. Fetch Messages for Selected Teacher
+    // 3. Fetch Messages for Selected Contact
     useEffect(() => {
-        if (!schoolId || !selectedTeacher) return;
+        if (!schoolId || !selectedTeacher || !messagingId) return;
 
-        const q = query(
+        // Optimized query using participants array (uses alias if principal)
+        const qOptimized = query(
+            collection(db, `schools/${schoolId}/messages`),
+            where('participants', 'array-contains', messagingId),
+            orderBy("timestamp", "asc")
+        );
+
+        // Legacy query for old messages (Fallback)
+        // Note: This is less efficient but necessary for older data.
+        // It fetches all messages for the school. We'll filter heavily.
+        const qLegacy = query(
             collection(db, `schools/${schoolId}/messages`),
             orderBy("timestamp", "asc")
         );
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubscribeOptimized = onSnapshot(qOptimized, (snapshot) => {
             const msgs = [];
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
-                // Improved Filtering:
-                // 1. From Me to Selected
-                // 2. From Selected to Me
-                const isFromMe = (data.from === currentUserId || data.fromId === currentUserId) && (data.to === selectedTeacher.id || data.toId === selectedTeacher.id);
-                const isToMe = (data.from === selectedTeacher.id || data.fromId === selectedTeacher.id) && (data.to === currentUserId || data.toId === currentUserId);
 
-                // Keep broadcast visibility if Principal
-                const isBroadcast = currentUserRole === 'principal' && data.type === 'principal-broadcast' && data.to === 'all';
+                const isFromMe = (data.fromId === currentUserId || data.from === currentUserId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
+                const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === currentUserId || data.to === currentUserId);
 
-                if (isFromMe || isToMe || isBroadcast) {
+                if (isFromMe || isToMe) {
                     msgs.push({ id: docSnap.id, ...data });
 
-                    // Mark as read if it's incoming and unread
                     if (isToMe && data.read === false) {
                         updateDoc(doc(db, `schools/${schoolId}/messages`, docSnap.id), {
                             read: true
@@ -236,13 +249,42 @@ const Inbox = () => {
                     }
                 }
             });
-
             setMessages(msgs);
             scrollToBottom();
         });
 
-        return () => unsubscribe();
-    }, [schoolId, selectedTeacher]);
+        // Legacy listener for older messages without participants field
+        const unsubscribeLegacy = onSnapshot(qLegacy, (snapshot) => {
+            const legacyMsgs = [];
+            snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                if (data.participants) return; // Skip optimized messages handled by other listener
+
+                const isFromMe = (data.fromId === messagingId || data.fromId === currentUserId || data.from === messagingId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
+                const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === messagingId || data.toId === currentUserId || data.to === messagingId);
+
+                if (isFromMe || isToMe) {
+                    legacyMsgs.push({ id: docSnap.id, ...data });
+                }
+            });
+            setLegacyMessages(legacyMsgs);
+        });
+
+        return () => {
+            unsubscribeOptimized();
+            unsubscribeLegacy();
+        };
+    }, [schoolId, selectedTeacher, messagingId, currentUserId]);
+
+    // Merge messages from both listeners for display
+    const mergedMessages = useMemo(() => {
+        const all = [...messages, ...legacyMessages];
+        return all.sort((a, b) => {
+            const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp?.seconds ? a.timestamp.seconds * 1000 : 0);
+            const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp?.seconds ? b.timestamp.seconds * 1000 : 0);
+            return timeA - timeB;
+        });
+    }, [messages, legacyMessages]);
 
     const scrollToBottom = () => {
         setTimeout(() => {
@@ -252,12 +294,12 @@ const Inbox = () => {
 
     // 4. Handle Clear History
     const handleClearHistory = async () => {
-        if (!schoolId || !selectedTeacher || messages.length === 0) return;
+        if (!schoolId || !selectedTeacher || mergedMessages.length === 0) return;
 
         if (window.confirm(`Are you sure you want to clear the entire chat history with ${selectedTeacher.name}? This action cannot be undone.`)) {
             try {
                 // Process deletions
-                for (const msg of messages) {
+                for (const msg of mergedMessages) {
                     // 1. Delete matching storage file if it exists
                     if (msg.attachment && msg.attachment.fullPath) {
                         try {
@@ -287,12 +329,15 @@ const Inbox = () => {
         try {
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
                 text: messageText.trim(),
-                from: currentUserId,
-                fromId: currentUserId,
+                from: currentUserRole === 'principal' ? 'principal' : 'admin',
+                fromId: messagingId,
                 fromName: currentUserName,
-                to: selectedTeacher.id,
+                fromRole: currentUserRole,
+                to: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'admin'),
                 toId: selectedTeacher.id,
                 toName: selectedTeacher.name,
+                toRole: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'school Admin'),
+                participants: [messagingId, selectedTeacher.id],
                 timestamp: serverTimestamp(),
                 read: false,
                 type: 'direct-message'
@@ -320,12 +365,15 @@ const Inbox = () => {
 
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
                 text: `Sent an attachment: ${file.name}`,
-                from: currentUserId,
-                fromId: currentUserId,
+                from: currentUserRole === 'principal' ? 'principal' : 'admin',
+                fromId: messagingId,
                 fromName: currentUserName,
-                to: selectedTeacher.id,
+                fromRole: currentUserRole,
+                to: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'admin'),
                 toId: selectedTeacher.id,
                 toName: selectedTeacher.name,
+                toRole: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'school Admin'),
+                participants: [messagingId, selectedTeacher.id],
                 timestamp: serverTimestamp(),
                 read: false,
                 type: 'direct-message',
@@ -479,17 +527,17 @@ const Inbox = () => {
 
                         {/* Chat Messages */}
                         <div className="chat-messages custom-scrollbar">
-                            {messages.length === 0 ? (
+                            {mergedMessages.length === 0 ? (
                                 <div className="empty-chat-state">
                                     <MessageSquare size={48} color="rgba(99, 102, 241, 0.5)" />
                                     <p>No messages yet.</p>
                                     <span>Send a message to start the conversation with {selectedTeacher.name}.</span>
                                 </div>
                             ) : (
-                                messages.map((msg, index) => {
-                                    const isMe = msg.fromId === currentUserId || msg.from === currentUserId || (currentUserId === 'principal' && msg.from === 'principal');
+                                mergedMessages.map((msg, index) => {
+                                    const isMe = msg.fromId === messagingId || msg.fromId === currentUserId || msg.from === messagingId || (messagingId === 'principal' && msg.from === 'principal');
                                     const showDateSeparator = index === 0 ||
-                                        formatMessageDate(msg.timestamp) !== formatMessageDate(messages[index - 1]?.timestamp);
+                                        formatMessageDate(msg.timestamp) !== formatMessageDate(mergedMessages[index - 1]?.timestamp);
 
                                     return (
                                         <React.Fragment key={msg.id}>

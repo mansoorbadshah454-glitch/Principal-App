@@ -19,6 +19,10 @@ const Dashboard = () => {
     const [currentUserId, setCurrentUserId] = useState('principal');
     const [currentUserRole, setCurrentUserRole] = useState('principal');
     const [currentUserName, setCurrentUserName] = useState('');
+
+    // messagingId is 'principal' for the principal, and UID for admins.
+    const messagingId = (currentUserRole === 'principal') ? 'principal' : currentUserId;
+
     const [fetchedClasses, setFetchedClasses] = useState([]);
     const [messages, setMessages] = useState([]);
     const [teachers, setTeachers] = useState([]);
@@ -108,11 +112,17 @@ const Dashboard = () => {
 
         const q = query(
             collection(db, `schools/${schoolId}/messages`),
-            where("toId", "==", currentUserId)
+            where("participants", "array-contains", messagingId)
         );
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const list = [];
-            snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                // Filter to messages where I am the recipient
+                if (data.toId === messagingId || data.to === messagingId || data.toId === currentUserId) {
+                    list.push({ id: doc.id, ...data });
+                }
+            });
 
             // Client-side sort
             list.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
@@ -121,10 +131,9 @@ const Dashboard = () => {
             setMessages(list);
         }, (error) => {
             console.error("Dashboard: Message Listener Error:", error);
-            // alert("Message Listener Error: " + error.message);
         });
         return () => unsubscribe();
-    }, [schoolId]);
+    }, [schoolId, messagingId, currentUserId]);
 
     // Mock Data for Charts
 
@@ -621,38 +630,43 @@ const Dashboard = () => {
             const session = localStorage.getItem('manual_session');
             if (session) {
                 const { schoolId } = JSON.parse(session);
-                console.log("Dashboard: Sending Message...");
-                console.log("Dashboard: School ID:", schoolId);
-                console.log("Dashboard: Selected Teacher:", selectedTeacher);
-                console.log("Dashboard: Message Text:", messageText);
-                console.log("Dashboard: Is Broadcast?", isBroadcast);
 
                 if (isBroadcast) {
                     // Send to all teachers
                     const promises = teachers.map(teacher =>
                         addDoc(collection(db, `schools/${schoolId}/messages`), {
-                            to: teacher.name,
-                            toId: teacher.id, // Add UID for reliable filtering
-                            from: 'principal',
-                            fromName: 'Principal',
-                            fromId: auth.currentUser.uid, // Required for 'sender can read' rule
+                            to: 'teacher',
+                            toId: teacher.id,
+                            toName: teacher.name,
+                            toRole: 'teacher',
+                            from: currentUserRole === 'principal' ? 'principal' : 'admin',
+                            fromName: currentUserName,
+                            fromId: messagingId,
+                            fromRole: currentUserRole,
+                            participants: [messagingId, teacher.id],
                             text: messageText,
                             timestamp: serverTimestamp(),
-                            read: false
+                            read: false,
+                            type: 'principal-broadcast'
                         })
                     );
                     await Promise.all(promises);
                 } else {
                     // Send to single teacher
                     await addDoc(collection(db, `schools/${schoolId}/messages`), {
-                        to: selectedTeacher.name,
-                        toId: selectedTeacher.id, // Add UID for reliable filtering
-                        from: 'principal',
-                        fromName: 'Principal',
-                        fromId: auth.currentUser.uid, // Required for 'sender can read' rule
+                        to: selectedTeacher.role === 'Teacher' ? 'teacher' : 'admin',
+                        toId: selectedTeacher.id,
+                        toName: selectedTeacher.name,
+                        toRole: selectedTeacher.role === 'Teacher' ? 'teacher' : 'school Admin',
+                        from: currentUserRole === 'principal' ? 'principal' : 'admin',
+                        fromName: currentUserName,
+                        fromId: messagingId,
+                        fromRole: currentUserRole,
+                        participants: [messagingId, selectedTeacher.id],
                         text: messageText,
                         timestamp: serverTimestamp(),
-                        read: false
+                        read: false,
+                        type: 'direct-message'
                     });
                 }
 
@@ -660,7 +674,6 @@ const Dashboard = () => {
                 setSelectedTeacher(null);
                 setModalPos(null);
                 setIsBroadcast(false);
-                // alert("Message Sent Query Successfully!"); 
             }
         } catch (error) {
             console.error('Error sending message:', error);
