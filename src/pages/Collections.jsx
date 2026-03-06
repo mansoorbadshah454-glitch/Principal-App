@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Wallet, Users, ChevronRight, Ban, CheckCircle, Plus, Trash2, X, CheckSquare, Square } from 'lucide-react';
 import { db, auth } from '../firebase';
 import {
-    collection, onSnapshot, query, doc, updateDoc, deleteField, setDoc, getDoc, deleteDoc
+    collection, onSnapshot, query, doc, updateDoc, deleteField, setDoc, getDoc, deleteDoc,
+    getDocs, writeBatch
 } from 'firebase/firestore';
 
 // --- Components ---
@@ -221,37 +222,32 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
     const isEven = seed % 2 === 0;
     const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
 
-    const StatsRow = ({ label, paid, unpaid, colorOverride }) => (
-        <div style={{
-            display: 'flex', gap: '0', padding: '0',
-            background: 'white', borderRadius: '12px', border: '1px solid #dbeafe',
-            overflow: 'hidden'
-        }}>
-            <div style={{ flex: 1, padding: '0.75rem', borderRight: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
-                    <CheckCircle size={16} />
-                </div>
-                <div>
-                    <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block' }}>
-                        {label} Paid
-                    </span>
-                    <span style={{ fontSize: '1rem', fontWeight: '700', color: '#1e293b' }}>
-                        {paid}
-                    </span>
-                </div>
+    const StatsPair = ({ label, paid, unpaid }) => (
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+            {/* Paid Card */}
+            <div style={{
+                flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
+                border: '1px solid #dcfce7', cursor: 'default',
+                display: 'flex', flexDirection: 'column', gap: '0.25rem',
+                borderBottom: '3px solid #10b981'
+            }}>
+                <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#10b981', textTransform: 'uppercase' }}>
+                    {label ? `${label} Paid` : 'Paid'}
+                </span>
+                <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{paid}</span>
             </div>
-            <div style={{ flex: 1, padding: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#dc2626' }}>
-                    <Ban size={16} />
-                </div>
-                <div>
-                    <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block' }}>
-                        {label} Unpaid
-                    </span>
-                    <span style={{ fontSize: '1rem', fontWeight: '700', color: '#1e293b' }}>
-                        {unpaid}
-                    </span>
-                </div>
+            {/* Unpaid Card */}
+            <div style={{
+                flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white',
+                border: '1px solid #fee2e2', cursor: 'default',
+                display: 'flex', flexDirection: 'column', gap: '0.25rem',
+                borderBottom: '3px solid #ef4444',
+                boxShadow: unpaid > 0 ? '0 0 10px rgba(239, 68, 68, 0.1)' : 'none'
+            }}>
+                <span style={{ fontSize: '0.7rem', fontWeight: '600', color: '#ef4444', textTransform: 'uppercase' }}>
+                    {label ? `${label} Unpaid` : 'Unpaid'}
+                </span>
+                <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>{unpaid}</span>
             </div>
         </div>
     );
@@ -317,12 +313,12 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                         </div>
                     </div>
                     {/* 1. Monthly Fee Stats */}
-                    <StatsRow label="Monthly Fee" paid={monthlyStats.paid} unpaid={monthlyStats.unpaid} />
+                    <StatsPair label="Fee" paid={monthlyStats.paid} unpaid={monthlyStats.unpaid} />
 
                     {/* 2. Action Stats (Calculated & Stacked) */}
                     {isTargeted && (
                         <div className="animate-fade-in-up">
-                            <StatsRow label={currentAction.name} paid={actionStats.paid} unpaid={actionStats.unpaid} />
+                            <StatsPair label={currentAction.name} paid={actionStats.paid} unpaid={actionStats.unpaid} />
                         </div>
                     )}
                 </div>
@@ -399,6 +395,71 @@ const Collections = () => {
         resolveUser();
         return () => { isMounted = false; };
     }, []);
+
+    // 1b. Monthly Fee Auto-Reset — runs once per calendar month
+    useEffect(() => {
+        if (!schoolId) return;
+
+        const runMonthlyFeeReset = async () => {
+            const currentMonth = new Date().toLocaleDateString('en-CA').slice(0, 7); // "YYYY-MM"
+            const resetMetaRef = doc(db, `schools/${schoolId}/settings`, 'feeResetMeta');
+
+            try {
+                const metaSnap = await getDoc(resetMetaRef);
+                const lastResetMonth = metaSnap.exists() ? metaSnap.data().lastResetMonth : null;
+
+                if (lastResetMonth === currentMonth) {
+                    // Already reset this month — do nothing
+                    console.log('[FeeReset] Already reset for', currentMonth);
+                    return;
+                }
+
+                console.log('[FeeReset] New month detected. Resetting all student fees to unpaid...');
+
+                // Fetch all classes (excluding metadata doc)
+                const classesSnap = await getDocs(collection(db, `schools/${schoolId}/classes`));
+                const classIds = classesSnap.docs
+                    .map(d => d.id)
+                    .filter(id => id !== 'action_metadata');
+
+                // Firestore batch limit is 500 writes — chunk if needed
+                const BATCH_LIMIT = 490;
+                let batch = writeBatch(db);
+                let writeCount = 0;
+
+                for (const classId of classIds) {
+                    const studentsSnap = await getDocs(
+                        collection(db, `schools/${schoolId}/classes/${classId}/students`)
+                    );
+                    for (const studentDoc of studentsSnap.docs) {
+                        batch.update(studentDoc.ref, {
+                            monthlyFeeStatus: 'unpaid',
+                            monthlyFeeDate: null
+                        });
+                        writeCount++;
+
+                        if (writeCount >= BATCH_LIMIT) {
+                            await batch.commit();
+                            batch = writeBatch(db);
+                            writeCount = 0;
+                        }
+                    }
+                }
+
+                // Commit remaining writes
+                if (writeCount > 0) await batch.commit();
+
+                // Stamp the reset month so this doesn't run again until next month
+                await setDoc(resetMetaRef, { lastResetMonth: currentMonth });
+                console.log('[FeeReset] Reset complete for', currentMonth);
+
+            } catch (err) {
+                console.error('[FeeReset] Error during monthly fee reset:', err);
+            }
+        };
+
+        runMonthlyFeeReset();
+    }, [schoolId]);
 
     // 2. Fetch Classes & Action
     useEffect(() => {

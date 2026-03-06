@@ -62,7 +62,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
     // Layer 1 (Priority): Listen to today's confirmed attendance history record
     useEffect(() => {
         if (!schoolId) return;
-        const today = new Date().toISOString().split('T')[0];
+        const today = new Date().toLocaleDateString('en-CA');
 
         const q = query(
             collection(db, `schools/${schoolId}/attendance`),
@@ -109,8 +109,9 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                     // student-list panel stays functional, but don't override the counts
                     return { ...prev, total: students.length };
                 }
-                const present = students.filter(s => s.status === 'present').length;
-                const absent = students.filter(s => s.status === 'absent').length;
+                const todayStr = new Date().toLocaleDateString('en-CA');
+                const present = students.filter(s => s.status === 'present' && s.lastAttendanceDate === todayStr).length;
+                const absent = students.filter(s => s.status === 'absent' && s.lastAttendanceDate === todayStr).length;
                 return { present, absent, total: students.length, source: 'pending' };
             });
 
@@ -134,7 +135,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
         setIsSaving(true);
         try {
             const batch = writeBatch(db);
-            const today = new Date().toISOString().split('T')[0];
+            const today = new Date().toLocaleDateString('en-CA');
 
             // 1. Create historical record
             const historyRef = doc(collection(db, `schools/${schoolId}/attendance`));
@@ -158,7 +159,10 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
             studentsList.forEach(student => {
                 const sRef = doc(db, `schools/${schoolId}/classes/${cls.id}/students`, student.id);
                 // We ensure 'status' is at least defined as 'absent' if null
-                batch.update(sRef, { status: student.status || 'absent' });
+                batch.update(sRef, {
+                    status: student.status || 'absent',
+                    lastAttendanceDate: today
+                });
             });
 
             await batch.commit();
@@ -173,8 +177,12 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
 
     const handleMarkStatus = async (studentId, status) => {
         try {
+            const todayStr = new Date().toLocaleDateString('en-CA');
             const sRef = doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId);
-            await updateDoc(sRef, { status });
+            await updateDoc(sRef, {
+                status,
+                lastAttendanceDate: todayStr
+            });
         } catch (error) {
             console.error("Error updating student status:", error);
         }
@@ -182,6 +190,9 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
 
     const filteredStudents = studentsList.filter(student => {
         if (filter === 'all') return true;
+        const todayStr = new Date().toLocaleDateString('en-CA');
+        const isMarkedToday = student.lastAttendanceDate === todayStr;
+        if (!isMarkedToday) return false;
         return (student.status || 'absent') === filter;
     });
 
