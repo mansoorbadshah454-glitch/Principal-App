@@ -62,22 +62,34 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
     // Layer 1 (Priority): Listen to today's confirmed attendance history record
     useEffect(() => {
         if (!schoolId) return;
-        const today = new Date().toLocaleDateString('en-CA');
+        const todayStr = new Date().toISOString().split('T')[0];
 
         const q = query(
             collection(db, `schools/${schoolId}/attendance`),
             where('classId', '==', cls.id),
-            where('date', '==', today)
+            where('date', '==', todayStr)
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             if (!snapshot.empty) {
                 // A confirmed record for today exists — use it as the source of truth
                 const record = snapshot.docs[0].data();
+
+                // Fallback: If summary counts are missing (e.g. from Flutter/other versions), calculate them
+                let present = record.presentCount ?? 0;
+                let absent = record.absentCount ?? 0;
+                let total = record.totalStudents ?? 0;
+
+                if (record.records && (!record.presentCount || !record.absentCount)) {
+                    present = record.records.filter(r => r.status === 'present').length;
+                    absent = record.records.filter(r => r.status === 'absent').length;
+                    total = record.records.length;
+                }
+
                 setRealStats({
-                    present: record.presentCount ?? 0,
-                    absent: record.absentCount ?? 0,
-                    total: record.totalStudents ?? 0,
+                    present,
+                    absent,
+                    total,
                     source: 'confirmed'
                 });
             } else {
@@ -91,7 +103,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
         return () => unsubscribe();
     }, [schoolId, cls.id]);
 
-    // Layer 2 (Fallback): Listen to raw student sub-collection for live student list + pending stats
+    // Layer 2 (Live Students): Listen to individual student status changes
     useEffect(() => {
         if (!schoolId) return;
 
@@ -102,17 +114,29 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                 ...doc.data()
             }));
 
-            // Only use raw counts when there is no confirmed history record for today
+            const todayStr = new Date().toISOString().split('T')[0];
+            const present = students.filter(s => (s.status === 'present' || s.status === 'Present') && s.lastAttendanceDate === todayStr).length;
+            const absent = students.filter(s => (s.status === 'absent' || s.status === 'Absent') && s.lastAttendanceDate === todayStr).length;
+            const anyMarkedToday = students.some(s => s.lastAttendanceDate === todayStr);
+
             setRealStats(prev => {
-                if (prev.source === 'confirmed') {
-                    // A confirmed record is driving stats — only update the total so the
-                    // student-list panel stays functional, but don't override the counts
-                    return { ...prev, total: students.length };
+                // If marking has started today, show live status (even if counts are 0)
+                if (anyMarkedToday) {
+                    return {
+                        present,
+                        absent,
+                        total: students.length,
+                        source: prev.source
+                    };
                 }
-                const todayStr = new Date().toLocaleDateString('en-CA');
-                const present = students.filter(s => s.status === 'present' && s.lastAttendanceDate === todayStr).length;
-                const absent = students.filter(s => s.status === 'absent' && s.lastAttendanceDate === todayStr).length;
-                return { present, absent, total: students.length, source: 'pending' };
+
+                // If no live marking yet today, show confirmed record if exists, else 0
+                return {
+                    present: prev.source === 'confirmed' ? prev.present : 0,
+                    absent: prev.source === 'confirmed' ? prev.absent : 0,
+                    total: students.length,
+                    source: prev.source
+                };
             });
 
             // If student list is expanded, also update the detailed list
@@ -135,14 +159,14 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
         setIsSaving(true);
         try {
             const batch = writeBatch(db);
-            const today = new Date().toLocaleDateString('en-CA');
+            const todayStr = new Date().toISOString().split('T')[0];
 
             // 1. Create historical record
             const historyRef = doc(collection(db, `schools/${schoolId}/attendance`));
             batch.set(historyRef, {
                 classId: cls.id,
                 className: cls.name,
-                date: today,
+                date: todayStr,
                 timestamp: new Date(),
                 presentCount: realStats.present,
                 absentCount: realStats.absent,
@@ -161,12 +185,12 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                 // We ensure 'status' is at least defined as 'absent' if null
                 batch.update(sRef, {
                     status: student.status || 'absent',
-                    lastAttendanceDate: today
+                    lastAttendanceDate: todayStr
                 });
             });
 
             await batch.commit();
-            alert(`Attendance for ${cls.name} saved successfully for ${today}`);
+            alert(`Attendance for ${cls.name} saved successfully for ${todayStr}`);
         } catch (error) {
             console.error("Error saving attendance:", error);
             alert("Failed to save attendance.");
@@ -177,7 +201,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
 
     const handleMarkStatus = async (studentId, status) => {
         try {
-            const todayStr = new Date().toLocaleDateString('en-CA');
+            const todayStr = new Date().toISOString().split('T')[0];
             const sRef = doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId);
             await updateDoc(sRef, {
                 status,
@@ -190,7 +214,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
 
     const filteredStudents = studentsList.filter(student => {
         if (filter === 'all') return true;
-        const todayStr = new Date().toLocaleDateString('en-CA');
+        const todayStr = new Date().toISOString().split('T')[0];
         const isMarkedToday = student.lastAttendanceDate === todayStr;
         if (!isMarkedToday) return false;
         return (student.status || 'absent') === filter;
@@ -354,19 +378,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                             <span style={{ fontWeight: '500' }}>{cls.teacher || 'No Teacher Assigned'}</span>
                         </div>
 
-                        {/* Attendance Status Badge — only shown once teacher confirms */}
-                        {realStats.source === 'confirmed' && (
-                            <div style={{ display: 'flex', alignItems: 'center' }}>
-                                <span style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                    fontSize: '0.7rem', fontWeight: '700', color: '#059669',
-                                    background: '#d1fae5', padding: '2px 8px', borderRadius: '20px',
-                                    border: '1px solid #6ee7b7'
-                                }}>
-                                    ✓ Confirmed Today
-                                </span>
-                            </div>
-                        )}
+
 
                         {/* Attendance Stats Cards - Interactive */}
                         <div style={{ display: 'flex', gap: '0.75rem' }}>
