@@ -23,6 +23,7 @@ const Promotions = () => {
     const [studentSearchQuery, setStudentSearchQuery] = useState('');
     const [processing, setProcessing] = useState(false);
     const [promotionStatus, setPromotionStatus] = useState(null);
+    const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'promote', 'retain', 'demote', 'leave'
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [confirmLevel, setConfirmLevel] = useState(1); // 1 or 2 for dual confirmation
     const [schoolDetails, setSchoolDetails] = useState({ name: '', logo: '' });
@@ -259,10 +260,15 @@ const Promotions = () => {
         setStudents(prev => prev.map(s => ({ ...s, promotionStatus: status })));
     };
 
-    const filteredStudents = students.filter(s =>
-        s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
-        s.rollNo?.toString().includes(studentSearchQuery)
-    );
+    const filteredStudents = students.filter(s => {
+        const matchesSearch = s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
+            s.rollNo?.toString().includes(studentSearchQuery);
+
+        const status = s.promotionStatus || 'promote';
+        const matchesStatus = statusFilter === 'all' || status === statusFilter;
+
+        return matchesSearch && matchesStatus;
+    });
 
     const classColors = {
         'nursery': '#F43F5E',
@@ -721,10 +727,61 @@ const Promotions = () => {
                                 />
                             </div>
                             <div style={{ display: 'flex', background: '#F1F5F9', padding: '4px', borderRadius: '12px', gap: '4px' }}>
-                                <button onClick={() => setAllStatus('promote')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'white', fontWeight: '600', color: '#10B981', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', fontSize: '12px' }}>Promote All</button>
-                                <button onClick={() => setAllStatus('retain')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'transparent', fontWeight: '600', color: '#F59E0B', cursor: 'pointer', fontSize: '12px' }}>Retain All</button>
-                                <button onClick={() => setAllStatus('demote')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'transparent', fontWeight: '600', color: '#6366F1', cursor: 'pointer', fontSize: '12px' }}>Demote All</button>
-                                <button onClick={() => setAllStatus('leave')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', background: 'transparent', fontWeight: '600', color: '#EF4444', cursor: 'pointer', fontSize: '12px' }}>Leave All</button>
+                                <button
+                                    onClick={() => setStatusFilter('all')}
+                                    style={{
+                                        padding: '6px 12px', borderRadius: '8px', border: 'none',
+                                        background: statusFilter === 'all' ? 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)' : 'transparent',
+                                        fontWeight: '700', color: statusFilter === 'all' ? 'white' : '#64748B',
+                                        cursor: 'pointer', fontSize: '12px', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    All
+                                </button>
+                                <button
+                                    onClick={() => setStatusFilter('promote')}
+                                    style={{
+                                        padding: '6px 12px', borderRadius: '8px', border: 'none',
+                                        background: statusFilter === 'promote' ? '#10B981' : 'transparent',
+                                        fontWeight: '700', color: statusFilter === 'promote' ? 'white' : '#10B981',
+                                        cursor: 'pointer', fontSize: '12px', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    Promote
+                                </button>
+                                <button
+                                    onClick={() => setStatusFilter('retain')}
+                                    style={{
+                                        padding: '6px 12px', borderRadius: '8px', border: 'none',
+                                        background: statusFilter === 'retain' ? '#EA580C' : 'transparent',
+                                        fontWeight: '700', color: statusFilter === 'retain' ? 'white' : '#EA580C',
+                                        cursor: 'pointer', fontSize: '12px', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    Retain
+                                </button>
+                                <button
+                                    onClick={() => setStatusFilter('demote')}
+                                    style={{
+                                        padding: '6px 12px', borderRadius: '8px', border: 'none',
+                                        background: statusFilter === 'demote' ? '#EAB308' : 'transparent',
+                                        fontWeight: '700', color: statusFilter === 'demote' ? 'white' : '#EAB308',
+                                        cursor: 'pointer', fontSize: '12px', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    Demote
+                                </button>
+                                <button
+                                    onClick={() => setStatusFilter('leave')}
+                                    style={{
+                                        padding: '6px 12px', borderRadius: '8px', border: 'none',
+                                        background: statusFilter === 'leave' ? '#DC2626' : 'transparent',
+                                        fontWeight: '700', color: statusFilter === 'leave' ? 'white' : '#DC2626',
+                                        cursor: 'pointer', fontSize: '12px', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    Leave
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -747,9 +804,10 @@ const Promotions = () => {
                                     const isPass = student.result === 'pass';
                                     return (
                                         <div key={student.id} style={{
-                                            padding: '20px', borderRadius: '20px', border: '1px solid #F1F5F9',
-                                            background: '#FCFDFF', display: 'flex', flexDirection: 'column', gap: '15px',
-                                            transition: 'all 0.2s hover', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                                            padding: '20px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.25)',
+                                            background: 'linear-gradient(145deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%)',
+                                            display: 'flex', flexDirection: 'column', gap: '15px',
+                                            transition: 'all 0.2s', boxShadow: '4px 4px 0 rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.3)'
                                         }}>
                                             <div style={{ display: 'flex', gap: '15px' }}>
                                                 <div style={{
@@ -764,11 +822,11 @@ const Promotions = () => {
                                                     )}
                                                 </div>
                                                 <div style={{ flex: 1 }}>
-                                                    <div style={{ fontWeight: '800', fontSize: '16px', color: '#1E293B' }}>{student.name}</div>
-                                                    <div style={{ fontSize: '13px', color: '#64748B' }}>Roll No: {student.rollNo || '-'}</div>
+                                                    <div style={{ fontWeight: '800', fontSize: '16px', color: 'white' }}>{student.name}</div>
+                                                    <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.75)' }}>Roll No: {student.rollNo || '-'}</div>
                                                 </div>
-                                                <div style={{ textAlign: 'right' }}>
-                                                    <div style={{ fontSize: '12px', color: '#94A3B8', marginBottom: '4px' }}>Exam Score</div>
+                                                <div style={{ textAlign: 'right', background: 'white', borderRadius: '12px', padding: '8px 12px' }}>
+                                                    <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '4px', fontWeight: '600' }}>Exam Score</div>
                                                     <input
                                                         type="number"
                                                         value={student.examScore}
@@ -776,7 +834,7 @@ const Promotions = () => {
                                                         placeholder="%"
                                                         style={{
                                                             width: '60px', padding: '6px', borderRadius: '8px', border: '1px solid #CBD5E1',
-                                                            textAlign: 'center', fontWeight: '700', outline: 'none'
+                                                            textAlign: 'center', fontWeight: '700', outline: 'none', background: 'white', color: '#1E293B'
                                                         }}
                                                     />
                                                 </div>
@@ -807,17 +865,19 @@ const Promotions = () => {
                                                         onClick={() => handleIndividualAction(student.id, 'promote')}
                                                         title={`To: ${student.nextClassName}`}
                                                         style={{
-                                                            flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
-                                                            background: status === 'promote' ? '#DCFCE7' : 'white', color: status === 'promote' ? '#15803D' : '#64748B',
-                                                            fontWeight: '700', fontSize: '10px'
+                                                            flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                            background: status === 'promote' ? '#10B981' : 'rgba(255,255,255,0.2)',
+                                                            color: status === 'promote' ? 'white' : 'rgba(255,255,255,0.85)',
+                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
                                                         }}
                                                     >Promote</button>
                                                     <button
                                                         onClick={() => handleIndividualAction(student.id, 'retain')}
                                                         style={{
-                                                            flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
-                                                            background: status === 'retain' ? '#FFFBEB' : 'white', color: status === 'retain' ? '#D97706' : '#64748B',
-                                                            fontWeight: '700', fontSize: '10px'
+                                                            flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                            background: status === 'retain' ? '#EA580C' : 'rgba(255,255,255,0.2)',
+                                                            color: status === 'retain' ? 'white' : 'rgba(255,255,255,0.85)',
+                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
                                                         }}
                                                     >Retain</button>
                                                     {student.previousClassId && (
@@ -825,18 +885,20 @@ const Promotions = () => {
                                                             onClick={() => handleIndividualAction(student.id, 'demote')}
                                                             title={`Back to: ${student.previousClassName}`}
                                                             style={{
-                                                                flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
-                                                                background: status === 'demote' ? '#EEF2FF' : 'white', color: status === 'demote' ? '#4F46E5' : '#64748B',
-                                                                fontWeight: '700', fontSize: '10px'
+                                                                flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                                background: status === 'demote' ? '#EAB308' : 'rgba(255,255,255,0.2)',
+                                                                color: status === 'demote' ? 'white' : 'rgba(255,255,255,0.85)',
+                                                                fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
                                                             }}
                                                         >Demote</button>
                                                     )}
                                                     <button
                                                         onClick={() => handleIndividualAction(student.id, 'leave')}
                                                         style={{
-                                                            flex: 1, padding: '8px 4px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer',
-                                                            background: status === 'leave' ? '#FEF2F2' : 'white', color: status === 'leave' ? '#DC2626' : '#64748B',
-                                                            fontWeight: '700', fontSize: '10px'
+                                                            flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                                            background: status === 'leave' ? '#DC2626' : 'rgba(255,255,255,0.2)',
+                                                            color: status === 'leave' ? 'white' : 'rgba(255,255,255,0.85)',
+                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
                                                         }}
                                                     >Leave</button>
                                                 </div>
