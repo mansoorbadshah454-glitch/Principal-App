@@ -58,7 +58,7 @@ const Dashboard = () => {
                     const data = JSON.parse(manualSession);
                     if (data.schoolId) {
                         setSchoolId(data.schoolId);
-                        setCurrentUserRole(data.role || 'principal');
+                        setCurrentUserRole((data.role || 'principal').toLowerCase());
                         setCurrentUserId(data.uid || 'principal');
                         // In manual bypass, email is usually saved. Let's extract name from it if no displayName
                         let name = 'Principal';
@@ -86,7 +86,7 @@ const Dashboard = () => {
                         const token = await user.getIdTokenResult();
                         if (token.claims.schoolId) {
                             setSchoolId(token.claims.schoolId);
-                            setCurrentUserRole(token.claims.role || 'principal');
+                            setCurrentUserRole((token.claims.role || 'principal').toLowerCase());
                             setCurrentUserId(user.uid);
                             setCurrentUserName(user.displayName || (token.claims.role === 'school Admin' ? 'Admin' : 'Principal'));
                         } else {

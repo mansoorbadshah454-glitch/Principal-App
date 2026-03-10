@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { db, auth, storage } from '../firebase';
-import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
 import {
     ref as storageRef,
     uploadBytes,
@@ -56,7 +56,7 @@ const Inbox = () => {
                     const data = JSON.parse(manualSession);
                     if (data.schoolId) {
                         setSchoolId(data.schoolId);
-                        setCurrentUserRole(data.role || 'principal');
+                        setCurrentUserRole((data.role || 'principal').toLowerCase());
                         setCurrentUserId(data.uid || 'principal');
                         setCurrentUserName(data.displayName || data.name || (data.role === 'school Admin' ? 'Admin' : 'Principal'));
                         return;
@@ -72,7 +72,7 @@ const Inbox = () => {
                         const token = await user.getIdTokenResult();
                         if (token.claims.schoolId) {
                             setSchoolId(token.claims.schoolId);
-                            setCurrentUserRole(token.claims.role || 'principal');
+                            setCurrentUserRole((token.claims.role || 'principal').toLowerCase());
                             setCurrentUserId(user.uid);
                             setCurrentUserName(user.displayName || (token.claims.role === 'school Admin' ? 'Admin' : 'Principal'));
                         }
@@ -190,7 +190,6 @@ const Inbox = () => {
 
         const q = query(
             collection(db, `schools/${schoolId}/messages`),
-            where('read', '==', false),
             where('participants', 'array-contains', messagingId)
         );
 
@@ -198,6 +197,10 @@ const Inbox = () => {
             const counts = {};
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
+
+                // Only count unread messages
+                if (data.read === true) return;
+
                 const senderId = data.fromId || data.from;
                 if (senderId && senderId !== messagingId) {
                     // Check if it's meant for me (either via UID or alias)
@@ -212,6 +215,32 @@ const Inbox = () => {
         return () => unsubscribe();
     }, [schoolId, messagingId, currentUserId]);
 
+    // 2.7 One-Time Sweep for Old Stuck Notifications
+    useEffect(() => {
+        if (!schoolId) return;
+        const sweepOldMessages = async () => {
+            try {
+                const q = query(collection(db, `schools/${schoolId}/messages`));
+                const snap = await getDocs(q);
+                const batch = writeBatch(db);
+                let count = 0;
+                snap.forEach(docSnap => {
+                    if (docSnap.data().read === false) {
+                        batch.update(docSnap.ref, { read: true });
+                        count++;
+                    }
+                });
+                if (count > 0) {
+                    await batch.commit();
+                    console.log(`[Sweep] Cleared ${count} stuck unread messages.`);
+                }
+            } catch (e) {
+                console.error("[Sweep Error]", e);
+            }
+        };
+        sweepOldMessages();
+    }, [schoolId]);
+
     // 3. Fetch Messages for Selected Contact
     useEffect(() => {
         if (!schoolId || !selectedTeacher || !messagingId) return;
@@ -219,16 +248,14 @@ const Inbox = () => {
         // Optimized query using participants array (uses alias if principal)
         const qOptimized = query(
             collection(db, `schools/${schoolId}/messages`),
-            where('participants', 'array-contains', messagingId),
-            orderBy("timestamp", "asc")
+            where('participants', 'array-contains', messagingId)
         );
 
         // Legacy query for old messages (Fallback)
         // Note: This is less efficient but necessary for older data.
         // It fetches all messages for the school. We'll filter heavily.
         const qLegacy = query(
-            collection(db, `schools/${schoolId}/messages`),
-            orderBy("timestamp", "asc")
+            collection(db, `schools/${schoolId}/messages`)
         );
 
         const unsubscribeOptimized = onSnapshot(qOptimized, (snapshot) => {
@@ -236,8 +263,8 @@ const Inbox = () => {
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
 
-                const isFromMe = (data.fromId === currentUserId || data.from === currentUserId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
-                const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === currentUserId || data.to === currentUserId);
+                const isFromMe = (data.fromId === messagingId || data.fromId === currentUserId || data.from === messagingId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
+                const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === messagingId || data.toId === currentUserId || data.to === messagingId);
 
                 if (isFromMe || isToMe) {
                     msgs.push({ id: docSnap.id, ...data });
@@ -280,8 +307,8 @@ const Inbox = () => {
     const mergedMessages = useMemo(() => {
         const all = [...messages, ...legacyMessages];
         return all.sort((a, b) => {
-            const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp?.seconds ? a.timestamp.seconds * 1000 : 0);
-            const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp?.seconds ? b.timestamp.seconds * 1000 : 0);
+            const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp?.seconds ? a.timestamp.seconds * 1000 : Date.now());
+            const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp?.seconds ? b.timestamp.seconds * 1000 : Date.now());
             return timeA - timeB;
         });
     }, [messages, legacyMessages]);
