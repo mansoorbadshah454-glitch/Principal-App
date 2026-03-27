@@ -20,6 +20,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
     //         'pending'   = no history yet today, falling back to raw student status
     const [realStats, setRealStats] = useState({ present: 0, absent: 0, total: 0, source: 'pending' });
     const [isSaving, setIsSaving] = useState(false);
+    const [newSubjectName, setNewSubjectName] = useState('');
 
     // Edit State (Inline)
     const [editForm, setEditForm] = useState({
@@ -293,7 +294,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                             Manage Subjects
                         </label>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', maxHeight: '150px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
-                            {subjectOptions.map((subj) => (
+                            {Array.from(new Set([...subjectOptions, ...editForm.subjects])).map((subj) => (
                                 <div
                                     key={subj}
                                     onClick={(e) => { e.stopPropagation(); handleSubjectToggle(subj); }}
@@ -320,6 +321,40 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                                     </span>
                                 </div>
                             ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+                            <input
+                                type="text"
+                                placeholder="Create new subject"
+                                value={newSubjectName}
+                                onChange={(e) => setNewSubjectName(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                    flex: 1, padding: '0.5rem', borderRadius: '6px',
+                                    border: '1px solid #e2e8f0', outline: 'none',
+                                    fontSize: '0.8rem'
+                                }}
+                            />
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    const subject = newSubjectName.trim();
+                                    if (subject && !editForm.subjects.includes(subject)) {
+                                        handleSubjectToggle(subject);
+                                    }
+                                    setNewSubjectName('');
+                                }}
+                                style={{
+                                    padding: '0.5rem 1rem', borderRadius: '6px',
+                                    background: 'var(--primary)', border: 'none',
+                                    color: 'white', fontSize: '0.8rem', fontWeight: '600',
+                                    cursor: 'pointer'
+                                }}
+                                type="button"
+                            >
+                                Add
+                            </button>
                         </div>
                     </div>
 
