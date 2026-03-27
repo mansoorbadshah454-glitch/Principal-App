@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { Camera, Save, Loader2, Shield, Copy, CheckCircle2 } from 'lucide-react';
+import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -13,7 +13,9 @@ const Settings = () => {
     const [schoolId, setSchoolId] = useState(null);
     const [schoolData, setSchoolData] = useState({
         name: '',
-        profileImage: ''
+        profileImage: '',
+        teacherStartTime: '08:00',
+        teacherEndTime: '14:00'
     });
     const [previewImage, setPreviewImage] = useState(null);
     const [imageFile, setImageFile] = useState(null);
@@ -37,10 +39,15 @@ const Settings = () => {
                     const docRef = doc(db, `schools/${id}/settings`, 'profile');
                     const docSnap = await getDoc(docRef);
                     if (docSnap.exists()) {
-                        setSchoolData(docSnap.data());
+                        const data = docSnap.data();
+                        setSchoolData({
+                            ...data,
+                            teacherStartTime: data.teacherStartTime || '08:00',
+                            teacherEndTime: data.teacherEndTime || '14:00'
+                        });
                     } else {
                         // Initialize if not exists
-                        await setDoc(docRef, { name: 'My School', profileImage: '' });
+                        await setDoc(docRef, { name: 'My School', profileImage: '', teacherStartTime: '08:00', teacherEndTime: '14:00' });
                     }
                 } catch (err) {
                     console.error("Error fetching settings:", err);
@@ -121,7 +128,9 @@ const Settings = () => {
             console.log("Saving to Firestore...");
             const settingsData = {
                 name: schoolData.name,
-                profileImage: imageUrl
+                profileImage: imageUrl,
+                teacherStartTime: schoolData.teacherStartTime,
+                teacherEndTime: schoolData.teacherEndTime
             };
 
             await setDoc(doc(db, `schools/${currentSchoolId}/settings`, 'profile'), settingsData, { merge: true });
@@ -280,6 +289,64 @@ const Settings = () => {
                         >
                             {loading ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
                             Save Changes
+                        </button>
+                    </div>
+                </div>
+
+                {/* Teachers duty time Card */}
+                <div className="card" style={{ height: 'fit-content' }}>
+                    <h2 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Clock size={20} color="var(--primary)" />
+                        Teachers duty time
+                    </h2>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                        <div style={{ display: 'flex', gap: '1rem' }}>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.25rem', color: 'var(--text-secondary)' }}>
+                                    Start Time
+                                </label>
+                                <input
+                                    type="time"
+                                    value={schoolData.teacherStartTime}
+                                    onChange={(e) => setSchoolData({ ...schoolData, teacherStartTime: e.target.value })}
+                                    style={{
+                                        width: '100%', padding: '0.5rem', borderRadius: '6px',
+                                        border: '1px solid #e2e8f0', outline: 'none',
+                                        fontSize: '0.95rem', fontFamily: 'monospace'
+                                    }}
+                                />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.25rem', color: 'var(--text-secondary)' }}>
+                                    End Time
+                                </label>
+                                <input
+                                    type="time"
+                                    value={schoolData.teacherEndTime}
+                                    onChange={(e) => setSchoolData({ ...schoolData, teacherEndTime: e.target.value })}
+                                    style={{
+                                        width: '100%', padding: '0.5rem', borderRadius: '6px',
+                                        border: '1px solid #e2e8f0', outline: 'none',
+                                        fontSize: '0.95rem', fontFamily: 'monospace'
+                                    }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Save Button */}
+                        <button
+                            onClick={handleSave}
+                            disabled={loading}
+                            className="btn-primary"
+                            style={{
+                                padding: '0.6rem', borderRadius: '8px',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                fontSize: '0.9rem', width: '100%'
+                            }}
+                        >
+                            {loading ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                            Save Timings
                         </button>
                     </div>
                 </div>

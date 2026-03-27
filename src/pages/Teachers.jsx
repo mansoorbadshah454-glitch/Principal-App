@@ -1,7 +1,10 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as QRCodeLib from 'qrcode';
 import { db, functions, auth } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -401,6 +404,12 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
 };
 
 const Teachers = () => {
+    const [activeTab, setActiveTab] = useState('list');
+    const [selectedAttendanceTeacher, setSelectedAttendanceTeacher] = useState(null);
+    const [attendanceMonth, setAttendanceMonth] = useState(new Date().getMonth());
+    const [attendanceYear, setAttendanceYear] = useState(new Date().getFullYear());
+    const [expandedHalfDayCell, setExpandedHalfDayCell] = useState(null);
+
     const [showAddTeacher, setShowAddTeacher] = useState(false);
     const [step, setStep] = useState(1);
     const [newTeacher, setNewTeacher] = useState({
@@ -416,6 +425,7 @@ const Teachers = () => {
     const [teachers, setTeachers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [schoolId, setSchoolId] = useState(null);
+    const [schoolName, setSchoolName] = useState('School Name');
     const [dbClasses, setDbClasses] = useState([]);
 
     const subjectOptions = [
@@ -431,6 +441,268 @@ const Teachers = () => {
         const lastDate = new Date(lastUpdate.getFullYear(), lastUpdate.getMonth(), lastUpdate.getDate());
         const currentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         return currentDate > lastDate;
+    };
+
+    // --- NEW ATTENDANCE LOGIC ---
+    const generateMockAttendance = (year, month) => {
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const attendance = {};
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        for(let i = 1; i <= daysInMonth; i++) {
+            const dateObj = new Date(year, month, i);
+            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+            
+            // Future dates are greyed out (Upcoming)
+            if (dateObj > today) {
+                attendance[dateStr] = 'Upcoming';
+                continue;
+            }
+
+            // Skip Sundays (0)
+            if (dateObj.getDay() === 0) {
+                attendance[dateStr] = 'Holiday';
+                continue;
+            }
+
+            const rand = Math.random();
+            if(rand < 0.85) attendance[dateStr] = 'Present';
+            else if(rand < 0.92) attendance[dateStr] = 'Absent';
+            else if(rand < 0.98) attendance[dateStr] = 'Half Day';
+            else attendance[dateStr] = 'Holiday';
+        }
+        return attendance;
+    };
+
+    const memoizedMockData = useMemo(() => {
+        if (!selectedAttendanceTeacher) return {};
+        // Returning new data whenever year/month/teacher changes, but keeping it stable across renders
+        return generateMockAttendance(attendanceYear, attendanceMonth);
+    }, [attendanceYear, attendanceMonth, selectedAttendanceTeacher?.id]);
+
+    const handleDownloadReport = (teacher) => {
+        const doc = new jsPDF();
+        const monthName = new Date(attendanceYear, attendanceMonth).toLocaleString('default', { month: 'long' });
+        
+        // Header
+        doc.setFontSize(22);
+        doc.setTextColor('#5b21b6');
+        doc.text(schoolName, 14, 22);
+        
+        doc.setFontSize(14);
+        doc.setTextColor('#1e293b');
+        doc.text(`Monthly Attendance Report - ${monthName} ${attendanceYear}`, 14, 34);
+        
+        doc.setFontSize(11);
+        doc.setTextColor('#475569');
+        doc.text(`Teacher: ${teacher.name}`, 14, 44);
+        doc.text(`Subject/Class: ${teacher.subject || (teacher.subjects && teacher.subjects[0]) || 'N/A'}`, 14, 52);
+
+        // Generate data for table
+        const mockData = memoizedMockData;
+        const daysInMonth = new Date(attendanceYear, attendanceMonth + 1, 0).getDate();
+        
+        let presentCount = 0;
+        let absentCount = 0;
+        let halfCount = 0;
+
+        const tableBody = [];
+        for(let i = 1; i <= daysInMonth; i++) {
+            const dateStr = `${attendanceYear}-${String(attendanceMonth + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+            const status = mockData[dateStr] || 'Present';
+            if(status === 'Present') presentCount++;
+            else if(status === 'Absent') absentCount++;
+            else if(status === 'Half Day') halfCount++;
+
+            const dateObj = new Date(attendanceYear, attendanceMonth, i);
+            const dayOfWeek = dateObj.toLocaleString('default', { weekday: 'short' });
+
+            tableBody.push([dateStr, dayOfWeek, status]);
+        }
+
+        // Summary
+        doc.setFontSize(11);
+        doc.setTextColor('#10b981'); // Green
+        doc.text(`Total Present: ${presentCount}`, 14, 64);
+        doc.setTextColor('#ef4444'); // Red
+        doc.text(`Total Absent: ${absentCount}`, 60, 64);
+        doc.setTextColor('#f59e0b'); // Yellow/Orange
+        doc.text(`Total Half Leaves: ${halfCount}`, 106, 64);
+
+        // Table
+        autoTable(doc, {
+            startY: 72,
+            head: [['Date', 'Day', 'Status']],
+            body: tableBody,
+            headStyles: { fillColor: '#8b5cf6', textColor: '#ffffff', fontStyle: 'bold' },
+            styles: { fontSize: 10, cellPadding: 4 },
+            alternateRowStyles: { fillColor: '#f8fafc' },
+            didParseCell: function(data) {
+                if (data.section === 'body' && data.column.index === 2) {
+                    const status = data.cell.raw;
+                    if (status === 'Present') { data.cell.styles.textColor = '#10b981'; data.cell.styles.fontStyle = 'bold'; }
+                    else if (status === 'Absent') { data.cell.styles.textColor = '#ef4444'; data.cell.styles.fontStyle = 'bold'; }
+                    else if (status === 'Half Day') { data.cell.styles.textColor = '#f59e0b'; data.cell.styles.fontStyle = 'bold'; }
+                    else if (status === 'Holiday') { data.cell.styles.textColor = '#3b82f6'; data.cell.styles.fontStyle = 'bold'; }
+                    else if (status === 'Upcoming') { data.cell.styles.textColor = '#94a3b8'; data.cell.styles.fontStyle = 'bold'; }
+                }
+            }
+        });
+
+        doc.save(`${teacher.name.replace(/\s+/g, '_')}_Attendance_${monthName}_${attendanceYear}.pdf`);
+    };
+
+    const [isGeneratingBarcode, setIsGeneratingBarcode] = useState(false);
+
+    const handleGenerateBarcodePDF = async () => {
+        if (!schoolId) {
+            alert("School ID is missing. Please reload the page.");
+            return;
+        }
+
+        setIsGeneratingBarcode(true);
+        try {
+            const uniqueId = `checkin_${schoolId}_${Date.now()}`;
+            
+            // 1. Save this new unique ID to the school's settings to invalidate old codes
+            // The mobile app will check this field to verify the scanned code is active
+            await setDoc(doc(db, `schools/${schoolId}/settings`, 'profile'), {
+                currentCheckinCode: uniqueId,
+                checkinCodeGeneratedAt: new Date().toISOString()
+            }, { merge: true });
+
+            // 2. Generate QR code data URL using qrcode library
+            const qrDataUrl = await QRCodeLib.toDataURL(uniqueId, { 
+                width: 400,
+                margin: 2,
+                color: {
+                    dark: '#1e293b',
+                    light: '#ffffff'
+                }
+            });
+
+            const pdfDoc = new jsPDF();
+            
+            // Header styling
+            pdfDoc.setFontSize(26);
+            pdfDoc.setTextColor('#5b21b6');
+            pdfDoc.text(schoolName || 'School Name', 105, 40, { align: 'center' });
+            
+            pdfDoc.setFontSize(18);
+            pdfDoc.setTextColor('#1e293b');
+            pdfDoc.setFont(undefined, 'bold');
+            pdfDoc.text('Daily Attendance Check-in', 105, 55, { align: 'center' });
+
+            // Information text
+            pdfDoc.setFontSize(12);
+            pdfDoc.setTextColor('#475569');
+            pdfDoc.setFont(undefined, 'normal');
+            pdfDoc.text('Scan this code using the Teacher App to log your', 105, 70, { align: 'center' });
+            pdfDoc.text('arrival and departure times.', 105, 78, { align: 'center' });
+            
+            // Add QR code image
+            pdfDoc.addImage(qrDataUrl, 'PNG', 55, 95, 100, 100);
+
+            // Print hint
+            pdfDoc.setFontSize(11);
+            pdfDoc.setTextColor('#10b981');
+            pdfDoc.setFont(undefined, 'bold');
+            pdfDoc.text('Scan for Check in and Check out', 105, 205, { align: 'center' });
+
+            // Footer
+            pdfDoc.setFontSize(9);
+            pdfDoc.setTextColor('#94a3b8');
+            pdfDoc.setFont(undefined, 'normal');
+            pdfDoc.text(`Tracking ID: ${uniqueId}`, 105, 230, { align: 'center' });
+            pdfDoc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 236, { align: 'center' });
+            pdfDoc.text('Please print and place this code securely near the entrance.', 105, 246, { align: 'center' });
+            
+            // Save PDF
+            pdfDoc.save(`Attendance_Scanner_${(schoolName || 'School').replace(/\s+/g, '_')}.pdf`);
+            
+        } catch (err) {
+            console.error("Error generating Barcode PDF", err);
+            alert("Failed to generate Barcode PDF: " + (err.message || "Unknown error"));
+        } finally {
+            setIsGeneratingBarcode(false);
+        }
+    };
+
+    const renderCalendar = (year, month) => {
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const firstDayOfMonth = new Date(year, month, 1).getDay();
+        const mockData = memoizedMockData;
+        
+        const calendarCells = [];
+        
+        // Empty cells for days before the 1st
+        for (let i = 0; i < firstDayOfMonth; i++) {
+            calendarCells.push(<div key={`empty-${i}`} style={{ padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #e2e8f0' }}></div>);
+        }
+        
+        // Days of the month
+        for (let i = 1; i <= daysInMonth; i++) {
+            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+            const status = mockData[dateStr] || 'Present';
+            
+            let bg = '#ffffff';
+            let color = '#334155';
+            let border = '#e2e8f0';
+            
+            if (status === 'Present') { bg = '#10b981'; color = '#ffffff'; border = '#059669'; }
+            else if (status === 'Absent') { bg = '#ef4444'; color = '#ffffff'; border = '#dc2626'; }
+            else if (status === 'Half Day') { bg = '#f59e0b'; color = '#ffffff'; border = '#d97706'; }
+            else if (status === 'Holiday') { bg = '#3b82f6'; color = '#ffffff'; border = '#2563eb'; }
+            else if (status === 'Upcoming') { bg = '#f1f5f9'; color = '#94a3b8'; border = '#e2e8f0'; }
+
+            const isHalfDayExpanded = expandedHalfDayCell === dateStr && status === 'Half Day';
+
+            calendarCells.push(
+                <div key={i} 
+                    onClick={() => {
+                        if (status === 'Half Day') {
+                            setExpandedHalfDayCell(isHalfDayExpanded ? null : dateStr);
+                        }
+                    }}
+                    style={{ 
+                    padding: '0.75rem', background: bg, borderRadius: '12px', border: `1px solid ${border}`, 
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+                    cursor: status === 'Half Day' ? 'pointer' : 'default',
+                    minHeight: '80px',
+                    position: 'relative', overflow: 'hidden'
+                }}
+                onMouseEnter={(e) => {
+                    if(status !== 'Upcoming') e.currentTarget.style.transform = 'scale(1.03)';
+                    if(status === 'Half Day') e.currentTarget.style.borderColor = '#f59e0b';
+                }}
+                onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'scale(1)';
+                    if(status === 'Half Day') e.currentTarget.style.borderColor = '#fde68a';
+                }}
+                >
+                    <span style={{ fontSize: '1.2rem', fontWeight: '800', color: color, zIndex: 2 }}>{i}</span>
+                    <span style={{ fontSize: '0.7rem', fontWeight: '600', color: color, textTransform: 'uppercase', zIndex: 2 }}>{status}</span>
+                    
+                    {/* Animated Half-day details (check in / out) */}
+                    <div style={{
+                        maxHeight: isHalfDayExpanded ? '50px' : '0px',
+                        opacity: isHalfDayExpanded ? 1 : 0,
+                        transition: 'all 0.3s ease-in-out',
+                        overflow: 'hidden',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center',
+                        fontSize: '0.65rem', fontWeight: '600', color: '#92400e',
+                        marginTop: isHalfDayExpanded ? '0.2rem' : '0'
+                    }}>
+                        <span>In: 08:00 AM</span>
+                        <span>Out: 12:30 PM</span>
+                    </div>
+                </div>
+            );
+        }
+        
+        return calendarCells;
     };
 
     // Initialize User & School ID
@@ -487,6 +759,19 @@ const Teachers = () => {
     // Fetch Teachers & Classes
     useEffect(() => {
         if (!schoolId) return;
+
+        // Fetch School Name for Reports
+        const fetchSchoolInfo = async () => {
+            try {
+                const schoolDoc = await getDoc(doc(db, 'schools', schoolId));
+                if (schoolDoc.exists()) {
+                    setSchoolName(schoolDoc.data().name || 'School Name');
+                }
+            } catch (err) {
+                console.error("Error fetching school info", err);
+            }
+        };
+        fetchSchoolInfo();
 
         // Fetch Classes for dropdown
         const fetchClasses = async () => {
@@ -945,8 +1230,41 @@ const Teachers = () => {
                 ))}
             </div>
 
-            {/* Teacher Grid */}
-            {loading ? (
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.5rem' }}>
+                <button
+                    onClick={() => { setActiveTab('list'); setSelectedAttendanceTeacher(null); }}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                        color: activeTab === 'list' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'list' ? '3px solid var(--primary)' : '3px solid transparent',
+                        transition: 'all 0.2s',
+                        borderRadius: '0'
+                    }}
+                >
+                    Teachers List
+                </button>
+                <button
+                    onClick={() => setActiveTab('attendance')}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                        color: activeTab === 'attendance' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'attendance' ? '3px solid var(--primary)' : '3px solid transparent',
+                        transition: 'all 0.2s',
+                        borderRadius: '0'
+                    }}
+                >
+                    Attendance
+                </button>
+            </div>
+
+            {/* Tab Content */}
+            {activeTab === 'list' && (
+                <>
+                    {/* Teacher Grid */}
+                    {loading ? (
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
                     <Loader2 className="animate-spin" size={32} color="var(--primary)" />
                 </div>
@@ -968,6 +1286,155 @@ const Teachers = () => {
                             isHighlighted={highlightedTeacherId === t.id}
                         />
                     ))}
+                </div>
+            )}
+                </>
+            )}
+
+            {activeTab === 'attendance' && (
+                <div className="animate-fade-in-up">
+                    {selectedAttendanceTeacher ? (
+                        <div className="card" style={{ padding: '2rem', background: 'white', borderRadius: '24px', border: '1px solid #e2e8f0', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                    <button 
+                                        onClick={() => setSelectedAttendanceTeacher(null)}
+                                        style={{ background: '#f1f5f9', border: 'none', width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = '#e2e8f0'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                                    >
+                                        <ChevronLeft size={20} color="#475569" />
+                                    </button>
+                                    <div>
+                                        <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#1e293b', marginBottom: '0.2rem' }}>{selectedAttendanceTeacher.name}'s Attendance</h2>
+                                        <p style={{ color: '#64748b', fontSize: '0.95rem', fontWeight: '500' }}>{selectedAttendanceTeacher.subject || (selectedAttendanceTeacher.subjects && selectedAttendanceTeacher.subjects[0]) || 'Teacher'}</p>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => handleDownloadReport(selectedAttendanceTeacher)}
+                                    className="btn-primary" 
+                                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1.5rem', borderRadius: '12px', background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', border: 'none', color: 'white', fontWeight: '600', boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)', cursor: 'pointer', transition: 'all 0.2s' }}
+                                    onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                                    onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                                >
+                                    <DownloadCloud size={18} />
+                                    Download Report
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', background: '#f8fafc', padding: '1rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                    <Calendar size={22} color="#64748b" />
+                                    <select 
+                                        value={attendanceMonth} 
+                                        onChange={(e) => setAttendanceMonth(parseInt(e.target.value))}
+                                        style={{ padding: '0.5rem 1rem', borderRadius: '10px', border: '1px solid #cbd5e1', outline: 'none', fontWeight: '600', color: '#334155', background: 'white', cursor: 'pointer' }}
+                                    >
+                                        {Array.from({length: 12}).map((_, i) => (
+                                            <option key={i} value={i}>{new Date(0, i + 1, 0).toLocaleString('default', { month: 'long' })}</option>
+                                        ))}
+                                    </select>
+                                    <select 
+                                        value={attendanceYear} 
+                                        onChange={(e) => setAttendanceYear(parseInt(e.target.value))}
+                                        style={{ padding: '0.5rem 1rem', borderRadius: '10px', border: '1px solid #cbd5e1', outline: 'none', fontWeight: '600', color: '#334155', background: 'white', cursor: 'pointer' }}
+                                    >
+                                        <option value={new Date().getFullYear()}>{new Date().getFullYear()}</option>
+                                        <option value={new Date().getFullYear() - 1}>{new Date().getFullYear() - 1}</option>
+                                    </select>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '1.25rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '4px', background: '#10b981' }}></div><span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Present</span></div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '4px', background: '#f59e0b' }}></div><span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Half Day</span></div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '4px', background: '#ef4444' }}></div><span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Absent</span></div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '4px', background: '#3b82f6' }}></div><span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Holiday</span></div>
+                                </div>
+                            </div>
+
+                            {/* Calendar Grid Container */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                                    <div key={day} style={{ textAlign: 'center', fontWeight: '700', color: '#64748b', padding: '0.5rem 0', fontSize: '0.9rem' }}>{day}</div>
+                                ))}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.5rem' }}>
+                                {renderCalendar(attendanceYear, attendanceMonth)}
+                            </div>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Check-in Barcode Section (PDF Generator) */}
+                            <div className="card" style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem 2rem', background: 'linear-gradient(to right, #f8fafc, #ffffff)', border: '1px solid #e2e8f0', borderRadius: '20px' }}>
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', maxWidth: '70%' }}>
+                                    <div style={{ background: '#ecfdf5', padding: '1rem', borderRadius: '16px' }}>
+                                        <QrCode size={32} color="#10b981" />
+                                    </div>
+                                    <div>
+                                        <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#1e293b', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <ShieldCheck size={20} color="#10b981" />
+                                            Daily Attendance Scanner
+                                        </h3>
+                                        <p style={{ color: '#475569', fontSize: '0.95rem', margin: '0 0 0.5rem 0', lineHeight: '1.4' }}>
+                                            Generate a printable Barcode PDF for teachers to scan for Check-in & Check-out.
+                                        </p>
+                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: '#fef2f2', border: '1px solid #fecaca', padding: '0.4rem 0.8rem', borderRadius: '8px', color: '#dc2626', fontSize: '0.85rem', fontWeight: '600' }}>
+                                            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#dc2626' }}></div>
+                                            Security Notice: Generating a new barcode immediately invalidates all previously generated ones.
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <button 
+                                    onClick={handleGenerateBarcodePDF}
+                                    disabled={isGeneratingBarcode}
+                                    className="btn-primary"
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                        padding: '0.75rem 1.5rem', borderRadius: '12px',
+                                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                        color: 'white', fontWeight: '700', border: 'none',
+                                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                                        cursor: isGeneratingBarcode ? 'wait' : 'pointer', 
+                                        transition: 'all 0.2s',
+                                        whiteSpace: 'nowrap',
+                                        opacity: isGeneratingBarcode ? 0.8 : 1
+                                    }}
+                                    onMouseEnter={(e) => !isGeneratingBarcode && (e.currentTarget.style.transform = 'translateY(-2px)')}
+                                    onMouseLeave={(e) => !isGeneratingBarcode && (e.currentTarget.style.transform = 'translateY(0)')}
+                                >
+                                    {isGeneratingBarcode ? <Loader2 size={20} className="animate-spin" /> : <DownloadCloud size={20} />}
+                                    {isGeneratingBarcode ? 'Generating & Refreshing...' : 'Generate New Barcode PDF'}
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                            {teachers.map((t) => (
+                                <div 
+                                    key={t.id} 
+                                    onClick={() => setSelectedAttendanceTeacher(t)}
+                                    style={{
+                                        background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '1.5rem',
+                                        cursor: 'pointer', transition: 'all 0.3s ease', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                                        display: 'flex', alignItems: 'center', gap: '1rem'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(139, 92, 246, 0.2)'; e.currentTarget.style.borderColor = '#c4b5fd'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                                >
+                                    <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '700', fontSize: '1.4rem', boxShadow: '0 4px 10px rgba(124, 58, 237, 0.3)' }}>
+                                        {t.name && t.name.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                        <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1e293b', marginBottom: '0.2rem' }}>{t.name}</h3>
+                                        <span style={{ fontSize: '0.85rem', color: '#64748b', background: '#f1f5f9', padding: '0.2rem 0.6rem', borderRadius: '12px', fontWeight: '600' }}>
+                                            {t.subject || (t.subjects && t.subjects.length > 0 ? t.subjects[0] : 'Teacher')}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
 
