@@ -443,43 +443,36 @@ const Teachers = () => {
         return currentDate > lastDate;
     };
 
-    // --- NEW ATTENDANCE LOGIC ---
-    const generateMockAttendance = (year, month) => {
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const attendance = {};
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        for(let i = 1; i <= daysInMonth; i++) {
-            const dateObj = new Date(year, month, i);
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-            
-            // Future dates are greyed out (Upcoming)
-            if (dateObj > today) {
-                attendance[dateStr] = 'Upcoming';
-                continue;
-            }
-
-            // Skip Sundays (0)
-            if (dateObj.getDay() === 0) {
-                attendance[dateStr] = 'Holiday';
-                continue;
-            }
-
-            const rand = Math.random();
-            if(rand < 0.85) attendance[dateStr] = 'Present';
-            else if(rand < 0.92) attendance[dateStr] = 'Absent';
-            else if(rand < 0.98) attendance[dateStr] = 'Half Day';
-            else attendance[dateStr] = 'Holiday';
+    // --- REAL ATTENDANCE DATA LOGIC ---
+    const [teacherLogs, setTeacherLogs] = useState({});
+    
+    useEffect(() => {
+        if (!selectedAttendanceTeacher || !schoolId) {
+            setTeacherLogs({});
+            return;
         }
-        return attendance;
-    };
 
-    const memoizedMockData = useMemo(() => {
-        if (!selectedAttendanceTeacher) return {};
-        // Returning new data whenever year/month/teacher changes, but keeping it stable across renders
-        return generateMockAttendance(attendanceYear, attendanceMonth);
-    }, [attendanceYear, attendanceMonth, selectedAttendanceTeacher?.id]);
+        const startDate = `${attendanceYear}-${String(attendanceMonth + 1).padStart(2, '0')}-01`;
+        const endDate = `${attendanceYear}-${String(attendanceMonth + 1).padStart(2, '0')}-31`;
+
+        const q = query(
+            collection(db, 'schools', schoolId, 'teachers', selectedAttendanceTeacher.id, 'attendance_logs'),
+            where('date', '>=', startDate),
+            where('date', '<=', endDate)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const logsMap = {};
+            snapshot.forEach((doc) => {
+                logsMap[doc.id] = doc.data();
+            });
+            setTeacherLogs(logsMap);
+        }, (error) => {
+            console.error('Error fetching teacher attendance logs:', error);
+        });
+
+        return () => unsubscribe();
+    }, [schoolId, selectedAttendanceTeacher, attendanceMonth, attendanceYear]);
 
     const handleDownloadReport = (teacher) => {
         const doc = new jsPDF();
@@ -500,22 +493,32 @@ const Teachers = () => {
         doc.text(`Subject/Class: ${teacher.subject || (teacher.subjects && teacher.subjects[0]) || 'N/A'}`, 14, 52);
 
         // Generate data for table
-        const mockData = memoizedMockData;
         const daysInMonth = new Date(attendanceYear, attendanceMonth + 1, 0).getDate();
         
         let presentCount = 0;
         let absentCount = 0;
         let halfCount = 0;
+        
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
         const tableBody = [];
         for(let i = 1; i <= daysInMonth; i++) {
             const dateStr = `${attendanceYear}-${String(attendanceMonth + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-            const status = mockData[dateStr] || 'Present';
+            const dateObj = new Date(attendanceYear, attendanceMonth, i);
+            
+            let status = teacherLogs[dateStr]?.status;
+            
+            if (!status) {
+                if (dateObj > today) status = 'Upcoming';
+                else if (dateObj.getDay() === 0) status = 'Holiday';
+                else status = 'Blank';
+            }
+
             if(status === 'Present') presentCount++;
             else if(status === 'Absent') absentCount++;
             else if(status === 'Half Day') halfCount++;
 
-            const dateObj = new Date(attendanceYear, attendanceMonth, i);
             const dayOfWeek = dateObj.toLocaleString('default', { weekday: 'short' });
 
             tableBody.push([dateStr, dayOfWeek, status]);
@@ -632,9 +635,10 @@ const Teachers = () => {
     const renderCalendar = (year, month) => {
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         const firstDayOfMonth = new Date(year, month, 1).getDay();
-        const mockData = memoizedMockData;
         
         const calendarCells = [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
         
         // Empty cells for days before the 1st
         for (let i = 0; i < firstDayOfMonth; i++) {
@@ -644,7 +648,15 @@ const Teachers = () => {
         // Days of the month
         for (let i = 1; i <= daysInMonth; i++) {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-            const status = mockData[dateStr] || 'Present';
+            const dateObj = new Date(year, month, i);
+            
+            let status = teacherLogs[dateStr]?.status;
+            
+            if (!status) {
+                if (dateObj > today) status = 'Upcoming';
+                else if (dateObj.getDay() === 0) status = 'Holiday';
+                else status = 'Blank';
+            }
             
             let bg = '#ffffff';
             let color = '#334155';
@@ -654,49 +666,62 @@ const Teachers = () => {
             else if (status === 'Absent') { bg = '#ef4444'; color = '#ffffff'; border = '#dc2626'; }
             else if (status === 'Half Day') { bg = '#f59e0b'; color = '#ffffff'; border = '#d97706'; }
             else if (status === 'Holiday') { bg = '#3b82f6'; color = '#ffffff'; border = '#2563eb'; }
-            else if (status === 'Upcoming') { bg = '#f1f5f9'; color = '#94a3b8'; border = '#e2e8f0'; }
+            else if (status === 'Upcoming' || status === 'Blank') { bg = '#f1f5f9'; color = '#94a3b8'; border = '#e2e8f0'; }
 
-            const isHalfDayExpanded = expandedHalfDayCell === dateStr && status === 'Half Day';
+            // Allow expanding Present or Half Day cells to see timestamps
+            const isExpanded = expandedHalfDayCell === dateStr && (status === 'Half Day' || status === 'Present');
+            
+            let checkInStr = '--:--';
+            let checkOutStr = '--:--';
+            if (teacherLogs[dateStr]?.checkIn) {
+                checkInStr = new Date(teacherLogs[dateStr].checkIn.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            }
+            if (teacherLogs[dateStr]?.checkOut) {
+                checkOutStr = new Date(teacherLogs[dateStr].checkOut.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            }
 
             calendarCells.push(
                 <div key={i} 
                     onClick={() => {
-                        if (status === 'Half Day') {
-                            setExpandedHalfDayCell(isHalfDayExpanded ? null : dateStr);
+                        if (status === 'Half Day' || status === 'Present') {
+                            setExpandedHalfDayCell(isExpanded ? null : dateStr);
                         }
                     }}
                     style={{ 
                     padding: '0.75rem', background: bg, borderRadius: '12px', border: `1px solid ${border}`, 
                     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
                     boxShadow: '0 1px 2px rgba(0,0,0,0.02)', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
-                    cursor: status === 'Half Day' ? 'pointer' : 'default',
+                    cursor: (status === 'Half Day' || status === 'Present') ? 'pointer' : 'default',
                     minHeight: '80px',
                     position: 'relative', overflow: 'hidden'
                 }}
                 onMouseEnter={(e) => {
-                    if(status !== 'Upcoming') e.currentTarget.style.transform = 'scale(1.03)';
-                    if(status === 'Half Day') e.currentTarget.style.borderColor = '#f59e0b';
+                    if(status !== 'Upcoming' && status !== 'Blank') e.currentTarget.style.transform = 'scale(1.03)';
+                    if(status === 'Half Day' || status === 'Present') e.currentTarget.style.borderColor = status === 'Half Day' ? '#f59e0b' : '#10b981';
                 }}
                 onMouseLeave={(e) => {
                     e.currentTarget.style.transform = 'scale(1)';
-                    if(status === 'Half Day') e.currentTarget.style.borderColor = '#fde68a';
+                    if(status === 'Half Day') e.currentTarget.style.borderColor = '#d97706';
+                    if(status === 'Present') e.currentTarget.style.borderColor = '#059669';
                 }}
                 >
                     <span style={{ fontSize: '1.2rem', fontWeight: '800', color: color, zIndex: 2 }}>{i}</span>
-                    <span style={{ fontSize: '0.7rem', fontWeight: '600', color: color, textTransform: 'uppercase', zIndex: 2 }}>{status}</span>
+                    <span style={{ fontSize: '0.7rem', fontWeight: '600', color: color, textTransform: 'uppercase', zIndex: 2 }}>
+                        {status === 'Blank' ? '' : status}
+                    </span>
                     
-                    {/* Animated Half-day details (check in / out) */}
+                    {/* Animated Details (check in / out) */}
                     <div style={{
-                        maxHeight: isHalfDayExpanded ? '50px' : '0px',
-                        opacity: isHalfDayExpanded ? 1 : 0,
+                        maxHeight: isExpanded ? '50px' : '0px',
+                        opacity: isExpanded ? 1 : 0,
                         transition: 'all 0.3s ease-in-out',
                         overflow: 'hidden',
                         display: 'flex', flexDirection: 'column', alignItems: 'center',
-                        fontSize: '0.65rem', fontWeight: '600', color: '#92400e',
-                        marginTop: isHalfDayExpanded ? '0.2rem' : '0'
+                        fontSize: '0.65rem', fontWeight: '600', color: status === 'Half Day' ? '#92400e' : '#ecfdf5',
+                        marginTop: isExpanded ? '0.2rem' : '0'
                     }}>
-                        <span>In: 08:00 AM</span>
-                        <span>Out: 12:30 PM</span>
+                        <span>In: {checkInStr}</span>
+                        <span>Out: {checkOutStr}</span>
                     </div>
                 </div>
             );
