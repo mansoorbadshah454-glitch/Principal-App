@@ -11,7 +11,7 @@ import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 // Internal Component for individual Teacher Card logic
-const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted }) => {
+const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted, todayStr }) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editStep, setEditStep] = useState(1);
     const [editedTeacher, setEditedTeacher] = useState({
@@ -404,6 +404,15 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
 };
 
 const Teachers = () => {
+    const getTodayStr = () => {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+    const todayStr = getTodayStr();
+
     const [activeTab, setActiveTab] = useState('list');
     const [selectedAttendanceTeacher, setSelectedAttendanceTeacher] = useState(null);
     const [attendanceMonth, setAttendanceMonth] = useState(new Date().getMonth());
@@ -510,7 +519,7 @@ const Teachers = () => {
             let status = teacherLogs[dateStr]?.status;
             
             if (!status) {
-                if (dateObj > today) status = 'Upcoming';
+                if (dateObj >= today) status = 'Upcoming';
                 else if (dateObj.getDay() === 0) status = 'Holiday';
                 else status = 'Blank';
             }
@@ -653,7 +662,7 @@ const Teachers = () => {
             let status = teacherLogs[dateStr]?.status;
             
             if (!status) {
-                if (dateObj > today) status = 'Upcoming';
+                if (dateObj >= today) status = 'Upcoming';
                 else if (dateObj.getDay() === 0) status = 'Holiday';
                 else status = 'Blank';
             }
@@ -1204,7 +1213,7 @@ const Teachers = () => {
                     },
                     {
                         label: 'Active Today',
-                        value: teachers.filter(t => t.isOnDuty && !isNewDay(t.lastDutyUpdate)).length,
+                        value: teachers.filter(t => t.lastAttendanceDate === todayStr).length,
                         icon: User,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%)',
                         border: '#dcfce7',
@@ -1213,7 +1222,7 @@ const Teachers = () => {
                     },
                     {
                         label: 'Staff On Leave',
-                        value: teachers.filter(t => !t.isOnDuty || isNewDay(t.lastDutyUpdate)).length,
+                        value: teachers.filter(t => t.lastAttendanceDate !== todayStr).length,
                         icon: User,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #fffbeb 100%)',
                         border: '#fef3c7',
@@ -1309,6 +1318,7 @@ const Teachers = () => {
                             schoolId={schoolId}
                             dbClasses={dbClasses}
                             isHighlighted={highlightedTeacherId === t.id}
+                            todayStr={todayStr}
                         />
                     ))}
                 </div>

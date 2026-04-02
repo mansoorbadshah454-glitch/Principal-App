@@ -219,6 +219,12 @@ const Dashboard = () => {
                 // Check if it's a new day - if so, consider status as 'off'
                 const isOff = isNewDay(lastDutyUpdate) || !dutyStatus;
 
+                const today = new Date();
+                const year = today.getFullYear();
+                const month = String(today.getMonth() + 1).padStart(2, '0');
+                const day = String(today.getDate()).padStart(2, '0');
+                const todayStr = `${year}-${month}-${day}`;
+
                 return {
                     id: doc.id,
                     name: data.name,
@@ -226,6 +232,7 @@ const Dashboard = () => {
                         ? data.assignedClasses[0]
                         : (data.assignedClasses || 'Unassigned'),
                     status: isOff ? 'off' : 'on',
+                    isPresent: data.lastAttendanceDate === todayStr,
                     score: 75 + (doc.id.charCodeAt(0) % 20)
                 };
             });
@@ -1453,13 +1460,25 @@ const Dashboard = () => {
                                                     onMouseLeave={(e) => e.target.style.color = 'inherit'}
                                                 >
                                                     {teacher.name}
+                                                    <span style={{
+                                                        marginLeft: '0.75rem',
+                                                        fontSize: '0.65rem',
+                                                        padding: '0.2rem 0.5rem',
+                                                        borderRadius: '8px',
+                                                        background: teacher.isPresent ? '#3b82f6' : '#ef4444',
+                                                        color: 'white',
+                                                        verticalAlign: 'middle',
+                                                        fontWeight: '600'
+                                                    }}>
+                                                        {teacher.isPresent ? 'Present' : 'Absent'}
+                                                    </span>
                                                 </p>
                                                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{teacher.class}</p>
                                             </div>
                                         </div>
                                         <div style={{ textAlign: 'right' }}>
                                             <p style={{ fontSize: '0.7rem', color: teacher.status === 'on' ? 'var(--success)' : 'var(--danger)', fontWeight: '600' }}>
-                                                {teacher.status === 'on' ? 'Duty On' : 'Duty Off'}
+                                                {teacher.status === 'on' ? 'On Class' : 'Off Class'}
                                             </p>
                                         </div>
                                     </div>
