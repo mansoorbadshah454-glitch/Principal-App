@@ -312,10 +312,6 @@ const Admission = () => {
                 // 1. Save to Class Sub-collection
                 await setDoc(studentRef, studentData);
 
-                // 2. Save to Master "Students" Collection (Sync for easy search/listing)
-                const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
-                await setDoc(masterStudentRef, studentData);
-
                 // Add to links array
                 // Add to links array
                 newStudentLinks.push({

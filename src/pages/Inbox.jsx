@@ -33,6 +33,10 @@ const Inbox = () => {
     const [unreadCounts, setUnreadCounts] = useState({});
     const [showMenu, setShowMenu] = useState(false);
 
+    // New state for file upload confirmation
+    const [selectedFileForUpload, setSelectedFileForUpload] = useState(null);
+    const [fileCaption, setFileCaption] = useState('');
+
     const messagesEndRef = useRef(null);
     const menuRef = useRef(null);
 
@@ -379,11 +383,21 @@ const Inbox = () => {
         }
     };
 
-    const handleFileUpload = async (e) => {
+    const handleFileUpload = (e) => {
         const file = e.target.files[0];
+        if (!file || !schoolId || !selectedTeacher) return;
+        
+        setSelectedFileForUpload(file);
+        setFileCaption('');
+        e.target.value = null; // Reset input so same file can be chosen again if canceled
+    };
+
+    const confirmAndUploadFile = async () => {
+        const file = selectedFileForUpload;
         if (!file || !schoolId || !selectedTeacher) return;
 
         setIsSending(true);
+        setSelectedFileForUpload(null); // Close modal
         try {
             const path = `schools/${schoolId}/messages/attachments/${Date.now()}_${file.name}`;
             const fileRef = storageRef(storage, path);
@@ -391,7 +405,7 @@ const Inbox = () => {
             const url = await getDownloadURL(fileRef);
 
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
-                text: `Sent an attachment: ${file.name}`,
+                text: fileCaption.trim() || '', // Use caption instead of hardcoded prefix
                 from: currentUserRole === 'principal' ? 'principal' : 'admin',
                 fromId: messagingId,
                 fromName: currentUserName,
@@ -411,6 +425,7 @@ const Inbox = () => {
                     type: file.type.split('/')[1] || 'file'
                 },
             });
+            setFileCaption('');
             scrollToBottom();
         } catch (error) {
             console.error("Error uploading file:", error);
@@ -575,22 +590,40 @@ const Inbox = () => {
                                             )}
                                             <div className={`message-wrapper ${isMe ? 'sent' : 'received'}`}>
                                                 <div className="message-bubble">
-                                                    <p className="message-text">{msg.text || msg.message}</p>
+                                                    {(msg.text || msg.message) && (
+                                                        <p className="message-text">{msg.text || msg.message}</p>
+                                                    )}
 
                                                     {msg.attachment && (
                                                         <div className="attachment-container">
-                                                            {['jpg', 'jpeg', 'png', 'webp'].includes(msg.attachment.type?.toLowerCase()) ? (
+                                                            {['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(msg.attachment.type?.toLowerCase()) ? (
                                                                 <img
                                                                     src={msg.attachment.url}
                                                                     alt={msg.attachment.name}
                                                                     className="media-preview"
                                                                     onClick={() => window.open(msg.attachment.url, '_blank')}
                                                                     style={{
-                                                                        maxWidth: '100%',
+                                                                        maxWidth: '250px',
+                                                                        maxHeight: '250px',
                                                                         borderRadius: '8px',
                                                                         cursor: 'pointer',
-                                                                        marginTop: '0.5rem',
-                                                                        display: 'block'
+                                                                        marginTop: msg.text ? '0.5rem' : '0',
+                                                                        display: 'block',
+                                                                        objectFit: 'cover'
+                                                                    }}
+                                                                />
+                                                            ) : ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(msg.attachment.type?.toLowerCase()) ? (
+                                                                <video
+                                                                    src={msg.attachment.url}
+                                                                    controls
+                                                                    className="media-preview"
+                                                                    style={{
+                                                                        maxWidth: '250px',
+                                                                        maxHeight: '250px',
+                                                                        borderRadius: '8px',
+                                                                        marginTop: msg.text ? '0.5rem' : '0',
+                                                                        display: 'block',
+                                                                        backgroundColor: '#000'
                                                                     }}
                                                                 />
                                                             ) : (
@@ -623,10 +656,10 @@ const Inbox = () => {
                         </div>
 
                         {/* Chat Input */}
-                        <div className="chat-input-area">
+                        <div className="chat-input-area" style={{ position: 'relative' }}>
                             <label className="attach-btn" title="Attach file">
                                 <Plus size={20} />
-                                <input type="file" onChange={handleFileUpload} style={{ display: 'none' }} />
+                                <input type="file" onChange={handleFileUpload} style={{ display: 'none' }} accept="image/*,video/*,application/pdf" />
                             </label>
                             <form className="chat-input-wrapper" onSubmit={handleSendMessage} style={{ flex: 1, display: 'flex' }}>
                                 <input
@@ -656,6 +689,46 @@ const Inbox = () => {
                     </div>
                 )}
             </div>
+
+            {/* File Upload Confirmation Modal */}
+            {selectedFileForUpload && (
+                <div className="file-confirm-overlay" style={{
+                    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                    <div className="file-confirm-modal" style={{
+                        background: 'var(--bg-color, #fff)', padding: '20px', borderRadius: '12px',
+                        width: '90%', maxWidth: '400px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
+                    }}>
+                        <h3 style={{ marginTop: 0, marginBottom: '15px', color: 'var(--text-color, #000)' }}>Send Attachment</h3>
+                        <div style={{ marginBottom: '15px', padding: '10px', background: 'var(--hover-color, #f3f4f6)', borderRadius: '8px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {selectedFileForUpload.type.startsWith('image/') ? (
+                                <img src={URL.createObjectURL(selectedFileForUpload)} alt="preview" style={{ maxWidth: '100%', maxHeight: '200px', display: 'block', margin: '0 auto', borderRadius: '8px' }} />
+                            ) : selectedFileForUpload.type.startsWith('video/') ? (
+                                <video src={URL.createObjectURL(selectedFileForUpload)} style={{ maxWidth: '100%', maxHeight: '200px', display: 'block', margin: '0 auto', borderRadius: '8px' }} controls />
+                            ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-color, #000)' }}><Paperclip size={24} /> <span style={{ wordBreak: 'break-all' }}>{selectedFileForUpload.name}</span></div>
+                            )}
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Add a caption..."
+                            value={fileCaption}
+                            onChange={(e) => setFileCaption(e.target.value)}
+                            onKeyDown={(e) => { if(e.key === 'Enter') confirmAndUploadFile() }}
+                            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', marginBottom: '15px', boxSizing: 'border-box' }}
+                            autoFocus
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                            <button onClick={() => setSelectedFileForUpload(null)} style={{ padding: '8px 16px', border: 'none', background: 'transparent', cursor: 'pointer', color: '#666', fontWeight: 500 }}>Cancel</button>
+                            <button onClick={confirmAndUploadFile} disabled={isSending} style={{ padding: '8px 16px', border: 'none', background: 'var(--primary-color, var(--wa-primary, #6366f1))', color: '#fff', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 500 }}>
+                                {isSending ? 'Sending...' : <><Send size={16} /> Send</>}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby } from 'lucide-react';
 import { db, functions } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
 import { auth } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 
@@ -52,12 +52,23 @@ const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbCl
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes/${selectedStepClassId}/students`));
                 const snapshot = await getDocs(q);
-                const studentsList = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    name: doc.data().name || `${doc.data().firstName} ${doc.data().lastName}`,
-                    rollNo: doc.data().rollNo
-                }));
-                setAvailableStepStudents(studentsList);
+                // Automatically vaporize any ghost clones that were created by the earlier bug!
+                const validStudents = [];
+                snapshot.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    if (!data.name && !data.firstName) {
+                        // This is a ghost clone! Destroy it natively.
+                        deleteDoc(docSnap.ref).catch(e => console.error("Ghost Buster Error:", e));
+                    } else {
+                        validStudents.push({
+                            id: docSnap.id,
+                            name: data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim(),
+                            rollNo: data.rollNo
+                        });
+                    }
+                });
+                
+                setAvailableStepStudents(validStudents);
             } catch (err) {
                 console.error("Error fetching students in card:", err);
             }
@@ -843,10 +854,60 @@ const Parents = () => {
 
     const handleUpdateParent = async (id, updatedData) => {
         try {
+            const oldParent = parents.find(p => p.id === id);
             const parentRef = doc(db, `schools/${schoolId}/parents`, id);
-            await updateDoc(parentRef, updatedData);
+
+            const oldLinks = oldParent?.linkedStudents || [];
+            const newLinks = updatedData.linkedStudents || [];
+
+            const unlinkedStudents = oldLinks.filter(oldLink => !newLinks.some(newLink => newLink.studentId === oldLink.studentId));
+            const freshlyLinkedStudents = newLinks.filter(newLink => !oldLinks.some(oldLink => oldLink.studentId === newLink.studentId));
+
+            const batch = writeBatch(db);
+
+            // 1. Sync Parent Doc
+            batch.update(parentRef, updatedData);
+
+            const allClasses = dbClasses || [];
+
+            const getPossibleRefs = (studentId) => {
+                const refs = [doc(db, `schools/${schoolId}/students`, studentId)]; // master
+                allClasses.forEach(cls => {
+                    refs.push(doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId));
+                });
+                return refs;
+            };
+
+            // 2. Remove access from unlinked students (sweeps all classes to clear ghosts)
+            for (const child of unlinkedStudents) {
+                if (child.studentId) {
+                    const refs = getPossibleRefs(child.studentId);
+                    const snaps = await Promise.all(refs.map(r => getDoc(r)));
+                    snaps.forEach(snap => {
+                        if (snap.exists()) {
+                            batch.update(snap.ref, { "parentDetails.parentId": null });
+                        }
+                    });
+                }
+            }
+
+            // 3. Grant access to newly linked students (finds true location safely)
+            for (const child of freshlyLinkedStudents) {
+                if (child.studentId) {
+                    const refs = getPossibleRefs(child.studentId);
+                    const snaps = await Promise.all(refs.map(r => getDoc(r)));
+                    snaps.forEach(snap => {
+                        if (snap.exists()) {
+                            batch.update(snap.ref, { "parentDetails.parentId": id });
+                        }
+                    });
+                }
+            }
+
+            await batch.commit();
         } catch (error) {
             console.error("Error updating parent:", error);
+            alert("DB ERROR: " + error.message);
             throw error;
         }
     };
@@ -896,16 +957,15 @@ const Parents = () => {
         try {
             console.log("Submitting Parent Data:", newParent, "SchoolID:", activeSchoolId);
             if (isEditing) {
-                const parentRef = doc(db, `schools/${activeSchoolId}/parents`, editingId);
                 const updateData = { ...newParent };
                 // Optionally handle password logic if needed, but for now we update everything
-                await updateDoc(parentRef, updateData);
+                await handleUpdateParent(editingId, updateData);
             } else {
                 // Use Cloud Function for Safe Creation (Auth + Firestore)
                 // Use imported 'functions' instance
                 const createSchoolUserFn = httpsCallable(functions, 'createSchoolUser');
 
-                await createSchoolUserFn({
+                const result = await createSchoolUserFn({
                     email: newParent.email ? newParent.email.trim() : '',
                     password: newParent.password,
                     name: newParent.name.trim(),
@@ -917,6 +977,23 @@ const Parents = () => {
                     occupation: newParent.occupation || '',
                     linkedStudents: newParent.linkedStudents
                 });
+
+                // Sync freshly linked students directly to their document subcollections
+                if (newParent.linkedStudents && newParent.linkedStudents.length > 0 && result?.data?.uid) {
+                    const batch = writeBatch(db);
+                    for (const child of newParent.linkedStudents) {
+                        if (child.studentId) {
+                            const refs = getPossibleRefs(child.studentId);
+                            const snaps = await Promise.all(refs.map(r => getDoc(r)));
+                            snaps.forEach(snap => {
+                                if (snap.exists()) {
+                                    batch.update(snap.ref, { "parentDetails.parentId": result.data.uid });
+                                }
+                            });
+                        }
+                    }
+                    await batch.commit();
+                }
             }
 
             setShowAddParent(false);

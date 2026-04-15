@@ -348,19 +348,22 @@ const Promotions = () => {
                             const alumniRef = doc(db, `schools/${schoolId}/alumni`, student.id);
                             batch.set(alumniRef, { ...studentData, graduatedAt: new Date(), previousClassId: selectedClass.id });
                             batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                            batch.delete(doc(db, `schools/${schoolId}/students`, student.id)); // Remove from active students
                         });
                     } else if (student.nextClassId) {
                         moveOps.push((batch) => {
                             const nextClassRef = doc(db, `schools/${schoolId}/classes/${student.nextClassId}/students`, student.id);
-                            batch.set(nextClassRef, { ...studentData, promotedAt: new Date(), previousClassId: selectedClass.id });
+                            batch.set(nextClassRef, { ...studentData, classId: student.nextClassId, className: student.nextClassName, promotedAt: new Date(), previousClassId: selectedClass.id });
                             batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                            batch.update(doc(db, `schools/${schoolId}/students`, student.id), { classId: student.nextClassId, className: student.nextClassName, updatedAt: new Date() });
                         });
                     }
                 } else if (status === 'demote' && student.previousClassId) {
                     moveOps.push((batch) => {
                         const prevClassRef = doc(db, `schools/${schoolId}/classes/${student.previousClassId}/students`, student.id);
-                        batch.set(prevClassRef, { ...studentData, demotedAt: new Date(), previousClassId: selectedClass.id });
+                        batch.set(prevClassRef, { ...studentData, classId: student.previousClassId, className: student.previousClassName, demotedAt: new Date(), previousClassId: selectedClass.id });
                         batch.delete(doc(db, `schools/${schoolId}/classes/${selectedClass.id}/students`, student.id));
+                        batch.update(doc(db, `schools/${schoolId}/students`, student.id), { classId: student.previousClassId, className: student.previousClassName, updatedAt: new Date() });
                     });
                 } else if (status === 'leave') {
                     moveOps.push((batch) => {
