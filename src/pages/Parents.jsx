@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby } from 'lucide-react';
 import { db, functions } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 
@@ -132,7 +132,7 @@ const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbCl
             setLocalMessageText('');
         } catch (error) {
             console.error("Error sending message:", error);
-            alert("Failed to send message.");
+            alert("Failed to send message: " + (error.message || "Unknown error"));
         }
     };
 
@@ -1024,17 +1024,63 @@ const Parents = () => {
     };
 
     const handleSendMessage = async (parentId, text) => {
-        if (!text.trim()) return;
+        if (!text || !text.trim()) return;
 
         try {
-            const notifRef = collection(db, `schools/${schoolId}/parents/${parentId}/notifications`);
+            const targetParent = parents.find(p => p.id === parentId);
+            const parentName = (targetParent && targetParent.name) ? targetParent.name : 'Parent';
+
+            // Extract admin user info robustly
+            let currentUserId = 'admin';
+            let currentUserRole = 'admin';
+            let currentUserName = 'Administration';
+            try {
+               const session = localStorage.getItem('manual_session');
+               if (session) {
+                   const parsed = JSON.parse(session);
+                   currentUserId = parsed.uid || 'admin';
+                   currentUserRole = parsed.role || 'admin';
+                   currentUserName = parsed.displayName || parsed.name || 'Administration';
+               } else if (auth?.currentUser) {
+                   currentUserId = auth.currentUser.uid || 'admin';
+                   currentUserName = auth.currentUser.displayName || 'Administration';
+               }
+            } catch(e) {
+                console.warn("Session check failed", e);
+            }
+
+            // Clean fallback data
+            const cleanRole = String(currentUserRole || 'admin').toLowerCase();
+            const displayRole = cleanRole.includes('principal') ? 'Principal' : 'Admin';
+            const displayName = currentUserName || 'Administration';
+
+            // 1. Send to global notifications feed (Teacher App format)
+            const notifRef = collection(db, `schools/${schoolId}/notifications`);
             await addDoc(notifRef, {
-                title: "Message from Principal",
+                parentId: parentId,
+                title: `Message from ${displayRole}`,
                 message: text.trim(),
                 timestamp: new Date(),
                 read: false,
                 type: 'private_message',
-                sender: 'Principal'
+                sender: displayRole
+            });
+
+            // 2. Send to global messages collection for exact Chat tab integration
+            const messagesRef = collection(db, `schools/${schoolId}/messages`);
+            await addDoc(messagesRef, {
+                teacherId: currentUserId || 'admin',
+                teacherName: displayRole === 'Principal' ? 'Principal' : displayName,
+                parentId: parentId || 'unknown',
+                parentName: parentName || 'Parent',
+                studentId: '', 
+                studentName: '', 
+                message: text.trim(),
+                timestamp: new Date(),
+                read: false,
+                schoolId: schoolId || 'unknown',
+                type: 'admin-message',
+                senderRole: displayRole 
             });
 
             alert("Message sent successfully!");
