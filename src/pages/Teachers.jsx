@@ -419,6 +419,59 @@ const Teachers = () => {
     const [attendanceYear, setAttendanceYear] = useState(new Date().getFullYear());
     const [expandedHalfDayCell, setExpandedHalfDayCell] = useState(null);
 
+    const [timeTableCols, setTimeTableCols] = useState(['08:00', '09:00', '10:00']);
+    const [timeTableRows, setTimeTableRows] = useState([
+        { id: Date.now().toString(), teacherId: '', cells: [{ class: '', subject: '' }, { class: '', subject: '' }, { class: '', subject: '' }] }
+    ]);
+    const [isPublishingTimeTable, setIsPublishingTimeTable] = useState(false);
+    const [publishType, setPublishType] = useState('standard');
+
+    const handleAddTimeCol = () => {
+        setTimeTableCols([...timeTableCols, '']);
+        setTimeTableRows(timeTableRows.map(row => ({
+            ...row,
+            cells: [...row.cells, { class: '', subject: '' }]
+        })));
+    };
+
+    const handleRemoveTimeCol = (index) => {
+        if (timeTableCols.length <= 1) return;
+        const newCols = [...timeTableCols];
+        newCols.splice(index, 1);
+        setTimeTableCols(newCols);
+        
+        setTimeTableRows(timeTableRows.map(row => {
+            const newCells = [...row.cells];
+            newCells.splice(index, 1);
+            return { ...row, cells: newCells };
+        }));
+    };
+
+    const handleAddTimeRow = () => {
+        setTimeTableRows([
+            ...timeTableRows,
+            { id: Date.now().toString(), teacherId: '', cells: timeTableCols.map(() => ({ class: '', subject: '' })) }
+        ]);
+    };
+
+    const handleTimeTableTimeChange = (colIndex, newTime) => {
+        const newCols = [...timeTableCols];
+        newCols[colIndex] = newTime;
+        setTimeTableCols(newCols);
+    };
+
+    const handleTimeTableTeacherChange = (rowIndex, teacherId) => {
+        const newRows = [...timeTableRows];
+        newRows[rowIndex].teacherId = teacherId;
+        setTimeTableRows(newRows);
+    };
+
+    const handleTimeTableCellChange = (rowIndex, colIndex, field, value) => {
+        const newRows = [...timeTableRows];
+        newRows[rowIndex].cells[colIndex][field] = value;
+        setTimeTableRows(newRows);
+    };
+
     const [showAddTeacher, setShowAddTeacher] = useState(false);
     const [step, setStep] = useState(1);
     const [newTeacher, setNewTeacher] = useState({
@@ -436,6 +489,44 @@ const Teachers = () => {
     const [schoolId, setSchoolId] = useState(null);
     const [schoolName, setSchoolName] = useState('School Name');
     const [dbClasses, setDbClasses] = useState([]);
+
+    useEffect(() => {
+        if (!schoolId) return;
+        const fetchMasterTimetable = async () => {
+            try {
+                const docRef = doc(db, 'schools', schoolId, 'timetables', 'weeklyMaster');
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if (data.cols && data.cols.length > 0) setTimeTableCols(data.cols);
+                    if (data.rows && data.rows.length > 0) setTimeTableRows(data.rows);
+                }
+            } catch (err) {
+                console.error("Failed to fetch timetable:", err);
+            }
+        };
+        fetchMasterTimetable();
+    }, [schoolId]);
+
+    const handleSaveTimeTable = async () => {
+        if (!schoolId) return;
+        setIsPublishingTimeTable(true);
+        try {
+            const publishTimetable = httpsCallable(functions, 'publishTimetable');
+            const result = await publishTimetable({
+                schoolId: schoolId,
+                cols: timeTableCols,
+                rows: timeTableRows,
+                notificationType: publishType
+            });
+            alert(result.data.message || 'Timetable published successfully!');
+        } catch (error) {
+            console.error("Publish failed:", error);
+            alert("Failed to publish timetable: " + error.message);
+        } finally {
+            setIsPublishingTimeTable(false);
+        }
+    };
 
     const subjectOptions = [
         'English', 'Urdu', 'Mathematics', 'Islamiyat', 'QURAN',
@@ -1292,6 +1383,19 @@ const Teachers = () => {
                 >
                     Attendance
                 </button>
+                <button
+                    onClick={() => setActiveTab('timetable')}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                        color: activeTab === 'timetable' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'timetable' ? '3px solid var(--primary)' : '3px solid transparent',
+                        transition: 'all 0.2s',
+                        borderRadius: '0'
+                    }}
+                >
+                    Time table
+                </button>
             </div>
 
             {/* Tab Content */}
@@ -1470,6 +1574,168 @@ const Teachers = () => {
                             </div>
                         </>
                     )}
+                </div>
+            )}
+
+            {activeTab === 'timetable' && (
+                <div className="animate-fade-in-up">
+                    <div className="card" style={{ padding: '2rem', background: '#e0f2fe', borderRadius: '24px', border: '1px solid #bae6fd', boxShadow: '0 10px 25px -5px rgba(14, 165, 233, 0.1)', overflowX: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#1e293b' }}>Weekly Time Table</h2>
+                            <button
+                                onClick={handleAddTimeRow}
+                                className="btn-primary"
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', borderRadius: '8px',
+                                    background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', border: 'none', color: 'white', fontWeight: '600', cursor: 'pointer'
+                                }}
+                            >
+                                <Plus size={16} /> Add Row
+                            </button>
+                        </div>
+
+                        <div style={{ minWidth: '600px' }}>
+                            {/* Header Row */}
+                            <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${timeTableCols.length}, minmax(110px, 1fr)) 80px`, gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center', background: '#f8fafc', padding: '0.5rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ fontWeight: '700', color: '#475569', fontSize: '0.85rem' }}>Teacher</div>
+                                {timeTableCols.map((col, idx) => (
+                                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                        <input
+                                            type="time"
+                                            value={col}
+                                            onChange={(e) => handleTimeTableTimeChange(idx, e.target.value)}
+                                            style={{ padding: '0.3rem', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontWeight: '600', color: '#334155', background: 'white', width: '100%', textAlign: 'center', fontSize: '0.85rem', cursor: 'pointer' }}
+                                        />
+                                    </div>
+                                ))}
+                                <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                                    <button onClick={handleAddTimeCol} style={{ background: '#10b981', border: 'none', color: 'white', width: '28px', height: '28px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)' }}>
+                                        <Plus size={14} />
+                                    </button>
+                                    <button onClick={() => handleRemoveTimeCol(timeTableCols.length - 1)} style={{ background: '#ef4444', border: 'none', color: 'white', width: '28px', height: '28px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(239, 68, 68, 0.2)' }} disabled={timeTableCols.length <= 1}>
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Data Rows */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {timeTableRows.map((row, rowIndex) => (
+                                    <div key={row.id} style={{ display: 'grid', gridTemplateColumns: `140px repeat(${timeTableCols.length}, minmax(110px, 1fr)) 80px`, gap: '0.5rem', alignItems: 'start', padding: '0.5rem', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', transition: 'box-shadow 0.2s' }}>
+                                        
+                                        {/* Teacher Selector */}
+                                        <div>
+                                            <select
+                                                value={row.teacherId}
+                                                onChange={(e) => handleTimeTableTeacherChange(rowIndex, e.target.value)}
+                                                style={{ width: '100%', padding: '0.4rem', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.8rem', fontWeight: '600', color: '#1e293b', background: '#f8fafc', cursor: 'pointer' }}
+                                            >
+                                                <option value="">Select Teacher</option>
+                                                {teachers.map(t => (
+                                                    <option key={t.id} value={t.id}>{t.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        {/* Time Cells */}
+                                        {row.cells.map((cell, colIndex) => (
+                                            <div key={colIndex} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', background: '#f1f5f9', padding: '0.4rem', borderRadius: '6px', border: (cell.class === 'FREE' || cell.class === 'BREAK') ? '1px dashed #94a3b8' : '1px solid #e2e8f0' }}>
+                                                
+                                                <select
+                                                    value={cell.class}
+                                                    onChange={(e) => handleTimeTableCellChange(rowIndex, colIndex, 'class', e.target.value)}
+                                                    style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '600', color: '#1e293b', background: 'white', cursor: 'pointer' }}
+                                                >
+                                                    <option value="">Select Class</option>
+                                                    <option value="FREE" style={{ fontWeight: 'bold', color: '#10b981' }}>-- FREE --</option>
+                                                    <option value="BREAK" style={{ fontWeight: 'bold', color: '#3b82f6' }}>-- BREAK --</option>
+                                                    {dbClasses.map(c => (
+                                                        <option key={c} value={c}>{c}</option>
+                                                    ))}
+                                                </select>
+
+                                                {(cell.class !== 'FREE' && cell.class !== 'BREAK') && (
+                                                    <select
+                                                        value={cell.subject}
+                                                        onChange={(e) => handleTimeTableCellChange(rowIndex, colIndex, 'subject', e.target.value)}
+                                                        style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '500', color: '#475569', background: 'white', cursor: 'pointer' }}
+                                                    >
+                                                        <option value="">Select Subject</option>
+                                                        {subjectOptions.map(s => (
+                                                            <option key={s} value={s}>{s}</option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                                
+                                                {cell.class === 'FREE' && (
+                                                    <div style={{ textAlign: 'center', padding: '0.1rem', color: '#10b981', fontSize: '0.7rem', fontWeight: '700', letterSpacing: '0.5px' }}>
+                                                        IDLE SLOT
+                                                    </div>
+                                                )}
+                                                {cell.class === 'BREAK' && (
+                                                    <div style={{ textAlign: 'center', padding: '0.1rem', color: '#3b82f6', fontSize: '0.7rem', fontWeight: '700', letterSpacing: '0.5px' }}>
+                                                        BREAK TIME
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+
+                                        {/* Remove Row Button */}
+                                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                                            <button 
+                                                onClick={() => {
+                                                    const newRows = [...timeTableRows];
+                                                    newRows.splice(rowIndex, 1);
+                                                    setTimeTableRows(newRows);
+                                                }}
+                                                style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.4rem', borderRadius: '6px', transition: 'background 0.2s' }}
+                                                onMouseEnter={(e) => e.currentTarget.style.background = '#fef2f2'}
+                                                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+
+                                    </div>
+                                ))}
+                            </div>
+
+                        </div>
+                    </div>
+                    
+                    {/* Save Button & Options Below Card */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '1rem', marginTop: '1.5rem', marginBottom: '2rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+                            <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>Notification Output</label>
+                            <select 
+                                value={publishType}
+                                onChange={(e) => setPublishType(e.target.value)}
+                                style={{ padding: '0.5rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontWeight: '600', color: publishType === 'emergency' ? '#ef4444' : '#1e293b', background: 'white', cursor: 'pointer' }}
+                            >
+                                <option value="standard">Publish Normal Plan (Standard Alerts)</option>
+                                <option value="emergency">Emergency Substitute (Urgent Alerts)</option>
+                            </select>
+                        </div>
+                        <button
+                            className="btn-primary"
+                            disabled={isPublishingTimeTable}
+                            style={{
+                                padding: '0.75rem 2.5rem', borderRadius: '12px',
+                                background: publishType === 'emergency' ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                color: 'white', fontWeight: '700', border: 'none', fontSize: '1.1rem',
+                                boxShadow: publishType === 'emergency' ? '0 4px 12px rgba(239, 68, 68, 0.3)' : '0 4px 12px rgba(16, 185, 129, 0.3)',
+                                cursor: isPublishingTimeTable ? 'wait' : 'pointer', transition: 'all 0.2s',
+                                display: 'flex', alignItems: 'center', gap: '0.5rem', height: 'fit-content',
+                                opacity: isPublishingTimeTable ? 0.7 : 1
+                            }}
+                            onClick={handleSaveTimeTable}
+                            onMouseEnter={(e) => !isPublishingTimeTable && (e.currentTarget.style.transform = 'translateY(-2px)')}
+                            onMouseLeave={(e) => !isPublishingTimeTable && (e.currentTarget.style.transform = 'translateY(0)')}
+                        >
+                            {isPublishingTimeTable ? <Loader2 size={20} className="animate-spin" /> : null}
+                            {isPublishingTimeTable ? 'Publishing...' : 'Save & Publish'}
+                        </button>
+                    </div>
                 </div>
             )}
 
