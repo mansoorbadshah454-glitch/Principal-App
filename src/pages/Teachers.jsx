@@ -957,17 +957,23 @@ const Teachers = () => {
         try {
             const teacherRef = doc(db, `schools/${schoolId}/teachers`, id);
             const updateData = { ...updatedTeacher };
+            const oldTeacher = teachers.find(t => t.id === id);
 
-            // 1. If password is provided, update Firebase Auth via Cloud Function
-            if (updateData.password && updateData.password.trim() !== '') {
-                console.log("Updating password for teacher:", id);
+            const isPasswordChanged = updateData.password && updateData.password.trim() !== '';
+            const newAuthEmail = (updateData.username && updateData.username.trim()) || (updateData.email && updateData.email.trim());
+            const oldAuthEmail = oldTeacher?.username || oldTeacher?.email;
+            const isEmailChanged = newAuthEmail !== oldAuthEmail;
+
+            // 1. If password or email changed, update Firebase Auth via Cloud Function
+            if (isPasswordChanged || (newAuthEmail && isEmailChanged)) {
+                console.log("Updating credentials for teacher:", id);
                 const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
-                await updatePasswordFn({
-                    targetUid: id,
-                    newPassword: updateData.password.trim(),
-                    schoolId: schoolId
-                });
-                console.log("Auth password updated successfully");
+                const authPayload = { targetUid: id, schoolId: schoolId };
+                if (isPasswordChanged) authPayload.newPassword = updateData.password.trim();
+                if (isEmailChanged) authPayload.newEmail = newAuthEmail;
+                
+                await updatePasswordFn(authPayload);
+                console.log("Auth credentials updated successfully");
             }
 
             if (!updateData.password) delete updateData.password; // Don't overwrite in FS if empty
@@ -977,7 +983,6 @@ const Teachers = () => {
 
             // ... (rest of the class re-assignment logic)
             // Handle Class Re-assignments
-            const oldTeacher = teachers.find(t => t.id === id);
             const oldClasses = oldTeacher?.assignedClasses || (oldTeacher?.assignedClass ? [oldTeacher.assignedClass] : []);
             const newClasses = updatedTeacher.assignedClasses || [];
 
@@ -1056,17 +1061,23 @@ const Teachers = () => {
                 // Update Logic
                 const teacherRef = doc(db, `schools/${schoolId}/teachers`, editingId);
                 const updateData = { ...newTeacher };
+                const oldTeacher = teachers.find(t => t.id === editingId);
 
-                // 1. If password is provided, update Firebase Auth via Cloud Function
-                if (updateData.password && updateData.password.trim() !== '') {
-                    console.log("Updating password for teacher during edit:", editingId);
+                const isPasswordChanged = updateData.password && updateData.password.trim() !== '';
+                const newAuthEmail = (updateData.username && updateData.username.trim()) || (updateData.email && updateData.email.trim());
+                const oldAuthEmail = oldTeacher?.username || oldTeacher?.email;
+                const isEmailChanged = newAuthEmail !== oldAuthEmail;
+
+                // 1. If password or email changed, update Firebase Auth via Cloud Function
+                if (isPasswordChanged || (newAuthEmail && isEmailChanged)) {
+                    console.log("Updating credentials for teacher during edit:", editingId);
                     const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
-                    await updatePasswordFn({
-                        targetUid: editingId,
-                        newPassword: updateData.password.trim(),
-                        schoolId: schoolId
-                    });
-                    console.log("Auth password updated successfully");
+                    const authPayload = { targetUid: editingId, schoolId: schoolId };
+                    if (isPasswordChanged) authPayload.newPassword = updateData.password.trim();
+                    if (isEmailChanged) authPayload.newEmail = newAuthEmail;
+
+                    await updatePasswordFn(authPayload);
+                    console.log("Auth credentials updated successfully");
                 }
 
                 if (!updateData.password) delete updateData.password; // Don't overwrite if empty
@@ -1076,7 +1087,6 @@ const Teachers = () => {
 
                 // ... (rest of class assignment logic)
                 // Handle Class Re-assignments
-                const oldTeacher = teachers.find(t => t.id === editingId);
                 const oldClasses = oldTeacher?.assignedClasses || (oldTeacher?.assignedClass ? [oldTeacher.assignedClass] : []);
                 const newClasses = newTeacher.assignedClasses || [];
 
