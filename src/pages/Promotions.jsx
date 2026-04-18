@@ -11,6 +11,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import CachedImage from '../components/CachedImage';
 
 const Promotions = () => {
     const [schoolId, setSchoolId] = useState(null);
@@ -819,7 +820,7 @@ const Promotions = () => {
                                                     border: '2px solid #F1F5F9'
                                                 }}>
                                                     {(student.avatar || student.profilePic) ? (
-                                                        <img src={student.avatar || student.profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                        <CachedImage src={student.avatar || student.profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                     ) : (
                                                         <span style={{ fontSize: '20px', fontWeight: '700', color: 'var(--primary)' }}>{student.name?.charAt(0)}</span>
                                                     )}

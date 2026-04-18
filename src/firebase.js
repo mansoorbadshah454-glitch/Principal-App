@@ -16,10 +16,12 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with settings to avoid "Unexpected state" errors
-// Using memory cache to avoid corrupted IndexedDB state causing crashes
+// Initialize Firestore with aggressive multi-tab persistent caching to reduce read costs to near-zero
+// and dramatically improve cross-session load times.
 export const db = initializeFirestore(app, {
-    localCache: memoryLocalCache()
+    localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+    })
 });
 
 export const auth = getAuth(app);

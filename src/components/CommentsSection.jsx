@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Send, User } from 'lucide-react';
+import CachedImage from './CachedImage';
 
 const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => {
     const [comments, setComments] = useState([]);
@@ -58,7 +59,7 @@ const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => 
             <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: '#e2e8f0' }}>
                     {schoolProfile?.image ? (
-                        <img src={schoolProfile.image} alt="User" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <CachedImage src={schoolProfile.image} alt="User" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', color: '#64748b' }}>
                             <User size={18} />
@@ -95,7 +96,7 @@ const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => 
                 {comments.map(comment => (
                     <div key={comment.id} style={{ display: 'flex', gap: '0.75rem' }}>
                         {comment.authorImage ? (
-                            <img src={comment.authorImage} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                            <CachedImage src={comment.authorImage} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
                         ) : (
                             <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>
                                 <User size={18} />

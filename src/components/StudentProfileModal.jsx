@@ -6,6 +6,7 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Cell
 } from 'recharts';
+import CachedImage from './CachedImage';
 
 const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, cardRect }) => {
     // Position Logic
@@ -182,7 +183,7 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                             {/* Avatar */}
                             <div style={styles.avatarContainer}>
                                 <div style={styles.avatarInner}>
-                                    <img
+                                    <CachedImage
                                         src={student.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.id}`}
                                         alt={student.name}
                                         style={styles.img}

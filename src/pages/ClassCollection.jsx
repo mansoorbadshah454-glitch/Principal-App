@@ -5,6 +5,7 @@ import { db, auth } from '../firebase';
 import { collection, getDocs, doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import CachedImage from '../components/CachedImage';
 
 const ClassCollection = () => {
     const { classId } = useParams();
@@ -377,7 +378,7 @@ const ClassCollection = () => {
                                 borderTop: `4px solid ${monthlyStatus === 'paid' ? '#10b981' : '#f43f5e'}`
                             }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                    <img
+                                    <CachedImage
                                         src={student.profilePic || `https://ui-avatars.com/api/?name=${student.name}&background=random`}
                                         alt={student.name}
                                         style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #e2e8f0' }}

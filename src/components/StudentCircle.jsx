@@ -3,6 +3,7 @@ import { User } from 'lucide-react';
 import { db, storage } from '../firebase';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { ref, getDownloadURL } from 'firebase/storage';
+import CachedImage from './CachedImage';
 
 /**
  * StudentCircle Component
@@ -37,16 +38,24 @@ const StudentCircle = ({ classId, schoolId, className, maxStudents = 20, size = 
                     const data = doc.data();
                     let imageUrl = null;
 
-                    // Try to fetch from Firebase Storage
-                    try {
-                        const storageRef = ref(storage, `schools/${schoolId}/students/${doc.id}/profile.jpg`);
-                        imageUrl = await getDownloadURL(storageRef);
-                    } catch (error) {
-                        // If no image in storage, check for base64 or use empty
-                        if (data.profilePic && data.profilePic.startsWith('data:')) {
-                            imageUrl = data.profilePic;
+                    // Priority 1: Direct cached URL in Firestore
+                    if (data.profilePic && !data.profilePic.startsWith('data:')) {
+                        imageUrl = data.profilePic;
+                    } else if (data.avatar && !data.avatar.startsWith('data:')) {
+                        imageUrl = data.avatar;
+                    } 
+                    // Priority 2: Base64 String
+                    else if (data.profilePic && data.profilePic.startsWith('data:')) {
+                        imageUrl = data.profilePic;
+                    } 
+                    // Priority 3: Fallback network fetch only if missing (Fixed huge billing bug)
+                    else {
+                        try {
+                            const storageRef = ref(storage, `schools/${schoolId}/students/${doc.id}/profile.jpg`);
+                            imageUrl = await getDownloadURL(storageRef);
+                        } catch (error) {
+                            // Leave as null
                         }
-                        // Otherwise imageUrl stays null (will show empty state)
                     }
 
                     return {
@@ -207,17 +216,13 @@ const StudentCircle = ({ classId, schoolId, className, maxStudents = 20, size = 
                                 transition: 'all 0.3s ease'
                             }}>
                                 {student.imageUrl ? (
-                                    <img
+                                    <CachedImage
                                         src={student.imageUrl}
                                         alt={student.name}
                                         style={{
                                             width: '100%',
                                             height: '100%',
                                             objectFit: 'cover'
-                                        }}
-                                        onError={(e) => {
-                                            e.target.style.display = 'none';
-                                            e.target.parentElement.innerHTML = `<div style="width: 100%; height: 100%; background: #e2e8f0; display: flex; align-items: center; justify-content: center;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></div>`;
                                         }}
                                     />
                                 ) : (
@@ -277,7 +282,7 @@ const StudentCircle = ({ classId, schoolId, className, maxStudents = 20, size = 
                             justifyContent: 'center'
                         }}>
                             {selectedStudent.imageUrl ? (
-                                <img
+                                <CachedImage
                                     src={selectedStudent.imageUrl}
                                     alt={selectedStudent.name}
                                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}

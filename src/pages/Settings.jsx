@@ -6,6 +6,7 @@ import { db, storage, auth } from '../firebase';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
+import CachedImage from '../components/CachedImage';
 
 const Settings = () => {
     const [loading, setLoading] = useState(false);
@@ -238,7 +239,7 @@ const Settings = () => {
                                     display: 'flex', alignItems: 'center', justifyContent: 'center'
                                 }}>
                                     {previewImage || schoolData.profileImage ? (
-                                        <img
+                                        <CachedImage
                                             src={previewImage || schoolData.profileImage}
                                             alt="School Profile"
                                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}

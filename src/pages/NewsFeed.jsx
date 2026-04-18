@@ -10,6 +10,7 @@ import {
     deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import CachedImage from '../components/CachedImage';
 
 const NewsFeed = () => {
     const [posts, setPosts] = useState([]);
@@ -290,7 +291,7 @@ const NewsFeed = () => {
                         padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center'
                     }}>
                         {schoolProfile.image ? (
-                            <img src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                            <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
                         ) : (
                             <Shield size={32} color="var(--primary)" />
                         )}
@@ -313,7 +314,7 @@ const NewsFeed = () => {
                             overflow: 'hidden', flexShrink: 0
                         }}>
                             {schoolProfile.image ? (
-                                <img src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             ) : (
                                 <Shield size={24} color="#64748b" style={{ margin: '8px' }} />
                             )}
@@ -432,7 +433,7 @@ const NewsFeed = () => {
                                         overflow: 'hidden', flexShrink: 0
                                     }}>
                                         {post.authorImage ? (
-                                            <img src={post.authorImage} alt="Author" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            <CachedImage src={post.authorImage} alt="Author" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                         ) : (
                                             <Shield size={24} color="#64748b" style={{ margin: '8px' }} />
                                         )}
@@ -500,7 +501,7 @@ const NewsFeed = () => {
 
                             {post.imageUrl && (
                                 <div style={{ width: '100%', background: '#f8fafc', borderTop: '1px solid #f1f5f9', borderBottom: '1px solid #f1f5f9' }}>
-                                    <img src={post.imageUrl} alt="Post Content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain', display: 'block' }} />
+                                    <CachedImage src={post.imageUrl} alt="Post Content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain', display: 'block' }} />
                                 </div>
                             )}
 

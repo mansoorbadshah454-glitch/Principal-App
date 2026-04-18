@@ -9,6 +9,7 @@ import {
 } from 'firebase/storage';
 import { Search, Send, ArrowLeft, MoreVertical, Phone, Video, MessageSquare, Clock, Check, CheckCheck, Paperclip, Plus } from 'lucide-react';
 import './Inbox.css'; // We will create this or use inline styles
+import CachedImage from '../components/CachedImage';
 
 const Inbox = () => {
     const [schoolId, setSchoolId] = useState(null);
@@ -597,7 +598,7 @@ const Inbox = () => {
                                                     {msg.attachment && (
                                                         <div className="attachment-container">
                                                             {['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(msg.attachment.type?.toLowerCase()) ? (
-                                                                <img
+                                                                <CachedImage
                                                                     src={msg.attachment.url}
                                                                     alt={msg.attachment.name}
                                                                     className="media-preview"

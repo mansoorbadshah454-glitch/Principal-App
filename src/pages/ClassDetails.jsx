@@ -9,6 +9,7 @@ import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
 import StudentProfileModal from '../components/StudentProfileModal';
 import StudentActionPopup from '../components/StudentActionPopup';
+import CachedImage from '../components/CachedImage';
 
 
 const ClassDetails = () => {
@@ -570,7 +571,7 @@ const ClassDetails = () => {
                                 background: '#f3f4f6', overflow: 'hidden', border: '3px solid white', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
                             }}>
                                 {/* Use generic initials or icon if image fails, but svg api is reliable */}
-                                <img src={student.avatar} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <CachedImage src={student.avatar} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             </div>
 
                             <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '0.25rem' }}>{student.name}</h3>

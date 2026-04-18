@@ -5,6 +5,7 @@ import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, writeBatch, where } from 'firebase/firestore';
 import { auth } from '../firebase';
 import StudentCircle from '../components/StudentCircle';
+import CachedImage from '../components/CachedImage';
 
 // Internal Component for individual Class Card logic
 const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subjectOptions, onCancel, onSave }) => {
@@ -574,7 +575,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                                                     border: '1px solid #f1f5f9'
                                                 }}>
                                                     {student.profilePic ? (
-                                                        <img src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                        <CachedImage src={student.profilePic} alt={student.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                     ) : (
                                                         <User size={18} color="#94a3b8" />
                                                     )}
