@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase, Plus, Trash2, Users } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
 import CachedImage from '../components/CachedImage';
@@ -32,6 +32,7 @@ const Settings = () => {
     const [imageFile, setImageFile] = useState(null);
     const [copied, setCopied] = useState(false);
     const [errors, setErrors] = useState({});
+    const [fetchError, setFetchError] = useState(false);
 
     const handleCopy = () => {
         if (schoolId) {
@@ -42,49 +43,71 @@ const Settings = () => {
     };
 
     useEffect(() => {
-        const fetchSettings = async () => {
-            const session = localStorage.getItem('manual_session');
-            if (session) {
-                const { schoolId: id } = JSON.parse(session);
-                setSchoolId(id);
-                try {
-                    // Fetch profile settings from settings/profile
-                    const profileRef = doc(db, `schools/${id}/settings`, 'profile');
-                    const profileSnap = await getDoc(profileRef);
-                    if (profileSnap.exists()) {
-                        const data = profileSnap.data();
-                        setSchoolData({
-                            ...data,
-                            address: data.address || '',
-                            phone: data.phone || '',
-                            landline: data.landline || '',
-                            emergencyContact: data.emergencyContact || '',
-                            teacherStartTime: data.teacherStartTime || '08:00',
-                            teacherEndTime: data.teacherEndTime || '14:00',
-                            schoolStartTime: data.schoolStartTime || '08:00',
-                            schoolEndTime: data.schoolEndTime || '14:00'
-                        });
-                    } else {
-                        // Initialize if it doesn't exist
-                        await setDoc(profileRef, { name: 'My School', profileImage: '', teacherStartTime: '08:00', teacherEndTime: '14:00', schoolStartTime: '08:00', schoolEndTime: '14:00' });
-                    }
+        const session = localStorage.getItem('manual_session');
+        if (!session) {
+            setInitialLoading(false);
+            return;
+        }
 
-                    // Fetch banking settings from settings/banking
-                    const bankingRef = doc(db, `schools/${id}/settings`, 'banking');
-                    const bankingSnap = await getDoc(bankingRef);
-                    if (bankingSnap.exists()) {
-                        setBankAccounts(bankingSnap.data().accounts || []);
-                    }
-                } catch (err) {
-                    console.error("Error fetching settings:", err);
-                } finally {
-                    setInitialLoading(false);
-                }
+        const { schoolId: id } = JSON.parse(session);
+        setSchoolId(id);
+
+        let isMounted = true;
+
+        // Fetch profile settings from settings/profile using onSnapshot
+        const profileRef = doc(db, `schools/${id}/settings`, 'profile');
+        const unsubProfile = onSnapshot(profileRef, async (profileSnap) => {
+            if (!isMounted) return;
+            
+            if (profileSnap.exists()) {
+                const data = profileSnap.data();
+                setSchoolData(prev => ({
+                    ...prev,
+                    ...data,
+                    address: data.address || '',
+                    phone: data.phone || '',
+                    landline: data.landline || '',
+                    emergencyContact: data.emergencyContact || '',
+                    teacherStartTime: data.teacherStartTime || '08:00',
+                    teacherEndTime: data.teacherEndTime || '14:00',
+                    schoolStartTime: data.schoolStartTime || '08:00',
+                    schoolEndTime: data.schoolEndTime || '14:00'
+                }));
+                setFetchError(false);
             } else {
-                setInitialLoading(false);
+                // Initialize if it doesn't exist
+                const defaultData = { name: 'My School', profileImage: '', teacherStartTime: '08:00', teacherEndTime: '14:00', schoolStartTime: '08:00', schoolEndTime: '14:00' };
+                try {
+                    await setDoc(profileRef, defaultData);
+                    setSchoolData(prev => ({ ...prev, ...defaultData }));
+                } catch (e) {
+                    console.error("Set Default profile error:", e);
+                }
             }
+            setInitialLoading(false);
+        }, (err) => {
+            console.error("Error fetching profile settings:", err);
+            setFetchError(true);
+            setInitialLoading(false);
+        });
+
+        // Fetch banking settings from settings/banking using onSnapshot
+        const bankingRef = doc(db, `schools/${id}/settings`, 'banking');
+        const unsubBanking = onSnapshot(bankingRef, (bankingSnap) => {
+            if (!isMounted) return;
+            
+            if (bankingSnap.exists()) {
+                setBankAccounts(bankingSnap.data().accounts || []);
+            }
+        }, (err) => {
+            console.error("Error fetching banking settings:", err);
+        });
+
+        return () => {
+            isMounted = false;
+            unsubProfile();
+            unsubBanking();
         };
-        fetchSettings();
     }, []);
 
     const handleImageChange = (e) => {
@@ -146,6 +169,11 @@ const Settings = () => {
     };
 
     const handleSave = async () => {
+        if (fetchError) {
+            alert("Cannot save settings: Database read permission denied. Please refresh or re-login.");
+            return;
+        }
+
         // Run validations strictly before continuing
         if (!validateInputs()) {
             alert("Please fix the validation errors before saving.");
