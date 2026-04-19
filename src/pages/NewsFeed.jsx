@@ -12,6 +12,16 @@ import {
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import CachedImage from '../components/CachedImage';
 
+const BACKGROUND_GRADIENTS = [
+    { id: 0, colors: [], name: 'Default' },
+    { id: 1, colors: ['#FF5F6D', '#FFC371'], name: 'Sunset' },
+    { id: 2, colors: ['#2193b0', '#6dd5ed'], name: 'Ocean' },
+    { id: 3, colors: ['#cc2b5e', '#753a88'], name: 'Purple Love' },
+    { id: 4, colors: ['#00B4DB', '#0083B0'], name: 'Blue Raspberry' },
+    { id: 5, colors: ['#f12711', '#f5af19'], name: 'Flare' },
+    { id: 6, colors: ['#8E2DE2', '#4A00E0'], name: 'Frost' },
+];
+
 const NewsFeed = () => {
     const [posts, setPosts] = useState([]);
     const [postText, setPostText] = useState('');
@@ -21,6 +31,7 @@ const NewsFeed = () => {
     const [schoolProfile, setSchoolProfile] = useState({ name: 'Principal', image: '' });
     const [menuOpenId, setMenuOpenId] = useState(null);
     const [openCommentPostId, setOpenCommentPostId] = useState(null);
+    const [selectedBackgroundIndex, setSelectedBackgroundIndex] = useState(0);
 
     // Audience State
     const [audience, setAudience] = useState('all'); // 'all' or 'class'
@@ -156,6 +167,7 @@ const NewsFeed = () => {
     const handleImageChange = (e) => {
         const file = e.target.files[0];
         if (file) {
+            setSelectedBackgroundIndex(0); // Reset background when picking image
             setPostImage(file);
             const reader = new FileReader();
             reader.onloadend = () => {
@@ -199,12 +211,14 @@ const NewsFeed = () => {
                 targetClassId: audience === 'class' ? selectedClass : null,
                 targetClassName: targetClassName,
                 likes: [],
-                commentCount: 0
+                commentCount: 0,
+                backgroundIndex: selectedBackgroundIndex
             });
 
             setPostText('');
             setPostImage(null);
             setImagePreview(null);
+            setSelectedBackgroundIndex(0);
             setAudience('all');
             setSelectedClass('');
         } catch (error) {
@@ -273,17 +287,18 @@ const NewsFeed = () => {
     };
 
     return (
-        <div style={{ width: '100%', animation: 'fadeIn 0.5s ease-out' }}>
+        <div style={{ margin: '-2.5rem', padding: '2.5rem', minHeight: 'calc(100vh - 2.5rem)', background: '#1e293b', animation: 'fadeIn 0.5s ease-out' }}>
 
-            {/* Header - Full Width */}
             <div className="card" style={{
-                marginBottom: '1.5rem',
                 background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
                 color: 'white',
                 border: 'none',
-                borderRadius: '0', // Full width usually looks better without rounded corners, or user can specify
-                margin: '0 0 2rem 0',
-                padding: '2rem'
+                borderRadius: '0', 
+                margin: '-2.5rem -2.5rem 2rem -2.5rem',
+                padding: '2rem',
+                position: 'sticky',
+                top: 0,
+                zIndex: 50
             }}>
                 <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     <div style={{
@@ -308,28 +323,64 @@ const NewsFeed = () => {
 
                 {/* Create Post */}
                 <div className="card" style={{ marginBottom: '2rem', padding: '1rem' }}>
-                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                        <div style={{
-                            width: '40px', height: '40px', borderRadius: '50%', background: '#f1f5f9',
-                            overflow: 'hidden', flexShrink: 0
-                        }}>
-                            {schoolProfile.image ? (
-                                <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            ) : (
-                                <Shield size={24} color="#64748b" style={{ margin: '8px' }} />
-                            )}
-                        </div>
+                    <div style={{
+                        display: 'flex', gap: '1rem', marginBottom: '1rem',
+                        background: selectedBackgroundIndex > 0 ? `linear-gradient(135deg, ${BACKGROUND_GRADIENTS[selectedBackgroundIndex].colors.join(', ')})` : 'none',
+                        minHeight: selectedBackgroundIndex > 0 ? '300px' : 'auto',
+                        padding: selectedBackgroundIndex > 0 ? '1rem' : '0',
+                        borderRadius: selectedBackgroundIndex > 0 ? '12px' : '0',
+                        alignItems: selectedBackgroundIndex > 0 ? 'center' : 'flex-start',
+                        position: 'relative'
+                    }}>
+                        {selectedBackgroundIndex === 0 && (
+                            <div style={{
+                                width: '40px', height: '40px', borderRadius: '50%', background: '#f1f5f9',
+                                overflow: 'hidden', flexShrink: 0
+                            }}>
+                                {schoolProfile.image ? (
+                                    <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                    <Shield size={24} color="#64748b" style={{ margin: '8px' }} />
+                                )}
+                            </div>
+                        )}
                         <textarea
                             value={postText}
                             onChange={(e) => setPostText(e.target.value)}
                             placeholder={`What's on your mind, ${schoolProfile.name}?`}
                             style={{
                                 width: '100%', border: 'none', outline: 'none',
-                                fontSize: '1rem', resize: 'none', minHeight: '80px',
+                                fontSize: selectedBackgroundIndex > 0 ? '28px' : '1rem',
+                                color: selectedBackgroundIndex > 0 ? '#ffffff' : 'inherit',
+                                textAlign: selectedBackgroundIndex > 0 ? 'center' : 'left',
+                                fontWeight: selectedBackgroundIndex > 0 ? 'bold' : 'normal',
+                                background: 'transparent',
+                                resize: 'none', minHeight: selectedBackgroundIndex > 0 ? 'auto' : '80px',
                                 fontFamily: 'inherit'
                             }}
                         />
                     </div>
+
+                    {/* Background Selection Row */}
+                    {!imagePreview && !postImage && (
+                        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '10px' }}>
+                            {BACKGROUND_GRADIENTS.map((bg) => (
+                                <div
+                                    key={bg.id}
+                                    onClick={() => setSelectedBackgroundIndex(bg.id)}
+                                    style={{
+                                        width: '36px', height: '36px', borderRadius: '50%',
+                                        background: bg.id === 0 ? '#f1f5f9' : `linear-gradient(135deg, ${bg.colors.join(', ')})`,
+                                        border: selectedBackgroundIndex === bg.id ? '2px solid var(--primary)' : '2px solid transparent',
+                                        cursor: 'pointer', flexShrink: 0,
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                    }}
+                                >
+                                    {bg.id === 0 && <div style={{width: 16, height: 2, background: '#cbd5e1', transform: 'rotate(-45deg)'}}></div>}
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     {imagePreview && (
                         <div style={{ marginBottom: '1rem', position: 'relative' }}>
@@ -493,10 +544,28 @@ const NewsFeed = () => {
                                 </div>
                             </div>
 
-                            {post.text && (
-                                <div style={{ padding: '0 1rem 1rem', fontSize: '1rem', color: 'var(--text-main)', whiteSpace: 'pre-wrap' }}>
-                                    {post.text}
+                            {post.text && post.backgroundIndex > 0 ? (
+                                <div style={{
+                                    minHeight: '300px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    background: `linear-gradient(135deg, ${BACKGROUND_GRADIENTS[post.backgroundIndex]?.colors?.join(', ') || '#4f46e5, #06b6d4'})`,
+                                    padding: '2rem', margin: '0 0 1rem 0'
+                                }}>
+                                    <div style={{
+                                        fontSize: '28px', color: '#ffffff', fontWeight: 'bold',
+                                        textAlign: 'center', whiteSpace: 'pre-wrap', width: '100%'
+                                    }}>
+                                        {post.text}
+                                    </div>
                                 </div>
+                            ) : (
+                                post.text && (
+                                    <div style={{ padding: '0 1rem 1rem', fontSize: '1rem', color: 'var(--text-main)', whiteSpace: 'pre-wrap' }}>
+                                        {post.text}
+                                    </div>
+                                )
                             )}
 
                             {post.imageUrl && (
