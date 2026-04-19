@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase, Plus, Trash2, Users } from 'lucide-react';
+import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase, Plus, Trash2, Users, Info } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -18,11 +18,15 @@ const Settings = () => {
         name: '',
         profileImage: '',
         address: '',
+        email: '',
         phone: '',
         landline: '',
         emergencyContact: '',
+        aboutText: '',
         teacherStartTime: '08:00',
         teacherEndTime: '14:00',
+        breakStartTime: '10:30',
+        breakEndTime: '11:00',
         schoolStartTime: '08:00',
         schoolEndTime: '14:00'
     });
@@ -65,18 +69,22 @@ const Settings = () => {
                     ...prev,
                     ...data,
                     address: data.address || '',
+                    email: data.email || '',
                     phone: data.phone || '',
                     landline: data.landline || '',
                     emergencyContact: data.emergencyContact || '',
+                    aboutText: data.aboutText || '',
                     teacherStartTime: data.teacherStartTime || '08:00',
                     teacherEndTime: data.teacherEndTime || '14:00',
+                    breakStartTime: data.breakStartTime || '10:30',
+                    breakEndTime: data.breakEndTime || '11:00',
                     schoolStartTime: data.schoolStartTime || '08:00',
                     schoolEndTime: data.schoolEndTime || '14:00'
                 }));
                 setFetchError(false);
             } else {
                 // Initialize if it doesn't exist
-                const defaultData = { name: 'My School', profileImage: '', teacherStartTime: '08:00', teacherEndTime: '14:00', schoolStartTime: '08:00', schoolEndTime: '14:00' };
+                const defaultData = { name: 'My School', profileImage: '', aboutText: '', teacherStartTime: '08:00', teacherEndTime: '14:00', breakStartTime: '10:30', breakEndTime: '11:00', schoolStartTime: '08:00', schoolEndTime: '14:00' };
                 try {
                     await setDoc(profileRef, defaultData);
                     setSchoolData(prev => ({ ...prev, ...defaultData }));
@@ -141,9 +149,13 @@ const Settings = () => {
     const validateInputs = () => {
         const newErrors = {};
         const phoneRegex = /^\+?[0-9\s\-()]{10,20}$/;
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         
         if (schoolData.address && schoolData.address.trim().length < 5) {
             newErrors.address = "Address is too short. Minimum 5 characters.";
+        }
+        if (schoolData.email && !emailRegex.test(schoolData.email.trim())) {
+            newErrors.email = "Invalid email format.";
         }
         if (schoolData.phone && !phoneRegex.test(schoolData.phone.trim())) {
             newErrors.phone = "Invalid phone format. Ensure at least 10 digits.";
@@ -210,11 +222,15 @@ const Settings = () => {
                 name: schoolData.name,
                 profileImage: imageUrl,
                 address: schoolData.address,
+                email: schoolData.email,
                 phone: schoolData.phone,
                 landline: schoolData.landline,
                 emergencyContact: schoolData.emergencyContact,
+                aboutText: schoolData.aboutText,
                 teacherStartTime: schoolData.teacherStartTime,
                 teacherEndTime: schoolData.teacherEndTime,
+                breakStartTime: schoolData.breakStartTime,
+                breakEndTime: schoolData.breakEndTime,
                 schoolStartTime: schoolData.schoolStartTime,
                 schoolEndTime: schoolData.schoolEndTime
             };
@@ -284,6 +300,18 @@ const Settings = () => {
                 }}
             >
                 <Clock size={18} /> School timing
+            </button>
+            <button
+                onClick={() => setActiveTab('about')}
+                style={{
+                    padding: '0.75rem 1rem', border: 'none', background: 'transparent',
+                    cursor: 'pointer', fontSize: '1rem', fontWeight: '600',
+                    color: activeTab === 'about' ? 'var(--primary)' : 'var(--text-secondary)',
+                    borderBottom: activeTab === 'about' ? '3px solid var(--primary)' : '3px solid transparent',
+                    display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s'
+                }}
+            >
+                <Info size={18} /> About
             </button>
             <button
                 onClick={() => setActiveTab('import')}
@@ -386,6 +414,15 @@ const Settings = () => {
                                     placeholder="Full School Address" rows={3} style={{ ...inputStyle(errors.address), resize: 'vertical' }}
                                 />
                                 {errors.address && <div style={errorMsgStyle}>{errors.address}</div>}
+                            </div>
+                            
+                            <div style={{ gridColumn: '1 / -1' }}>
+                                <label style={labelStyle}>Email Address</label>
+                                <input
+                                    type="email" value={schoolData.email} onChange={(e) => { setSchoolData({ ...schoolData, email: e.target.value }); setErrors({...errors, email: null}); }}
+                                    placeholder="info@school.com" style={inputStyle(errors.email)}
+                                />
+                                {errors.email && <div style={errorMsgStyle}>{errors.email}</div>}
                             </div>
                             
                             <div>
@@ -546,6 +583,27 @@ const Settings = () => {
                             </div>
                         </div>
 
+                        {/* Break Time */}
+                        <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '1rem', color: '#1e293b', marginTop: 0 }}>Break Time</h3>
+                            <div style={{ display: 'flex', gap: '1.5rem' }}>
+                                <div style={{ flex: 1 }}>
+                                    <label style={labelStyle}>Start Time</label>
+                                    <input
+                                        type="time" value={schoolData.breakStartTime} onChange={(e) => setSchoolData({ ...schoolData, breakStartTime: e.target.value })}
+                                        style={{...inputStyle(), fontFamily: 'monospace'}}
+                                    />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <label style={labelStyle}>End Time</label>
+                                    <input
+                                        type="time" value={schoolData.breakEndTime} onChange={(e) => setSchoolData({ ...schoolData, breakEndTime: e.target.value })}
+                                        style={{...inputStyle(), fontFamily: 'monospace'}}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
                         {/* School time */}
                         <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                             <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '1rem', color: '#1e293b', marginTop: 0 }}>School Time (Student Class Hours)</h3>
@@ -576,6 +634,42 @@ const Settings = () => {
                         >
                             {loading ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
                             Save Timings
+                        </button>
+                    </div>
+                )}
+
+                {activeTab === 'about' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', animation: 'fadeIn 0.3s ease-out' }}>
+                        
+                        {/* Blue Info Badge */}
+                        <div style={{
+                            padding: '1rem', background: '#eff6ff', borderLeft: '4px solid #3b82f6',
+                            borderRadius: '0 6px 6px 0', color: '#1e3a8a', fontSize: '0.9rem',
+                            display: 'flex', alignItems: 'center', gap: '0.5rem'
+                        }}>
+                            <strong>Note:</strong> This description will be dynamically shown in the "About" section of the Parent App.
+                        </div>
+
+                        <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '1rem', color: '#1e293b', marginTop: 0 }}>School Mission & Description</h3>
+                            <textarea
+                                value={schoolData.aboutText}
+                                onChange={(e) => setSchoolData({ ...schoolData, aboutText: e.target.value })}
+                                placeholder="Enter your school's mission, history, and core values here..."
+                                rows={8}
+                                style={{ ...inputStyle(), resize: 'vertical' }}
+                            />
+                        </div>
+
+                        <button
+                            onClick={handleSave} disabled={loading} className="btn-primary"
+                            style={{
+                                padding: '0.8rem', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                gap: '0.5rem', fontSize: '1rem', width: '100%'
+                            }}
+                        >
+                            {loading ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+                            Save About Details
                         </button>
                     </div>
                 )}
