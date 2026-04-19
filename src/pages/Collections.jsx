@@ -343,6 +343,10 @@ const Collections = () => {
     const [loading, setLoading] = useState(true);
     const [currentAction, setCurrentAction] = useState(null);
     const [showModal, setShowModal] = useState(false);
+    
+    // Fee Settings State
+    const [feeSettings, setFeeSettings] = useState({ dueDate: '', penaltyAmount: '' });
+    const [isSavingFeeSettings, setIsSavingFeeSettings] = useState(false);
 
     // Helper for Sort
     const getClassOrder = (name) => {
@@ -494,12 +498,40 @@ const Collections = () => {
             console.error("Error listening to action:", error);
         });
 
+        // Listen to Fee Settings
+        const feeSettingsRef = doc(db, 'schools', schoolId, 'settings', 'feeSettings');
+        const unsubFeeSettings = onSnapshot(feeSettingsRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setFeeSettings({
+                    dueDate: docSnap.data().dueDate || '',
+                    penaltyAmount: docSnap.data().penaltyAmount || ''
+                });
+            } else {
+                setFeeSettings({ dueDate: '', penaltyAmount: '' });
+            }
+        });
+
         return () => {
             unsubClasses();
             unsubAction();
+            unsubFeeSettings();
         };
 
     }, [schoolId]);
+
+    const handleSaveFeeSettings = async () => {
+        if (!schoolId) return;
+        setIsSavingFeeSettings(true);
+        try {
+            const feeSettingsRef = doc(db, 'schools', schoolId, 'settings', 'feeSettings');
+            await setDoc(feeSettingsRef, feeSettings, { merge: true });
+            alert("Fee settings saved successfully!");
+        } catch (error) {
+            console.error("Error saving fee settings:", error);
+            alert("Failed to save fee settings");
+        }
+        setIsSavingFeeSettings(false);
+    };
 
     const handleSaveAction = async (actionData) => {
         // Check for Manual Bypass Isolation
@@ -656,12 +688,47 @@ const Collections = () => {
     return (
         <div className="animate-fade-in-up">
             {/* Header */}
-            <div style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <div style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '1rem' }}>
                 <div>
                     <h1 style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--text-main)', marginBottom: '0.5rem' }}>
                         Fee Collections
                     </h1>
                     <p style={{ color: 'var(--text-secondary)' }}>Overview of student fee payments across all classes</p>
+                </div>
+
+                {/* Fee Settings Inline UI */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'white', padding: '0.5rem 1rem', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Due Date:</span>
+                        <input
+                            type="text"
+                            placeholder="e.g. 10th"
+                            value={feeSettings.dueDate}
+                            onChange={(e) => setFeeSettings({...feeSettings, dueDate: e.target.value})}
+                            style={{ padding: '0.4rem 0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', width: '80px', fontSize: '0.9rem', outline: 'none' }}
+                        />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Penalty Amt:</span>
+                        <input
+                            type="number"
+                            placeholder="e.g. 500"
+                            value={feeSettings.penaltyAmount}
+                            onChange={(e) => setFeeSettings({...feeSettings, penaltyAmount: e.target.value})}
+                            style={{ padding: '0.4rem 0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', width: '100px', fontSize: '0.9rem', outline: 'none' }}
+                        />
+                    </div>
+                    <button
+                        onClick={handleSaveFeeSettings}
+                        disabled={isSavingFeeSettings}
+                        style={{
+                            padding: '0.5rem 1rem', borderRadius: '8px', border: 'none',
+                            background: 'var(--primary)', color: 'white', fontWeight: '600', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: isSavingFeeSettings ? 0.7 : 1
+                        }}
+                    >
+                        {isSavingFeeSettings ? 'Saving...' : 'Save'}
+                    </button>
                 </div>
 
                 {/* Action Controls */}

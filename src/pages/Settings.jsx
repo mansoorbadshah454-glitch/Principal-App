@@ -34,6 +34,7 @@ const Settings = () => {
     const [bankAccounts, setBankAccounts] = useState([]);
     const [previewImage, setPreviewImage] = useState(null);
     const [imageFile, setImageFile] = useState(null);
+    const [feeSettings, setFeeSettings] = useState({ dueDate: '', penaltyAmount: '' });
     const [copied, setCopied] = useState(false);
     const [errors, setErrors] = useState({});
     const [fetchError, setFetchError] = useState(false);
@@ -111,10 +112,27 @@ const Settings = () => {
             console.error("Error fetching banking settings:", err);
         });
 
+        // Fetch fee settings using onSnapshot
+        const feeSettingsRef = doc(db, `schools/${id}/settings`, 'feeSettings');
+        const unsubFeeSettings = onSnapshot(feeSettingsRef, (feeSnap) => {
+            if (!isMounted) return;
+            
+            if (feeSnap.exists()) {
+                setFeeSettings({
+                    dueDate: feeSnap.data().dueDate || '',
+                    penaltyAmount: feeSnap.data().penaltyAmount || ''
+                });
+            }
+        }, (err) => {
+            console.error("Error fetching fee settings:", err);
+        });
+
+
         return () => {
             isMounted = false;
             unsubProfile();
             unsubBanking();
+            unsubFeeSettings();
         };
     }, []);
 
@@ -241,6 +259,9 @@ const Settings = () => {
             // 2. Banking document 
             // Avoid polluting `profile` and keep banking details encapsulated for better security and future separation
             await setDoc(doc(db, `schools/${currentSchoolId}/settings`, 'banking'), { accounts: bankAccounts }, { merge: true });
+
+            // 3. Fee settings document
+            await setDoc(doc(db, `schools/${currentSchoolId}/settings`, 'feeSettings'), feeSettings, { merge: true });
 
             setSchoolData(settingsData);
             setPreviewImage(null);
@@ -448,6 +469,33 @@ const Settings = () => {
                                     placeholder="Emergency Phone Number" style={inputStyle(errors.emergencyContact)}
                                 />
                                 {errors.emergencyContact && <div style={errorMsgStyle}>{errors.emergencyContact}</div>}
+                            </div>
+                        </div>
+
+                        {/* Fee Configuration Section */}
+                        <div style={{ marginTop: '1rem', paddingTop: '1.5rem', borderTop: '1px solid #f1f5f9' }}>
+                            <h3 style={{ fontSize: '1.2rem', fontWeight: '700', marginBottom: '1rem', color: '#1e293b' }}>Fee Collection Settings</h3>
+                            <div style={{
+                                padding: '1rem', background: '#eff6ff', borderLeft: '4px solid #3b82f6',
+                                borderRadius: '0 6px 6px 0', marginBottom: '1.5rem', color: '#1e3a8a', fontSize: '0.9rem'
+                            }}>
+                                <strong>Note:</strong> Set the automated monthly fee deadline and penalty charges. These sync directly to the Parent's App Calendar.
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
+                                <div>
+                                    <label style={labelStyle}>Due Date (e.g. 10th)</label>
+                                    <input
+                                        type="text" value={feeSettings.dueDate} onChange={(e) => setFeeSettings({...feeSettings, dueDate: e.target.value})}
+                                        placeholder="e.g. 10th" style={inputStyle()}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={labelStyle}>Late Penalty Amount (Rs)</label>
+                                    <input
+                                        type="number" value={feeSettings.penaltyAmount} onChange={(e) => setFeeSettings({...feeSettings, penaltyAmount: e.target.value})}
+                                        placeholder="e.g. 500" style={inputStyle()}
+                                    />
+                                </div>
                             </div>
                         </div>
 
