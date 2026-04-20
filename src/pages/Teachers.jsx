@@ -14,6 +14,8 @@ import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted, todayStr }) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editStep, setEditStep] = useState(1);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isPressed, setIsPressed] = useState(false);
     const [editedTeacher, setEditedTeacher] = useState({
         ...teacher,
         subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
@@ -54,13 +56,17 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
 
     const handleSave = async (e) => {
         if (e) e.preventDefault();
+        setIsSaving(true);
         try {
             await onUpdate(teacher.id, editedTeacher);
             setIsEditing(false);
             setEditStep(1);
+            alert("Teacher updated successfully!");
         } catch (error) {
             console.error("Error updating teacher:", error);
             alert("Failed to update teacher.");
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -269,6 +275,9 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
                         </button>
                         <button
                             type="button"
+                            onMouseDown={() => setIsPressed(true)}
+                            onMouseUp={() => setIsPressed(false)}
+                            onMouseLeave={() => setIsPressed(false)}
                             onClick={() => {
                                 if (editStep < 2) {
                                     setEditStep(prev => prev + 1);
@@ -276,9 +285,35 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
                                     handleSave();
                                 }
                             }}
-                            style={{ flex: 1.5, padding: '0.8rem', borderRadius: '12px', background: purpleAccent, border: 'none', color: 'white', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem', boxShadow: `0 4px 12px rgba(139, 92, 246, 0.2)` }}
+                            disabled={isSaving}
+                            style={{ 
+                                flex: 1.5, 
+                                padding: '0.8rem', 
+                                borderRadius: '12px', 
+                                background: purpleAccent, 
+                                border: 'none', 
+                                color: 'white', 
+                                fontWeight: '700', 
+                                cursor: isSaving ? 'not-allowed' : 'pointer', 
+                                fontSize: '0.9rem', 
+                                boxShadow: `0 4px 12px rgba(139, 92, 246, 0.2)`,
+                                transform: (isPressed && !isSaving) ? 'scale(0.95)' : 'scale(1)',
+                                transition: 'transform 0.1s ease',
+                                opacity: isSaving ? 0.7 : 1,
+                                display: 'flex',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                gap: '0.5rem'
+                            }}
                         >
-                            {editStep < 2 ? 'Next Step' : 'Save Changes'}
+                            {isSaving ? (
+                                <>
+                                    <Loader2 className="animate-spin" size={16} />
+                                    Saving...
+                                </>
+                            ) : (
+                                editStep < 2 ? 'Next Step' : 'Save Changes'
+                            )}
                         </button>
                     </div>
                 </div>
@@ -1034,44 +1069,41 @@ const Teachers = () => {
 
             // Removed classes: set teacher to 'Unassigned'
             const removedMessages = oldClasses.filter(c => !newClasses.includes(c));
-            for (const cls of removedMessages) {
+            const removedPromises = removedMessages.map(async (cls) => {
                 const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
                 const snap = await getDocs(q);
-                snap.forEach(async (d) => {
-                    await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
-                        teacher: 'Unassigned',
-                        teacherId: null
-                    });
-                });
-            }
+                return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                    teacher: 'Unassigned',
+                    teacherId: null
+                })));
+            });
 
             // Added classes: set teacher to New Name AND teacherId
             const addedClasses = newClasses.filter(c => !oldClasses.includes(c));
-            for (const cls of addedClasses) {
+            const addedPromises = addedClasses.map(async (cls) => {
                 const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
                 const snap = await getDocs(q);
-                snap.forEach(async (d) => {
-                    await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                    teacher: updatedTeacher.name,
+                    teacherId: id
+                })));
+            });
+
+            // Also update Name in KEPT classes if name changed
+            let keptPromises = [];
+            if (oldTeacher.name !== updatedTeacher.name) {
+                const keptClasses = newClasses.filter(c => oldClasses.includes(c));
+                keptPromises = keptClasses.map(async (cls) => {
+                    const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
+                    const snap = await getDocs(q);
+                    return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                         teacher: updatedTeacher.name,
                         teacherId: id
-                    });
+                    })));
                 });
             }
 
-            // Also update Name in KEPT classes if name changed
-            if (oldTeacher.name !== updatedTeacher.name) {
-                const keptClasses = newClasses.filter(c => oldClasses.includes(c));
-                for (const cls of keptClasses) {
-                    const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                    const snap = await getDocs(q);
-                    snap.forEach(async (d) => {
-                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
-                            teacher: updatedTeacher.name,
-                            teacherId: id
-                        });
-                    });
-                }
-            }
+            await Promise.all([...removedPromises, ...addedPromises, ...keptPromises]);
         } catch (error) {
             console.error("Error updating teacher in Teachers component:", error);
             throw error;
@@ -1143,44 +1175,41 @@ const Teachers = () => {
 
                 // Removed classes: set teacher to 'Unassigned'
                 const removedMessages = oldClasses.filter(c => !newClasses.includes(c));
-                for (const cls of removedMessages) {
+                const removedPromises = removedMessages.map(async (cls) => {
                     const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
                     const snap = await getDocs(q);
-                    snap.forEach(async (d) => {
-                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
-                            teacher: 'Unassigned',
-                            teacherId: null
-                        });
-                    });
-                }
+                    return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                        teacher: 'Unassigned',
+                        teacherId: null
+                    })));
+                });
 
                 // Added classes: set teacher to New Name AND teacherId
                 const addedClasses = newClasses.filter(c => !oldClasses.includes(c));
-                for (const cls of addedClasses) {
+                const addedPromises = addedClasses.map(async (cls) => {
                     const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
                     const snap = await getDocs(q);
-                    snap.forEach(async (d) => {
-                        await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                    return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
+                        teacher: newTeacher.name,
+                        teacherId: editingId
+                    })));
+                });
+
+                // Also update Name in KEPT classes if name changed
+                let keptPromises = [];
+                if (oldTeacher.name !== newTeacher.name) {
+                    const keptClasses = newClasses.filter(c => oldClasses.includes(c));
+                    keptPromises = keptClasses.map(async (cls) => {
+                        const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
+                        const snap = await getDocs(q);
+                        return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                             teacher: newTeacher.name,
                             teacherId: editingId
-                        });
+                        })));
                     });
                 }
 
-                // Also update Name in KEPT classes if name changed
-                if (oldTeacher.name !== newTeacher.name) {
-                    const keptClasses = newClasses.filter(c => oldClasses.includes(c));
-                    for (const cls of keptClasses) {
-                        const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                        const snap = await getDocs(q);
-                        snap.forEach(async (d) => {
-                            await updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
-                                teacher: newTeacher.name,
-                                teacherId: editingId
-                            });
-                        });
-                    }
-                }
+                await Promise.all([...removedPromises, ...addedPromises, ...keptPromises]);
 
                 // Clean up state after successful update
                 setShowAddTeacher(false);
