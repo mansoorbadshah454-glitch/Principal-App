@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import CommentsSection from '../components/CommentsSection';
+import LikersModal from '../components/LikersModal';
 import {
     collection, addDoc, query, orderBy, onSnapshot,
     deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment
@@ -32,6 +33,7 @@ const NewsFeed = () => {
     const [menuOpenId, setMenuOpenId] = useState(null);
     const [openCommentPostId, setOpenCommentPostId] = useState(null);
     const [selectedBackgroundIndex, setSelectedBackgroundIndex] = useState(0);
+    const [likersModalData, setLikersModalData] = useState(null);
 
     // Audience State
     const [audience, setAudience] = useState('all'); // 'all' or 'class'
@@ -288,6 +290,14 @@ const NewsFeed = () => {
 
     return (
         <div style={{ margin: '-2.5rem', padding: '2.5rem', minHeight: 'calc(100vh - 2.5rem)', background: '#1e293b', animation: 'fadeIn 0.5s ease-out' }}>
+            
+            {likersModalData && (
+                <LikersModal 
+                    uids={likersModalData} 
+                    schoolId={schoolId} 
+                    onClose={() => setLikersModalData(null)} 
+                />
+            )}
 
             <div className="card" style={{
                 background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
@@ -577,18 +587,31 @@ const NewsFeed = () => {
                             {/* Actions */}
                             <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div style={{ display: 'flex', gap: '1.5rem' }}>
-                                    <button
-                                        onClick={() => handleLike(post)}
-                                        style={{
-                                            background: 'transparent', border: 'none', cursor: 'pointer',
-                                            display: 'flex', alignItems: 'center', gap: '0.4rem',
-                                            color: post.likes?.includes(currentUserId) ? '#3b82f6' : '#64748b',
-                                            fontSize: '0.9rem', fontWeight: '600'
-                                        }}
-                                    >
-                                        <ThumbsUp size={18} fill={post.likes?.includes(currentUserId) ? '#3b82f6' : 'none'} />
-                                        <span>{post.likes?.length || 0} Likes</span>
-                                    </button>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                        <button
+                                            onClick={() => handleLike(post)}
+                                            style={{
+                                                background: 'transparent', border: 'none', cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                                color: post.likes?.includes(currentUserId) ? '#3b82f6' : '#64748b',
+                                                fontSize: '0.9rem', fontWeight: '600', padding: 0
+                                            }}
+                                        >
+                                            <ThumbsUp size={18} fill={post.likes?.includes(currentUserId) ? '#3b82f6' : 'none'} />
+                                            <span>{post.likes?.length || 0} Likes</span>
+                                        </button>
+                                        {(post.likes && post.likes.length > 0) && (
+                                            <button
+                                                onClick={() => setLikersModalData(post.likes)}
+                                                style={{
+                                                    background: 'transparent', border: 'none', cursor: 'pointer',
+                                                    color: '#64748b', fontSize: '0.85rem', fontWeight: '600', padding: 0, textDecoration: 'underline'
+                                                }}
+                                            >
+                                                View
+                                            </button>
+                                        )}
+                                    </div>
                                     <button
                                         onClick={() => setOpenCommentPostId(openCommentPostId === post.id ? null : post.id)}
                                         style={{

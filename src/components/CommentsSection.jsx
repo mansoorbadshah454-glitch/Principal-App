@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, updateDoc, increment, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, updateDoc, increment, deleteDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Send, User } from 'lucide-react';
 import CachedImage from './CachedImage';
+import LikersModal from './LikersModal';
 
 const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => {
     const [comments, setComments] = useState([]);
     const [newComment, setNewComment] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [likersModalData, setLikersModalData] = useState(null);
 
     useEffect(() => {
         if (!schoolId || !postId) return;
@@ -62,6 +64,21 @@ const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => 
         }
     };
 
+    const handleLikeComment = async (comment) => {
+        if (!currentUserId) return;
+        const commentRef = doc(db, `schools/${schoolId}/posts/${postId}/comments`, comment.id);
+        const isLiked = comment.likes?.includes(currentUserId);
+        try {
+            if (isLiked) {
+                await updateDoc(commentRef, { likes: arrayRemove(currentUserId) });
+            } else {
+                await updateDoc(commentRef, { likes: arrayUnion(currentUserId) });
+            }
+        } catch (error) {
+            console.error("Error liking comment:", error);
+        }
+    };
+
     const formatTime = (timestamp) => {
         if (!timestamp) return 'Just now';
         return timestamp.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -69,6 +86,14 @@ const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => 
 
     return (
         <div style={{ padding: '1rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
+            {likersModalData && (
+                <LikersModal 
+                    uids={likersModalData} 
+                    schoolId={schoolId} 
+                    onClose={() => setLikersModalData(null)} 
+                />
+            )}
+            
             <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: '#e2e8f0' }}>
                     {schoolProfile?.image ? (
@@ -128,6 +153,20 @@ const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => 
                             </div>
                             <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '4px', marginLeft: '4px', display: 'flex', gap: '1rem', alignItems: 'center' }}>
                                 <span>{formatTime(comment.timestamp)}</span>
+                                <button 
+                                    onClick={() => handleLikeComment(comment)}
+                                    style={{ background: 'none', border: 'none', color: comment.likes?.includes(currentUserId) ? '#3b82f6' : '#64748b', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600', padding: 0, display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                                >
+                                    Like {comment.likes?.length > 0 ? `(${comment.likes.length})` : ''}
+                                </button>
+                                {comment.likes && comment.likes.length > 0 && (
+                                    <button 
+                                        onClick={() => setLikersModalData(comment.likes)}
+                                        style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600', padding: 0, textDecoration: 'underline' }}
+                                    >
+                                        View
+                                    </button>
+                                )}
                                 <button 
                                     onClick={() => handleDeleteComment(comment.id)}
                                     style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600', padding: 0 }}
