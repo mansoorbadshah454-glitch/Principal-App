@@ -84,14 +84,21 @@ const Settings = () => {
                 }));
                 setFetchError(false);
             } else {
-                // Initialize if it doesn't exist
-                const defaultData = { name: 'My School', profileImage: '', aboutText: '', teacherStartTime: '08:00', teacherEndTime: '14:00', breakStartTime: '10:30', breakEndTime: '11:00', schoolStartTime: '08:00', schoolEndTime: '14:00' };
-                try {
-                    await setDoc(profileRef, defaultData);
-                    setSchoolData(prev => ({ ...prev, ...defaultData }));
-                } catch (e) {
-                    console.error("Set Default profile error:", e);
-                }
+                // NEVER write to the DB automatically here to avoid cache wipe race conditions on deployment.
+                // Just map safe local defaults to the UI. The DB will safely update when they press "Save".
+                const defaultData = { 
+                    name: 'My School', 
+                    profileImage: '', 
+                    aboutText: '', 
+                    teacherStartTime: '08:00', 
+                    teacherEndTime: '14:00', 
+                    breakStartTime: '10:30', 
+                    breakEndTime: '11:00', 
+                    schoolStartTime: '08:00', 
+                    schoolEndTime: '14:00' 
+                };
+                setSchoolData(prev => ({ ...prev, ...defaultData }));
+                setFetchError(false);
             }
             setInitialLoading(false);
         }, (err) => {

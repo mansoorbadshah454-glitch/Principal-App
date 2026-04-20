@@ -16,7 +16,7 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
     const [editStep, setEditStep] = useState(1);
     const [editedTeacher, setEditedTeacher] = useState({
         ...teacher,
-        subjects: Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : []),
+        subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
         assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
     });
 
@@ -38,7 +38,7 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
                 setEditStep(1);
                 setEditedTeacher({
                     ...teacher,
-                    subjects: Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : []),
+                    subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
                     assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
                 });
             }
@@ -359,7 +359,9 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#5b21b6', fontSize: '0.9rem' }}>
                         <BookOpen size={16} color="#7c3aed" />
                         <span>Subjects: <strong style={{ color: '#4c1d95' }}>
-                            {Array.isArray(teacher.subjects) ? teacher.subjects.join(', ') : teacher.subjects || teacher.subject || 'None'}
+                            {teacher.displaySubjects 
+                                ? (Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects.join(', ') : teacher.displaySubjects)
+                                : (Array.isArray(teacher.subjects) ? teacher.subjects.join(', ') : teacher.subjects || teacher.subject || 'None')}
                         </strong></span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#5b21b6', fontSize: '0.9rem' }}>
@@ -454,6 +456,20 @@ const Teachers = () => {
         ]);
     };
 
+    const handleUpdateBreakTime = async (type, val) => {
+        if (!schoolId) return;
+        try {
+            if (type === 'start') setGlobalBreakStartTime(val);
+            if (type === 'end') setGlobalBreakEndTime(val);
+            
+            await updateDoc(doc(db, `schools/${schoolId}/settings`, 'profile'), {
+                [type === 'start' ? 'breakStartTime' : 'breakEndTime']: val
+            });
+        } catch (e) {
+            console.error("Failed to update break time globally", e);
+        }
+    };
+
     const handleTimeTableTimeChange = (colIndex, newTime) => {
         const newCols = [...timeTableCols];
         newCols[colIndex] = newTime;
@@ -489,6 +505,9 @@ const Teachers = () => {
     const [schoolId, setSchoolId] = useState(null);
     const [schoolName, setSchoolName] = useState('School Name');
     const [dbClasses, setDbClasses] = useState([]);
+    const [dbClassesData, setDbClassesData] = useState([]);
+    const [globalBreakStartTime, setGlobalBreakStartTime] = useState('10:30');
+    const [globalBreakEndTime, setGlobalBreakEndTime] = useState('11:00');
 
     useEffect(() => {
         if (!schoolId) return;
@@ -512,11 +531,22 @@ const Teachers = () => {
         if (!schoolId) return;
         setIsPublishingTimeTable(true);
         try {
+            const enforcedRows = timeTableRows.map(row => ({
+                ...row,
+                cells: row.cells.map((cell, colIndex) => {
+                    const isGlobalBreak = timeTableCols[colIndex] === globalBreakStartTime;
+                    return {
+                        class: isGlobalBreak ? 'BREAK' : cell.class,
+                        subject: isGlobalBreak ? '' : cell.subject
+                    };
+                })
+            }));
+
             const publishTimetable = httpsCallable(functions, 'publishTimetable');
             const result = await publishTimetable({
                 schoolId: schoolId,
                 cols: timeTableCols,
-                rows: timeTableRows,
+                rows: enforcedRows,
                 notificationType: publishType
             });
             alert(result.data.message || 'Timetable published successfully!');
@@ -892,6 +922,13 @@ const Teachers = () => {
                 if (schoolDoc.exists()) {
                     setSchoolName(schoolDoc.data().name || 'School Name');
                 }
+
+                const profileDoc = await getDoc(doc(db, `schools/${schoolId}/settings`, 'profile'));
+                if (profileDoc.exists()) {
+                    const d = profileDoc.data();
+                    if (d.breakStartTime) setGlobalBreakStartTime(d.breakStartTime);
+                    if (d.breakEndTime) setGlobalBreakEndTime(d.breakEndTime);
+                }
             } catch (err) {
                 console.error("Error fetching school info", err);
             }
@@ -903,7 +940,11 @@ const Teachers = () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes`));
                 const snapshot = await getDocs(q);
-                const classesList = snapshot.docs.map(doc => doc.data().name);
+                
+                const fullClasses = snapshot.docs.map(doc => doc.data());
+                setDbClassesData(fullClasses);
+                
+                const classesList = fullClasses.map(c => c.name);
                 // Sort roughly
                 classesList.sort();
                 setDbClasses(classesList);
@@ -957,6 +998,11 @@ const Teachers = () => {
         try {
             const teacherRef = doc(db, `schools/${schoolId}/teachers`, id);
             const updateData = { ...updatedTeacher };
+            
+            // Strip out functional subjects to prevent timetable powers but keep them for display
+            updateData.displaySubjects = updatedTeacher.subjects;
+            updateData.subjects = [];
+
             const oldTeacher = teachers.find(t => t.id === id);
 
             const isPasswordChanged = updateData.password && updateData.password.trim() !== '';
@@ -1037,7 +1083,7 @@ const Teachers = () => {
         setNewTeacher({
             ...teacher,
             password: '', // Clear password field for security/edit mode
-            subjects: Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : []),
+            subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
             assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
         });
         setEditingId(teacher.id);
@@ -1061,6 +1107,11 @@ const Teachers = () => {
                 // Update Logic
                 const teacherRef = doc(db, `schools/${schoolId}/teachers`, editingId);
                 const updateData = { ...newTeacher };
+                
+                // Strip out functional subjects to prevent timetable powers but keep them for display
+                updateData.displaySubjects = newTeacher.subjects;
+                updateData.subjects = [];
+
                 const oldTeacher = teachers.find(t => t.id === editingId);
 
                 const isPasswordChanged = updateData.password && updateData.password.trim() !== '';
@@ -1155,7 +1206,7 @@ const Teachers = () => {
                         schoolId: schoolId,
                         // Pass extra fields directly to backend
                         phone: newTeacher.phone.trim(),
-                        subjects: newTeacher.subjects,
+                        subjects: [], // Force empty array so no timetable powers are given
                         address: newTeacher.address,
                         assignedClasses: newTeacher.assignedClasses,
                         username: newTeacher.username.trim()
@@ -1163,6 +1214,11 @@ const Teachers = () => {
 
                     console.log("Cloud Function Result:", result);
                     const newTeacherUid = result.data.uid;
+
+                    // Immediately update the newly created document with the displaySubjects
+                    await updateDoc(doc(db, `schools/${schoolId}/teachers`, newTeacherUid), {
+                        displaySubjects: newTeacher.subjects
+                    });
 
                     // Note: Doc creation is now handled entirely by the Cloud Function.
                     // We only need to handle Class assignments in other collections if needed.
@@ -1591,7 +1647,15 @@ const Teachers = () => {
                 <div className="animate-fade-in-up">
                     <div className="card" style={{ padding: '2rem', background: '#e0f2fe', borderRadius: '24px', border: '1px solid #bae6fd', boxShadow: '0 10px 25px -5px rgba(14, 165, 233, 0.1)', overflowX: 'auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#1e293b' }}>Weekly Time Table</h2>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+                                <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#1e293b', margin: 0 }}>Weekly Time Table</h2>
+                                <div style={{ background: '#fef3c7', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <label style={{ fontSize: '0.85rem', fontWeight: '700', color: '#d97706', letterSpacing: '0.5px' }}>Official Break Config:</label>
+                                    <input type="time" value={globalBreakStartTime} onChange={(e) => handleUpdateBreakTime('start', e.target.value)} style={{ padding: '0.2rem', borderRadius: '4px', border: '1px solid #fcd34d', outline: 'none', background: 'white', color: '#92400e', fontWeight: 'bold' }} />
+                                    <span style={{ color: '#d97706', fontWeight: 'bold' }}>-</span>
+                                    <input type="time" value={globalBreakEndTime} onChange={(e) => handleUpdateBreakTime('end', e.target.value)} style={{ padding: '0.2rem', borderRadius: '4px', border: '1px solid #fcd34d', outline: 'none', background: 'white', color: '#92400e', fontWeight: 'bold' }} />
+                                </div>
+                            </div>
                             <button
                                 onClick={handleAddTimeRow}
                                 className="btn-primary"
@@ -1648,13 +1712,18 @@ const Teachers = () => {
                                         </div>
 
                                         {/* Time Cells */}
-                                        {row.cells.map((cell, colIndex) => (
-                                            <div key={colIndex} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', background: '#f1f5f9', padding: '0.4rem', borderRadius: '6px', border: (cell.class === 'FREE' || cell.class === 'BREAK') ? '1px dashed #94a3b8' : '1px solid #e2e8f0' }}>
+                                        {row.cells.map((cell, colIndex) => {
+                                            const isGlobalBreak = timeTableCols[colIndex] === globalBreakStartTime;
+                                            const effectiveClass = isGlobalBreak ? 'BREAK' : cell.class;
+                                            
+                                            return (
+                                            <div key={colIndex} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', background: '#f1f5f9', padding: '0.4rem', borderRadius: '6px', border: (effectiveClass === 'FREE' || effectiveClass === 'BREAK') ? '1px dashed #94a3b8' : '1px solid #e2e8f0' }}>
                                                 
                                                 <select
-                                                    value={cell.class}
+                                                    value={effectiveClass}
+                                                    disabled={isGlobalBreak}
                                                     onChange={(e) => handleTimeTableCellChange(rowIndex, colIndex, 'class', e.target.value)}
-                                                    style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '600', color: '#1e293b', background: 'white', cursor: 'pointer' }}
+                                                    style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '600', color: '#1e293b', background: isGlobalBreak ? '#dbeafe' : 'white', cursor: isGlobalBreak ? 'not-allowed' : 'pointer' }}
                                                 >
                                                     <option value="">Select Class</option>
                                                     <option value="FREE" style={{ fontWeight: 'bold', color: '#10b981' }}>-- FREE --</option>
@@ -1664,31 +1733,38 @@ const Teachers = () => {
                                                     ))}
                                                 </select>
 
-                                                {(cell.class !== 'FREE' && cell.class !== 'BREAK') && (
-                                                    <select
-                                                        value={cell.subject}
-                                                        onChange={(e) => handleTimeTableCellChange(rowIndex, colIndex, 'subject', e.target.value)}
-                                                        style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '500', color: '#475569', background: 'white', cursor: 'pointer' }}
-                                                    >
-                                                        <option value="">Select Subject</option>
-                                                        {subjectOptions.map(s => (
-                                                            <option key={s} value={s}>{s}</option>
-                                                        ))}
-                                                    </select>
-                                                )}
+                                                {(effectiveClass !== 'FREE' && effectiveClass !== 'BREAK') && (() => {
+                                                    const selectedClassData = dbClassesData.find(c => c.name === effectiveClass);
+                                                    const allowedSubjects = (selectedClassData && Array.isArray(selectedClassData.subjects) && selectedClassData.subjects.length > 0) 
+                                                        ? selectedClassData.subjects 
+                                                        : subjectOptions;
+
+                                                    return (
+                                                        <select
+                                                            value={cell.subject}
+                                                            onChange={(e) => handleTimeTableCellChange(rowIndex, colIndex, 'subject', e.target.value)}
+                                                            style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '500', color: '#475569', background: 'white', cursor: 'pointer' }}
+                                                        >
+                                                            <option value="">Select Subject</option>
+                                                            {allowedSubjects.map(s => (
+                                                                <option key={s} value={s}>{s}</option>
+                                                            ))}
+                                                        </select>
+                                                    );
+                                                })()}
                                                 
-                                                {cell.class === 'FREE' && (
+                                                {effectiveClass === 'FREE' && (
                                                     <div style={{ textAlign: 'center', padding: '0.1rem', color: '#10b981', fontSize: '0.7rem', fontWeight: '700', letterSpacing: '0.5px' }}>
                                                         IDLE SLOT
                                                     </div>
                                                 )}
-                                                {cell.class === 'BREAK' && (
+                                                {effectiveClass === 'BREAK' && (
                                                     <div style={{ textAlign: 'center', padding: '0.1rem', color: '#3b82f6', fontSize: '0.7rem', fontWeight: '700', letterSpacing: '0.5px' }}>
                                                         BREAK TIME
                                                     </div>
                                                 )}
                                             </div>
-                                        ))}
+                                        )})}
 
                                         {/* Remove Row Button */}
                                         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>

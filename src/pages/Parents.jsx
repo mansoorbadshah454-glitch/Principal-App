@@ -326,13 +326,13 @@ const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbCl
                         <>
                             <div style={{ background: 'white', padding: '1.25rem', borderRadius: '16px', border: '1px solid #fdf2ff' }}>
                                 <div style={{ marginBottom: '1.25rem' }}>
-                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Username</label>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Email Address</label>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#fffaff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
-                                        <User size={16} color="#bc1888" />
+                                        <Mail size={16} color="#bc1888" />
                                         <input
-                                            type="text"
-                                            value={editedParent.username || ''}
-                                            onChange={(e) => setEditedParent({ ...editedParent, username: e.target.value })}
+                                            type="email"
+                                            value={editedParent.email || ''}
+                                            onChange={(e) => setEditedParent({ ...editedParent, email: e.target.value })}
                                             style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
                                         />
                                     </div>
@@ -481,7 +481,7 @@ const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbCl
                                 backdropFilter: 'blur(4px)',
                                 border: '1px solid rgba(255, 255, 255, 0.3)'
                             }}>
-                                @{parent.username || 'parent'}
+                                {parent.email || 'No Email'}
                             </span>
                         </div>
                     </div>
@@ -857,6 +857,21 @@ const Parents = () => {
             const oldParent = parents.find(p => p.id === id);
             const parentRef = doc(db, `schools/${schoolId}/parents`, id);
 
+            // Check if email or password changed to trigger Firebase Auth update
+            const emailChanged = oldParent && (oldParent.email !== updatedData.email);
+            const passwordChanged = oldParent && (oldParent.password !== updatedData.password);
+
+            if (emailChanged || passwordChanged) {
+                const updateCredsFn = httpsCallable(functions, 'updateSchoolUserPassword');
+                console.log("Calling Cloud Function to sync auth credentials via handleUpdateParent...");
+                await updateCredsFn({
+                    targetUid: id,
+                    newEmail: emailChanged ? (updatedData.email || '').trim() : undefined,
+                    newPassword: passwordChanged ? updatedData.password : undefined,
+                    schoolId: schoolId
+                });
+            }
+
             const oldLinks = oldParent?.linkedStudents || [];
             const newLinks = updatedData.linkedStudents || [];
 
@@ -973,7 +988,7 @@ const Parents = () => {
                     schoolId: activeSchoolId, // Use the resolved ID
                     phone: newParent.phone.trim(),
                     address: newParent.address,
-                    username: newParent.username.trim(),
+                    username: newParent.email ? newParent.email.trim() : '', 
                     occupation: newParent.occupation || '',
                     linkedStudents: newParent.linkedStudents
                 });
@@ -981,6 +996,14 @@ const Parents = () => {
                 // Sync freshly linked students directly to their document subcollections
                 if (newParent.linkedStudents && newParent.linkedStudents.length > 0 && result?.data?.uid) {
                     const batch = writeBatch(db);
+                    const allClasses = dbClasses || [];
+                    const getPossibleRefs = (studentId) => {
+                        const refs = [doc(db, `schools/${schoolId}/students`, studentId)]; // master
+                        allClasses.forEach(cls => {
+                            refs.push(doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId));
+                        });
+                        return refs;
+                    };
                     for (const child of newParent.linkedStudents) {
                         if (child.studentId) {
                             const refs = getPossibleRefs(child.studentId);
@@ -1450,17 +1473,6 @@ const Parents = () => {
                                         />
                                     </div>
 
-                                    <div style={{ marginBottom: '1.5rem' }}>
-                                        <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                            Email Address (Optional)
-                                        </label>
-                                        <input
-                                            type="email" placeholder="parent@example.com"
-                                            value={newParent.email}
-                                            onChange={(e) => setNewParent({ ...newParent, email: e.target.value })}
-                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
-                                        />
-                                    </div>
 
                                     <div style={{ marginBottom: '1.5rem' }}>
                                         <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
@@ -1495,12 +1507,12 @@ const Parents = () => {
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
                                         <div>
                                             <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                                Username
+                                                Email Address
                                             </label>
                                             <input
-                                                type="text" placeholder="e.g. johndoe123"
-                                                value={newParent.username}
-                                                onChange={(e) => setNewParent({ ...newParent, username: e.target.value })}
+                                                type="email" placeholder="parent@school.com"
+                                                value={newParent.email}
+                                                onChange={(e) => setNewParent({ ...newParent, email: e.target.value })}
                                                 style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
                                                 required
                                             />
