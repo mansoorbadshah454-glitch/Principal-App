@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { Mail, Lock, ArrowRight, Loader2, Layout, UserCheck, Users, Zap, Award } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Loader2, Layout, UserCheck, Users, Zap, Award, Building, Eye, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { functions } from '../firebase';
 
@@ -42,18 +42,50 @@ const InfoCard = ({ icon: Icon, title, description, color }) => (
 const Login = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [schoolIdInput, setSchoolIdInput] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const navigate = useNavigate();
+
+    useEffect(() => {
+        const savedCredentials = localStorage.getItem('principal_saved_credentials');
+        if (savedCredentials) {
+            try {
+                const parsed = JSON.parse(savedCredentials);
+                if (parsed.email) setEmail(parsed.email);
+                if (parsed.password) setPassword(parsed.password);
+                if (parsed.schoolIdInput) setSchoolIdInput(parsed.schoolIdInput);
+            } catch (e) {
+                console.error("Could not parse saved credentials", e);
+            }
+        }
+    }, []);
 
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
         setError('');
 
-        try {
-            const normalizedEmail = email.toLowerCase().trim();
+        const normalizedEmail = email.toLowerCase().trim();
+        let normalizedSchoolId = schoolIdInput.trim();
 
+        // Auto-format School ID: 
+        // If they typed just numeric digits (e.g., "6257"), automatically add the "SCHOOL_" prefix.
+        if (/^\d+$/.test(normalizedSchoolId)) {
+            normalizedSchoolId = `SCHOOL_${normalizedSchoolId}`;
+        } else {
+            // Ensure text-based inputs are fully uppercase (e.g., "school_6257" -> "SCHOOL_6257")
+            normalizedSchoolId = normalizedSchoolId.toUpperCase();
+        }
+
+        if (!normalizedSchoolId) {
+            setError('Please enter your School ID.');
+            setLoading(false);
+            return;
+        }
+
+        try {
             // Step 1: Attempt standard Firebase Auth
             const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
             const user = userCredential.user;
@@ -68,6 +100,12 @@ const Login = () => {
                 if (!schoolId) {
                     await auth.signOut();
                     setError('Security Error: No School ID associated with this account.');
+                    return;
+                }
+
+                if (schoolId !== normalizedSchoolId) {
+                    await auth.signOut();
+                    setError('Security Error: The provided School ID does not match your account.');
                     return;
                 }
 
@@ -87,6 +125,12 @@ const Login = () => {
                     isManual: false
                 }));
 
+                localStorage.setItem('principal_saved_credentials', JSON.stringify({
+                    email: email,
+                    password: password,
+                    schoolIdInput: schoolIdInput
+                }));
+
                 navigate('/');
                 return;
             } else {
@@ -96,54 +140,69 @@ const Login = () => {
             }
         } catch (authErr) {
             console.log("Auth failed, checking for manual bypass...");
-            const normalizedEmail = email.toLowerCase().trim();
 
             try {
                 const q = query(collection(db, "global_users"), where("email", "==", normalizedEmail));
                 const querySnapshot = await getDocs(q);
 
                 if (!querySnapshot.empty) {
-                    const userData = querySnapshot.docs[0].data();
-                    const schoolId = userData.schoolId;
-                    const uid = userData.uid;
+                    let userData = null;
+                    for (const docSnap of querySnapshot.docs) {
+                        if (docSnap.data().schoolId === normalizedSchoolId) {
+                            userData = docSnap.data();
+                            break;
+                        }
+                    }
 
-                    const schoolUserRef = doc(db, `schools/${schoolId}/users`, uid);
-                    const schoolUserDoc = await getDoc(schoolUserRef);
+                    if (userData) {
+                        const schoolId = userData.schoolId;
+                        const uid = userData.uid;
 
-                    if (schoolUserDoc.exists()) {
-                        const storedManualPassword = schoolUserDoc.data().manualPassword;
-                        const userRole = schoolUserDoc.data().role || 'principal';
+                        const schoolUserRef = doc(db, `schools/${schoolId}/users`, uid);
+                        const schoolUserDoc = await getDoc(schoolUserRef);
 
-                        if (storedManualPassword && storedManualPassword === password) {
-                            const schoolSnap = await getDoc(doc(db, "schools", schoolId));
-                            if (schoolSnap.exists() && schoolSnap.data().status === 'suspended') {
-                                setError('System Access Denied: Your school system has been suspended.');
+                        if (schoolUserDoc.exists()) {
+                            const storedManualPassword = schoolUserDoc.data().manualPassword;
+                            const userRole = schoolUserDoc.data().role || 'principal';
+
+                            if (storedManualPassword && storedManualPassword === password) {
+                                const schoolSnap = await getDoc(doc(db, "schools", schoolId));
+                                if (schoolSnap.exists() && schoolSnap.data().status === 'suspended') {
+                                    setError('System Access Denied: Your school system has been suspended.');
+                                    return;
+                                }
+
+                                let displayNameFinal = normalizedEmail.split('@')[0];
+
+                                if (userRole === 'school Admin') {
+                                    // Fetch custom display name from admin_users
+                                    const adminDocRef = doc(db, `schools/${schoolId}/admin_users`, schoolUserDoc.id);
+                                    const adminDocSnap = await getDoc(adminDocRef);
+                                    if (adminDocSnap.exists()) {
+                                        displayNameFinal = adminDocSnap.data().displayName || adminDocSnap.data().name || displayNameFinal;
+                                    }
+                                } else {
+                                    displayNameFinal = schoolUserDoc.data().displayName || schoolUserDoc.data().name || displayNameFinal;
+                                }
+
+                                localStorage.setItem('manual_session', JSON.stringify({
+                                    uid: uid,
+                                    schoolId: schoolId,
+                                    role: userRole,
+                                    email: normalizedEmail,
+                                    displayName: displayNameFinal,
+                                    isManual: true
+                                }));
+
+                                localStorage.setItem('principal_saved_credentials', JSON.stringify({
+                                    email: email,
+                                    password: password,
+                                    schoolIdInput: schoolIdInput
+                                }));
+
+                                window.location.href = '/';
                                 return;
                             }
-
-                            let displayNameFinal = normalizedEmail.split('@')[0];
-
-                            if (userRole === 'school Admin') {
-                                // Fetch custom display name from admin_users
-                                const adminDocRef = doc(db, `schools/${schoolId}/admin_users`, schoolUserDoc.id);
-                                const adminDocSnap = await getDoc(adminDocRef);
-                                if (adminDocSnap.exists()) {
-                                    displayNameFinal = adminDocSnap.data().displayName || adminDocSnap.data().name || displayNameFinal;
-                                }
-                            } else {
-                                displayNameFinal = schoolUserDoc.data().displayName || schoolUserDoc.data().name || displayNameFinal;
-                            }
-
-                            localStorage.setItem('manual_session', JSON.stringify({
-                                uid: uid,
-                                schoolId: schoolId,
-                                role: userRole,
-                                email: normalizedEmail,
-                                displayName: displayNameFinal,
-                                isManual: true
-                            }));
-                            window.location.href = '/';
-                            return;
                         }
                     }
                 }
@@ -366,6 +425,29 @@ const Login = () => {
 
                     <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                         <div style={{ position: 'relative' }}>
+                            <Building style={{ position: 'absolute', left: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: '#475569' }} size={20} />
+                            <input
+                                type="text"
+                                style={{
+                                    width: '100%',
+                                    background: 'rgba(255, 255, 255, 0.02)',
+                                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                                    borderRadius: '16px',
+                                    padding: '1.1rem 1.1rem 1.1rem 3.5rem',
+                                    color: 'white',
+                                    fontSize: '1rem',
+                                    outline: 'none',
+                                    transition: 'all 0.3s ease'
+                                }}
+                                className="login-input"
+                                placeholder="School ID"
+                                value={schoolIdInput}
+                                onChange={(e) => setSchoolIdInput(e.target.value)}
+                                required
+                            />
+                        </div>
+
+                        <div style={{ position: 'relative' }}>
                             <Mail style={{ position: 'absolute', left: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: '#475569' }} size={20} />
                             <input
                                 type="email"
@@ -391,13 +473,13 @@ const Login = () => {
                         <div style={{ position: 'relative' }}>
                             <Lock style={{ position: 'absolute', left: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: '#475569' }} size={20} />
                             <input
-                                type="password"
+                                type={showPassword ? "text" : "password"}
                                 style={{
                                     width: '100%',
                                     background: 'rgba(255, 255, 255, 0.02)',
                                     border: '1px solid rgba(255, 255, 255, 0.1)',
                                     borderRadius: '16px',
-                                    padding: '1.1rem 1.1rem 1.1rem 3.5rem',
+                                    padding: '1.1rem 3.5rem 1.1rem 3.5rem',
                                     color: 'white',
                                     fontSize: '1rem',
                                     outline: 'none',
@@ -409,6 +491,26 @@ const Login = () => {
                                 onChange={(e) => setPassword(e.target.value)}
                                 required
                             />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                style={{
+                                    position: 'absolute',
+                                    right: '1.25rem',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: '#475569',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                }}
+                            >
+                                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                            </button>
                         </div>
 
                         <button
