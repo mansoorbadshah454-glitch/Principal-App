@@ -322,8 +322,21 @@ const NewsFeed = () => {
                         )}
                     </div>
                     <div>
-                        <h1 style={{ fontSize: '1.5rem', fontWeight: '700', margin: 0 }}>News Feed</h1>
-                        <p style={{ opacity: 0.9, fontSize: '0.9rem' }}>Updates from the Principal's Desk</p>
+                        <h1 style={{ margin: 0, display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                            <span style={{ 
+                                fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif', 
+                                fontSize: '1.8rem',
+                                fontWeight: '800', 
+                                letterSpacing: '-1px',
+                                color: '#ffffff'
+                            }}>Schoolbook</span>
+                            <span style={{ 
+                                fontSize: '1.4rem', 
+                                fontWeight: '500', 
+                                opacity: 0.9 
+                            }}>Newsfeed</span>
+                        </h1>
+                        <p style={{ opacity: 0.9, fontSize: '0.9rem', marginTop: '2px' }}>Updates from the Principal's Desk</p>
                     </div>
                 </div>
             </div>
