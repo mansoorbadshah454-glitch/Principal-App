@@ -23,11 +23,141 @@ const BACKGROUND_GRADIENTS = [
     { id: 6, colors: ['#8E2DE2', '#4A00E0'], name: 'Frost' },
 ];
 
+const ExpandableText = ({ text }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    
+    if (!text) return null;
+    
+    const isLong = text.length > 200;
+    const displayText = (isLong && !isExpanded) ? text.substring(0, 200) + '...' : text;
+    
+    return (
+        <div style={{ padding: '0 1rem 1rem', fontSize: '1rem', color: 'var(--text-main)', whiteSpace: 'pre-wrap' }}>
+            {displayText}
+            {isLong && (
+                <button 
+                    onClick={() => setIsExpanded(!isExpanded)}
+                    style={{ 
+                        background: 'none', border: 'none', color: '#64748b', 
+                        fontWeight: 'bold', cursor: 'pointer', padding: '0', 
+                        marginLeft: '5px', fontSize: '1rem' 
+                    }}
+                >
+                    {isExpanded ? 'See less' : 'See more'}
+                </button>
+            )}
+        </div>
+    );
+};
+
+const PostMediaCollage = ({ media }) => {
+    const [viewerOpen, setViewerOpen] = useState(false);
+    const [currentIndex, setCurrentIndex] = useState(0);
+
+    const openViewer = (index) => {
+       setCurrentIndex(index);
+       setViewerOpen(true);
+    };
+
+    const renderItem = (item, index, isCover = false) => {
+        const isVideo = item.type === 'video';
+        return (
+            <div key={index} onClick={() => openViewer(index)} style={{ position: 'relative', height: '100%', width: '100%', cursor: 'pointer', overflow: 'hidden', backgroundColor: 'black' }}>
+                {isVideo ? (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                           <div style={{ width: '50px', height: '50px', borderRadius: '50%', background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                               <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                           </div>
+                       </div>
+                    </div>
+                ) : (
+                    <CachedImage src={item.url} alt="Post content" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                )}
+                {isCover && media.length > 4 && (
+                    <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+                        <span style={{ color: 'white', fontSize: '2rem', fontWeight: 'bold' }}>+{media.length - 4}</span>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const getLayout = () => {
+        if (media.length === 1) return (
+            <div style={{ width: '100%', maxHeight: '500px', display: 'flex', justifyContent: 'center', backgroundColor: '#1e293b' }}>
+               {media[0].type === 'video' ? (
+                   <video src={media[0].url} controls style={{ maxHeight: '500px', maxWidth: '100%' }} />
+               ) : (
+                   <CachedImage src={media[0].url} alt="Post content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain' }} />
+               )}
+            </div>
+        );
+
+        if (media.length === 2) return (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px', height: '300px' }}>
+                {renderItem(media[0], 0)}
+                {renderItem(media[1], 1)}
+            </div>
+        );
+
+        if (media.length === 3) return (
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2px', height: '300px' }}>
+                {renderItem(media[0], 0)}
+                <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: '2px' }}>
+                    {renderItem(media[1], 1)}
+                    {renderItem(media[2], 2)}
+                </div>
+            </div>
+        );
+
+        // 4 or more
+        return (
+            <div style={{ display: 'grid', gridTemplateRows: '2fr 1fr', gap: '2px', height: '400px' }}>
+                {renderItem(media[0], 0)}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '2px' }}>
+                    {renderItem(media[1], 1)}
+                    {renderItem(media[2], 2)}
+                    {renderItem(media[3], 3, media.length > 4)}
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <>
+            {getLayout()}
+            {viewerOpen && (
+                <div style={{ position: 'fixed', top: 0, bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.95)', zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ padding: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                        <button onClick={() => setViewerOpen(false)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '3rem', cursor: 'pointer', lineHeight: '1' }}>&times;</button>
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', position: 'relative' }}>
+                        {currentIndex > 0 && (
+                            <button onClick={() => setCurrentIndex(prev => prev - 1)} style={{ position: 'absolute', left: '2rem', background: 'rgba(255,255,255,0.2)', color: 'white', border: 'none', borderRadius: '50%', width: '3rem', height: '3rem', cursor: 'pointer', zIndex: 2 }}>&#10094;</button>
+                        )}
+                        <div style={{ maxWidth: '100%', maxHeight: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                            {media[currentIndex].type === 'video' ? (
+                                <video src={media[currentIndex].url} controls autoPlay style={{ maxWidth: '100%', maxHeight: '80vh' }} />
+                            ) : (
+                                <img src={media[currentIndex].url} alt="Fullscreen view" style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain' }} />
+                            )}
+                        </div>
+                        {currentIndex < media.length - 1 && (
+                            <button onClick={() => setCurrentIndex(prev => prev + 1)} style={{ position: 'absolute', right: '2rem', background: 'rgba(255,255,255,0.2)', color: 'white', border: 'none', borderRadius: '50%', width: '3rem', height: '3rem', cursor: 'pointer', zIndex: 2 }}>&#10095;</button>
+                        )}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
+
 const NewsFeed = () => {
     const [posts, setPosts] = useState([]);
     const [postText, setPostText] = useState('');
-    const [postImage, setPostImage] = useState(null);
-    const [imagePreview, setImagePreview] = useState(null);
+    const [postMedia, setPostMedia] = useState([]);
+    const [mediaPreviews, setMediaPreviews] = useState([]);
     const [loading, setLoading] = useState(false);
     const [schoolProfile, setSchoolProfile] = useState({ name: 'Principal', image: '' });
     const [menuOpenId, setMenuOpenId] = useState(null);
@@ -167,44 +297,53 @@ const NewsFeed = () => {
     }, [schoolId]);
 
     const handleImageChange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setSelectedBackgroundIndex(0); // Reset background when picking image
-            setPostImage(file);
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setImagePreview(reader.result);
-            };
-            reader.readAsDataURL(file);
+        const files = Array.from(e.target.files);
+        if (files.length > 0) {
+            setSelectedBackgroundIndex(0); // Reset background when picking media
+            setPostMedia(prev => [...prev, ...files]);
+            
+            const newPreviews = files.map(file => {
+               const isVideo = file.type.startsWith('video/');
+               return {
+                   url: URL.createObjectURL(file),
+                   type: isVideo ? 'video' : 'image',
+                   file: file
+               };
+            });
+            setMediaPreviews(prev => [...prev, ...newPreviews]);
         }
     };
 
     const handlePost = async () => {
-        if (!postText.trim() && !postImage) return;
+        if (!postText.trim() && postMedia.length === 0) return;
         if (audience === 'class' && !selectedClass) {
             alert("Please select a class.");
             return;
         }
 
         setLoading(true);
-        setLoading(true);
         if (!schoolId) return;
 
         try {
-            let imageUrl = '';
-            if (postImage) {
-                const storageRef = ref(storage, `schools/${schoolId}/posts/${Date.now()}`);
-                await uploadBytes(storageRef, postImage);
-                imageUrl = await getDownloadURL(storageRef);
+            let mediaUrls = [];
+            if (postMedia.length > 0) {
+                mediaUrls = await Promise.all(postMedia.map(async (file) => {
+                    const storageRef = ref(storage, `schools/${schoolId}/posts/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`);
+                    await uploadBytes(storageRef, file);
+                    const url = await getDownloadURL(storageRef);
+                    return {
+                        url,
+                        type: file.type.startsWith('video/') ? 'video' : 'image'
+                    };
+                }));
             }
 
             const targetClassName = audience === 'class'
                 ? classes.find(c => c.id === selectedClass)?.name || ''
                 : '';
 
-            await addDoc(collection(db, `schools/${schoolId}/posts`), {
+            const postData = {
                 text: postText,
-                imageUrl: imageUrl,
                 timestamp: serverTimestamp(),
                 authorName: schoolProfile.name,
                 authorImage: schoolProfile.image,
@@ -215,11 +354,20 @@ const NewsFeed = () => {
                 likes: [],
                 commentCount: 0,
                 backgroundIndex: selectedBackgroundIndex
-            });
+            };
+
+            if (mediaUrls.length > 0) {
+                postData.media = mediaUrls;
+                postData.imageUrl = mediaUrls[0].type === 'image' ? mediaUrls[0].url : '';
+                postData.mediaUrl = mediaUrls[0].url;
+                postData.mediaType = mediaUrls[0].type;
+            }
+
+            await addDoc(collection(db, `schools/${schoolId}/posts`), postData);
 
             setPostText('');
-            setPostImage(null);
-            setImagePreview(null);
+            setPostMedia([]);
+            setMediaPreviews([]);
             setSelectedBackgroundIndex(0);
             setAudience('all');
             setSelectedClass('');
@@ -369,11 +517,17 @@ const NewsFeed = () => {
                         )}
                         <textarea
                             value={postText}
-                            onChange={(e) => setPostText(e.target.value)}
+                            onChange={(e) => {
+                                const newText = e.target.value;
+                                setPostText(newText);
+                                if (newText.length > 130 && selectedBackgroundIndex > 0) {
+                                    setSelectedBackgroundIndex(0);
+                                }
+                            }}
                             placeholder={`What's on your mind, ${schoolProfile.name}?`}
                             style={{
                                 width: '100%', border: 'none', outline: 'none',
-                                fontSize: selectedBackgroundIndex > 0 ? '28px' : '1rem',
+                                fontSize: selectedBackgroundIndex > 0 ? (postText.length < 85 ? '28px' : '22px') : '1rem',
                                 color: selectedBackgroundIndex > 0 ? '#ffffff' : 'inherit',
                                 textAlign: selectedBackgroundIndex > 0 ? 'center' : 'left',
                                 fontWeight: selectedBackgroundIndex > 0 ? 'bold' : 'normal',
@@ -385,12 +539,18 @@ const NewsFeed = () => {
                     </div>
 
                     {/* Background Selection Row */}
-                    {!imagePreview && !postImage && (
+                    {mediaPreviews.length === 0 && (
                         <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '10px' }}>
                             {BACKGROUND_GRADIENTS.map((bg) => (
                                 <div
                                     key={bg.id}
-                                    onClick={() => setSelectedBackgroundIndex(bg.id)}
+                                    onClick={() => {
+                                        if (bg.id > 0 && postText.length > 130) {
+                                            alert("Backgrounds can only be used for posts under 130 characters.");
+                                            return;
+                                        }
+                                        setSelectedBackgroundIndex(bg.id);
+                                    }}
                                     style={{
                                         width: '36px', height: '36px', borderRadius: '50%',
                                         background: bg.id === 0 ? '#f1f5f9' : `linear-gradient(135deg, ${bg.colors.join(', ')})`,
@@ -405,20 +565,33 @@ const NewsFeed = () => {
                         </div>
                     )}
 
-                    {imagePreview && (
-                        <div style={{ marginBottom: '1rem', position: 'relative' }}>
-                            <img src={imagePreview} alt="Preview" style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '12px', objectFit: 'cover' }} />
-                            <button
-                                onClick={() => { setPostImage(null); setImagePreview(null); }}
-                                style={{
-                                    position: 'absolute', top: '10px', right: '10px',
-                                    background: 'rgba(0,0,0,0.5)', color: 'white',
-                                    border: 'none', borderRadius: '50%', width: '24px', height: '24px',
-                                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                }}
-                            >
-                                ×
-                            </button>
+                    {mediaPreviews.length > 0 && (
+                        <div style={{ marginBottom: '1rem', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            {mediaPreviews.map((preview, idx) => (
+                                <div key={idx} style={{ position: 'relative', width: '100px', height: '100px' }}>
+                                    {preview.type === 'video' ? (
+                                        <div style={{ width: '100%', height: '100%', background: '#000', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                        </div>
+                                    ) : (
+                                        <img src={preview.url} alt="Preview" style={{ width: '100%', height: '100%', borderRadius: '8px', objectFit: 'cover' }} />
+                                    )}
+                                    <button
+                                        onClick={() => {
+                                            setPostMedia(prev => prev.filter((_, i) => i !== idx));
+                                            setMediaPreviews(prev => prev.filter((_, i) => i !== idx));
+                                        }}
+                                        style={{
+                                            position: 'absolute', top: '-5px', right: '-5px',
+                                            background: 'rgba(0,0,0,0.6)', color: 'white',
+                                            border: 'none', borderRadius: '50%', width: '20px', height: '20px',
+                                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px'
+                                        }}
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            ))}
                         </div>
                     )}
 
@@ -477,16 +650,16 @@ const NewsFeed = () => {
                         }} className="hover:bg-slate-50">
                             <ImageIcon size={20} color="#10b981" />
                             <span>Photo/Video</span>
-                            <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: 'none' }} />
+                            <input type="file" accept="image/*,video/*" multiple onChange={handleImageChange} style={{ display: 'none' }} />
                         </label>
 
                         <button
                             onClick={handlePost}
-                            disabled={loading || (!postText.trim() && !postImage)}
+                            disabled={loading || (!postText.trim() && postMedia.length === 0)}
                             className="btn-primary"
                             style={{
                                 padding: '0.5rem 1.5rem', borderRadius: '8px',
-                                opacity: (loading || (!postText.trim() && !postImage)) ? 0.6 : 1,
+                                opacity: (loading || (!postText.trim() && postMedia.length === 0)) ? 0.6 : 1,
                                 display: 'flex', alignItems: 'center', gap: '0.5rem'
                             }}
                         >
@@ -567,7 +740,7 @@ const NewsFeed = () => {
                                 </div>
                             </div>
 
-                            {post.text && post.backgroundIndex > 0 ? (
+                            {post.text && post.backgroundIndex > 0 && post.text.length <= 130 ? (
                                 <div style={{
                                     minHeight: '300px',
                                     display: 'flex',
@@ -577,25 +750,34 @@ const NewsFeed = () => {
                                     padding: '2rem', margin: '0 0 1rem 0'
                                 }}>
                                     <div style={{
-                                        fontSize: '28px', color: '#ffffff', fontWeight: 'bold',
+                                        fontSize: post.text.length < 85 ? '28px' : '22px', 
+                                        color: '#ffffff', fontWeight: 'bold',
                                         textAlign: 'center', whiteSpace: 'pre-wrap', width: '100%'
                                     }}>
                                         {post.text}
                                     </div>
                                 </div>
                             ) : (
-                                post.text && (
-                                    <div style={{ padding: '0 1rem 1rem', fontSize: '1rem', color: 'var(--text-main)', whiteSpace: 'pre-wrap' }}>
-                                        {post.text}
-                                    </div>
-                                )
+                                post.text && <ExpandableText text={post.text} />
                             )}
 
-                            {post.imageUrl && (
-                                <div style={{ width: '100%', background: '#f8fafc', borderTop: '1px solid #f1f5f9', borderBottom: '1px solid #f1f5f9' }}>
-                                    <CachedImage src={post.imageUrl} alt="Post Content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain', display: 'block' }} />
-                                </div>
-                            )}
+                            {(() => {
+                                let postMediaList = post.media || [];
+                                if (postMediaList.length === 0 && post.imageUrl) {
+                                    postMediaList = [{ url: post.imageUrl, type: 'image' }];
+                                } else if (postMediaList.length === 0 && post.mediaUrl) {
+                                    postMediaList = [{ url: post.mediaUrl, type: post.mediaType || 'image' }];
+                                }
+                                
+                                if (postMediaList.length > 0) {
+                                    return (
+                                        <div style={{ width: '100%', background: '#f8fafc', borderTop: '1px solid #f1f5f9', borderBottom: '1px solid #f1f5f9' }}>
+                                            <PostMediaCollage media={postMediaList} />
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })()}
 
                             {/* Actions */}
                             <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

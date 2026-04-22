@@ -245,6 +245,26 @@ const Promotions = () => {
                 uploadedResultAt: new Date()
             });
 
+            // Fetch Student Details to get Parent ID for Notification
+            const studentDoc = await getDoc(masterStudentRef);
+            if (studentDoc.exists()) {
+                const studentData = studentDoc.data();
+                const parentId = studentData.parentDetails?.parentId;
+                
+                if (parentId) {
+                    await addDoc(collection(db, `schools/${schoolId}/notifications`), {
+                        parentId: parentId,
+                        studentId: studentId,
+                        studentName: studentData.name,
+                        title: '📄 New Result Card',
+                        message: `A new result card (${file.name}) has been uploaded for ${studentData.name}.`,
+                        type: 'result',
+                        read: false,
+                        createdAt: new Date()
+                    });
+                }
+            }
+
         } catch (error) {
             console.error("Error uploading result:", error);
             alert("Failed to upload result file.");

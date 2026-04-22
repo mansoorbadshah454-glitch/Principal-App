@@ -22,21 +22,7 @@ const LikersModal = ({ uids, schoolId, onClose }) => {
                 let studentContext = null;
                 let found = false;
 
-                // 1. Check Principal / School Admin
-                if (!found) {
-                    try {
-                        const userDoc = await getDoc(doc(db, `schools/${schoolId}/users/${uid}`));
-                        if (userDoc.exists()) {
-                            const data = userDoc.data();
-                            finalName = data.displayName || data.name || 'Principal';
-                            const rawRole = (data.role || '').toUpperCase();
-                            role = (rawRole === 'SCHOOL ADMIN' || rawRole === 'ADMIN') ? 'Admin' : 'Principal';
-                            found = true;
-                        }
-                    } catch (e) { }
-                }
-
-                // 2. Check Teacher
+                // 1. Check Teacher
                 if (!found) {
                     try {
                         const teacherDoc = await getDoc(doc(db, `schools/${schoolId}/teachers/${uid}`));
@@ -49,7 +35,7 @@ const LikersModal = ({ uids, schoolId, onClose }) => {
                     } catch (e) { }
                 }
 
-                // 3. Check Parent
+                // 2. Check Parent
                 if (!found) {
                     try {
                         const parentDoc = await getDoc(doc(db, `schools/${schoolId}/parents/${uid}`));
@@ -96,6 +82,20 @@ const LikersModal = ({ uids, schoolId, onClose }) => {
                                     role = kidClass;
                                 }
                             } catch (e) { console.error(e); }
+                        }
+                    } catch (e) { }
+                }
+
+                // 3. Check Principal / School Admin
+                if (!found) {
+                    try {
+                        const userDoc = await getDoc(doc(db, `schools/${schoolId}/users/${uid}`));
+                        if (userDoc.exists()) {
+                            const data = userDoc.data();
+                            finalName = data.displayName || data.name || 'Principal';
+                            const rawRole = (data.role || '').toUpperCase();
+                            role = (rawRole === 'SCHOOL ADMIN' || rawRole === 'ADMIN') ? 'Admin' : 'Principal';
+                            found = true;
                         }
                     } catch (e) { }
                 }
