@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby } from 'lucide-react';
 import { db, functions } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
+import { getDocsFast } from '../utils/cacheUtils';
 import { auth } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 
@@ -51,7 +52,7 @@ const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbCl
         const fetchStudents = async () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes/${selectedStepClassId}/students`));
-                const snapshot = await getDocs(q);
+                const snapshot = await getDocsFast(q);
                 // Automatically vaporize any ghost clones that were created by the earlier bug!
                 const validStudents = [];
                 snapshot.docs.forEach(docSnap => {
@@ -760,7 +761,7 @@ const Parents = () => {
         const fetchClasses = async () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes`));
-                const snapshot = await getDocs(q);
+                const snapshot = await getDocsFast(q);
                 const classesList = snapshot.docs.map(doc => ({
                     id: doc.id,
                     name: doc.data().name
@@ -802,7 +803,7 @@ const Parents = () => {
         const fetchStudents = async () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes/${selectedClassId}/students`));
-                const snapshot = await getDocs(q);
+                const snapshot = await getDocsFast(q);
                 const studentsList = snapshot.docs.map(doc => ({
                     id: doc.id,
                     name: doc.data().name || `${doc.data().firstName} ${doc.data().lastName}`,

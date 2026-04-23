@@ -750,10 +750,12 @@ const Classes = () => {
 
         const q = query(collection(db, `schools/${schoolId}/classes`));
         const unsubscribe = onSnapshot(q, async (snapshot) => {
-            const classesData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            const classesData = snapshot.docs
+                .filter(doc => doc.id !== 'action_metadata')
+                .map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
 
             // Seed default classes if none exist
             if (classesData.length === 0) {

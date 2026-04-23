@@ -6,8 +6,9 @@ import {
 import { db, auth, storage } from '../firebase';
 import {
     collection, getDocs, doc, writeBatch, getDoc, updateDoc,
-    query, orderBy, addDoc, getCountFromServer
+    query, orderBy, addDoc
 } from 'firebase/firestore';
+import { getDocsFast } from '../utils/cacheUtils';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -112,11 +113,11 @@ const Promotions = () => {
             const classesData = await Promise.all(snapshot.docs.map(async (docSnap) => {
                 const classId = docSnap.id;
                 const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
-                const countSnapshot = await getCountFromServer(studentsRef);
+                const studentsSnap = await getDocsFast(studentsRef);
                 return {
                     id: classId,
                     ...docSnap.data(),
-                    students: countSnapshot.data().count
+                    students: studentsSnap.size
                 };
             }));
 
@@ -155,7 +156,7 @@ const Promotions = () => {
 
         try {
             const studentsRef = collection(db, `schools/${schoolId}/classes/${cls.id}/students`);
-            const snapshot = await getDocs(studentsRef);
+            const snapshot = await getDocsFast(studentsRef);
 
             const currentIndex = classes.findIndex(c => c.id === cls.id);
             const nextClass = classes[currentIndex + 1] || null;
@@ -334,7 +335,7 @@ const Promotions = () => {
             // We fetch and delete in chunks to avoid blowing up memory or batch limits
             console.log("Starting Attendance Purge...");
             const attendanceRef = collection(db, `schools/${schoolId}/attendance`);
-            const attendanceSnap = await getDocs(attendanceRef);
+            const attendanceSnap = await getDocsFast(attendanceRef);
 
             if (!attendanceSnap.empty) {
                 const deleteOps = attendanceSnap.docs.map(docSnap => (batch) => {
@@ -586,18 +587,6 @@ const Promotions = () => {
 
 
     // --- RENDER ---
-    if (loading) {
-        return (
-            <div style={{
-                height: '80vh', display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center', gap: '20px'
-            }}>
-                <Loader2 size={48} className="animate-spin" color="var(--primary)" />
-                <p style={{ fontWeight: '600', color: '#64748B' }}>Loading Annual Promotions...</p>
-            </div>
-        );
-    }
-
     return (
         <div style={{ padding: '30px', maxWidth: '1400px', margin: '0 auto' }} className="animate-fade-in-up">
             {/* Header */}

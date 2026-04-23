@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Shield } from 'lucide-react';
 import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { getDocsFast } from '../utils/cacheUtils';
 import { db } from '../firebase';
 import UserCard from '../components/UserCard';
 import AddAdminModal from '../components/AddAdminModal';
@@ -21,7 +22,7 @@ const Users = () => {
                 const { schoolId, role } = JSON.parse(session);
                 setCurrentUserRole(role || 'principal');
                 // Fetch from school-specific collection
-                const querySnapshot = await getDocs(collection(db, `schools/${schoolId}/admin_users`));
+                const querySnapshot = await getDocsFast(collection(db, `schools/${schoolId}/admin_users`));
                 const usersList = querySnapshot.docs
                     .map(doc => ({
                         id: doc.id,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { db, auth, storage } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { getDocsFast } from '../utils/cacheUtils';
 import {
     ref as storageRef,
     uploadBytes,
@@ -226,7 +227,7 @@ const Inbox = () => {
         const sweepOldMessages = async () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/messages`));
-                const snap = await getDocs(q);
+                const snap = await getDocsFast(q);
                 const batch = writeBatch(db);
                 let count = 0;
                 snap.forEach(docSnap => {

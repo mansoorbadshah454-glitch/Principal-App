@@ -3,15 +3,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import CachedImage from './CachedImage';
 import {
     X, Camera, User, Phone, Briefcase,
-    Loader2, CheckCircle2, AlertCircle, Trash2, Key
+    Loader2, CheckCircle2, AlertCircle, Trash2, Key, Edit
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { db, storage, auth } from '../firebase';
 import { doc, updateDoc, getDoc, deleteDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId, ...props }) => {
+    const navigate = useNavigate();
     const [uploading, setUploading] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
     const [previewImage, setPreviewImage] = useState(null);
@@ -310,6 +312,22 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId, ...pr
                         <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#64748b', marginBottom: '1.5rem', fontWeight: '500' }}>
                             Click the camera icon to update profile photo
                         </p>
+
+                        <button
+                            onClick={() => {
+                                onClose();
+                                navigate(`/student/edit/${classId}/${student.id}`);
+                            }}
+                            style={{
+                                width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid #e2e8f0',
+                                background: '#f8fafc', color: 'var(--primary)', fontWeight: '700',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                marginBottom: '1.5rem', transition: 'all 0.2s'
+                            }}
+                            className="hover:bg-indigo-50 hover:border-indigo-200"
+                        >
+                            <Edit size={16} /> Edit Student Profile & Fees
+                        </button>
 
                         <div style={styles.infoSection}>
                             <div style={styles.infoItem}>

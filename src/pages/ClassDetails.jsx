@@ -27,9 +27,6 @@ const ClassDetails = () => {
     const [searchTerm, setSearchTerm] = useState('');
 
 
-    // Custom Collection Action State
-    const [currentAction, setCurrentAction] = useState(null);
-
     // Popup Positioning State
     const [actionButtonRect, setActionButtonRect] = useState(null);
     const [selectedCardRect, setSelectedCardRect] = useState(null);
@@ -78,7 +75,6 @@ const ClassDetails = () => {
         // We need to handle the cleanup of the async setup
         let unsubClass = () => { };
         let unsubStudents = () => { };
-        let unsubSchool = () => { };
 
         const startListeners = async () => {
             // Class Metadata
@@ -137,18 +133,7 @@ const ClassDetails = () => {
                 setLoading(false);
             });
 
-            // Action (Listen to 'classes/action_metadata' to comply with rules)
-            const actionRef = doc(db, 'schools', schoolId, 'classes', 'action_metadata');
-            unsubSchool = onSnapshot(actionRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    setCurrentAction(docSnap.data());
-                } else {
-                    setCurrentAction(null);
-                }
-            }, (error) => {
-                console.error("Error listening to action:", error);
-                // Don't necessarily stop loading here as this is secondary data
-            });
+
         };
 
         startListeners();
@@ -156,7 +141,6 @@ const ClassDetails = () => {
         return () => {
             unsubClass();
             unsubStudents();
-            unsubSchool();
         };
 
     }, [schoolId, classId]);
@@ -223,26 +207,7 @@ const ClassDetails = () => {
         }
     }, [students, selectedStudent]);
 
-    // Check if this class is targeted by the current action
-    const isTargeted = currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(classId)));
-
-    // Calculate Action Stats
-    const actionStats = useMemo(() => {
-        if (!isTargeted || !currentAction) return { paid: 0, unpaid: 0 };
-        let paid = 0;
-        let unpaid = 0;
-        students.forEach(s => {
-            if (s.customPayments?.[currentAction.name]?.status === 'paid') {
-                paid++;
-            } else {
-                unpaid++;
-            }
-        });
-        return { paid, unpaid };
-    }, [students, isTargeted, currentAction]);
-
-
-    const togglePaymentStatus = async (studentId, newStatus) => {
+    const toggleIndividualAction = async (studentId, actionId, newStatus) => {
         // Check for Manual Bypass
         const manualSession = localStorage.getItem('manual_session');
         if (manualSession) {
@@ -253,21 +218,33 @@ const ClassDetails = () => {
             }
         }
 
-        if (!schoolId || !classId || !currentAction || !auth.currentUser) return;
+        if (!schoolId || !classId || !auth.currentUser) return;
 
         try {
             const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
-            await updateDoc(studentRef, {
-                [`customPayments.${currentAction.name}`]: {
-                    status: newStatus,
-                    date: new Date().toISOString()
+            const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
+
+            // We need the current individualActions array to update the specific object inside it
+            const student = students.find(s => s.id === studentId);
+            if (!student) return;
+
+            const updatedActions = (student.individualActions || []).map(action => {
+                if (action.id === actionId) {
+                    return { ...action, status: newStatus };
                 }
+                return action;
             });
+
+            await updateDoc(studentRef, { individualActions: updatedActions });
+            try {
+                await updateDoc(masterStudentRef, { individualActions: updatedActions });
+            } catch (err) {} // Master doc might not exist
         } catch (error) {
-            console.error("Error updating payment:", error);
-            alert("Failed to update payment status");
+            console.error("Error updating action:", error);
+            alert("Failed to update status");
         }
     };
+
 
 
     // Calculate Live Class Metrics
@@ -385,40 +362,6 @@ const ClassDetails = () => {
                 ))}
             </div>
 
-            {/* ACTION STATS (Only if Targeted) */}
-            {isTargeted && (
-                <div style={{ marginBottom: '2.5rem' }}>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Wallet size={20} color="var(--primary)" />
-                        {currentAction.name} Collection
-                    </h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
-                        <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.3)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
-                                <div style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.2)', borderRadius: '10px' }}>
-                                    <CheckCircle size={24} />
-                                </div>
-                                <span style={{ fontSize: '1rem', fontWeight: '600', opacity: 0.9 }}>{currentAction.name} Paid</span>
-                            </div>
-                            <div style={{ fontSize: '2.5rem', fontWeight: '800' }}>
-                                {actionStats.paid} <span style={{ fontSize: '1rem', fontWeight: '500', opacity: 0.8 }}>Students</span>
-                            </div>
-                        </div>
-
-                        <div className="card" style={{ padding: '1.5rem', background: 'linear-gradient(135deg, #f43f5e 0%, #e11d48 100%)', color: 'white', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(244, 63, 94, 0.3)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
-                                <div style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.2)', borderRadius: '10px' }}>
-                                    <Ban size={24} />
-                                </div>
-                                <span style={{ fontSize: '1rem', fontWeight: '600', opacity: 0.9 }}>{currentAction.name} Unpaid</span>
-                            </div>
-                            <div style={{ fontSize: '2.5rem', fontWeight: '800' }}>
-                                {actionStats.unpaid} <span style={{ fontSize: '1rem', fontWeight: '500', opacity: 0.8 }}>Students</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* Search Bar */}
             <div style={{ marginBottom: '2rem' }}>
@@ -505,9 +448,6 @@ const ClassDetails = () => {
             {/* Students Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
                 {rankedAndFilteredStudents.map((student, index) => {
-                    // Check payment status for this student
-                    const isPaid = isTargeted && student.customPayments?.[currentAction.name]?.status === 'paid';
-
                     return (
                         <div
                             key={student.id}
@@ -587,32 +527,36 @@ const ClassDetails = () => {
                                 {student.status === 'present' ? 'Present Today' : 'Absent Today'}
                             </div>
 
-                            {/* ACTION BUTTONS (If Targeted) */}
-                            {isTargeted && (
-                                <div style={{ width: '100%', marginBottom: '1rem' }} onClick={(e) => e.stopPropagation()}>
-                                    {isPaid ? (
-                                        <button
-                                            onClick={() => togglePaymentStatus(student.id, 'unpaid')}
-                                            style={{
-                                                width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none',
-                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer',
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                            }}
-                                        >
-                                            <CheckCircle size={16} /> Paid: {currentAction.name}
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={() => togglePaymentStatus(student.id, 'paid')}
-                                            style={{
-                                                width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #fee2e2',
-                                                background: 'white', color: '#dc2626', fontWeight: '600', cursor: 'pointer',
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                            }}
-                                        >
-                                            <Ban size={16} /> Mark {currentAction.name} Paid
-                                        </button>
-                                    )}
+                            {/* Individual Actions */}
+                            {student.individualActions && student.individualActions.length > 0 && (
+                                <div style={{ width: '100%', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+                                    {student.individualActions.map(action => (
+                                        <div key={action.id} style={{ width: '100%' }}>
+                                            {action.status === 'paid' ? (
+                                                <button
+                                                    onClick={() => toggleIndividualAction(student.id, action.id, 'unpaid')}
+                                                    style={{
+                                                        width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none',
+                                                        background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                                                    }}
+                                                >
+                                                    <CheckCircle size={16} /> Paid: {action.name} (Rs {action.amount})
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={() => toggleIndividualAction(student.id, action.id, 'paid')}
+                                                    style={{
+                                                        width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #fee2e2',
+                                                        background: 'white', color: '#dc2626', fontWeight: '600', cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+                                                    }}
+                                                >
+                                                    <Ban size={16} /> Mark {action.name} Paid
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
                                 </div>
                             )}
 

@@ -19,7 +19,7 @@ const NewsFeed = lazy(() => import('./pages/NewsFeed'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Users = lazy(() => import('./pages/Users'));
 const Inbox = lazy(() => import('./pages/Inbox'));
-
+const EditStudentProfile = lazy(() => import('./pages/EditStudentProfile'));
 const PageLoader = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100%' }}>
     <div className="animate-spin" style={{ width: '40px', height: '40px', border: '3px solid #6366f1', borderTopColor: 'transparent', borderRadius: '50%' }} />
@@ -89,6 +89,7 @@ function App() {
           <Route path="admission" element={<Admission />} />
           <Route path="classes" element={<Classes />} />
           <Route path="classes/:classId" element={<ClassDetails />} />
+          <Route path="student/edit/:classId/:studentId" element={<EditStudentProfile />} />
           <Route path="teachers" element={<Teachers />} />
           <Route path="parents" element={<Parents />} />
           <Route path="collections" element={<Collections />} />

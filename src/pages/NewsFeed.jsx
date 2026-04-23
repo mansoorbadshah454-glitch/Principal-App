@@ -10,6 +10,7 @@ import {
     collection, addDoc, query, orderBy, onSnapshot,
     deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment
 } from 'firebase/firestore';
+import { getDocFast } from '../utils/cacheUtils';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import CachedImage from '../components/CachedImage';
 
@@ -217,7 +218,7 @@ const NewsFeed = () => {
         const fetchProfile = async () => {
             try {
                 const docRef = doc(db, `schools/${schoolId}/settings`, 'profile');
-                const docSnap = await getDoc(docRef);
+                const docSnap = await getDocFast(docRef);
                 if (docSnap.exists()) {
                     setSchoolProfile({
                         name: docSnap.data().name || 'Principal',

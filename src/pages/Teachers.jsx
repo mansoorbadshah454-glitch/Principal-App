@@ -7,6 +7,7 @@ import autoTable from 'jspdf-autotable';
 import * as QRCodeLib from 'qrcode';
 import { db, functions, auth } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
+import { getDocsFast } from '../utils/cacheUtils';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
@@ -18,6 +19,7 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
     const [isPressed, setIsPressed] = useState(false);
     const [editedTeacher, setEditedTeacher] = useState({
         ...teacher,
+        salary: teacher.salary || '',
         subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
         assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
     });
@@ -40,6 +42,7 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
                 setEditStep(1);
                 setEditedTeacher({
                     ...teacher,
+                    salary: teacher.salary || '',
                     subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
                     assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
                 });
@@ -212,14 +215,26 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
                                 </div>
                             </div>
 
-                            <div>
-                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Email</label>
-                                <input
-                                    type="email"
-                                    value={editedTeacher.email || ''}
-                                    onChange={(e) => setEditedTeacher({ ...editedTeacher, email: e.target.value })}
-                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
-                                />
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Email</label>
+                                    <input
+                                        type="email"
+                                        value={editedTeacher.email || ''}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, email: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Monthly Salary</label>
+                                    <input
+                                        type="number"
+                                        value={editedTeacher.salary || ''}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, salary: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        placeholder="e.g. 50000"
+                                    />
+                                </div>
                             </div>
                         </>
                     )}
@@ -409,6 +424,12 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{teacher.email}</span>
                         </div>
                     )}
+                    {teacher.salary && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#5b21b6', fontSize: '0.9rem' }}>
+                            <span style={{ fontWeight: '800', color: '#7c3aed', width: '16px', textAlign: 'center' }}>Rs</span>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '600' }}>{Number(teacher.salary).toLocaleString()} / month</span>
+                        </div>
+                    )}
                 </div>
 
                 <div style={{
@@ -529,6 +550,7 @@ const Teachers = () => {
         name: '',
         email: '',
         phone: '',
+        salary: '',
         subjects: [],
         address: '',
         assignedClasses: [],
@@ -974,7 +996,7 @@ const Teachers = () => {
         const fetchClasses = async () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes`));
-                const snapshot = await getDocs(q);
+                const snapshot = await getDocsFast(q);
                 
                 const fullClasses = snapshot.docs.map(doc => doc.data());
                 setDbClassesData(fullClasses);
@@ -1071,7 +1093,7 @@ const Teachers = () => {
             const removedMessages = oldClasses.filter(c => !newClasses.includes(c));
             const removedPromises = removedMessages.map(async (cls) => {
                 const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                const snap = await getDocs(q);
+                const snap = await getDocsFast(q);
                 return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                     teacher: 'Unassigned',
                     teacherId: null
@@ -1082,7 +1104,7 @@ const Teachers = () => {
             const addedClasses = newClasses.filter(c => !oldClasses.includes(c));
             const addedPromises = addedClasses.map(async (cls) => {
                 const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                const snap = await getDocs(q);
+                const snap = await getDocsFast(q);
                 return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                     teacher: updatedTeacher.name,
                     teacherId: id
@@ -1095,7 +1117,7 @@ const Teachers = () => {
                 const keptClasses = newClasses.filter(c => oldClasses.includes(c));
                 keptPromises = keptClasses.map(async (cls) => {
                     const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                    const snap = await getDocs(q);
+                    const snap = await getDocsFast(q);
                     return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                         teacher: updatedTeacher.name,
                         teacherId: id
@@ -1114,6 +1136,7 @@ const Teachers = () => {
         // Fallback for global modal if needed, but TeacherCard handles its own isEditing now
         setNewTeacher({
             ...teacher,
+            salary: teacher.salary || '',
             password: '', // Clear password field for security/edit mode
             subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
             assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
@@ -1177,7 +1200,7 @@ const Teachers = () => {
                 const removedMessages = oldClasses.filter(c => !newClasses.includes(c));
                 const removedPromises = removedMessages.map(async (cls) => {
                     const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                    const snap = await getDocs(q);
+                    const snap = await getDocsFast(q);
                     return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                         teacher: 'Unassigned',
                         teacherId: null
@@ -1188,7 +1211,7 @@ const Teachers = () => {
                 const addedClasses = newClasses.filter(c => !oldClasses.includes(c));
                 const addedPromises = addedClasses.map(async (cls) => {
                     const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                    const snap = await getDocs(q);
+                    const snap = await getDocsFast(q);
                     return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                         teacher: newTeacher.name,
                         teacherId: editingId
@@ -1201,7 +1224,7 @@ const Teachers = () => {
                     const keptClasses = newClasses.filter(c => oldClasses.includes(c));
                     keptPromises = keptClasses.map(async (cls) => {
                         const q = query(collection(db, `schools/${schoolId}/classes`), where("name", "==", cls));
-                        const snap = await getDocs(q);
+                        const snap = await getDocsFast(q);
                         return Promise.all(snap.docs.map(d => updateDoc(doc(db, `schools/${schoolId}/classes`, d.id), {
                             teacher: newTeacher.name,
                             teacherId: editingId
@@ -1213,7 +1236,7 @@ const Teachers = () => {
 
                 // Clean up state after successful update
                 setShowAddTeacher(false);
-                setNewTeacher({ name: '', email: '', phone: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
+                setNewTeacher({ name: '', email: '', phone: '', salary: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
                 setStep(1);
                 setIsEditing(false);
                 setEditingId(null);
@@ -1235,6 +1258,7 @@ const Teachers = () => {
                         schoolId: schoolId,
                         // Pass extra fields directly to backend
                         phone: newTeacher.phone.trim(),
+                        salary: Number(newTeacher.salary) || 0,
                         subjects: [], // Force empty array so no timetable powers are given
                         address: newTeacher.address,
                         assignedClasses: newTeacher.assignedClasses,
@@ -1259,7 +1283,7 @@ const Teachers = () => {
                                 collection(db, `schools/${schoolId}/classes`),
                                 where("name", "==", className)
                             );
-                            const querySnapshot = await getDocs(q);
+                            const querySnapshot = await getDocsFast(q);
                             if (!querySnapshot.empty) {
                                 const classDoc = querySnapshot.docs[0];
                                 await updateDoc(doc(db, `schools/${schoolId}/classes`, classDoc.id), {
@@ -1273,7 +1297,7 @@ const Teachers = () => {
                     setLoading(false);
 
                     setShowAddTeacher(false);
-                    setNewTeacher({ name: '', email: '', phone: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
+                    setNewTeacher({ name: '', email: '', phone: '', salary: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
                     setStep(1);
                     setIsEditing(false);
                     setEditingId(null);
@@ -1995,15 +2019,27 @@ const Teachers = () => {
                                         </div>
                                         <div>
                                             <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                                Email Address (Optional)
+                                                Monthly Salary
                                             </label>
                                             <input
-                                                type="email" placeholder="teacher@school.com"
-                                                value={newTeacher.email}
-                                                onChange={(e) => setNewTeacher({ ...newTeacher, email: e.target.value })}
+                                                type="number" placeholder="e.g. 45000"
+                                                value={newTeacher.salary}
+                                                onChange={(e) => setNewTeacher({ ...newTeacher, salary: e.target.value })}
                                                 style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
                                             />
                                         </div>
+                                    </div>
+                                    
+                                    <div style={{ marginBottom: '1.5rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
+                                            Email Address (Optional)
+                                        </label>
+                                        <input
+                                            type="email" placeholder="teacher@school.com"
+                                            value={newTeacher.email}
+                                            onChange={(e) => setNewTeacher({ ...newTeacher, email: e.target.value })}
+                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
+                                        />
                                     </div>
 
                                     <div style={{ marginBottom: '1.5rem' }}>
