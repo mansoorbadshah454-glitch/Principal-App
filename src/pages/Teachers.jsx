@@ -472,6 +472,15 @@ const Teachers = () => {
     const todayStr = getTodayStr();
 
     const [activeTab, setActiveTab] = useState('list');
+
+    // Syllabus States
+    const [selectedSyllabusClass, setSelectedSyllabusClass] = useState('');
+    const [selectedSyllabusSubject, setSelectedSyllabusSubject] = useState('');
+    const [syllabusChapters, setSyllabusChapters] = useState([]);
+    const [newChapterTitle, setNewChapterTitle] = useState('');
+    const [newChapterTime, setNewChapterTime] = useState('');
+    const [loadingSyllabus, setLoadingSyllabus] = useState(false);
+
     const [selectedAttendanceTeacher, setSelectedAttendanceTeacher] = useState(null);
     const [attendanceMonth, setAttendanceMonth] = useState(new Date().getMonth());
     const [attendanceYear, setAttendanceYear] = useState(new Date().getFullYear());
@@ -1041,12 +1050,90 @@ const Teachers = () => {
                 setTimeout(() => {
                     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     setHighlightedTeacherId(teacherId);
-                    // Remove highlight after 3 seconds
                     setTimeout(() => setHighlightedTeacherId(null), 3000);
-                }, 500); // Small delay to ensure rendering
+                }, 500);
             }
         }
     }, [location.state, loading, teachers]);
+
+    // Fetch Syllabus
+    useEffect(() => {
+        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject) {
+            setSyllabusChapters([]);
+            return;
+        }
+        setLoadingSyllabus(true);
+        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
+        if (!classObj) {
+            setSyllabusChapters([]);
+            setLoadingSyllabus(false);
+            return;
+        }
+
+        const docRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus`, selectedSyllabusSubject);
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setSyllabusChapters(docSnap.data().chapters || []);
+            } else {
+                setSyllabusChapters([]);
+            }
+            setLoadingSyllabus(false);
+        }, (error) => {
+            console.error("Error fetching syllabus:", error);
+            setLoadingSyllabus(false);
+        });
+
+        return () => unsubscribe();
+    }, [schoolId, selectedSyllabusClass, selectedSyllabusSubject, dbClassesData]);
+
+    const handleAddChapter = async (e) => {
+        e.preventDefault();
+        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject || !newChapterTitle.trim()) return;
+
+        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
+        if (!classObj) return;
+
+        const docRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus`, selectedSyllabusSubject);
+        try {
+            const docSnap = await getDoc(docRef);
+            const newChapter = {
+                id: Date.now().toString(),
+                title: newChapterTitle.trim(),
+                time: newChapterTime.trim() || 'Not specified',
+                status: 'Pending'
+            };
+
+            if (docSnap.exists()) {
+                await updateDoc(docRef, {
+                    chapters: [...(docSnap.data().chapters || []), newChapter]
+                });
+            } else {
+                await setDoc(docRef, {
+                    chapters: [newChapter]
+                });
+            }
+            setNewChapterTitle('');
+            setNewChapterTime('');
+        } catch (err) {
+            console.error("Error adding chapter:", err);
+            alert("Failed to add chapter.");
+        }
+    };
+
+    const handleDeleteChapter = async (chapterId) => {
+        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject) return;
+        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
+        if (!classObj) return;
+
+        const docRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus`, selectedSyllabusSubject);
+        try {
+            const updatedChapters = syllabusChapters.filter(c => c.id !== chapterId);
+            await updateDoc(docRef, { chapters: updatedChapters });
+        } catch (err) {
+            console.error("Error deleting chapter:", err);
+            alert("Failed to delete chapter.");
+        }
+    };
 
     const [isEditing, setIsEditing] = useState(false);
     const [editingId, setEditingId] = useState(null);
@@ -1515,6 +1602,19 @@ const Teachers = () => {
                 >
                     Time table
                 </button>
+                <button
+                    onClick={() => setActiveTab('syllabus')}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                        color: activeTab === 'syllabus' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'syllabus' ? '3px solid var(--primary)' : '3px solid transparent',
+                        transition: 'all 0.2s',
+                        borderRadius: '0'
+                    }}
+                >
+                    Syllabus
+                </button>
             </div>
 
             {/* Tab Content */}
@@ -1874,6 +1974,136 @@ const Teachers = () => {
                             {isPublishingTimeTable ? <Loader2 size={20} className="animate-spin" /> : null}
                             {isPublishingTimeTable ? 'Publishing...' : 'Save & Publish'}
                         </button>
+                    </div>
+                </div>
+            )}
+            {activeTab === 'syllabus' && (
+                <div className="animate-fade-in-up">
+                    <div className="card" style={{ 
+                        padding: '2rem', 
+                        background: 'rgba(255, 255, 255, 0.7)', 
+                        backdropFilter: 'blur(20px)',
+                        borderRadius: '24px', 
+                        border: '1px solid rgba(255, 255, 255, 0.6)', 
+                        boxShadow: '0 10px 30px -5px rgba(14, 165, 233, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.9)',
+                        position: 'relative',
+                        overflow: 'hidden'
+                    }}>
+                        <div style={{ marginBottom: '2rem', position: 'relative', zIndex: 1 }}>
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#1e293b', marginBottom: '0.2rem' }}>Syllabus Management</h2>
+                            <p style={{ color: '#64748b', fontSize: '0.95rem', fontWeight: '500' }}>Define chapters and topics for each class and subject.</p>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Select Class</label>
+                                <select 
+                                    value={selectedSyllabusClass} 
+                                    onChange={(e) => {
+                                        setSelectedSyllabusClass(e.target.value);
+                                        setSelectedSyllabusSubject('');
+                                    }}
+                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
+                                >
+                                    <option value="">-- Choose Class --</option>
+                                    {dbClassesData.map(c => (
+                                        <option key={c.id} value={c.name}>{c.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Select Subject</label>
+                                <select 
+                                    value={selectedSyllabusSubject} 
+                                    onChange={(e) => setSelectedSyllabusSubject(e.target.value)}
+                                    disabled={!selectedSyllabusClass}
+                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', background: !selectedSyllabusClass ? '#f8fafc' : 'white' }}
+                                >
+                                    <option value="">-- Choose Subject --</option>
+                                    {selectedSyllabusClass && dbClassesData.find(c => c.name === selectedSyllabusClass)?.subjects?.map(s => (
+                                        <option key={s} value={s}>{s}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        {selectedSyllabusClass && selectedSyllabusSubject && (
+                            <>
+                                <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '2rem' }}>
+                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1e293b', marginBottom: '1rem' }}>Add New Chapter</h3>
+                                    <form onSubmit={handleAddChapter} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+                                        <div style={{ flex: 2 }}>
+                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.3rem', color: 'var(--text-secondary)' }}>Chapter Title</label>
+                                            <input 
+                                                type="text" 
+                                                value={newChapterTitle}
+                                                onChange={(e) => setNewChapterTitle(e.target.value)}
+                                                placeholder="e.g. Chapter 1: Basic Algebra"
+                                                required
+                                                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                            />
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.3rem', color: 'var(--text-secondary)' }}>Estimated Time</label>
+                                            <input 
+                                                type="text" 
+                                                value={newChapterTime}
+                                                onChange={(e) => setNewChapterTime(e.target.value)}
+                                                placeholder="e.g. 2 Weeks"
+                                                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                            />
+                                        </div>
+                                        <button 
+                                            type="submit"
+                                            className="btn-primary"
+                                            style={{ padding: '0.75rem 1.5rem', borderRadius: '8px', height: '46px', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '600' }}
+                                        >
+                                            <Plus size={18} />
+                                            Add
+                                        </button>
+                                    </form>
+                                </div>
+
+                                <div>
+                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1e293b', marginBottom: '1rem' }}>Chapters List</h3>
+                                    {loadingSyllabus ? (
+                                        <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
+                                            <Loader2 className="animate-spin" size={24} color="var(--primary)" />
+                                        </div>
+                                    ) : syllabusChapters.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '2rem', background: '#f8fafc', borderRadius: '12px', color: '#64748b' }}>
+                                            No chapters added yet for this subject.
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.5rem' }} className="custom-scrollbar">
+                                            {syllabusChapters.map((chapter, index) => (
+                                                <div key={chapter.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                        <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#eff6ff', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '0.9rem' }}>
+                                                            {index + 1}
+                                                        </div>
+                                                        <div>
+                                                            <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: '600', color: '#1e293b' }}>{chapter.title}</h4>
+                                                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.2rem' }}>
+                                                                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Time: {chapter.time}</span>
+                                                                <span style={{ fontSize: '0.8rem', color: chapter.status === 'Completed' ? '#10b981' : chapter.status === 'In Progress' ? '#f59e0b' : '#64748b' }}>Status: {chapter.status}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => handleDeleteChapter(chapter.id)}
+                                                        style={{ background: '#fef2f2', border: 'none', width: '36px', height: '36px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#ef4444' }}
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
