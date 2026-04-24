@@ -275,7 +275,7 @@ const EditStudentProfile = () => {
                 <button
                     onClick={() => setShowLeaveConfirm(true)}
                     style={{
-                        padding: '0.75rem 1.25rem', borderRadius: '12px', border: 'none', background: '#fef2f2', color: '#ef4444',
+                        padding: '0.75rem 1.25rem', borderRadius: '12px', background: '#fef2f2', color: '#ef4444',
                         fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem',
                         transition: 'all 0.2s', border: '1px solid #fee2e2'
                     }}

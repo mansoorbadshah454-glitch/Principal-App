@@ -1568,19 +1568,6 @@ const Teachers = () => {
                     Teachers List
                 </button>
                 <button
-                    onClick={() => setActiveTab('attendance')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'attendance' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'attendance' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0'
-                    }}
-                >
-                    Attendance
-                </button>
-                <button
                     onClick={() => setActiveTab('timetable')}
                     style={{
                         background: 'none', border: 'none', cursor: 'pointer',
@@ -1605,6 +1592,19 @@ const Teachers = () => {
                     }}
                 >
                     Syllabus
+                </button>
+                <button
+                    onClick={() => setActiveTab('attendance')}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                        color: activeTab === 'attendance' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'attendance' ? '3px solid var(--primary)' : '3px solid transparent',
+                        transition: 'all 0.2s',
+                        borderRadius: '0'
+                    }}
+                >
+                    Attendance
                 </button>
             </div>
 
