@@ -739,74 +739,6 @@ const Dashboard = () => {
     const selectedClassObj = displayClasses.find(c => c.name === syllabusWidgetClass);
     const displaySubjects = selectedClassObj?.subjects?.length > 0 ? selectedClassObj.subjects : ['Demo Subject 1', 'Demo Subject 2'];
 
-    const injectDummyDataToFirebase = async () => {
-        const classId = fetchedClasses.find(c => c.name === syllabusWidgetClass)?.id;
-        if (!classId || !schoolId || !syllabusWidgetSubject) return;
-        
-        setSyllabusWidgetLoading(true);
-        try {
-            let dummyChapters = [];
-            const subject = syllabusWidgetSubject.toLowerCase();
-            
-            if (subject.includes('math')) {
-                dummyChapters = [
-                    { id: 'math1', title: 'Algebraic Expressions', time: '2 Weeks', status: 'Completed', topics: ['Variables', 'Linear equations', 'Polynomials'] },
-                    { id: 'math2', title: 'Geometry & Angles', time: '3 Weeks', status: 'Completed', topics: ['Triangles', 'Pythagorean Theorem', 'Volume'] },
-                    { id: 'math3', title: 'Trigonometry Basics', time: '2 Weeks', status: 'In Progress', topics: ['Sine', 'Cosine', 'Tangent', 'Unit Circle'] },
-                    { id: 'math4', title: 'Calculus Introduction', time: '4 Weeks', status: 'Pending', topics: ['Limits', 'Derivatives'] },
-                    { id: 'math5', title: 'Statistics & Probability', time: '2 Weeks', status: 'Pending', topics: ['Data Distribution', 'Expected Value'] },
-                ];
-            } else if (subject.includes('sci') || subject.includes('phys') || subject.includes('chem') || subject.includes('bio')) {
-                dummyChapters = [
-                    { id: 'sci1', title: 'Cellular Biology', time: '2 Weeks', status: 'Completed', topics: ['Cell structure', 'Mitosis', 'DNA'] },
-                    { id: 'sci2', title: 'Chemical Reactions', time: '3 Weeks', status: 'Completed', topics: ['Periodic Table', 'Bonds', 'Acids & Bases'] },
-                    { id: 'sci3', title: 'Laws of Motion', time: '2 Weeks', status: 'In Progress', topics: ['Newton\'s Laws', 'Kinematics'] },
-                    { id: 'sci4', title: 'Earth & Space', time: '3 Weeks', status: 'Pending', topics: ['Solar System', 'Tectonic Plates'] },
-                    { id: 'sci5', title: 'Ecosystems', time: '1 Week', status: 'Pending', topics: ['Food Chains', 'Climate Change'] },
-                ];
-            } else if (subject.includes('eng') || subject.includes('lang') || subject.includes('lit')) {
-                dummyChapters = [
-                    { id: 'eng1', title: 'Grammar Fundamentals', time: '2 Weeks', status: 'Completed', topics: ['Parts of Speech', 'Punctuation'] },
-                    { id: 'eng2', title: 'Creative Writing', time: '3 Weeks', status: 'Completed', topics: ['Narrative structure', 'Character development'] },
-                    { id: 'eng3', title: 'Poetry Analysis', time: '2 Weeks', status: 'In Progress', topics: ['Rhyme schemes', 'Metaphors', 'Sonnets'] },
-                    { id: 'eng4', title: 'Classic Literature', time: '4 Weeks', status: 'Pending', topics: ['Shakespeare', 'Themes & Motifs'] },
-                    { id: 'eng5', title: 'Public Speaking', time: '2 Weeks', status: 'Pending', topics: ['Debate', 'Speech drafting'] },
-                ];
-            } else if (subject.includes('hist') || subject.includes('soc') || subject.includes('geo')) {
-                dummyChapters = [
-                    { id: 'hist1', title: 'Ancient Civilizations', time: '3 Weeks', status: 'Completed', topics: ['Egypt', 'Mesopotamia', 'Greece'] },
-                    { id: 'hist2', title: 'The Middle Ages', time: '2 Weeks', status: 'Completed', topics: ['Feudalism', 'The Crusades'] },
-                    { id: 'hist3', title: 'Industrial Revolution', time: '2 Weeks', status: 'In Progress', topics: ['Inventions', 'Urbanization', 'Labor Laws'] },
-                    { id: 'hist4', title: 'World Wars', time: '4 Weeks', status: 'Pending', topics: ['Causes', 'Major Battles', 'Aftermath'] },
-                    { id: 'hist5', title: 'Modern Era', time: '2 Weeks', status: 'Pending', topics: ['Cold War', 'Globalization'] },
-                ];
-            } else {
-                // Mixed generic data for any other subject (Urdu, Computer, etc.)
-                dummyChapters = [
-                    { id: 'gen1', title: 'Foundations & Core Concepts', time: '2 Weeks', status: 'Completed', topics: ['Basic principles', 'Historical context', 'Terminology'] },
-                    { id: 'gen2', title: 'Analytical Methods', time: '3 Weeks', status: 'Completed', topics: ['Research design', 'Data collection', 'Ethics'] },
-                    { id: 'gen3', title: 'Applied Theory & Practice', time: '2 Weeks', status: 'In Progress', topics: ['Case studies', 'Practical experiments', 'Field work'] },
-                    { id: 'gen4', title: 'Advanced Problem Solving', time: '3 Weeks', status: 'Pending', topics: ['Complex modeling', 'Group thesis', 'Optimization'] },
-                    { id: 'gen5', title: 'Final Review & Assessment', time: '1 Week', status: 'Pending', topics: ['Exam preparation', 'Peer review', 'Presentations'] },
-                ];
-            }
-
-            for (const chap of dummyChapters) {
-                await setDoc(doc(db, `schools/${schoolId}/classes/${classId}/syllabus/${syllabusWidgetSubject}/chapters`, chap.id), {
-                    title: chap.title,
-                    time: chap.time,
-                    status: chap.status,
-                    topics: chap.topics,
-                    createdAt: serverTimestamp()
-                });
-            }
-        } catch (error) {
-            console.error("Error injecting dummy data:", error);
-            alert("Failed to inject dummy data: " + error.message);
-        } finally {
-            setSyllabusWidgetLoading(false);
-        }
-    };
 
     return (
         <div className="animate-fade-in-up">
@@ -990,14 +922,6 @@ const Dashboard = () => {
                                         ) : syllabusWidgetData.length === 0 ? (
                                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', padding: '1rem' }}>
                                                 <p style={{ color: '#334155', fontSize: '0.9rem', margin: 0 }}>No chapters found for this subject.</p>
-                                                <button 
-                                                    onClick={injectDummyDataToFirebase}
-                                                    style={{ padding: '0.5rem 1rem', background: '#0ea5e9', border: 'none', color: 'white', borderRadius: '8px', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 2px 4px rgba(14, 165, 233, 0.3)' }}
-                                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)' }}
-                                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)' }}
-                                                >
-                                                    Inject Dummy Data
-                                                </button>
                                             </div>
                                         ) : (
                                             <div style={{ maxHeight: '180px', overflowY: 'auto', paddingRight: '0.5rem' }} className="custom-scrollbar">

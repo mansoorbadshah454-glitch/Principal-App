@@ -6,7 +6,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as QRCodeLib from 'qrcode';
 import { db, functions, auth } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc, orderBy, serverTimestamp } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -1006,8 +1006,7 @@ const Teachers = () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes`));
                 const snapshot = await getDocsFast(q);
-                
-                const fullClasses = snapshot.docs.map(doc => doc.data());
+                const fullClasses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setDbClassesData(fullClasses);
                 
                 const classesList = fullClasses.map(c => c.name);
@@ -1070,16 +1069,18 @@ const Teachers = () => {
             return;
         }
 
-        const docRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus`, selectedSyllabusSubject);
-        const unsubscribe = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                setSyllabusChapters(docSnap.data().chapters || []);
-            } else {
-                setSyllabusChapters([]);
-            }
+        const chaptersRef = collection(db, `schools/${schoolId}/classes/${classObj.id}/syllabus/${selectedSyllabusSubject}/chapters`);
+        const q = query(chaptersRef, orderBy('createdAt'));
+        
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const chapters = [];
+            snapshot.forEach((docSnap) => {
+                chapters.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            setSyllabusChapters(chapters);
             setLoadingSyllabus(false);
         }, (error) => {
-            console.error("Error fetching syllabus:", error);
+            console.error("Error fetching syllabus chapters:", error);
             setLoadingSyllabus(false);
         });
 
@@ -1093,25 +1094,16 @@ const Teachers = () => {
         const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
         if (!classObj) return;
 
-        const docRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus`, selectedSyllabusSubject);
+        const chaptersRef = collection(db, `schools/${schoolId}/classes/${classObj.id}/syllabus/${selectedSyllabusSubject}/chapters`);
         try {
-            const docSnap = await getDoc(docRef);
-            const newChapter = {
-                id: Date.now().toString(),
+            await addDoc(chaptersRef, {
                 title: newChapterTitle.trim(),
                 time: newChapterTime.trim() || 'Not specified',
-                status: 'Pending'
-            };
+                status: 'Pending',
+                topics: [],
+                createdAt: serverTimestamp()
+            });
 
-            if (docSnap.exists()) {
-                await updateDoc(docRef, {
-                    chapters: [...(docSnap.data().chapters || []), newChapter]
-                });
-            } else {
-                await setDoc(docRef, {
-                    chapters: [newChapter]
-                });
-            }
             setNewChapterTitle('');
             setNewChapterTime('');
         } catch (err) {
@@ -1125,10 +1117,9 @@ const Teachers = () => {
         const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
         if (!classObj) return;
 
-        const docRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus`, selectedSyllabusSubject);
+        const chapterDocRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus/${selectedSyllabusSubject}/chapters`, chapterId);
         try {
-            const updatedChapters = syllabusChapters.filter(c => c.id !== chapterId);
-            await updateDoc(docRef, { chapters: updatedChapters });
+            await deleteDoc(chapterDocRef);
         } catch (err) {
             console.error("Error deleting chapter:", err);
             alert("Failed to delete chapter.");
