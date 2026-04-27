@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Ban, Search, Filter } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Ban, Search, Filter, MoreVertical, Edit, Plus, Trash2, X } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, getDocs, doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import jsPDF from 'jspdf';
@@ -18,6 +18,20 @@ const ClassCollection = () => {
     const [currentAction, setCurrentAction] = useState(null);
     const [teacherName, setTeacherName] = useState('');
     const [schoolDetails, setSchoolDetails] = useState({ name: '', logo: '' });
+    
+    // New Individual Actions State
+    const [menuStudentId, setMenuStudentId] = useState(null);
+    const [showAddActionPopup, setShowAddActionPopup] = useState(false);
+    const [actionStudentId, setActionStudentId] = useState(null);
+    const [newActionTitle, setNewActionTitle] = useState('');
+    const [newActionAmount, setNewActionAmount] = useState('');
+
+    // Close menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = () => setMenuStudentId(null);
+        document.addEventListener('click', handleClickOutside);
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, []);
 
     // 1. Resolve School ID
     useEffect(() => {
@@ -133,6 +147,87 @@ const ClassCollection = () => {
         } catch (error) {
             console.error("Error updating action fee:", error);
             alert("Failed to update status");
+        }
+    };
+
+    const toggleIndividualAction = async (studentId, actionId, newStatus) => {
+        if (!schoolId || !classId) return;
+        const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
+        const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
+
+        const student = students.find(s => s.id === studentId);
+        if (!student) return;
+
+        const updatedActions = (student.individualActions || []).map(action => {
+            if (action.id === actionId) {
+                return { ...action, status: newStatus };
+            }
+            return action;
+        });
+
+        try {
+            await updateDoc(studentRef, { individualActions: updatedActions });
+            try {
+                await updateDoc(masterStudentRef, { individualActions: updatedActions });
+            } catch (err) {}
+        } catch (error) {
+            console.error("Error updating individual action:", error);
+            alert("Failed to update status");
+        }
+    };
+
+    const deleteIndividualAction = async (studentId, actionId) => {
+        if (!window.confirm("Are you sure you want to remove this fine/action?")) return;
+        if (!schoolId || !classId) return;
+        const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
+        const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
+
+        const student = students.find(s => s.id === studentId);
+        if (!student) return;
+
+        const updatedActions = (student.individualActions || []).filter(action => action.id !== actionId);
+
+        try {
+            await updateDoc(studentRef, { individualActions: updatedActions });
+            try {
+                await updateDoc(masterStudentRef, { individualActions: updatedActions });
+            } catch (err) {}
+        } catch (error) {
+            console.error("Error deleting individual action:", error);
+            alert("Failed to delete action");
+        }
+    };
+
+    const handleAddIndividualAction = async () => {
+        if (!schoolId || !classId || !actionStudentId || !newActionTitle.trim() || !newActionAmount) return;
+        
+        const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, actionStudentId);
+        const masterStudentRef = doc(db, `schools/${schoolId}/students`, actionStudentId);
+        const student = students.find(s => s.id === actionStudentId);
+        
+        if (!student) return;
+
+        const newAction = {
+            id: Date.now().toString(),
+            name: newActionTitle.trim(),
+            amount: Number(newActionAmount),
+            status: 'unpaid'
+        };
+
+        const updatedActions = [...(student.individualActions || []), newAction];
+
+        try {
+            await updateDoc(studentRef, { individualActions: updatedActions });
+            try {
+                await updateDoc(masterStudentRef, { individualActions: updatedActions });
+            } catch (err) {}
+            setShowAddActionPopup(false);
+            setNewActionTitle('');
+            setNewActionAmount('');
+            setActionStudentId(null);
+        } catch (error) {
+            console.error("Error adding new action:", error);
+            alert("Failed to add action");
         }
     };
 
@@ -375,8 +470,63 @@ const ClassCollection = () => {
                         return (
                             <div key={student.id} className="card" style={{
                                 padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem',
-                                borderTop: `4px solid ${monthlyStatus === 'paid' ? '#10b981' : '#f43f5e'}`
+                                borderTop: `4px solid ${monthlyStatus === 'paid' ? '#10b981' : '#f43f5e'}`,
+                                position: 'relative'
                             }}>
+                                {/* 3-Dot Menu Button */}
+                                <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
+                                    <button 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMenuStudentId(menuStudentId === student.id ? null : student.id);
+                                        }}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '0.2rem' }}
+                                    >
+                                        <MoreVertical size={20} />
+                                    </button>
+                                    
+                                    {/* Dropdown Menu */}
+                                    {menuStudentId === student.id && (
+                                        <div style={{
+                                            position: 'absolute', top: '100%', right: '0', background: 'white',
+                                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', borderRadius: '12px',
+                                            padding: '0.5rem', minWidth: '180px', zIndex: 10, border: '1px solid #e2e8f0'
+                                        }}>
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    navigate(`/student/edit/${classId}/${student.id}?from=collections`);
+                                                }}
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%',
+                                                    padding: '0.5rem', border: 'none', background: 'transparent',
+                                                    textAlign: 'left', cursor: 'pointer', fontSize: '0.85rem',
+                                                    color: 'var(--text-main)', borderRadius: '8px', fontWeight: '500'
+                                                }}
+                                                className="hover:bg-slate-100"
+                                            >
+                                                <Edit size={14} color="var(--primary)" /> Edit Profile & Fee
+                                            </button>
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setActionStudentId(student.id);
+                                                    setShowAddActionPopup(true);
+                                                    setMenuStudentId(null);
+                                                }}
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%',
+                                                    padding: '0.5rem', border: 'none', background: 'transparent',
+                                                    textAlign: 'left', cursor: 'pointer', fontSize: '0.85rem',
+                                                    color: 'var(--text-main)', borderRadius: '8px', fontWeight: '500'
+                                                }}
+                                                className="hover:bg-slate-100"
+                                            >
+                                                <Plus size={14} color="#ec4899" /> Add New Action
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                     <CachedImage
                                         src={student.profilePic || `https://ui-avatars.com/api/?name=${student.name}&background=random`}
@@ -454,9 +604,106 @@ const ClassCollection = () => {
                                         )}
                                     </div>
                                 )}
+
+                                {/* 3. Individual Actions Control */}
+                                {student.individualActions && student.individualActions.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        {student.individualActions.map(action => (
+                                            <div key={action.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.75rem', borderRadius: '8px' }}>
+                                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#ec4899' }}>{action.name}</span>
+                                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Rs {action.amount}</span>
+                                                </div>
+
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    {action.status === 'paid' ? (
+                                                        <button
+                                                            onClick={() => toggleIndividualAction(student.id, action.id, 'unpaid')}
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                                                padding: '0.4rem 0.75rem', borderRadius: '8px', border: 'none',
+                                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem'
+                                                            }}
+                                                        >
+                                                            <CheckCircle size={14} /> Paid
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => toggleIndividualAction(student.id, action.id, 'paid')}
+                                                            style={{
+                                                                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                                                padding: '0.4rem 0.75rem', borderRadius: '8px', border: '1px solid #16a34a',
+                                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem'
+                                                            }}
+                                                        >
+                                                            <CheckCircle size={14} /> Mark Paid
+                                                        </button>
+                                                    )}
+                                                    <button 
+                                                        onClick={() => deleteIndividualAction(student.id, action.id)}
+                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem', display: 'flex' }}
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {/* Add Action Popup */}
+            {showAddActionPopup && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+                }}>
+                    <div className="card" style={{ background: 'white', padding: '2rem', borderRadius: '24px', width: '90%', maxWidth: '400px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0,0,0,0.1)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                            <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>Add New Action</h3>
+                            <button onClick={() => setShowAddActionPopup(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        
+                        <div style={{ marginBottom: '1rem' }}>
+                            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Action Title</label>
+                            <input 
+                                type="text"
+                                placeholder="e.g. Fine, Books Fee"
+                                value={newActionTitle}
+                                onChange={(e) => setNewActionTitle(e.target.value)}
+                                style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid #e2e8f0', outline: 'none' }}
+                            />
+                        </div>
+
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Amount (Rs)</label>
+                            <input 
+                                type="number"
+                                placeholder="e.g. 500"
+                                value={newActionAmount}
+                                onChange={(e) => setNewActionAmount(e.target.value)}
+                                style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', border: '1px solid #e2e8f0', outline: 'none' }}
+                            />
+                        </div>
+
+                        <button 
+                            onClick={handleAddIndividualAction}
+                            disabled={!newActionTitle.trim() || !newActionAmount}
+                            style={{
+                                width: '100%', padding: '0.75rem', borderRadius: '12px', border: 'none',
+                                background: 'var(--primary)', color: 'white', fontWeight: '700', cursor: 'pointer',
+                                opacity: (!newActionTitle.trim() || !newActionAmount) ? 0.5 : 1
+                            }}
+                        >
+                            Save Action
+                        </button>
+                    </div>
                 </div>
             )}
         </div>

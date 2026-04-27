@@ -18,7 +18,8 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
         basePaymentsReceived: 0,
         teachersSalary: 0,
         actionExpectedRevenue: 0,
-        actionPaymentsReceived: 0
+        actionPaymentsReceived: 0,
+        paidIndividualActions: []
     });
     
     const [financesData, setFinancesData] = useState({ incomes: [], expenses: [] });
@@ -73,18 +74,19 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
                 let receivedRev = 0;
                 let actionExpectedRev = 0;
                 let actionReceivedRev = 0;
+                let individualIncomesList = [];
                 
                 const validClasses = classesSnap.docs.filter(c => c.id !== 'action_metadata');
 
                 const studentPromises = validClasses.map(async (classDoc) => {
                     const isTargetedByAction = currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(classDoc.id)));
                     const studentsSnap = await getDocsFast(collection(db, `schools/${schoolId}/classes/${classDoc.id}/students`));
-                    return { isTargetedByAction, studentsSnap };
+                    return { isTargetedByAction, studentsSnap, classDoc };
                 });
 
                 const studentResults = await Promise.all(studentPromises);
 
-                studentResults.forEach(({ isTargetedByAction, studentsSnap }) => {
+                studentResults.forEach(({ isTargetedByAction, studentsSnap, classDoc }) => {
                     studentsSnap.docs.forEach(studentDoc => {
                         const sData = studentDoc.data();
                         
@@ -119,6 +121,16 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
                                 actionExpectedRev += Number(action.amount || 0);
                                 if (action.status === 'paid') {
                                     actionReceivedRev += Number(action.amount || 0);
+                                    individualIncomesList.push({
+                                        id: `${sData.id}-${action.id}`,
+                                        name: action.name,
+                                        studentName: sData.name,
+                                        rollNo: sData.rollNo || 'N/A',
+                                        className: classDoc.data().name,
+                                        amount: Number(action.amount || 0),
+                                        studentId: sData.id,
+                                        classId: classDoc.id
+                                    });
                                 }
                             });
                         }
@@ -130,7 +142,8 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
                     basePaymentsReceived: receivedRev,
                     teachersSalary: totalSalary,
                     actionExpectedRevenue: actionExpectedRev,
-                    actionPaymentsReceived: actionReceivedRev
+                    actionPaymentsReceived: actionReceivedRev,
+                    paidIndividualActions: individualIncomesList
                 });
                 setLoading(false);
             } catch (err) {
@@ -225,6 +238,30 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
         } catch (err) {
             console.error(`Error deleting ${category}:`, err);
             alert("Failed to delete entry.");
+        }
+    };
+
+    const handleRevertIndividualAction = async (classId, studentId, actionId) => {
+        if (checkManualBypass()) return;
+        if (!window.confirm("Are you sure you want to remove this paid action from finances?")) return;
+        
+        try {
+            const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
+            const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
+            
+            const docSnap = await getDoc(studentRef);
+            if (docSnap.exists()) {
+                const sData = docSnap.data();
+                const updatedActions = (sData.individualActions || []).map(a => 
+                    a.id === actionId ? { ...a, status: 'unpaid' } : a
+                );
+                
+                await updateDoc(studentRef, { individualActions: updatedActions });
+                try { await updateDoc(masterStudentRef, { individualActions: updatedActions }); } catch(e){}
+            }
+        } catch (err) {
+            console.error("Error removing action:", err);
+            alert("Failed to remove action.");
         }
     };
 
@@ -328,11 +365,22 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
                 `Rs ${Number(inc.amount).toLocaleString()}`
             ]);
 
+            // Add Individual Actions to PDF Report
+            if (stats.paidIndividualActions && stats.paidIndividualActions.length > 0) {
+                stats.paidIndividualActions.forEach(action => {
+                    incomesBody.unshift([
+                        `${action.name} (${action.studentName}, Roll: ${action.rollNo}, Class: ${action.className})`,
+                        'Individual Action',
+                        `Rs ${action.amount.toLocaleString()}`
+                    ]);
+                });
+            }
+
             if (currentAction) {
                 incomesBody.unshift([
                     currentAction.name,
-                    'Active Action (Collected)',
-                    `Rs ${(stats.actionPaymentsReceived || 0).toLocaleString()}`
+                    'Global Action',
+                    `Rs ${(stats.actionPaymentsReceived - (stats.paidIndividualActions?.reduce((sum, a) => sum + a.amount, 0) || 0)).toLocaleString()}` // only show the global part
                 ]);
             }
             
@@ -566,16 +614,39 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
                                     <div>
                                         <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '600', color: 'var(--text-main)' }}>
                                             {currentAction.name} 
-                                            <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', background: '#e2e8f0', color: '#475569', borderRadius: '12px', textTransform: 'uppercase', fontWeight: '700' }}>Active Action</span>
+                                            <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', background: '#e2e8f0', color: '#475569', borderRadius: '12px', textTransform: 'uppercase', fontWeight: '700' }}>Global Action</span>
                                         </span>
                                         <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Currently Collected Amount</span>
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                    <span style={{ fontWeight: '700', color: '#16a34a' }}>Rs {(stats.actionPaymentsReceived || 0).toLocaleString()}</span>
+                                    <span style={{ fontWeight: '700', color: '#16a34a' }}>Rs {((stats.actionPaymentsReceived || 0) - (stats.paidIndividualActions?.reduce((sum, a) => sum + a.amount, 0) || 0)).toLocaleString()}</span>
                                 </div>
                             </div>
                         )}
+
+                        {/* Individual Paid Actions Rows */}
+                        {stats.paidIndividualActions && stats.paidIndividualActions.map(action => (
+                            <div key={action.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #dcfce7' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                    <div style={{ background: '#86efac', padding: '0.3rem', borderRadius: '50%' }}>
+                                        <ArrowUpRight size={16} color="#166534" />
+                                    </div>
+                                    <div>
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '600', color: 'var(--text-main)' }}>
+                                            {action.name} 
+                                            <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', background: '#e2e8f0', color: '#475569', borderRadius: '12px', textTransform: 'uppercase', fontWeight: '700' }}>Add Payments Received</span>
+                                        </span>
+                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                            Student: {action.studentName} | Roll: {action.rollNo} | Class: {action.className}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                    <span style={{ fontWeight: '700', color: '#16a34a' }}>Rs {action.amount.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        ))}
 
                         {/* Incomes Rows */}
                         {financesData.incomes.map(inc => (
@@ -594,12 +665,6 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                     <span style={{ fontWeight: '700', color: '#16a34a' }}>Rs {Number(inc.amount).toLocaleString()}</span>
-                                    <button 
-                                        onClick={() => handleDeleteFinance(inc.id, 'incomes')}
-                                        style={{ background: 'none', border: 'none', color: '#16a34a', cursor: 'pointer', padding: '0.2rem' }}
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
                                 </div>
                             </div>
                         ))}
@@ -621,12 +686,6 @@ const FinancesDashboard = ({ schoolId, currentAction }) => {
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                     <span style={{ fontWeight: '700', color: '#dc2626' }}>Rs {Number(exp.amount).toLocaleString()}</span>
-                                    <button 
-                                        onClick={() => handleDeleteFinance(exp.id, 'expenses')}
-                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem' }}
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
                                 </div>
                             </div>
                         ))}

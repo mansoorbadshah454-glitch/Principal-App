@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Save, Plus, Trash2, User, Wallet, AlertCircle, Loader2, X } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { doc, getDoc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
@@ -9,7 +9,7 @@ const ACTION_CATEGORIES = ['Fine fee', 'Uniform', 'Books', 'Sports', 'Tour charg
 const RECURRING_CATEGORIES = [
     'Admission fee', 'Tuition fee', 'Transport fee', 'Library', 'Hostel fee',
     'Stationary charges', 'Promotions fee', 'Concession', 'Security',
-    'Miscellaneous', 'Annual fund'
+    'Miscellaneous', 'Annual fund', 'Online Services'
 ];
 
 const ALL_CATEGORIES = [...RECURRING_CATEGORIES, ...ACTION_CATEGORIES].sort();
@@ -17,6 +17,9 @@ const ALL_CATEGORIES = [...RECURRING_CATEGORIES, ...ACTION_CATEGORIES].sort();
 const EditStudentProfile = () => {
     const { classId, studentId } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
+    const searchParams = new URLSearchParams(location.search);
+    const returnTo = searchParams.get('from') === 'collections' ? `/collections/${classId}` : `/classes/${classId}`;
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [schoolId, setSchoolId] = useState(null);
@@ -98,6 +101,7 @@ const EditStudentProfile = () => {
                         dob: data.dob || '',
                         admissionDate: data.admissionDate || '',
                         parentDetails: {
+                            ...(data.parentDetails || {}),
                             fatherName: data.parentDetails?.fatherName || '',
                             occupation: data.parentDetails?.occupation || '',
                             phone: data.parentDetails?.phone || '',
@@ -206,7 +210,7 @@ const EditStudentProfile = () => {
             }
 
             alert("Student profile updated successfully!");
-            navigate(`/classes/${classId}`);
+            navigate(returnTo);
         } catch (error) {
             console.error("Error saving student profile:", error);
             alert("Failed to save changes.");
@@ -238,7 +242,7 @@ const EditStudentProfile = () => {
             } catch(e) {}
 
             alert("Student has been removed from the school.");
-            navigate(`/classes/${classId}`);
+            navigate(returnTo);
         } catch (error) {
             console.error("Error deleting student:", error);
             alert("Failed to process school leave.");
@@ -262,7 +266,7 @@ const EditStudentProfile = () => {
             <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     <button
-                        onClick={() => navigate(`/classes/${classId}`)}
+                        onClick={() => navigate(returnTo)}
                         style={{
                             background: 'white', border: '1px solid #e2e8f0', padding: '0.75rem',
                             borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'

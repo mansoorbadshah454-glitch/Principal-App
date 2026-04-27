@@ -886,10 +886,16 @@ const Parents = () => {
 
             const allClasses = dbClasses || [];
 
-            const getPossibleRefs = (studentId) => {
+            const getPossibleRefs = (child) => {
+                const studentId = child.studentId;
                 const refs = [doc(db, `schools/${schoolId}/students`, studentId)]; // master
+                if (child.classId) {
+                    refs.push(doc(db, `schools/${schoolId}/classes/${child.classId}/students`, studentId));
+                }
                 allClasses.forEach(cls => {
-                    refs.push(doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId));
+                    if (cls.id !== child.classId) {
+                        refs.push(doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId));
+                    }
                 });
                 return refs;
             };
@@ -897,11 +903,11 @@ const Parents = () => {
             // 2. Remove access from unlinked students (sweeps all classes to clear ghosts)
             for (const child of unlinkedStudents) {
                 if (child.studentId) {
-                    const refs = getPossibleRefs(child.studentId);
+                    const refs = getPossibleRefs(child);
                     const snaps = await Promise.all(refs.map(r => getDoc(r)));
                     snaps.forEach(snap => {
                         if (snap.exists()) {
-                            batch.update(snap.ref, { "parentDetails.parentId": null });
+                            batch.set(snap.ref, { parentDetails: { parentId: null } }, { merge: true });
                         }
                     });
                 }
@@ -910,11 +916,11 @@ const Parents = () => {
             // 3. Grant access to newly linked students (finds true location safely)
             for (const child of freshlyLinkedStudents) {
                 if (child.studentId) {
-                    const refs = getPossibleRefs(child.studentId);
+                    const refs = getPossibleRefs(child);
                     const snaps = await Promise.all(refs.map(r => getDoc(r)));
                     snaps.forEach(snap => {
                         if (snap.exists()) {
-                            batch.update(snap.ref, { "parentDetails.parentId": id });
+                            batch.set(snap.ref, { parentDetails: { parentId: id } }, { merge: true });
                         }
                     });
                 }
@@ -998,20 +1004,26 @@ const Parents = () => {
                 if (newParent.linkedStudents && newParent.linkedStudents.length > 0 && result?.data?.uid) {
                     const batch = writeBatch(db);
                     const allClasses = dbClasses || [];
-                    const getPossibleRefs = (studentId) => {
+                    const getPossibleRefs = (child) => {
+                        const studentId = child.studentId;
                         const refs = [doc(db, `schools/${schoolId}/students`, studentId)]; // master
+                        if (child.classId) {
+                            refs.push(doc(db, `schools/${schoolId}/classes/${child.classId}/students`, studentId));
+                        }
                         allClasses.forEach(cls => {
-                            refs.push(doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId));
+                            if (cls.id !== child.classId) {
+                                refs.push(doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId));
+                            }
                         });
                         return refs;
                     };
                     for (const child of newParent.linkedStudents) {
                         if (child.studentId) {
-                            const refs = getPossibleRefs(child.studentId);
+                            const refs = getPossibleRefs(child);
                             const snaps = await Promise.all(refs.map(r => getDoc(r)));
                             snaps.forEach(snap => {
                                 if (snap.exists()) {
-                                    batch.update(snap.ref, { "parentDetails.parentId": result.data.uid });
+                                    batch.set(snap.ref, { parentDetails: { parentId: result.data.uid } }, { merge: true });
                                 }
                             });
                         }
