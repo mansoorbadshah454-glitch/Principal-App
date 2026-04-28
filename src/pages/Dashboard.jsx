@@ -34,7 +34,7 @@ const Dashboard = () => {
     const [selectedTeacher, setSelectedTeacher] = useState(null);
     const [messageText, setMessageText] = useState('');
     const [isSending, setIsSending] = useState(false);
-    const [isBroadcast, setIsBroadcast] = useState(false);
+
     const [modalPos, setModalPos] = useState(null); // New state for popup position
     const [performanceTab, setPerformanceTab] = useState('subjects');
     const [selectedClass, setSelectedClass] = useState('all');
@@ -648,21 +648,6 @@ const Dashboard = () => {
 
     const availableClasses = ['All School', ...fetchedClasses.map(c => c.name)];
 
-    const handleSendBroadcast = (e) => {
-        setIsBroadcast(true);
-        setSelectedTeacher({ name: 'All Teachers', class: 'Broadcast Message' });
-
-        // Calculate position relative to the button
-        if (e && e.currentTarget) {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setModalPos({
-                top: rect.bottom + 10, // 10px below the button
-                left: Math.min(rect.left, window.innerWidth - 420) // Keep within screen (400px width + 20px padding)
-            });
-        } else {
-            setModalPos(null); // Fallback to center if no event
-        }
-    };
 
     const handleSendMessage = async () => {
         if (!messageText.trim() || !selectedTeacher) return;
@@ -673,49 +658,26 @@ const Dashboard = () => {
             if (session) {
                 const { schoolId } = JSON.parse(session);
 
-                if (isBroadcast) {
-                    // Send to all teachers
-                    const promises = teachers.map(teacher =>
-                        addDoc(collection(db, `schools/${schoolId}/messages`), {
-                            to: 'teacher',
-                            toId: teacher.id,
-                            toName: teacher.name,
-                            toRole: 'teacher',
-                            from: currentUserRole === 'principal' ? 'principal' : 'admin',
-                            fromName: currentUserName,
-                            fromId: messagingId,
-                            fromRole: currentUserRole,
-                            participants: [messagingId, teacher.id],
-                            text: messageText,
-                            timestamp: serverTimestamp(),
-                            read: false,
-                            type: 'principal-broadcast'
-                        })
-                    );
-                    await Promise.all(promises);
-                } else {
-                    // Send to single teacher
-                    await addDoc(collection(db, `schools/${schoolId}/messages`), {
-                        to: selectedTeacher.role === 'Teacher' ? 'teacher' : 'admin',
-                        toId: selectedTeacher.id,
-                        toName: selectedTeacher.name,
-                        toRole: selectedTeacher.role === 'Teacher' ? 'teacher' : 'school Admin',
-                        from: currentUserRole === 'principal' ? 'principal' : 'admin',
-                        fromName: currentUserName,
-                        fromId: messagingId,
-                        fromRole: currentUserRole,
-                        participants: [messagingId, selectedTeacher.id],
-                        text: messageText,
-                        timestamp: serverTimestamp(),
-                        read: false,
-                        type: 'direct-message'
-                    });
-                }
+                // Send to single teacher
+                await addDoc(collection(db, `schools/${schoolId}/messages`), {
+                    to: selectedTeacher.role === 'Teacher' ? 'teacher' : 'admin',
+                    toId: selectedTeacher.id,
+                    toName: selectedTeacher.name,
+                    toRole: selectedTeacher.role === 'Teacher' ? 'teacher' : 'school Admin',
+                    from: currentUserRole === 'principal' ? 'principal' : 'admin',
+                    fromName: currentUserName,
+                    fromId: messagingId,
+                    fromRole: currentUserRole,
+                    participants: [messagingId, selectedTeacher.id],
+                    text: messageText,
+                    timestamp: serverTimestamp(),
+                    read: false,
+                    type: 'direct-message'
+                });
 
                 setMessageText('');
                 setSelectedTeacher(null);
                 setModalPos(null);
-                setIsBroadcast(false);
             }
         } catch (error) {
             console.error('Error sending message:', error);
@@ -1526,39 +1488,6 @@ const Dashboard = () => {
                                 <h3 style={{ fontSize: '1.125rem', margin: 0 }}>Teachers Live</h3>
 
                                 <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', width: '100%' }}>
-                                    <button
-                                        onClick={handleSendBroadcast}
-                                        style={{
-                                            flex: 1,
-                                            padding: '0.75rem 1rem',
-                                            background: 'linear-gradient(135deg, var(--primary) 0%, #4338ca 100%)',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '12px',
-                                            fontSize: '0.875rem',
-                                            fontWeight: '600',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            gap: '0.625rem',
-                                            transition: 'var(--transition)',
-                                            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.15)',
-                                            position: 'relative'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            e.currentTarget.style.transform = 'translateY(-2px)';
-                                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(79, 70, 229, 0.25)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.transform = 'translateY(0)';
-                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.15)';
-                                        }}
-                                    >
-                                        <Send size={18} />
-                                        <span>Send Note to All</span>
-                                    </button>
-
                                     <button
                                         onClick={() => navigate('/inbox')}
                                         style={{

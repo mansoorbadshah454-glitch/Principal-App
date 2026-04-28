@@ -441,8 +441,30 @@ const NewsFeed = () => {
     };
 
     return (
-        <div style={{ margin: '-2.5rem', padding: '2.5rem', minHeight: 'calc(100vh - 2.5rem)', background: '#1e293b', animation: 'fadeIn 0.5s ease-out' }}>
+        <div style={{ margin: '-2.5rem', padding: '2.5rem', minHeight: 'calc(100vh - 2.5rem)', position: 'relative', animation: 'fadeIn 0.5s ease-out' }}>
             
+            {/* Blurred Background Image */}
+            <div style={{
+                position: 'fixed',
+                top: '-20px', left: '-20px', right: '-20px', bottom: '-20px',
+                backgroundImage: 'url("https://images.unsplash.com/photo-1541829070764-84a7d30dd3f3?ixlib=rb-1.2.1&auto=format&fit=crop&w=1920&q=80")',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                filter: 'blur(10px)',
+                zIndex: 0
+            }} />
+            
+            {/* Dark Overlay */}
+            <div style={{
+                position: 'fixed',
+                top: 0, left: 0, right: 0, bottom: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                zIndex: 0
+            }} />
+
+            {/* Content Wrapper */}
+            <div style={{ position: 'relative', zIndex: 1 }}>
+
             {likersModalData && (
                 <LikersModal 
                     uids={likersModalData} 
@@ -855,6 +877,7 @@ const NewsFeed = () => {
                 </div>
 
             </div>
+            </div> {/* End Content Wrapper */}
 
 
             <style>{`

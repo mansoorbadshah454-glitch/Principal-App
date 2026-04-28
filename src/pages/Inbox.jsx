@@ -34,6 +34,7 @@ const Inbox = () => {
     const [isSending, setIsSending] = useState(false);
     const [unreadCounts, setUnreadCounts] = useState({});
     const [showMenu, setShowMenu] = useState(false);
+    const [activeTab, setActiveTab] = useState('list'); // 'list' | 'group'
 
     // New state for file upload confirmation
     const [selectedFileForUpload, setSelectedFileForUpload] = useState(null);
@@ -269,17 +270,25 @@ const Inbox = () => {
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
 
-                const isFromMe = (data.fromId === messagingId || data.fromId === currentUserId || data.from === messagingId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
-                const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === messagingId || data.toId === currentUserId || data.to === messagingId);
+                const isGroupChat = selectedTeacher.id === 'all_teachers';
+                let isRelevant = false;
 
-                if (isFromMe || isToMe) {
-                    msgs.push({ id: docSnap.id, ...data });
+                if (isGroupChat) {
+                    isRelevant = data.toId === 'all_teachers' || data.type === 'principal-broadcast';
+                } else {
+                    const isFromMe = (data.fromId === messagingId || data.fromId === currentUserId || data.from === messagingId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
+                    const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === messagingId || data.toId === currentUserId || data.to === messagingId);
+                    isRelevant = isFromMe || isToMe;
 
                     if (isToMe && data.read === false) {
                         updateDoc(doc(db, `schools/${schoolId}/messages`, docSnap.id), {
                             read: true
                         }).catch(err => console.error("Error marking as read:", err));
                     }
+                }
+
+                if (isRelevant) {
+                    msgs.push({ id: docSnap.id, ...data });
                 }
             });
             setMessages(msgs);
@@ -293,10 +302,18 @@ const Inbox = () => {
                 const data = docSnap.data();
                 if (data.participants) return; // Skip optimized messages handled by other listener
 
-                const isFromMe = (data.fromId === messagingId || data.fromId === currentUserId || data.from === messagingId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
-                const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === messagingId || data.toId === currentUserId || data.to === messagingId);
+                const isGroupChat = selectedTeacher.id === 'all_teachers';
+                let isRelevant = false;
 
-                if (isFromMe || isToMe) {
+                if (isGroupChat) {
+                    isRelevant = data.toId === 'all_teachers' || data.type === 'principal-broadcast';
+                } else {
+                    const isFromMe = (data.fromId === messagingId || data.fromId === currentUserId || data.from === messagingId) && (data.toId === selectedTeacher.id || data.to === selectedTeacher.id);
+                    const isToMe = (data.fromId === selectedTeacher.id || data.from === selectedTeacher.id) && (data.toId === messagingId || data.toId === currentUserId || data.to === messagingId);
+                    isRelevant = isFromMe || isToMe;
+                }
+
+                if (isRelevant) {
                     legacyMsgs.push({ id: docSnap.id, ...data });
                 }
             });
@@ -360,20 +377,25 @@ const Inbox = () => {
 
         setIsSending(true);
         try {
+            const isGroup = selectedTeacher.id === 'all_teachers';
+            const participantsList = isGroup
+                ? [messagingId, ...teachers.map(t => t.id)]
+                : [messagingId, selectedTeacher.id];
+
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
                 text: messageText.trim(),
                 from: currentUserRole === 'principal' ? 'principal' : 'admin',
                 fromId: messagingId,
                 fromName: currentUserName,
                 fromRole: currentUserRole,
-                to: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'admin'),
+                to: isGroup ? 'all' : (selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'admin')),
                 toId: selectedTeacher.id,
                 toName: selectedTeacher.name,
-                toRole: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'school Admin'),
-                participants: [messagingId, selectedTeacher.id],
+                toRole: isGroup ? 'group' : (selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'school Admin')),
+                participants: participantsList,
                 timestamp: serverTimestamp(),
                 read: false,
-                type: 'direct-message'
+                type: isGroup ? 'principal-broadcast' : 'direct-message'
             });
             setMessageText('');
             scrollToBottom();
@@ -406,20 +428,25 @@ const Inbox = () => {
             await uploadBytes(fileRef, file);
             const url = await getDownloadURL(fileRef);
 
+            const isGroup = selectedTeacher.id === 'all_teachers';
+            const participantsList = isGroup
+                ? [messagingId, ...teachers.map(t => t.id)]
+                : [messagingId, selectedTeacher.id];
+
             await addDoc(collection(db, `schools/${schoolId}/messages`), {
                 text: fileCaption.trim() || '', // Use caption instead of hardcoded prefix
                 from: currentUserRole === 'principal' ? 'principal' : 'admin',
                 fromId: messagingId,
                 fromName: currentUserName,
                 fromRole: currentUserRole,
-                to: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'admin'),
+                to: isGroup ? 'all' : (selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'admin')),
                 toId: selectedTeacher.id,
                 toName: selectedTeacher.name,
-                toRole: selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'school Admin'),
-                participants: [messagingId, selectedTeacher.id],
+                toRole: isGroup ? 'group' : (selectedTeacher.role === 'Teacher' ? 'teacher' : (selectedTeacher.role === 'Principal' ? 'principal' : 'school Admin')),
+                participants: participantsList,
                 timestamp: serverTimestamp(),
                 read: false,
-                type: 'direct-message',
+                type: isGroup ? 'principal-broadcast' : 'direct-message',
                 attachment: {
                     url: url,
                     fullPath: path, // Added for easy deletion
@@ -473,30 +500,60 @@ const Inbox = () => {
                     </div>
                 </div>
 
+                <div style={{ display: 'flex', gap: '10px', padding: '10px 20px', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
+                    <button 
+                        onClick={() => { setActiveTab('list'); setSelectedTeacher(null); }}
+                        style={{ flex: 1, padding: '8px', borderRadius: '6px', border: 'none', background: activeTab === 'list' ? 'var(--primary-color, #4f46e5)' : 'transparent', color: activeTab === 'list' ? '#fff' : 'inherit', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
+                    >List</button>
+                    <button 
+                        onClick={() => { setActiveTab('group'); setSelectedTeacher({ id: 'all_teachers', name: 'All Teachers Group', role: 'Group' }); }}
+                        style={{ flex: 1, padding: '8px', borderRadius: '6px', border: 'none', background: activeTab === 'group' ? 'var(--primary-color, #4f46e5)' : 'transparent', color: activeTab === 'group' ? '#fff' : 'inherit', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
+                    >Group</button>
+                </div>
+
                 <div className="inbox-teacher-list custom-scrollbar">
-                    {filteredTeachers.map(teacher => (
+                    {activeTab === 'list' ? (
+                        <>
+                            {filteredTeachers.map(teacher => (
+                                <div
+                                    key={teacher.id}
+                                    className={`inbox-teacher-item ${selectedTeacher?.id === teacher.id ? 'active' : ''}`}
+                                    onClick={() => setSelectedTeacher(teacher)}
+                                >
+                                    <div className="teacher-avatar">
+                                        {teacher.name ? teacher.name.charAt(0).toUpperCase() : 'T'}
+                                        {teacher.status === 'on' && <span className="status-indicator online"></span>}
+                                    </div>
+                                    <div className="teacher-info">
+                                        <div className="teacher-name-row">
+                                            <span className="teacher-name">{teacher.name || 'Unnamed Teacher'}</span>
+                                            {unreadCounts[teacher.id] > 0 && (
+                                                <span className="unread-badge">{unreadCounts[teacher.id]}</span>
+                                            )}
+                                        </div>
+                                        <span className="teacher-class">{teacher.class || 'No Class'}</span>
+                                    </div>
+                                </div>
+                            ))}
+                            {filteredTeachers.length === 0 && (
+                                <div className="no-results">No contacts found.</div>
+                            )}
+                        </>
+                    ) : (
                         <div
-                            key={teacher.id}
-                            className={`inbox-teacher-item ${selectedTeacher?.id === teacher.id ? 'active' : ''}`}
-                            onClick={() => setSelectedTeacher(teacher)}
+                            className={`inbox-teacher-item ${selectedTeacher?.id === 'all_teachers' ? 'active' : ''}`}
+                            onClick={() => setSelectedTeacher({ id: 'all_teachers', name: 'All Teachers Group', role: 'Group' })}
                         >
-                            <div className="teacher-avatar">
-                                {teacher.name ? teacher.name.charAt(0).toUpperCase() : 'T'}
-                                {teacher.status === 'on' && <span className="status-indicator online"></span>}
+                            <div className="teacher-avatar" style={{ background: '#10b981' }}>
+                                G
                             </div>
                             <div className="teacher-info">
                                 <div className="teacher-name-row">
-                                    <span className="teacher-name">{teacher.name || 'Unnamed Teacher'}</span>
-                                    {unreadCounts[teacher.id] > 0 && (
-                                        <span className="unread-badge">{unreadCounts[teacher.id]}</span>
-                                    )}
+                                    <span className="teacher-name">All Teachers Group</span>
                                 </div>
-                                <span className="teacher-class">{teacher.class || 'No Class'}</span>
+                                <span className="teacher-class">Broadcast to everyone</span>
                             </div>
                         </div>
-                    ))}
-                    {filteredTeachers.length === 0 && (
-                        <div className="no-results">No contacts found.</div>
                     )}
                 </div>
             </div>
