@@ -73,7 +73,7 @@ const PostMediaCollage = ({ media }) => {
                        </div>
                     </div>
                 ) : (
-                    <CachedImage src={item.url} alt="Post content" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <img src={item.url} alt="Post content" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                 )}
                 {isCover && media.length > 4 && (
                     <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
@@ -90,7 +90,7 @@ const PostMediaCollage = ({ media }) => {
                {media[0].type === 'video' ? (
                    <video src={media[0].url} controls style={{ maxHeight: '500px', maxWidth: '100%' }} />
                ) : (
-                   <CachedImage src={media[0].url} alt="Post content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain' }} />
+                   <img src={media[0].url} alt="Post content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain' }} />
                )}
             </div>
         );
