@@ -8,7 +8,7 @@ import CommentsSection from '../components/CommentsSection';
 import LikersModal from '../components/LikersModal';
 import {
     collection, addDoc, query, orderBy, onSnapshot,
-    deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment
+    deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment, deleteField
 } from 'firebase/firestore';
 import { getDocFast } from '../utils/cacheUtils';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -73,7 +73,7 @@ const PostMediaCollage = ({ media }) => {
                        </div>
                     </div>
                 ) : (
-                    <img src={item.url} alt="Post content" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <CachedImage src={item.url} alt="Post content" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                 )}
                 {isCover && media.length > 4 && (
                     <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
@@ -90,7 +90,7 @@ const PostMediaCollage = ({ media }) => {
                {media[0].type === 'video' ? (
                    <video src={media[0].url} controls style={{ maxHeight: '500px', maxWidth: '100%' }} />
                ) : (
-                   <img src={media[0].url} alt="Post content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain' }} />
+                   <CachedImage src={media[0].url} alt="Post content" style={{ width: '100%', maxHeight: '500px', objectFit: 'contain' }} />
                )}
             </div>
         );
@@ -141,7 +141,7 @@ const PostMediaCollage = ({ media }) => {
                             {media[currentIndex].type === 'video' ? (
                                 <video src={media[currentIndex].url} controls autoPlay style={{ maxWidth: '100%', maxHeight: '80vh' }} />
                             ) : (
-                                <img src={media[currentIndex].url} alt="Fullscreen view" style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain' }} />
+                                <CachedImage src={media[currentIndex].url} alt="Fullscreen view" style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain' }} />
                             )}
                         </div>
                         {currentIndex < media.length - 1 && (
@@ -401,21 +401,24 @@ const NewsFeed = () => {
         }
     };
 
-    const handleLike = async (post) => {
+    const handleLike = async (post, allLikers) => {
 
         if (!schoolId || !currentUserId) return;
         const uid = currentUserId;
 
         // Optimistic UI handled by Firestore listener
         const postRef = doc(db, `schools/${schoolId}/posts`, post.id);
-        const isLiked = post.likes?.includes(uid);
+        const isLiked = allLikers.includes(uid);
 
         try {
             if (isLiked) {
                 await updateDoc(postRef, {
-                    likes: arrayRemove(uid)
+                    likes: arrayRemove(uid),
+                    [`reactions.${uid}`]: deleteField()
                 });
             } else {
+                // To remain compatible, we just add to likes array. 
+                // The flutter app reads from both.
                 await updateDoc(postRef, {
                     likes: arrayUnion(uid)
                 });
@@ -672,7 +675,12 @@ const NewsFeed = () => {
 
                 {/* Posts List */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                    {posts.map(post => (
+                    {posts.map(post => {
+                        const allLikers = [...new Set([
+                            ...(post.likes || []),
+                            ...Object.keys(post.reactions || {}).filter(k => post.reactions[k] === 'like')
+                        ])];
+                        return (
                         <div key={post.id} className="card" style={{ padding: '0', overflow: 'hidden' }}>
                             <div style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                 <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -785,20 +793,20 @@ const NewsFeed = () => {
                                 <div style={{ display: 'flex', gap: '1.5rem' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                         <button
-                                            onClick={() => handleLike(post)}
+                                            onClick={() => handleLike(post, allLikers)}
                                             style={{
                                                 background: 'transparent', border: 'none', cursor: 'pointer',
                                                 display: 'flex', alignItems: 'center', gap: '0.4rem',
-                                                color: post.likes?.includes(currentUserId) ? '#3b82f6' : '#64748b',
+                                                color: allLikers.includes(currentUserId) ? '#3b82f6' : '#64748b',
                                                 fontSize: '0.9rem', fontWeight: '600', padding: 0
                                             }}
                                         >
-                                            <ThumbsUp size={18} fill={post.likes?.includes(currentUserId) ? '#3b82f6' : 'none'} />
-                                            <span>{post.likes?.length || 0} Likes</span>
+                                            <ThumbsUp size={18} fill={allLikers.includes(currentUserId) ? '#3b82f6' : 'none'} />
+                                            <span>{allLikers.length || 0} Likes</span>
                                         </button>
-                                        {(post.likes && post.likes.length > 0) && (
+                                        {(allLikers.length > 0) && (
                                             <button
-                                                onClick={() => setLikersModalData(post.likes)}
+                                                onClick={() => setLikersModalData(allLikers)}
                                                 style={{
                                                     background: 'transparent', border: 'none', cursor: 'pointer',
                                                     color: '#64748b', fontSize: '0.85rem', fontWeight: '600', padding: 0, textDecoration: 'underline'
@@ -837,7 +845,7 @@ const NewsFeed = () => {
                                 />
                             )}
                         </div>
-                    ))}
+                    )})}
 
                     {posts.length === 0 && (
                         <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>

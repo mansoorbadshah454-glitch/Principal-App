@@ -21,3 +21,45 @@ messaging.onBackgroundMessage((payload) => {
     };
     self.registration.showNotification(notificationTitle, notificationOptions);
 });
+
+// --- OFFLINE CACHE FOR FIREBASE STORAGE ---
+const CACHE_NAME = 'firebase-storage-cache-v1';
+
+self.addEventListener('fetch', (event) => {
+    // Only intercept GET requests to Firebase Storage
+    if (event.request.method === 'GET' && event.request.url.includes('firebasestorage.googleapis.com')) {
+        event.respondWith(
+            caches.match(event.request).then((cachedResponse) => {
+                if (cachedResponse) {
+                    // Return cached image, but also fetch an update in the background (stale-while-revalidate)
+                    event.waitUntil(
+                        fetch(event.request).then((networkResponse) => {
+                            if (networkResponse && networkResponse.status === 200) {
+                                caches.open(CACHE_NAME).then((cache) => {
+                                    cache.put(event.request, networkResponse);
+                                });
+                            }
+                        }).catch(() => { /* Ignore background fetch errors */ })
+                    );
+                    return cachedResponse;
+                }
+
+                // If not in cache, fetch from network and cache it
+                return fetch(event.request).then((networkResponse) => {
+                    // Cache only valid responses or opaque responses (type === 'opaque')
+                    if (!networkResponse || (networkResponse.status !== 200 && networkResponse.type !== 'opaque')) {
+                        return networkResponse;
+                    }
+                    const responseToCache = networkResponse.clone();
+                    caches.open(CACHE_NAME).then((cache) => {
+                        cache.put(event.request, responseToCache);
+                    });
+                    return networkResponse;
+                }).catch((error) => {
+                    console.error('[SW] Fetch failed for storage:', error);
+                    // You could optionally return a fallback placeholder image here
+                });
+            })
+        );
+    }
+});

@@ -21,7 +21,7 @@ import {
   Printer,
   Download,
 } from "lucide-react";
-import { db } from "../firebase";
+import { db, storage } from "../firebase";
 import {
   collection,
   getDocs,
@@ -37,6 +37,7 @@ import {
   limit,
   arrayUnion,
 } from "firebase/firestore";
+import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { getDocsFast } from "../utils/cacheUtils";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import html2canvas from "html2canvas";
@@ -478,6 +479,28 @@ const Admission = () => {
         );
         const className = selectedClass ? selectedClass.name : "Unknown";
 
+        // Generate ID via ref (so we use same ID for both locations)
+        const studentRef = doc(
+          collection(
+            db,
+            `schools/${schoolId}/classes/${student.admissionClass}/students`,
+          ),
+        );
+        const studentId = studentRef.id;
+
+        // Upload Profile Pic if available
+        let profilePicUrl = null;
+        if (student.profilePic) {
+          try {
+            const storagePath = `schools/${schoolId}/students/${studentId}/profile.jpg`;
+            const imageRef = ref(storage, storagePath);
+            await uploadString(imageRef, student.profilePic, 'data_url');
+            profilePicUrl = await getDownloadURL(imageRef);
+          } catch (err) {
+            console.error("Error uploading profile pic:", err);
+          }
+        }
+
         // Prepare Student Data Object
         const studentData = {
           name: `${student.firstName} ${student.lastName}`,
@@ -486,7 +509,8 @@ const Admission = () => {
           dob: student.dob,
           gender: student.gender,
           previousSchool: student.previousSchool,
-          profilePic: student.profilePic || null,
+          profilePic: profilePicUrl,
+          avatar: profilePicUrl,
           parentDetails: { ...parentDetails, parentId: finalParentId }, // Link Ref in Student Doc
           rollNo:
             student.rollNo || `TPP-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -501,17 +525,12 @@ const Admission = () => {
           createdAt: serverTimestamp(),
         };
 
-        // Generate ID via ref (so we use same ID for both locations)
-        const studentRef = doc(
-          collection(
-            db,
-            `schools/${schoolId}/classes/${student.admissionClass}/students`,
-          ),
-        );
-        const studentId = studentRef.id;
-
         // 1. Save to Class Sub-collection
         await setDoc(studentRef, studentData);
+
+        // 2. Save to Master Students Collection
+        const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
+        await setDoc(masterStudentRef, studentData);
 
         // Add to links array
         // Add to links array

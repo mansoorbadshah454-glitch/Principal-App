@@ -56,7 +56,7 @@ const CachedImage = ({ src, alt, className, style, fallbackIcon: FallbackIcon = 
     }
 
     return (
-        <div style={{ position: 'relative', width: style?.width || '100%', height: style?.height || '100%', ...style }} className={className}>
+        <div style={{ position: 'relative', width: style?.width || '100%', height: style?.height || 'auto', ...style }} className={className}>
             {/* The actual image loads in the background */}
             <img 
                 src={src} 
@@ -64,15 +64,14 @@ const CachedImage = ({ src, alt, className, style, fallbackIcon: FallbackIcon = 
                 onLoad={handleLoad}
                 onError={handleError}
                 style={{ 
-                    objectFit: 'cover', 
+                    objectFit: style?.objectFit || 'cover', 
                     width: '100%', 
-                    height: '100%',
+                    height: style?.height || 'auto',
+                    maxHeight: style?.maxHeight || 'none',
                     borderRadius: style?.borderRadius || '0',
                     opacity: isLoaded ? 1 : 0, 
                     transition: 'opacity 0.2s ease-in-out',
-                    position: 'absolute',
-                    top: 0,
-                    left: 0
+                    display: 'block'
                 }} 
                 {...props} 
             />
