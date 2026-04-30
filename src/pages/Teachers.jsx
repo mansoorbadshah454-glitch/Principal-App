@@ -6,7 +6,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as QRCodeLib from 'qrcode';
 import { db, functions, auth } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc, orderBy, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc, orderBy, serverTimestamp, limit } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
@@ -1651,33 +1651,32 @@ const Teachers = () => {
                         />
                     ))}
                 </div>
-                {teachers.length >= teacherLimit && (
-                    <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
-                        <button
-                            onClick={() => setTeacherLimit(prev => prev + 20)}
-                            className="btn-primary"
-                            style={{
-                                padding: '0.75rem 2.5rem',
-                                borderRadius: '12px',
-                                background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
-                                color: 'white',
-                                fontWeight: '700',
-                                border: 'none',
-                                boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                            onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                        >
-                            Load More Teachers
-                        </button>
-                    </div>
-                )}
+            )}
+            {!loading && teachers.length >= teacherLimit && (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
+                    <button
+                        onClick={() => setTeacherLimit(prev => prev + 20)}
+                        className="btn-primary"
+                        style={{
+                            padding: '0.75rem 2.5rem',
+                            borderRadius: '12px',
+                            background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
+                            color: 'white',
+                            fontWeight: '700',
+                            border: 'none',
+                            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
+                        Load More Teachers
+                    </button>
                 </div>
             )}
-                </>
-            )}
+            </>
+        )}
 
             {activeTab === 'attendance' && (
                 <div className="animate-fade-in-up">
