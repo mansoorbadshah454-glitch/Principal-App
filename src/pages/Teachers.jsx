@@ -12,7 +12,7 @@ import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 // Internal Component for individual Teacher Card logic
-const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted, todayStr }) => {
+const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted, todayStr }) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editStep, setEditStep] = useState(1);
     const [isSaving, setIsSaving] = useState(false);
@@ -459,7 +459,7 @@ const TeacherCard = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighl
             </div>
         </div>
     );
-};
+});
 
 const Teachers = () => {
     const getTodayStr = () => {
@@ -574,6 +574,8 @@ const Teachers = () => {
     const [dbClassesData, setDbClassesData] = useState([]);
     const [globalBreakStartTime, setGlobalBreakStartTime] = useState('10:30');
     const [globalBreakEndTime, setGlobalBreakEndTime] = useState('11:00');
+    const [teacherLimit, setTeacherLimit] = useState(20); // Enterprise Scalability: Cap reads
+    const [teacherCount, setTeacherCount] = useState(0); // Atomic counter for accurate total
 
     useEffect(() => {
         if (!schoolId) return;
@@ -977,7 +979,7 @@ const Teachers = () => {
         };
     }, []);
 
-    // Fetch Teachers & Classes
+    // Fetch School Info & Classes
     useEffect(() => {
         if (!schoolId) return;
 
@@ -994,6 +996,11 @@ const Teachers = () => {
                     const d = profileDoc.data();
                     if (d.breakStartTime) setGlobalBreakStartTime(d.breakStartTime);
                     if (d.breakEndTime) setGlobalBreakEndTime(d.breakEndTime);
+                }
+
+                const countsDoc = await getDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'));
+                if (countsDoc.exists()) {
+                    setTeacherCount(countsDoc.data().teacherCount || 0);
                 }
             } catch (err) {
                 console.error("Error fetching school info", err);
@@ -1019,9 +1026,17 @@ const Teachers = () => {
         };
 
         fetchClasses();
+    }, [schoolId]);
 
-        // Listen for Teachers
-        const q = query(collection(db, `schools/${schoolId}/teachers`));
+    // Listen for Teachers (Paginated)
+    useEffect(() => {
+        if (!schoolId) return;
+
+        const q = query(
+            collection(db, `schools/${schoolId}/teachers`),
+            orderBy('name'),
+            limit(teacherLimit)
+        );
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const teachersData = snapshot.docs.map(doc => ({
                 id: doc.id,
@@ -1035,7 +1050,7 @@ const Teachers = () => {
         });
 
         return () => unsubscribe();
-    }, [schoolId]);
+    }, [schoolId, teacherLimit]);
 
     // Handle Scroll to Teacher from Dashboard
     const location = useLocation();
@@ -1492,7 +1507,7 @@ const Teachers = () => {
                 {[
                     {
                         label: 'Total Teachers',
-                        value: teachers.length,
+                        value: teacherCount || teachers.length, // Fallback to array length if atomic counter is missing
                         icon: Users,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f5f7ff 100%)',
                         border: '#e0e7ff',
@@ -1635,6 +1650,30 @@ const Teachers = () => {
                             todayStr={todayStr}
                         />
                     ))}
+                </div>
+                {teachers.length >= teacherLimit && (
+                    <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
+                        <button
+                            onClick={() => setTeacherLimit(prev => prev + 20)}
+                            className="btn-primary"
+                            style={{
+                                padding: '0.75rem 2.5rem',
+                                borderRadius: '12px',
+                                background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
+                                color: 'white',
+                                fontWeight: '700',
+                                border: 'none',
+                                boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                        >
+                            Load More Teachers
+                        </button>
+                    </div>
+                )}
                 </div>
             )}
                 </>
@@ -1782,6 +1821,30 @@ const Teachers = () => {
                                 </div>
                             ))}
                             </div>
+                            
+                            {teachers.length >= teacherLimit && (
+                                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
+                                    <button
+                                        onClick={() => setTeacherLimit(prev => prev + 20)}
+                                        className="btn-primary"
+                                        style={{
+                                            padding: '0.75rem 2.5rem',
+                                            borderRadius: '12px',
+                                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                            color: 'white',
+                                            fontWeight: '700',
+                                            border: 'none',
+                                            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                                    >
+                                        Load More Teachers
+                                    </button>
+                                </div>
+                            )}
                         </>
                     )}
                 </div>

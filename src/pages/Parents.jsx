@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby } from 'lucide-react';
 import { db, functions } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc, serverTimestamp, limit } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
 import { auth } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 
 // Internal Component for individual Parent Card logic
-const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbClasses, schoolId }) => {
+const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbClasses, schoolId }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [isMessaging, setIsMessaging] = useState(false);
@@ -634,7 +634,7 @@ const ParentCard = ({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbCl
             </div>
         </div>
     );
-};
+});
 
 const Parents = () => {
     const [showAddParent, setShowAddParent] = useState(false);
@@ -674,6 +674,10 @@ const Parents = () => {
     const [loading, setLoading] = useState(true);
     const [schoolId, setSchoolId] = useState(null);
     const [dbClasses, setDbClasses] = useState([]);
+    
+    // Enterprise Scalability: Pagination and Counters
+    const [parentLimit, setParentLimit] = useState(20);
+    const [parentCount, setParentCount] = useState(0);
 
     // Filter & Search State
     const [filterClassId, setFilterClassId] = useState('');
@@ -776,8 +780,23 @@ const Parents = () => {
 
         fetchClasses();
 
+        const fetchCounts = async () => {
+            try {
+                const docSnap = await getDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'));
+                if (docSnap.exists()) {
+                    setParentCount(docSnap.data().parentCount || 0);
+                }
+            } catch (err) {
+                console.error("Error fetching parent count", err);
+            }
+        };
+        fetchCounts();
+
         // Listen for Parents
-        const q = query(collection(db, `schools/${schoolId}/parents`));
+        const q = query(
+            collection(db, `schools/${schoolId}/parents`),
+            limit(parentLimit)
+        );
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const parentsData = snapshot.docs.map(doc => ({
                 id: doc.id,
@@ -791,7 +810,7 @@ const Parents = () => {
         });
 
         return () => unsubscribe();
-    }, [schoolId]);
+    }, [schoolId, parentLimit]);
 
     // Fetch students when a class is selected
     useEffect(() => {
@@ -1231,7 +1250,7 @@ const Parents = () => {
                 {[
                     {
                         label: 'Total Parents',
-                        value: parents.length,
+                        value: parentCount || parents.length,
                         icon: Users,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f5f7ff 100%)',
                         border: '#e0e7ff',
@@ -1371,6 +1390,30 @@ const Parents = () => {
                             schoolId={schoolId}
                         />
                     ))}
+                </div>
+            )}
+            
+            {!loading && parents.length >= parentLimit && !searchQuery && !filterClassId && (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
+                    <button
+                        onClick={() => setParentLimit(prev => prev + 20)}
+                        className="btn-primary"
+                        style={{
+                            padding: '0.75rem 2.5rem',
+                            borderRadius: '12px',
+                            background: 'linear-gradient(135deg, #bc1888 0%, #e6683c 100%)',
+                            color: 'white',
+                            fontWeight: '700',
+                            border: 'none',
+                            boxShadow: '0 4px 12px rgba(188, 24, 136, 0.3)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
+                        Load More Parents
+                    </button>
                 </div>
             )}
 

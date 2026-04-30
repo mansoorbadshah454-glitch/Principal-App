@@ -8,7 +8,7 @@ import CommentsSection from '../components/CommentsSection';
 import LikersModal from '../components/LikersModal';
 import {
     collection, addDoc, query, orderBy, onSnapshot,
-    deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment, deleteField
+    deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment, deleteField, limit
 } from 'firebase/firestore';
 import { getDocFast } from '../utils/cacheUtils';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -165,6 +165,7 @@ const NewsFeed = () => {
     const [openCommentPostId, setOpenCommentPostId] = useState(null);
     const [selectedBackgroundIndex, setSelectedBackgroundIndex] = useState(0);
     const [likersModalData, setLikersModalData] = useState(null);
+    const [postLimit, setPostLimit] = useState(20); // Scalable limit
 
     // Audience State
     const [audience, setAudience] = useState('all'); // 'all' or 'class'
@@ -252,50 +253,26 @@ const NewsFeed = () => {
         return () => unsubscribe();
     }, [schoolId]);
 
-    // Fetch Posts
+    // Fetch Posts (Paginated)
     useEffect(() => {
         if (schoolId) {
             const q = query(
                 collection(db, `schools/${schoolId}/posts`),
-                orderBy('timestamp', 'desc')
+                orderBy('timestamp', 'desc'),
+                limit(postLimit) // Enterprise Scalability: Dynamic capped reads
             );
             const unsubscribe = onSnapshot(q, (snapshot) => {
-                const currentTime = new Date();
-                const oneWeekAgo = new Date(currentTime.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-                const filteredPosts = [];
-                const deletePromises = [];
-
-                snapshot.docs.forEach(doc => {
-                    const data = doc.data();
-                    const post = { id: doc.id, ...data };
-
-                    if (!data.timestamp) {
-                        filteredPosts.push(post); // Keep optimistic updates
-                        return;
-                    }
-
-                    if (data.timestamp.toDate() > oneWeekAgo) {
-                        filteredPosts.push(post);
-                    } else {
-                        // Found an old post, add to delete queue
-                        deletePromises.push(deleteDoc(doc.ref));
-                        if (data.imageUrl) {
-                            const imageRef = ref(storage, data.imageUrl);
-                            deletePromises.push(deleteObject(imageRef).catch(err => console.log('Image delete cleanup err', err)));
-                        }
-                    }
-                });
-
-                if (deletePromises.length > 0) {
-                    Promise.all(deletePromises).then(() => console.log(`Cleaned up ${deletePromises.length} old items`));
-                }
-
-                setPosts(filteredPosts);
+                const fetchedPosts = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                // Note: Client-side deletion of old posts is removed. 
+                // Firestore TTL (Time-To-Live) handles this automatically and cheaply on the backend.
+                setPosts(fetchedPosts);
             });
             return () => unsubscribe();
         }
-    }, [schoolId]);
+    }, [schoolId, postLimit]);
 
     const handleImageChange = (e) => {
         const files = Array.from(e.target.files);
@@ -872,6 +849,22 @@ const NewsFeed = () => {
                     {posts.length === 0 && (
                         <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
                             <p>No posts yet. Share something with the school!</p>
+                        </div>
+                    )}
+
+                    {posts.length >= postLimit && (
+                        <div style={{ textAlign: 'center', padding: '1rem', marginTop: '1rem' }}>
+                            <button
+                                onClick={() => setPostLimit(prev => prev + 20)}
+                                style={{
+                                    padding: '0.75rem 2rem', borderRadius: '8px',
+                                    fontWeight: 'bold', cursor: 'pointer',
+                                    border: 'none', background: '#3b82f6', color: 'white',
+                                    boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.2)'
+                                }}
+                            >
+                                Load Older Posts
+                            </button>
                         </div>
                     )}
                 </div>

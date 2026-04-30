@@ -141,6 +141,24 @@ const Dashboard = () => {
         return () => unsubscribe();
     }, [schoolId, messagingId, currentUserId]);
 
+    const [atomicCounts, setAtomicCounts] = useState({ studentCount: null, parentCount: null, teacherCount: null });
+
+    // Fetch Atomic Counters
+    useEffect(() => {
+        if (!schoolId) return;
+        const fetchCounters = async () => {
+            try {
+                const snap = await getDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'));
+                if (snap.exists()) {
+                    setAtomicCounts(snap.data());
+                }
+            } catch (err) {
+                console.error("Dashboard: Error fetching atomic counters", err);
+            }
+        };
+        fetchCounters();
+    }, [schoolId]);
+
     // Syllabus Widget Data Fetching
     useEffect(() => {
         if (!schoolId || !syllabusWidgetClass || !syllabusWidgetSubject) {
@@ -176,7 +194,7 @@ const Dashboard = () => {
     const overviewStats = [
         {
             label: 'Total Students',
-            value: statsLoaded ? collectionStats.total.toLocaleString() : 'Loading...',
+            value: statsLoaded ? (atomicCounts.studentCount ?? collectionStats.total).toLocaleString() : 'Loading...',
             icon: Users,
             gradient: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
             shadow: 'rgba(99, 102, 241, 0.4)',
