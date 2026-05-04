@@ -61,8 +61,10 @@ const MainLayout = () => {
                 }
             }, (error) => {
                 console.error("Status snapshot error:", error);
-                // If permission denied, likely school deleted or rule mismatch
-                setLoading(false);
+                alert("Access Denied: Your school has been removed or access was revoked.");
+                localStorage.removeItem('manual_session');
+                auth.signOut();
+                window.location.href = '/login';
             });
 
             // Listen for announcements
