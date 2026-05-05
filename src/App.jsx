@@ -58,7 +58,10 @@ function App() {
           setUser(null);
         }
       } else {
-        setUser(currentUser);
+        const manualSession = localStorage.getItem('manual_session');
+        if (manualSession) {
+          setUser(currentUser);
+        }
       }
       setLoading(false);
     }, (error) => {

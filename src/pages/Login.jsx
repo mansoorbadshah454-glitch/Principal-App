@@ -49,6 +49,7 @@ const Login = () => {
     const navigate = useNavigate();
 
     useEffect(() => {
+        localStorage.removeItem('manual_session');
         const savedCredentials = localStorage.getItem('principal_saved_credentials');
         if (savedCredentials) {
             try {
@@ -109,13 +110,6 @@ const Login = () => {
                     return;
                 }
 
-                // Check school status
-                const schoolSnap = await getDoc(doc(db, "schools", schoolId));
-                if (schoolSnap.exists() && schoolSnap.data().status === 'suspended') {
-                    await auth.signOut();
-                    setError('System Access Denied: Your school system has been suspended. Please contact support.');
-                    return;
-                }
 
                 localStorage.setItem('manual_session', JSON.stringify({
                     uid: user.uid,
@@ -131,7 +125,7 @@ const Login = () => {
                     schoolIdInput: schoolIdInput
                 }));
 
-                navigate('/');
+                window.location.href = '/';
                 return;
             } else {
                 await auth.signOut();
@@ -166,11 +160,7 @@ const Login = () => {
                             const userRole = schoolUserDoc.data().role || 'principal';
 
                             if (storedManualPassword && storedManualPassword === password) {
-                                const schoolSnap = await getDoc(doc(db, "schools", schoolId));
-                                if (schoolSnap.exists() && schoolSnap.data().status === 'suspended') {
-                                    setError('System Access Denied: Your school system has been suspended.');
-                                    return;
-                                }
+
 
                                 let displayNameFinal = normalizedEmail.split('@')[0];
 
