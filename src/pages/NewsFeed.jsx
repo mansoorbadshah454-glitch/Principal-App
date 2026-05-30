@@ -702,14 +702,14 @@ const NewsFeed = () => {
                                             <span>•</span>
                                             <Clock size={12} />
                                             <span>{formatDate(post.timestamp)}</span>
-                                            {post.audience === 'class' && (
+                                            {(post.audience === 'class' || post.targetAudience === 'class') && (
                                                 <>
                                                     <span>•</span>
                                                     <Users size={12} />
                                                     <span>{post.targetClassName || 'Class'}</span>
                                                 </>
                                             )}
-                                            {post.audience === 'all' && (
+                                            {(post.audience === 'all' || post.targetAudience === 'all' || (!post.audience && !post.targetAudience)) && (
                                                 <>
                                                     <span>•</span>
                                                     <Users size={12} />
