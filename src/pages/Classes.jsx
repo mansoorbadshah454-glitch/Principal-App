@@ -61,51 +61,29 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
         }
     };
 
-    // Layer 1 (Priority): Listen to today's confirmed attendance history record
-    useEffect(() => {
-        if (!schoolId) return;
-        const todayStr = new Date().toISOString().split('T')[0];
+    // Helper for robust date & timezone matching
+    const isDateToday = (targetDate) => {
+        if (!targetDate) return false;
+        let targetStr = targetDate;
+        if (typeof targetDate === 'object' && targetDate.toDate) {
+            const d = targetDate.toDate();
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            targetStr = `${y}-${m}-${day}`;
+        }
 
-        const q = query(
-            collection(db, `schools/${schoolId}/attendance`),
-            where('classId', '==', cls.id),
-            where('date', '==', todayStr)
-        );
+        const d = new Date();
+        const localYear = d.getFullYear();
+        const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+        const localDay = String(d.getDate()).padStart(2, '0');
+        const localToday = `${localYear}-${localMonth}-${localDay}`;
+        const utcToday = d.toISOString().split('T')[0];
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            if (!snapshot.empty) {
-                // A confirmed record for today exists — use it as the source of truth
-                const record = snapshot.docs[0].data();
+        return targetStr === localToday || targetStr === utcToday;
+    };
 
-                // Fallback: If summary counts are missing (e.g. from Flutter/other versions), calculate them
-                let present = record.presentCount ?? 0;
-                let absent = record.absentCount ?? 0;
-                let total = record.totalStudents ?? 0;
-
-                if (record.records && (!record.presentCount || !record.absentCount)) {
-                    present = record.records.filter(r => r.status === 'present').length;
-                    absent = record.records.filter(r => r.status === 'absent').length;
-                    total = record.records.length;
-                }
-
-                setRealStats({
-                    present,
-                    absent,
-                    total,
-                    source: 'confirmed'
-                });
-            } else {
-                // No confirmed record yet — signal that the fallback (Layer 2) should drive the stats
-                setRealStats(prev => ({ ...prev, source: 'pending' }));
-            }
-        }, (error) => {
-            console.error("Error fetching attendance history:", error);
-        });
-
-        return () => unsubscribe();
-    }, [schoolId, cls.id]);
-
-    // Layer 2 (Live Students): Listen to individual student status changes
+    // Live Real-Time Student Listener: Subscribes directly to class students for live attendance stats
     useEffect(() => {
         if (!schoolId) return;
 
@@ -116,110 +94,35 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                 ...doc.data()
             }));
 
-            const todayStr = new Date().toISOString().split('T')[0];
-            const present = students.filter(s => (s.status === 'present' || s.status === 'Present') && s.lastAttendanceDate === todayStr).length;
-            const absent = students.filter(s => (s.status === 'absent' || s.status === 'Absent') && s.lastAttendanceDate === todayStr).length;
-            const anyMarkedToday = students.some(s => s.lastAttendanceDate === todayStr);
+            const present = students.filter(s => (s.status || '').toLowerCase() === 'present' && isDateToday(s.lastAttendanceDate)).length;
+            const absent = students.filter(s => (s.status || '').toLowerCase() === 'absent' && isDateToday(s.lastAttendanceDate)).length;
 
-            setRealStats(prev => {
-                // If marking has started today, show live status (even if counts are 0)
-                if (anyMarkedToday) {
-                    return {
-                        present,
-                        absent,
-                        total: students.length,
-                        source: prev.source
-                    };
-                }
-
-                // If no live marking yet today, show confirmed record if exists, else 0
-                return {
-                    present: prev.source === 'confirmed' ? prev.present : 0,
-                    absent: prev.source === 'confirmed' ? prev.absent : 0,
-                    total: students.length,
-                    source: prev.source
-                };
+            setRealStats({
+                present,
+                absent,
+                total: students.length,
+                source: 'live'
             });
 
-            // If student list is expanded, also update the detailed list
-            if (showStudents) {
-                students.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-                setStudentsList(students);
-                setLoadingStudents(false);
-            }
+            students.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            setStudentsList(students);
+            setLoadingStudents(false);
         }, (error) => {
-            console.error("Error fetching students:", error);
+            console.error("Error fetching class students:", error);
             setLoadingStudents(false);
         });
 
         return () => unsubscribe();
-    }, [schoolId, cls.id, showStudents]);
+    }, [schoolId, cls.id]);
 
-    const handleSaveAttendance = async (e) => {
-        e.stopPropagation();
-        if (!schoolId) return;
-        setIsSaving(true);
-        try {
-            const batch = writeBatch(db);
-            const todayStr = new Date().toISOString().split('T')[0];
-
-            // 1. Create historical record
-            const historyRef = doc(collection(db, `schools/${schoolId}/attendance`));
-            batch.set(historyRef, {
-                classId: cls.id,
-                className: cls.name,
-                date: todayStr,
-                timestamp: new Date(),
-                presentCount: realStats.present,
-                absentCount: realStats.absent,
-                totalStudents: realStats.total,
-                records: studentsList.map(s => ({
-                    id: s.id,
-                    name: s.name,
-                    status: s.status || 'absent'
-                }))
-            });
-
-            // 2. Sync individual student status to class sub-collection
-            // (Note: Teachers usually mark them individually, but Principal App's "Save" acts as a snapshot confirmer)
-            studentsList.forEach(student => {
-                const sRef = doc(db, `schools/${schoolId}/classes/${cls.id}/students`, student.id);
-                // We ensure 'status' is at least defined as 'absent' if null
-                batch.update(sRef, {
-                    status: student.status || 'absent',
-                    lastAttendanceDate: todayStr
-                });
-            });
-
-            await batch.commit();
-            alert(`Attendance for ${cls.name} saved successfully for ${todayStr}`);
-        } catch (error) {
-            console.error("Error saving attendance:", error);
-            alert("Failed to save attendance.");
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleMarkStatus = async (studentId, status) => {
-        try {
-            const todayStr = new Date().toISOString().split('T')[0];
-            const sRef = doc(db, `schools/${schoolId}/classes/${cls.id}/students`, studentId);
-            await updateDoc(sRef, {
-                status,
-                lastAttendanceDate: todayStr
-            });
-        } catch (error) {
-            console.error("Error updating student status:", error);
-        }
-    };
+    // Note: Principal Web App is in read-only mode for student attendance.
+    // Student attendance is marked exclusively by class teachers via Teacher Mobile App.
 
     const filteredStudents = studentsList.filter(student => {
         if (filter === 'all') return true;
-        const todayStr = new Date().toISOString().split('T')[0];
-        const isMarkedToday = student.lastAttendanceDate === todayStr;
+        const isMarkedToday = isDateToday(student.lastAttendanceDate);
         if (!isMarkedToday) return false;
-        return (student.status || 'absent') === filter;
+        return (student.status || 'absent').toLowerCase() === filter;
     });
 
     const totalStudents = realStats.total;
@@ -589,23 +492,46 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
                                                     </p>
                                                 </div>
 
-                                                {/* Status Toggle (Principal can also mark if needed) */}
-                                                <div
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        const nextStatus = student.status === 'present' ? 'absent' : 'present';
-                                                        handleMarkStatus(student.id, nextStatus);
-                                                    }}
-                                                    style={{
-                                                        padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800',
-                                                        background: student.status === 'present' ? '#dcfce7' : '#fee2e2',
-                                                        color: student.status === 'present' ? '#10b981' : '#ef4444',
-                                                        cursor: 'pointer', border: '1px solid transparent',
-                                                        transition: 'all 0.2s'
-                                                    }}
-                                                >
-                                                    {student.status === 'present' ? 'PRESENT' : 'ABSENT'}
-                                                </div>
+                                                {/* Read-Only Status Badge (Marked exclusively by Class Teacher) */}
+                                                {(() => {
+                                                    const isMarkedToday = isDateToday(student.lastAttendanceDate);
+                                                    const statusLower = (student.status || '').toLowerCase();
+
+                                                    let label = 'NOT MARKED';
+                                                    let bg = '#f1f5f9';
+                                                    let color = '#64748b';
+
+                                                    if (isMarkedToday) {
+                                                        if (statusLower === 'present') {
+                                                            label = 'PRESENT';
+                                                            bg = '#dcfce7';
+                                                            color = '#15803d';
+                                                        } else if (statusLower === 'absent') {
+                                                            label = 'ABSENT';
+                                                            bg = '#fee2e2';
+                                                            color = '#b91c1c';
+                                                        } else if (statusLower === 'leave_granted') {
+                                                            label = 'ON LEAVE';
+                                                            bg = '#fef3c7';
+                                                            color = '#b45309';
+                                                        }
+                                                    }
+
+                                                    return (
+                                                        <div
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            style={{
+                                                                padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800',
+                                                                background: bg,
+                                                                color: color,
+                                                                cursor: 'default', userSelect: 'none',
+                                                                border: '1px solid transparent'
+                                                            }}
+                                                        >
+                                                            {label}
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
                                         ))}
                                     </div>

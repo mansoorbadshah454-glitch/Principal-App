@@ -358,10 +358,31 @@ const Dashboard = () => {
             setStatsLoaded(true);
         };
 
+        // Helper for robust date & timezone matching
+        const isDateToday = (targetDate) => {
+            if (!targetDate) return false;
+            let targetStr = targetDate;
+            if (typeof targetDate === 'object' && targetDate.toDate) {
+                const d = targetDate.toDate();
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                targetStr = `${y}-${m}-${day}`;
+            }
+
+            const d = new Date();
+            const localYear = d.getFullYear();
+            const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+            const localDay = String(d.getDate()).padStart(2, '0');
+            const localToday = `${localYear}-${localMonth}-${localDay}`;
+            const utcToday = d.toISOString().split('T')[0];
+
+            return targetStr === localToday || targetStr === utcToday;
+        };
+
         fetchedClasses.forEach(cls => {
             const qStudents = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
             const unsubStudents = onSnapshot(qStudents, (snap) => {
-                const todayStr = new Date().toISOString().split('T')[0];
                 const classStats = {
                     fees: { paid: 0, unpaid: 0 },
                     attendance: { present: 0, absent: 0 },
@@ -377,9 +398,15 @@ const Dashboard = () => {
                     if (data.monthlyFeeStatus === 'paid') classStats.fees.paid++;
                     else classStats.fees.unpaid++;
 
-                    // 2. Attendance
-                    if (data.status === 'present' && data.lastAttendanceDate === todayStr) classStats.attendance.present++;
-                    else classStats.attendance.absent++;
+                    // 2. Attendance (Strict Today Check, Case-Insensitive, Timezone Resilient)
+                    const isMarkedToday = isDateToday(data.lastAttendanceDate);
+                    const statusLower = (data.status || '').toLowerCase();
+
+                    if (isMarkedToday && statusLower === 'present') {
+                        classStats.attendance.present++;
+                    } else if (isMarkedToday && statusLower === 'absent') {
+                        classStats.attendance.absent++;
+                    }
 
                     // 3. Subject Scores
                     if (data.academicScores && Array.isArray(data.academicScores)) {
