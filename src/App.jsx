@@ -60,10 +60,7 @@ function App() {
           setUser(null);
         }
       } else {
-        const manualSession = localStorage.getItem('manual_session');
-        if (manualSession) {
-          setUser(currentUser);
-        }
+        setUser(currentUser);
       }
       setLoading(false);
     }, (error) => {

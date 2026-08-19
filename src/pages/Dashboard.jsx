@@ -859,37 +859,48 @@ const Dashboard = () => {
                         ))}
                     </div>
 
-                    {/* Interactive Syllabus Viewer Widget */}
+                    {/* Interactive Syllabus Viewer Widget (Windows 10 Clean Style) */}
                     <div className="card" style={{
-                        background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.85) 0%, rgba(3, 105, 161, 0.85) 100%)',
-                        backdropFilter: 'blur(16px)',
+                        background: '#ffffff',
+                        borderRadius: '12px',
                         padding: '1.5rem',
                         position: 'relative',
                         overflow: 'hidden',
-                        border: '1px solid rgba(255,255,255,0.2)',
-                        boxShadow: '0 10px 30px -5px rgba(14, 165, 233, 0.5)'
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 4px 12px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.04)'
                     }}>
-                        {/* Background Floating Elements */}
-                        <div style={{ position: 'absolute', top: '-10px', right: '-20px', opacity: 0.1, animation: 'spin 20s linear infinite', color: 'white' }}>
-                            <BookOpen size={150} />
-                        </div>
-                        <div style={{ position: 'absolute', bottom: '10px', right: '40%', opacity: 0.1, animation: 'bounce 5s infinite', color: 'white' }}>
-                            <GraduationCap size={100} />
-                        </div>
+                        {/* Windows Accent Top Line */}
+                        <div style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: '3px',
+                            background: '#0078d4'
+                        }} />
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', position: 'relative', zIndex: 2, flexWrap: 'wrap', gap: '2rem' }}>
                             <div style={{ flex: '1 1 400px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                                    <div style={{ padding: '0.5rem', background: 'rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(8px)', borderRadius: '10px', color: 'white', border: '1px solid rgba(255, 255, 255, 0.3)' }}>
-                                        <BookOpen size={24} />
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                                    <div style={{ 
+                                        padding: '0.6rem', 
+                                        background: '#eff6ff', 
+                                        borderRadius: '8px', 
+                                        color: '#0078d4', 
+                                        border: '1px solid #dbeafe',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}>
+                                        <BookOpen size={22} />
                                     </div>
                                     <div>
-                                        <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: 'white', margin: 0, textShadow: '2px 2px 0px rgba(0,0,0,0.4)' }}>Live Syllabus Viewer</h2>
-                                        <p style={{ color: '#e0f2fe', fontSize: '0.9rem', margin: 0 }}>Select a class and subject to track real-time progress</p>
+                                        <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#0f172a', margin: 0 }}>Live Syllabus Viewer</h2>
+                                        <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '2px 0 0 0' }}>Select a class and subject to track real-time progress</p>
                                     </div>
                                 </div>
 
-                                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
+                                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem' }}>
                                     <div style={{ flex: 1 }}>
                                         <select 
                                             value={syllabusWidgetClass} 
@@ -897,11 +908,22 @@ const Dashboard = () => {
                                                 setSyllabusWidgetClass(e.target.value);
                                                 setSyllabusWidgetSubject('');
                                             }}
-                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', outline: 'none', background: 'rgba(255, 255, 255, 0.15)', backdropFilter: 'blur(10px)', fontWeight: '600', color: 'white', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.1)' }}
+                                            style={{ 
+                                                width: '100%', 
+                                                padding: '0.65rem 0.85rem', 
+                                                borderRadius: '6px', 
+                                                border: '1px solid #cbd5e1', 
+                                                outline: 'none', 
+                                                background: '#ffffff', 
+                                                fontWeight: '600', 
+                                                color: '#1e293b', 
+                                                fontSize: '0.9rem',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                                            }}
                                         >
-                                            <option value="" style={{ background: '#0369a1', color: 'white' }}>-- Class --</option>
+                                            <option value="" style={{ background: '#ffffff', color: '#64748b' }}>-- Select Class --</option>
                                             {displayClasses.map(c => (
-                                                <option key={c.id} value={c.name} style={{ background: '#0369a1', color: 'white' }}>{c.name}</option>
+                                                <option key={c.id} value={c.name} style={{ background: '#ffffff', color: '#1e293b' }}>{c.name}</option>
                                             ))}
                                         </select>
                                     </div>
@@ -910,47 +932,67 @@ const Dashboard = () => {
                                             value={syllabusWidgetSubject} 
                                             onChange={(e) => setSyllabusWidgetSubject(e.target.value)}
                                             disabled={!syllabusWidgetClass}
-                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', outline: 'none', background: !syllabusWidgetClass ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.15)', backdropFilter: 'blur(10px)', fontWeight: '600', color: !syllabusWidgetClass ? 'rgba(255,255,255,0.6)' : 'white', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.1)' }}
+                                            style={{ 
+                                                width: '100%', 
+                                                padding: '0.65rem 0.85rem', 
+                                                borderRadius: '6px', 
+                                                border: '1px solid #cbd5e1', 
+                                                outline: 'none', 
+                                                background: !syllabusWidgetClass ? '#f1f5f9' : '#ffffff', 
+                                                fontWeight: '600', 
+                                                color: !syllabusWidgetClass ? '#94a3b8' : '#1e293b', 
+                                                fontSize: '0.9rem',
+                                                cursor: !syllabusWidgetClass ? 'not-allowed' : 'pointer',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                                            }}
                                         >
-                                            <option value="" style={{ background: '#0369a1', color: 'white' }}>-- Subject --</option>
+                                            <option value="" style={{ background: '#ffffff', color: '#64748b' }}>-- Select Subject --</option>
                                             {syllabusWidgetClass && displaySubjects.map(s => (
-                                                <option key={s} value={s} style={{ background: '#0369a1', color: 'white' }}>{s}</option>
+                                                <option key={s} value={s} style={{ background: '#ffffff', color: '#1e293b' }}>{s}</option>
                                             ))}
                                         </select>
                                     </div>
                                 </div>
 
                                 {syllabusWidgetClass && syllabusWidgetSubject && (
-                                    <div style={{ background: '#f1f5f9', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.05)', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.05)' }}>
+                                    <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                                         {syllabusWidgetLoading ? (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#334155' }}>
-                                                <div className="animate-spin"><CircleDashed size={20} /></div> Loading...
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#475569', fontSize: '0.9rem', padding: '0.5rem' }}>
+                                                <div className="animate-spin"><CircleDashed size={18} color="#0078d4" /></div> Loading chapters...
                                             </div>
                                         ) : syllabusWidgetData.length === 0 ? (
-                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', padding: '1rem' }}>
-                                                <p style={{ color: '#334155', fontSize: '0.9rem', margin: 0 }}>No chapters found for this subject.</p>
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', padding: '1rem' }}>
+                                                <p style={{ color: '#64748b', fontSize: '0.875rem', margin: 0 }}>No chapters recorded for this subject yet.</p>
                                             </div>
                                         ) : (
                                             <div style={{ maxHeight: '180px', overflowY: 'auto', paddingRight: '0.5rem' }} className="custom-scrollbar">
                                                 {syllabusWidgetData.map((chap, i) => (
-                                                    <div key={chap.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0', borderBottom: i < syllabusWidgetData.length - 1 ? '1px solid #e2e8f0' : 'none' }}>
+                                                    <div key={chap.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0', borderBottom: i < syllabusWidgetData.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
                                                         {chap.status === 'Completed' ? (
                                                             <CheckCircle2 size={18} color="#10b981" />
                                                         ) : chap.status === 'In Progress' ? (
                                                             <Activity size={18} color="#f59e0b" />
                                                         ) : (
-                                                            <CircleDashed size={18} color="#64748b" />
+                                                            <CircleDashed size={18} color="#94a3b8" />
                                                         )}
                                                         <div style={{ flex: 1 }}>
-                                                            <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#0f172a', fontWeight: chap.status === 'Completed' ? '500' : '600', textDecoration: chap.status === 'Completed' ? 'line-through' : 'none' }}>{chap.title}</h4>
-                                                            <span style={{ fontSize: '0.75rem', color: '#475569' }}>{chap.time}</span>
+                                                            <h4 style={{ margin: 0, fontSize: '0.875rem', color: '#0f172a', fontWeight: chap.status === 'Completed' ? '500' : '600', textDecoration: chap.status === 'Completed' ? 'line-through' : 'none' }}>{chap.title}</h4>
+                                                            {chap.time && <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{chap.time}</span>}
                                                             {chap.topics && chap.topics.length > 0 && (
-                                                                <div style={{ marginTop: '0.35rem', padding: '0.35rem 0.6rem', background: '#e2e8f0', borderRadius: '6px', fontSize: '0.75rem', color: '#1e293b', border: '1px solid #cbd5e1' }}>
+                                                                <div style={{ marginTop: '0.35rem', padding: '0.3rem 0.55rem', background: '#f1f5f9', borderRadius: '4px', fontSize: '0.75rem', color: '#334155', border: '1px solid #e2e8f0' }}>
                                                                     <strong>Topics:</strong> {chap.topics.join(', ')}
                                                                 </div>
                                                             )}
                                                         </div>
-                                                        <div style={{ fontSize: '0.7rem', fontWeight: '700', padding: '3px 10px', borderRadius: '12px', background: chap.status === 'Completed' ? 'rgba(16, 185, 129, 0.15)' : chap.status === 'In Progress' ? 'rgba(245, 158, 11, 0.15)' : '#e2e8f0', color: chap.status === 'Completed' ? '#047857' : chap.status === 'In Progress' ? '#b45309' : '#475569' }}>
+                                                        <div style={{ 
+                                                            fontSize: '0.7rem', 
+                                                            fontWeight: '700', 
+                                                            padding: '2px 8px', 
+                                                            borderRadius: '4px', 
+                                                            background: chap.status === 'Completed' ? '#dcfce7' : chap.status === 'In Progress' ? '#fef3c7' : '#f1f5f9', 
+                                                            color: chap.status === 'Completed' ? '#15803d' : chap.status === 'In Progress' ? '#b45309' : '#475569',
+                                                            border: `1px solid ${chap.status === 'Completed' ? '#bbf7d0' : chap.status === 'In Progress' ? '#fde68a' : '#e2e8f0'}`
+                                                        }}>
                                                             {chap.status || 'Pending'}
                                                         </div>
                                                     </div>
@@ -967,38 +1009,56 @@ const Dashboard = () => {
                                     const total = syllabusWidgetData.length;
                                     const completed = syllabusWidgetData.filter(c => c.status === 'Completed').length;
                                     const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-                                    const radius = 60;
+                                    const radius = 58;
                                     const circumference = 2 * Math.PI * radius;
                                     const offset = circumference - (percentage / 100) * circumference;
 
                                     return (
                                         <div style={{ position: 'relative', width: '140px', height: '140px' }}>
                                             <svg width="140" height="140" style={{ transform: 'rotate(-90deg)' }}>
-                                                <circle cx="70" cy="70" r={radius} fill="transparent" stroke="rgba(255,255,255,0.2)" strokeWidth="12" />
+                                                <circle cx="70" cy="70" r={radius} fill="transparent" stroke="#f1f5f9" strokeWidth="10" />
                                                 <circle 
                                                     cx="70" cy="70" r={radius} 
                                                     fill="transparent" 
-                                                    stroke={percentage === 100 ? '#10b981' : 'white'} 
-                                                    strokeWidth="12" 
+                                                    stroke={percentage === 100 ? '#10b981' : '#0078d4'} 
+                                                    strokeWidth="10" 
                                                     strokeDasharray={circumference} 
                                                     strokeDashoffset={syllabusWidgetLoading || !syllabusWidgetClass || !syllabusWidgetSubject ? circumference : offset} 
                                                     strokeLinecap="round"
-                                                    style={{ transition: 'stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1)', filter: 'drop-shadow(0 0 4px rgba(255,255,255,0.4))' }}
+                                                    style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1)' }}
                                                 />
                                             </svg>
                                             <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                                                <span style={{ fontSize: '1.75rem', fontWeight: '800', color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>{syllabusWidgetLoading || !syllabusWidgetClass || !syllabusWidgetSubject ? '-' : percentage}%</span>
-                                                <span style={{ fontSize: '0.75rem', color: '#e0f2fe', fontWeight: '600' }}>Completed</span>
+                                                <span style={{ fontSize: '1.75rem', fontWeight: '800', color: '#0f172a' }}>{syllabusWidgetLoading || !syllabusWidgetClass || !syllabusWidgetSubject ? '-' : percentage}%</span>
+                                                <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '600' }}>Completed</span>
                                             </div>
                                         </div>
                                     );
                                 })()}
-                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', width: '100%' }}>
+                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', width: '100%' }}>
                                     <button 
                                         onClick={() => navigate('/teachers?tab=syllabus')}
-                                        style={{ flex: 1, padding: '0.6rem 1rem', background: 'rgba(255, 255, 255, 0.15)', border: '1px solid rgba(255,255,255,0.3)', color: 'white', borderRadius: '8px', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.3s', backdropFilter: 'blur(8px)', boxShadow: '0 4px 6px rgba(0,0,0, 0.1)' }}
-                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'white'; e.currentTarget.style.color = '#0ea5e9'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 12px rgba(0,0,0, 0.15)'; }}
-                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; e.currentTarget.style.color = 'white'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0, 0.1)'; }}
+                                        style={{ 
+                                            flex: 1, 
+                                            padding: '0.65rem 1rem', 
+                                            background: '#0078d4', 
+                                            border: '1px solid #0078d4', 
+                                            color: '#ffffff', 
+                                            borderRadius: '6px', 
+                                            fontWeight: '600', 
+                                            fontSize: '0.85rem', 
+                                            cursor: 'pointer', 
+                                            transition: 'all 0.2s ease', 
+                                            boxShadow: '0 2px 4px rgba(0, 120, 212, 0.2)' 
+                                        }}
+                                        onMouseEnter={(e) => { 
+                                            e.currentTarget.style.background = '#0067b8'; 
+                                            e.currentTarget.style.borderColor = '#0067b8';
+                                        }}
+                                        onMouseLeave={(e) => { 
+                                            e.currentTarget.style.background = '#0078d4'; 
+                                            e.currentTarget.style.borderColor = '#0078d4';
+                                        }}
                                     >
                                         Edit Syllabus
                                     </button>

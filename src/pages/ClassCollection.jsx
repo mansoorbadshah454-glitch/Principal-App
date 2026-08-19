@@ -1,11 +1,420 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Ban, Search, Filter, MoreVertical, Edit, Plus, Trash2, X } from 'lucide-react';
+import { 
+    ArrowLeft, CheckCircle, Ban, Search, Filter, MoreVertical, Edit, Plus, Trash2, X,
+    Printer, Download, Eye, ExternalLink, Image as ImageIcon, Building2, Loader2
+} from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, getDocs, doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
+
+// --- Payment Proof Image Lightbox Modal ---
+const PaymentProofModal = ({ isOpen, onClose, proofUrl, title }) => {
+    if (!isOpen || !proofUrl) return null;
+    return (
+        <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '1rem'
+        }}>
+            <div className="card" style={{
+                background: '#ffffff',
+                borderRadius: '12px',
+                width: '100%',
+                maxWidth: '560px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                padding: '1.5rem',
+                position: 'relative'
+            }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
+                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '700', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <ImageIcon size={18} color="#0078d4" />
+                        {title || 'Payment Receipt / Screenshot'}
+                    </h3>
+                    <button
+                        onClick={onClose}
+                        style={{
+                            background: '#f1f5f9',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '28px',
+                            height: '28px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            color: '#64748b'
+                        }}
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+
+                <div style={{ background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0.5rem', textAlign: 'center', maxHeight: '60vh', overflow: 'auto' }}>
+                    <img src={proofUrl} alt="Payment Proof" style={{ maxWidth: '100%', maxHeight: '55vh', objectFit: 'contain', borderRadius: '6px' }} />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+                    <a
+                        href={proofUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            fontSize: '0.85rem',
+                            color: '#0078d4',
+                            textDecoration: 'none',
+                            fontWeight: '600'
+                        }}
+                    >
+                        <ExternalLink size={15} /> Open Full Image in New Tab
+                    </a>
+                    <button
+                        onClick={onClose}
+                        style={{
+                            padding: '0.5rem 1.25rem',
+                            borderRadius: '6px',
+                            border: '1px solid #cbd5e1',
+                            background: '#ffffff',
+                            color: '#475569',
+                            fontWeight: '600',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Fee Receipt Printable Modal ---
+const FeeReceiptModal = ({ isOpen, onClose, receiptData, schoolInfo }) => {
+    if (!isOpen || !receiptData) return null;
+
+    const [isDownloading, setIsDownloading] = useState(false);
+
+    const handleDownloadPDF = async () => {
+        try {
+            setIsDownloading(true);
+            const doc = new jsPDF({
+                orientation: 'portrait',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            const primaryColor = [0, 120, 212];
+            const darkColor = [15, 23, 42];
+            const grayColor = [100, 116, 139];
+
+            // Header
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(18);
+            doc.setTextColor(...darkColor);
+            doc.text((schoolInfo?.name || 'OFFICIAL SCHOOL RECEIPT').toUpperCase(), 14, 20);
+
+            doc.setFillColor(...primaryColor);
+            doc.roundedRect(14, 24, 46, 6, 1.5, 1.5, 'F');
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(255, 255, 255);
+            doc.text('FEE PAYMENT VOUCHER', 16, 28);
+
+            // Receipt Meta
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8);
+            doc.setTextColor(...grayColor);
+            doc.text('RECEIPT NO:', 196, 18, { align: 'right' });
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(12);
+            doc.setTextColor(...primaryColor);
+            doc.text(receiptData.receiptNo || 'N/A', 196, 24, { align: 'right' });
+
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text(`Date: ${receiptData.dateString || ''} ${receiptData.timeString || ''}`, 196, 29, { align: 'right' });
+
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.5);
+            doc.line(14, 34, 196, 34);
+
+            // Student Info Box
+            doc.setFillColor(248, 250, 252);
+            doc.roundedRect(14, 38, 182, 32, 2, 2, 'F');
+            doc.setDrawColor(226, 232, 240);
+            doc.roundedRect(14, 38, 182, 32, 2, 2, 'S');
+
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Student Name:', 18, 45);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.studentName || 'N/A', 45, 45);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Roll No:', 120, 45);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(String(receiptData.rollNo || 'N/A'), 140, 45);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Class:', 18, 54);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.className || 'N/A', 45, 54);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Father Name:', 120, 54);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.fatherName || 'N/A', 145, 54);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Payment Mode:', 18, 63);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(22, 163, 74);
+            doc.text(receiptData.paymentMode || 'Cash', 45, 63);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Collected By:', 120, 63);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.collectedBy || 'Principal Office', 145, 63);
+
+            // Table
+            const tableRows = (receiptData.items || []).map((item, idx) => [
+                idx + 1,
+                item.name,
+                `Rs ${Number(item.amount).toLocaleString()}`
+            ]);
+
+            if (receiptData.discount > 0) {
+                tableRows.push([
+                    '-',
+                    'Discount / Concession',
+                    `- Rs ${Number(receiptData.discount).toLocaleString()}`
+                ]);
+            }
+
+            tableRows.push([
+                '',
+                'TOTAL AMOUNT PAID',
+                `Rs ${Number(receiptData.totalPaid).toLocaleString()}`
+            ]);
+
+            autoTable(doc, {
+                startY: 76,
+                head: [['#', 'Fee Description', 'Amount (PKR)']],
+                body: tableRows,
+                theme: 'grid',
+                headStyles: {
+                    fillColor: [15, 23, 42],
+                    textColor: [255, 255, 255],
+                    fontStyle: 'bold',
+                    fontSize: 9,
+                    halign: 'left'
+                },
+                columnStyles: {
+                    0: { halign: 'center', cellWidth: 15 },
+                    1: { halign: 'left' },
+                    2: { halign: 'right', fontStyle: 'bold', cellWidth: 45 }
+                },
+                styles: {
+                    font: 'helvetica',
+                    fontSize: 9,
+                    cellPadding: 3.5,
+                    lineColor: [226, 232, 240]
+                },
+                didParseCell: function(data) {
+                    if (data.row.index === tableRows.length - 1) {
+                        data.cell.styles.fontStyle = 'bold';
+                        data.cell.styles.fillColor = [240, 253, 244];
+                        data.cell.styles.textColor = [22, 101, 52];
+                        data.cell.styles.fontSize = 10;
+                    }
+                }
+            });
+
+            const finalY = doc.lastAutoTable?.finalY || 130;
+
+            // Footer
+            const footerY = Math.max(finalY + 22, 155);
+            doc.setDrawColor(203, 213, 225);
+            doc.setLineDashPattern([2, 2], 0);
+            doc.line(14, footerY, 196, footerY);
+            doc.setLineDashPattern([], 0);
+
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('* This is a computer-generated fee receipt.', 14, footerY + 8);
+
+            doc.setDrawColor(148, 163, 184);
+            doc.setLineWidth(0.5);
+            doc.line(150, footerY + 16, 196, footerY + 16);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text('Authorized Signature', 173, footerY + 21, { align: 'center' });
+
+            const safeName = (receiptData.studentName || 'Student').replace(/[^a-zA-Z0-9_-]/g, '_');
+            doc.save(`Fee_Receipt_${receiptData.receiptNo}_${safeName}.pdf`);
+        } catch (err) {
+            console.error("PDF generation failed:", err);
+            alert("Failed to generate PDF");
+        } finally {
+            setIsDownloading(false);
+        }
+    };
+
+    const handlePrint = () => {
+        const printContent = document.getElementById('printable-class-fee-receipt');
+        if (!printContent) return;
+
+        const printWindow = window.open('', '', 'width=800,height=900');
+        printWindow.document.write(`
+            <html>
+                <head>
+                    <title>Fee Receipt - ${receiptData.receiptNo}</title>
+                    <style>
+                        @page { size: auto; margin: 15mm; }
+                        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; margin: 0; padding: 20px; background: #fff; }
+                        .receipt-container { max-width: 650px; margin: 0 auto; border: 2px solid #0f172a; padding: 24px; border-radius: 8px; }
+                        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }
+                        th { background: #f1f5f9; padding: 10px 12px; text-align: left; border-bottom: 2px solid #cbd5e1; font-weight: 700; color: #1e293b; }
+                        td { padding: 9px 12px; border-bottom: 1px solid #e2e8f0; color: #334155; }
+                    </style>
+                </head>
+                <body>
+                    ${printContent.innerHTML}
+                    <script>
+                        window.onload = function() { window.focus(); window.print(); window.close(); };
+                    </script>
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
+    };
+
+    return (
+        <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem'
+        }}>
+            <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '680px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', padding: '1.75rem', position: 'relative' }}>
+                <button onClick={onClose} style={{ position: 'absolute', top: '1.25rem', right: '1.25rem', background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b' }}>
+                    <X size={18} />
+                </button>
+
+                <div id="printable-class-fee-receipt">
+                    <div style={{ border: '2px solid #e2e8f0', borderRadius: '12px', padding: '1.5rem', background: '#ffffff' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                {schoolInfo?.logo ? (
+                                    <img src={schoolInfo.logo} alt="Logo" style={{ width: '48px', height: '48px', objectFit: 'contain', borderRadius: '6px' }} />
+                                ) : (
+                                    <div style={{ width: '48px', height: '48px', background: '#0078d4', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+                                        <Building2 size={24} />
+                                    </div>
+                                )}
+                                <div>
+                                    <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
+                                        {schoolInfo?.name || 'OFFICIAL SCHOOL RECEIPT'}
+                                    </h2>
+                                    <span style={{ display: 'inline-block', background: '#0078d4', color: 'white', fontSize: '0.7rem', fontWeight: '700', padding: '2px 8px', borderRadius: '4px', marginTop: '4px', textTransform: 'uppercase' }}>
+                                        Fee Payment Voucher
+                                    </span>
+                                </div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                                <span style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>RECEIPT NO</span>
+                                <span style={{ fontSize: '1rem', fontWeight: '800', color: '#0078d4' }}>{receiptData.receiptNo}</span>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                            <div><span style={{ color: '#64748b', fontWeight: '600' }}>Student Name: </span><strong style={{ color: '#0f172a' }}>{receiptData.studentName}</strong></div>
+                            <div><span style={{ color: '#64748b', fontWeight: '600' }}>Roll No: </span><strong style={{ color: '#0f172a' }}>{receiptData.rollNo || 'N/A'}</strong></div>
+                            <div><span style={{ color: '#64748b', fontWeight: '600' }}>Class: </span><strong style={{ color: '#0f172a' }}>{receiptData.className}</strong></div>
+                            <div><span style={{ color: '#64748b', fontWeight: '600' }}>Father Name: </span><strong style={{ color: '#0f172a' }}>{receiptData.fatherName || 'N/A'}</strong></div>
+                            <div><span style={{ color: '#64748b', fontWeight: '600' }}>Date & Time: </span><strong style={{ color: '#0f172a' }}>{receiptData.dateString} {receiptData.timeString}</strong></div>
+                            <div><span style={{ color: '#64748b', fontWeight: '600' }}>Payment Mode: </span><strong style={{ color: '#16a34a' }}>{receiptData.paymentMode}</strong></div>
+                        </div>
+
+                        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.25rem', fontSize: '0.875rem' }}>
+                            <thead>
+                                <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
+                                    <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Description</th>
+                                    <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: '#1e293b', fontWeight: '700' }}>Amount (Rs)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {receiptData.items?.map((item, idx) => (
+                                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                        <td style={{ padding: '0.5rem 0.75rem', color: '#334155' }}>{item.name}</td>
+                                        <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
+                                            Rs {Number(item.amount).toLocaleString()}
+                                        </td>
+                                    </tr>
+                                ))}
+                                <tr style={{ borderTop: '2px solid #0f172a', background: '#f8fafc' }}>
+                                    <td style={{ padding: '0.75rem', fontWeight: '800', fontSize: '1rem', color: '#0f172a' }}>TOTAL AMOUNT PAID</td>
+                                    <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '800', fontSize: '1.1rem', color: '#16a34a' }}>
+                                        Rs {Number(receiptData.totalPaid).toLocaleString()}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        {receiptData.proofUrl && (
+                            <div style={{ marginBottom: '1rem', padding: '0.5rem 0.75rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', fontSize: '0.8rem', color: '#166534', fontWeight: '600' }}>
+                                ✓ Online/Bank Transfer Receipt Screenshot Attached
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '1.5rem', paddingTop: '0.75rem', borderTop: '1px dashed #cbd5e1', fontSize: '0.75rem', color: '#64748b' }}>
+                            <div><span>* This is a computer-generated fee receipt.</span></div>
+                            <div style={{ textAlign: 'center', borderTop: '1px solid #94a3b8', width: '130px', paddingTop: '3px', color: '#0f172a', fontWeight: '600' }}>Authorized Signature</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
+                    <button onClick={onClose} style={{ padding: '0.65rem 1.25rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#ffffff', color: '#475569', fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer' }}>Close</button>
+                    <button onClick={handleDownloadPDF} disabled={isDownloading} style={{ padding: '0.65rem 1.4rem', borderRadius: '8px', border: '1px solid #16a34a', background: '#f0fdf4', color: '#15803d', fontWeight: '600', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', opacity: isDownloading ? 0.7 : 1 }}>
+                        {isDownloading ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                        {isDownloading ? 'Generating PDF...' : 'Download PDF'}
+                    </button>
+                    <button onClick={handlePrint} style={{ padding: '0.65rem 1.5rem', borderRadius: '8px', border: 'none', background: '#0078d4', color: '#ffffff', fontWeight: '600', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0, 120, 212, 0.25)' }}>
+                        <Printer size={18} /> Print Slip
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const ClassCollection = () => {
     const { classId } = useParams();
@@ -25,6 +434,11 @@ const ClassCollection = () => {
     const [actionStudentId, setActionStudentId] = useState(null);
     const [newActionTitle, setNewActionTitle] = useState('');
     const [newActionAmount, setNewActionAmount] = useState('');
+
+    // Receipt & Payment Proof Modals State
+    const [proofModal, setProofModal] = useState({ isOpen: false, url: '', title: '' });
+    const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+    const [receiptData, setReceiptData] = useState(null);
 
     // Close menu when clicking outside
     useEffect(() => {
@@ -543,31 +957,118 @@ const ClassCollection = () => {
 
                                 <div style={{ height: '1px', background: '#f1f5f9', margin: '0.25rem 0' }} />
 
-                                {/* 1. Monthly Fee Control */}
+                                {/* 1. Monthly Fee Status (Uneditable Official Badge) */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Monthly Fee</span>
+                                    <div>
+                                        <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1e293b' }}>Monthly Fee</span>
+                                        {monthlyStatus === 'paid' && student.monthlyFeeDate && (
+                                            <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                                Paid: {new Date(student.monthlyFeeDate).toLocaleDateString()} {student.lastPaymentMode ? `(${student.lastPaymentMode})` : ''}
+                                            </div>
+                                        )}
+                                    </div>
+
                                     {monthlyStatus === 'paid' ? (
-                                        <button
-                                            onClick={() => toggleMonthlyFee(student.id, 'paid')}
-                                            style={{
-                                                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                                padding: '0.4rem 1rem', borderRadius: '8px', border: 'none',
-                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer'
-                                            }}
-                                        >
-                                            <CheckCircle size={16} /> Paid
-                                        </button>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                            <div
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                    padding: '0.35rem 0.65rem', borderRadius: '6px',
+                                                    background: '#dcfce7', color: '#15803d', fontWeight: '700',
+                                                    fontSize: '0.8rem', border: '1px solid #bbf7d0'
+                                                }}
+                                                title="Fee marked as paid via official workflow"
+                                            >
+                                                <CheckCircle size={14} /> Paid
+                                            </div>
+
+                                            {/* View Receipt Slip Button */}
+                                            <button
+                                                onClick={() => {
+                                                    const items = [];
+                                                    let total = 0;
+                                                    if (student.feeStructure && student.feeStructure.length > 0) {
+                                                        student.feeStructure.forEach(f => {
+                                                            const amt = Number(f.amount) || 0;
+                                                            if (amt > 0) { items.push({ name: f.name, amount: amt }); total += amt; }
+                                                        });
+                                                    } else {
+                                                        const base = Number(student.tuitionFee) || 0;
+                                                        items.push({ name: 'Tuition Fee', amount: base });
+                                                        total += base;
+                                                    }
+                                                    setReceiptData({
+                                                        receiptNo: student.lastReceiptNo || `REC-${(student.id || '').slice(-6).toUpperCase()}`,
+                                                        studentName: student.name,
+                                                        rollNo: student.rollNo || 'N/A',
+                                                        className: className || 'Class',
+                                                        fatherName: student.parentDetails?.fatherName || student.fatherName || 'N/A',
+                                                        items: items.length > 0 ? items : [{ name: 'Monthly Fee', amount: total }],
+                                                        totalPaid: total,
+                                                        paymentMode: student.lastPaymentMode || 'Cash',
+                                                        proofUrl: student.lastPaymentProofUrl || null,
+                                                        dateString: student.monthlyFeeDate ? new Date(student.monthlyFeeDate).toLocaleDateString() : new Date().toLocaleDateString(),
+                                                        timeString: student.monthlyFeeDate ? new Date(student.monthlyFeeDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+                                                        collectedBy: 'Principal Office'
+                                                    });
+                                                    setReceiptModalOpen(true);
+                                                }}
+                                                style={{
+                                                    display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                                                    padding: '0.35rem 0.65rem', borderRadius: '6px',
+                                                    background: '#f8fafc', color: '#0078d4', fontWeight: '600',
+                                                    fontSize: '0.75rem', border: '1px solid #cbd5e1', cursor: 'pointer'
+                                                }}
+                                                title="View & Print Official Receipt Slip"
+                                            >
+                                                <Printer size={12} /> Slip
+                                            </button>
+
+                                            {/* View Proof Button if Screenshot exists */}
+                                            {student.lastPaymentProofUrl && (
+                                                <button
+                                                    onClick={() => setProofModal({
+                                                        isOpen: true,
+                                                        url: student.lastPaymentProofUrl,
+                                                        title: `${student.name} - Payment Screenshot`
+                                                    })}
+                                                    style={{
+                                                        display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                                                        padding: '0.35rem 0.65rem', borderRadius: '6px',
+                                                        background: '#eff6ff', color: '#0078d4', fontWeight: '600',
+                                                        fontSize: '0.75rem', border: '1px solid #93c5fd', cursor: 'pointer'
+                                                    }}
+                                                    title="View attached bank deposit slip / screenshot"
+                                                >
+                                                    <Eye size={12} /> Proof
+                                                </button>
+                                            )}
+                                        </div>
                                     ) : (
-                                        <button
-                                            onClick={() => toggleMonthlyFee(student.id, 'unpaid')}
-                                            style={{
-                                                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                                padding: '0.4rem 1rem', borderRadius: '8px', border: '1px solid #fee2e2',
-                                                background: '#fff', color: '#dc2626', fontWeight: '600', cursor: 'pointer'
-                                            }}
-                                        >
-                                            <Ban size={16} /> Unpaid
-                                        </button>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <div
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                                    padding: '0.35rem 0.75rem', borderRadius: '6px',
+                                                    background: '#fee2e2', color: '#b91c1c', fontWeight: '700',
+                                                    fontSize: '0.85rem', border: '1px solid #fecaca'
+                                                }}
+                                            >
+                                                <Ban size={15} /> Unpaid
+                                            </div>
+                                            <button
+                                                onClick={() => navigate(`/collections?tab=workflow&classId=${classId}&studentId=${student.id}`)}
+                                                style={{
+                                                    padding: '0.35rem 0.75rem', borderRadius: '6px',
+                                                    background: '#0078d4', color: '#ffffff', fontWeight: '600',
+                                                    fontSize: '0.8rem', border: 'none', cursor: 'pointer',
+                                                    boxShadow: '0 2px 4px rgba(0, 120, 212, 0.2)'
+                                                }}
+                                                title="Collect fee in Daily Workflow"
+                                            >
+                                                Collect
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
 
@@ -706,6 +1207,22 @@ const ClassCollection = () => {
                     </div>
                 </div>
             )}
+
+            {/* Proof Lightbox Modal */}
+            <PaymentProofModal
+                isOpen={proofModal.isOpen}
+                onClose={() => setProofModal({ isOpen: false, url: '', title: '' })}
+                proofUrl={proofModal.url}
+                title={proofModal.title}
+            />
+
+            {/* Fee Receipt Slip Modal */}
+            <FeeReceiptModal
+                isOpen={receiptModalOpen}
+                onClose={() => setReceiptModalOpen(false)}
+                receiptData={receiptData}
+                schoolInfo={schoolDetails}
+            />
         </div>
     );
 };

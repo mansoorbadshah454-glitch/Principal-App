@@ -1,15 +1,16 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode, Sparkles } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as QRCodeLib from 'qrcode';
 import { db, functions, auth } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc, orderBy, serverTimestamp, limit } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, setDoc, getDoc, orderBy, serverTimestamp, limit, writeBatch } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { getStandardChapters } from '../data/curriculumData';
 
 // Internal Component for individual Teacher Card logic
 const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted, todayStr }) => {
@@ -480,6 +481,11 @@ const Teachers = () => {
     const [newChapterTitle, setNewChapterTitle] = useState('');
     const [newChapterTime, setNewChapterTime] = useState('');
     const [loadingSyllabus, setLoadingSyllabus] = useState(false);
+    const [isImportingStandard, setIsImportingStandard] = useState(false);
+
+    const standardChapters = useMemo(() => {
+        return getStandardChapters(selectedSyllabusClass, selectedSyllabusSubject);
+    }, [selectedSyllabusClass, selectedSyllabusSubject]);
 
     const [selectedAttendanceTeacher, setSelectedAttendanceTeacher] = useState(null);
     const [attendanceMonth, setAttendanceMonth] = useState(new Date().getMonth());
@@ -1138,6 +1144,56 @@ const Teachers = () => {
         } catch (err) {
             console.error("Error deleting chapter:", err);
             alert("Failed to delete chapter.");
+        }
+    };
+
+    const handleImportStandardChapters = async () => {
+        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject || standardChapters.length === 0) return;
+        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass || c.id === selectedSyllabusClass);
+        if (!classObj) {
+            alert("Could not identify the selected class.");
+            return;
+        }
+
+        setIsImportingStandard(true);
+        try {
+            const cleanSubject = selectedSyllabusSubject.trim();
+            const chaptersRef = collection(db, 'schools', schoolId, 'classes', classObj.id, 'syllabus', cleanSubject, 'chapters');
+            
+            const existingTitles = new Set(syllabusChapters.map(c => (c.title || '').toLowerCase().trim()));
+            const toAdd = standardChapters.filter(ch => {
+                const titleWithPrefix = `Chapter ${ch.num}: ${ch.name}`.toLowerCase().trim();
+                const plainTitle = (ch.name || '').toLowerCase().trim();
+                return !existingTitles.has(titleWithPrefix) && !existingTitles.has(plainTitle);
+            });
+
+            if (toAdd.length === 0) {
+                alert("All standard chapters for this subject are already present in the syllabus!");
+                setIsImportingStandard(false);
+                return;
+            }
+
+            const batch = writeBatch(db);
+            const baseTime = Date.now();
+            toAdd.forEach((ch, idx) => {
+                const newDocRef = doc(chaptersRef);
+                const chapterNum = Number(ch.num) || (idx + 1);
+                batch.set(newDocRef, {
+                    title: `Chapter ${ch.num}: ${ch.name}`,
+                    time: '2 Weeks',
+                    status: 'Pending',
+                    topics: [],
+                    createdAt: new Date(baseTime + chapterNum * 1000)
+                });
+            });
+
+            await batch.commit();
+            alert(`Successfully imported ${toAdd.length} standard chapters!`);
+        } catch (err) {
+            console.error("Error importing standard chapters:", err);
+            alert(`Failed to import standard chapters: ${err?.message || err}`);
+        } finally {
+            setIsImportingStandard(false);
         }
     };
 
@@ -2083,6 +2139,68 @@ const Teachers = () => {
 
                         {selectedSyllabusClass && selectedSyllabusSubject && (
                             <>
+                                {standardChapters.length > 0 && (
+                                    <div style={{
+                                        background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
+                                        border: '1px solid #c4b5fd',
+                                        borderRadius: '16px',
+                                        padding: '1.25rem 1.5rem',
+                                        marginBottom: '1.5rem',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        flexWrap: 'wrap',
+                                        gap: '1rem',
+                                        boxShadow: '0 4px 15px -3px rgba(124, 58, 237, 0.1)'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#7c3aed', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                <Sparkles size={20} />
+                                            </div>
+                                            <div>
+                                                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700', color: '#5b21b6' }}>
+                                                    Standard Curriculum Available ({standardChapters.length} Chapters)
+                                                </h4>
+                                                <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: '#6d28d9' }}>
+                                                    Auto-populate all official chapters for {selectedSyllabusSubject} with 1-click.
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleImportStandardChapters}
+                                            disabled={isImportingStandard}
+                                            style={{
+                                                background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+                                                color: 'white',
+                                                border: 'none',
+                                                padding: '0.65rem 1.25rem',
+                                                borderRadius: '10px',
+                                                fontWeight: '700',
+                                                fontSize: '0.85rem',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem',
+                                                cursor: isImportingStandard ? 'not-allowed' : 'pointer',
+                                                boxShadow: '0 4px 12px rgba(124, 58, 237, 0.25)',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        >
+                                            {isImportingStandard ? (
+                                                <>
+                                                    <Loader2 size={16} className="animate-spin" />
+                                                    <span>Importing...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Sparkles size={16} />
+                                                    <span>⚡ Import Standard Syllabus</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                )}
+
                                 <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '2rem' }}>
                                     <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1e293b', marginBottom: '1rem' }}>Add New Chapter</h3>
                                     <form onSubmit={handleAddChapter} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
@@ -2090,12 +2208,20 @@ const Teachers = () => {
                                             <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.3rem', color: 'var(--text-secondary)' }}>Chapter Title</label>
                                             <input 
                                                 type="text" 
+                                                list="standard-chapters-datalist"
                                                 value={newChapterTitle}
                                                 onChange={(e) => setNewChapterTitle(e.target.value)}
                                                 placeholder="e.g. Chapter 1: Basic Algebra"
                                                 required
                                                 style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
                                             />
+                                            {standardChapters.length > 0 && (
+                                                <datalist id="standard-chapters-datalist">
+                                                    {standardChapters.map(ch => (
+                                                        <option key={ch.num} value={`Chapter ${ch.num}: ${ch.name}`} />
+                                                    ))}
+                                                </datalist>
+                                            )}
                                         </div>
                                         <div style={{ flex: 1 }}>
                                             <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.3rem', color: 'var(--text-secondary)' }}>Estimated Time</label>
