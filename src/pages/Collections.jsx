@@ -4,7 +4,8 @@ import {
     Wallet, Users, ChevronRight, Ban, CheckCircle, Plus, Trash2, X, 
     CheckSquare, Square, ArrowUpRight, ArrowDownRight, Download,
     Printer, Search, CheckCircle2, User, FileText, Loader2, Sparkles, Building2, Phone, Calendar, Clock, DollarSign,
-    Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity
+    Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity,
+    PieChart, BarChart3, Zap, ShieldCheck, Layers
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -2188,24 +2189,535 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {/* Main Interaction Split Layout */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+            {/* Top Full-Width Prominent Summary Card: LIVE TODAY'S SUMMARY Collections Overview */}
+            <div className="card animate-fade-in-up" style={{
+                background: '#ffffff',
+                borderRadius: '16px',
+                padding: '1.6rem 1.85rem',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.04)',
+                position: 'relative',
+                overflow: 'hidden'
+            }}>
+                {/* Header with Live Status & Quick Meta */}
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '1rem',
+                    marginBottom: '1.35rem',
+                    borderBottom: '1px solid #f1f5f9',
+                    paddingBottom: '1rem'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            padding: '0.35rem 0.85rem',
+                            borderRadius: '20px',
+                            background: '#ecfdf5',
+                            border: '1px solid #a7f3d0',
+                            color: '#059669',
+                            fontSize: '0.78rem',
+                            fontWeight: '800',
+                            letterSpacing: '0.04em'
+                        }}>
+                            <span style={{
+                                display: 'inline-block',
+                                width: '9px',
+                                height: '9px',
+                                borderRadius: '50%',
+                                background: '#10b981',
+                                boxShadow: '0 0 0 3px rgba(16, 185, 129, 0.25)'
+                            }} className="animate-pulse" />
+                            LIVE TODAY'S SUMMARY
+                        </div>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                Collections Overview & Analytics <Sparkles size={16} color="#0078d4" />
+                            </h3>
+                            <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '500' }}>
+                                Real-time automated fee tracking, channel split & collection velocity
+                            </span>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.45rem',
+                            fontSize: '0.825rem',
+                            color: '#0078d4',
+                            fontWeight: '700',
+                            background: '#eff6ff',
+                            padding: '0.35rem 0.8rem',
+                            borderRadius: '8px',
+                            border: '1px solid #bfdbfe'
+                        }}>
+                            <Activity size={15} />
+                            <span>Live Synced</span>
+                        </div>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.45rem',
+                            fontSize: '0.825rem',
+                            color: '#334155',
+                            fontWeight: '700',
+                            background: '#f8fafc',
+                            padding: '0.35rem 0.8rem',
+                            borderRadius: '8px',
+                            border: '1px solid #e2e8f0'
+                        }}>
+                            <Calendar size={15} color="#0078d4" />
+                            {todayMetrics.todayStr}
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3 Pillars Visual Interactive Grid: Metrics + Circular Gauge + Channel Bar Charts */}
+                <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))',
+                    gap: '1.25rem'
+                }}>
+                    {/* Pillar 1: Primary Highlight Revenue & Slips Cards */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
+                        {/* Total Collected Card */}
+                        <div style={{
+                            background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                            borderRadius: '14px',
+                            padding: '1.25rem 1.4rem',
+                            color: '#ffffff',
+                            border: '1px solid rgba(5, 150, 105, 0.3)',
+                            boxShadow: '0 4px 14px -2px rgba(5, 150, 105, 0.28)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                        }}>
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#d1fae5' }}>
+                                        Total Collected Today
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(255,255,255,0.2)', padding: '1px 6px', borderRadius: '8px', color: '#ffffff' }}>
+                                        Live
+                                    </span>
+                                </div>
+                                <h2 style={{ margin: '0.35rem 0 0', fontSize: '2rem', fontWeight: '900', letterSpacing: '-0.03em', lineHeight: 1.1, color: '#ffffff' }}>
+                                    Rs {todayMetrics.totalAmount.toLocaleString()}
+                                </h2>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', marginTop: '0.4rem', color: '#a7f3d0', fontWeight: '600' }}>
+                                    <TrendingUp size={14} color="#6ee7b7" />
+                                    <span>Real-time instant sum across all channels</span>
+                                </div>
+                            </div>
+                            <div style={{
+                                width: '52px',
+                                height: '52px',
+                                borderRadius: '12px',
+                                background: 'rgba(255,255,255,0.18)',
+                                backdropFilter: 'blur(6px)',
+                                border: '1px solid rgba(255,255,255,0.25)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: '#ffffff'
+                            }}>
+                                <Wallet size={26} />
+                            </div>
+                        </div>
+
+                        {/* Total Slips Issued Card */}
+                        <div style={{
+                            background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
+                            borderRadius: '14px',
+                            padding: '1.25rem 1.4rem',
+                            color: '#ffffff',
+                            border: '1px solid rgba(0, 120, 212, 0.3)',
+                            boxShadow: '0 4px 14px -2px rgba(0, 120, 212, 0.28)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                        }}>
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#e0f2fe' }}>
+                                        Fee Slips Issued
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(255,255,255,0.2)', padding: '1px 6px', borderRadius: '8px', color: '#ffffff' }}>
+                                        Verified
+                                    </span>
+                                </div>
+                                <h2 style={{ margin: '0.35rem 0 0', fontSize: '2rem', fontWeight: '900', letterSpacing: '-0.03em', lineHeight: 1.1, color: '#ffffff' }}>
+                                    {todayMetrics.totalCount} <span style={{ fontSize: '1.15rem', fontWeight: '700', opacity: 0.95 }}>Slips</span>
+                                </h2>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', marginTop: '0.4rem', color: '#bae6fd', fontWeight: '600' }}>
+                                    <Printer size={14} color="#93c5fd" />
+                                    <span>Recorded in ledger & printable vouchers</span>
+                                </div>
+                            </div>
+                            <div style={{
+                                width: '52px',
+                                height: '52px',
+                                borderRadius: '12px',
+                                background: 'rgba(255,255,255,0.18)',
+                                backdropFilter: 'blur(6px)',
+                                border: '1px solid rgba(255,255,255,0.25)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: '#ffffff'
+                            }}>
+                                <FileText size={26} />
+                            </div>
+                        </div>
+
+                        {/* Digital vs Cash Velocity Mini Metric Card */}
+                        <div style={{
+                            background: '#f8fafc',
+                            borderRadius: '12px',
+                            padding: '0.85rem 1rem',
+                            border: '1px solid #e2e8f0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#f5f3ff', color: '#7c3aed', border: '1px solid #e9d5ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <Zap size={17} />
+                                </div>
+                                <div>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block' }}>
+                                        Digital vs Cash Ratio
+                                    </span>
+                                    <span style={{ fontSize: '0.85rem', fontWeight: '900', color: '#0f172a' }}>
+                                        {todayMetrics.bankPct + todayMetrics.onlinePct}% Digital &bull; {todayMetrics.cashPct}% Cash
+                                    </span>
+                                </div>
+                            </div>
+                            <span style={{
+                                fontSize: '0.7rem',
+                                fontWeight: '800',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                background: todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? '#f3e8ff' : '#ecfdf5',
+                                color: todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? '#6b21a8' : '#047857',
+                                border: `1px solid ${todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? '#d8b4fe' : '#a7f3d0'}`
+                            }}>
+                                {todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? 'Digital Heavy' : 'Cash Primary'}
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Pillar 2: Animated SVG Circular Donut Chart */}
+                    <div style={{
+                        background: '#ffffff',
+                        borderRadius: '14px',
+                        padding: '1.25rem',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        position: 'relative'
+                    }}>
+                        <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <PieChart size={17} color="#0078d4" /> Payment Channels Split
+                            </span>
+                            <span style={{ fontSize: '0.72rem', fontWeight: '700', padding: '2px 7px', borderRadius: '6px', background: '#f1f5f9', color: '#475569' }}>
+                                360&deg; Distribution
+                            </span>
+                        </div>
+
+                        {/* Circular Donut Gauge Container */}
+                        <div style={{ position: 'relative', width: '180px', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0.5rem 0' }}>
+                            {/* SVG Donut Ring */}
+                            {(() => {
+                                const radius = 54;
+                                const circumference = 2 * Math.PI * radius; // ~339.29
+                                const hasData = todayMetrics.totalAmount > 0;
+                                const cashLen = hasData ? (todayMetrics.cashPct / 100) * circumference : 0;
+                                const bankLen = hasData ? (todayMetrics.bankPct / 100) * circumference : 0;
+                                const onlineLen = hasData ? (todayMetrics.onlinePct / 100) * circumference : 0;
+
+                                return (
+                                    <svg width="180" height="180" viewBox="0 0 140 140" style={{ transform: 'rotate(-90deg)' }}>
+                                        {/* Background Track Ring */}
+                                        <circle
+                                            cx="70"
+                                            cy="70"
+                                            r={radius}
+                                            fill="transparent"
+                                            stroke="#f1f5f9"
+                                            strokeWidth="13"
+                                        />
+
+                                        {hasData ? (
+                                            <>
+                                                {/* Cash Segment (Emerald) */}
+                                                {todayMetrics.cashPct > 0 && (
+                                                    <circle
+                                                        cx="70"
+                                                        cy="70"
+                                                        r={radius}
+                                                        fill="transparent"
+                                                        stroke="#10b981"
+                                                        strokeWidth="13"
+                                                        strokeDasharray={`${cashLen} ${circumference - cashLen}`}
+                                                        strokeDashoffset="0"
+                                                        strokeLinecap={todayMetrics.cashPct < 100 ? "round" : "butt"}
+                                                        style={{ transition: 'stroke-dasharray 1s cubic-bezier(0.4, 0, 0.2, 1)' }}
+                                                    />
+                                                )}
+
+                                                {/* Bank Segment (Royal Blue) */}
+                                                {todayMetrics.bankPct > 0 && (
+                                                    <circle
+                                                        cx="70"
+                                                        cy="70"
+                                                        r={radius}
+                                                        fill="transparent"
+                                                        stroke="#3b82f6"
+                                                        strokeWidth="13"
+                                                        strokeDasharray={`${bankLen} ${circumference - bankLen}`}
+                                                        strokeDashoffset={`-${cashLen}`}
+                                                        strokeLinecap={todayMetrics.bankPct < 100 ? "round" : "butt"}
+                                                        style={{ transition: 'stroke-dasharray 1s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 1s' }}
+                                                    />
+                                                )}
+
+                                                {/* Online Segment (Purple) */}
+                                                {todayMetrics.onlinePct > 0 && (
+                                                    <circle
+                                                        cx="70"
+                                                        cy="70"
+                                                        r={radius}
+                                                        fill="transparent"
+                                                        stroke="#a855f7"
+                                                        strokeWidth="13"
+                                                        strokeDasharray={`${onlineLen} ${circumference - onlineLen}`}
+                                                        strokeDashoffset={`-${cashLen + bankLen}`}
+                                                        strokeLinecap={todayMetrics.onlinePct < 100 ? "round" : "butt"}
+                                                        style={{ transition: 'stroke-dasharray 1s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 1s' }}
+                                                    />
+                                                )}
+                                            </>
+                                        ) : (
+                                            <circle
+                                                cx="70"
+                                                cy="70"
+                                                r={radius}
+                                                fill="transparent"
+                                                stroke="#cbd5e1"
+                                                strokeWidth="13"
+                                                strokeDasharray="4 4"
+                                            />
+                                        )}
+                                    </svg>
+                                );
+                            })()}
+
+                            {/* Center Donut Core Hub */}
+                            <div style={{
+                                position: 'absolute',
+                                width: '102px',
+                                height: '102px',
+                                borderRadius: '50%',
+                                background: '#ffffff',
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                textAlign: 'center',
+                                padding: '4px'
+                            }}>
+                                <span style={{ fontSize: '0.62rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                    Total Today
+                                </span>
+                                <span style={{ fontSize: '1.05rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+                                    {todayMetrics.totalAmount >= 1000 ? `${(todayMetrics.totalAmount / 1000).toFixed(todayMetrics.totalAmount % 1000 === 0 ? 0 : 1)}k` : `Rs ${todayMetrics.totalAmount}`}
+                                </span>
+                                <span style={{ fontSize: '0.62rem', fontWeight: '800', color: '#059669', background: '#ecfdf5', padding: '1px 6px', borderRadius: '6px', marginTop: '2px', border: '1px solid #a7f3d0' }}>
+                                    {todayMetrics.totalCount} Slips
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Circular Donut Legend Chips */}
+                        <div style={{ width: '100%', display: 'flex', justifyContent: 'space-around', alignItems: 'center', gap: '0.35rem', paddingTop: '0.5rem', borderTop: '1px solid #f1f5f9' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }} />
+                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Cash {todayMetrics.cashPct}%</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }} />
+                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Bank {todayMetrics.bankPct}%</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#a855f7' }} />
+                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Online {todayMetrics.onlinePct}%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Pillar 3: Animated Channel Breakdown & Mini Progress Bar Graphs */}
+                    <div style={{
+                        background: '#ffffff',
+                        borderRadius: '14px',
+                        padding: '1.25rem 1.35rem',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        gap: '0.75rem'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <BarChart3 size={17} color="#0078d4" /> Live Channel Analytics
+                            </span>
+                            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '2px 8px', borderRadius: '6px' }}>
+                                Interactive Bars
+                            </span>
+                        </div>
+
+                        {/* Channel 1: Cash in Hand Bar */}
+                        <div style={{
+                            background: '#f0fdf4',
+                            borderRadius: '10px',
+                            padding: '0.7rem 0.85rem',
+                            border: '1px solid #bbf7d0'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <Wallet size={13} />
+                                    </div>
+                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#14532d' }}>Cash</span>
+                                    <span style={{ fontSize: '0.7rem', color: '#166534', fontWeight: '600' }}>({todayMetrics.cashCount} Slips)</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <strong style={{ fontSize: '0.9rem', fontWeight: '900', color: '#14532d' }}>
+                                        Rs {todayMetrics.cashAmount.toLocaleString()}
+                                    </strong>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '1px 6px', borderRadius: '6px', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
+                                        {todayMetrics.cashPct}%
+                                    </span>
+                                </div>
+                            </div>
+                            {/* Animated Mini Progress Bar */}
+                            <div style={{ height: '7px', width: '100%', background: '#dcfce7', borderRadius: '6px', overflow: 'hidden' }}>
+                                <div style={{
+                                    height: '100%',
+                                    width: `${todayMetrics.cashPct}%`,
+                                    background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
+                                    borderRadius: '6px',
+                                    transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
+                                }} />
+                            </div>
+                        </div>
+
+                        {/* Channel 2: Bank Transfer Bar */}
+                        <div style={{
+                            background: '#eff6ff',
+                            borderRadius: '10px',
+                            padding: '0.7rem 0.85rem',
+                            border: '1px solid #bfdbfe'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#dbeafe', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <Landmark size={13} />
+                                    </div>
+                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#1e3a8a' }}>Bank Deposit</span>
+                                    <span style={{ fontSize: '0.7rem', color: '#1e40af', fontWeight: '600' }}>({todayMetrics.bankCount} Slips)</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <strong style={{ fontSize: '0.9rem', fontWeight: '900', color: '#1e3a8a' }}>
+                                        Rs {todayMetrics.bankAmount.toLocaleString()}
+                                    </strong>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '1px 6px', borderRadius: '6px', background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
+                                        {todayMetrics.bankPct}%
+                                    </span>
+                                </div>
+                            </div>
+                            {/* Animated Mini Progress Bar */}
+                            <div style={{ height: '7px', width: '100%', background: '#dbeafe', borderRadius: '6px', overflow: 'hidden' }}>
+                                <div style={{
+                                    height: '100%',
+                                    width: `${todayMetrics.bankPct}%`,
+                                    background: 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 100%)',
+                                    borderRadius: '6px',
+                                    transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
+                                }} />
+                            </div>
+                        </div>
+
+                        {/* Channel 3: Online / EasyPaisa / JazzCash Bar */}
+                        <div style={{
+                            background: '#faf5ff',
+                            borderRadius: '10px',
+                            padding: '0.7rem 0.85rem',
+                            border: '1px solid #e9d5ff'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#f3e8ff', color: '#9333ea', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <Smartphone size={13} />
+                                    </div>
+                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#581c87' }}>Online Wallets</span>
+                                    <span style={{ fontSize: '0.7rem', color: '#6b21a8', fontWeight: '600' }}>({todayMetrics.onlineCount} Slips)</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <strong style={{ fontSize: '0.9rem', fontWeight: '900', color: '#581c87' }}>
+                                        Rs {todayMetrics.onlineAmount.toLocaleString()}
+                                    </strong>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '1px 6px', borderRadius: '6px', background: '#f3e8ff', color: '#7e22ce', border: '1px solid #d8b4fe' }}>
+                                        {todayMetrics.onlinePct}%
+                                    </span>
+                                </div>
+                            </div>
+                            {/* Animated Mini Progress Bar */}
+                            <div style={{ height: '7px', width: '100%', background: '#f3e8ff', borderRadius: '6px', overflow: 'hidden' }}>
+                                <div style={{
+                                    height: '100%',
+                                    width: `${todayMetrics.onlinePct}%`,
+                                    background: 'linear-gradient(90deg, #a855f7 0%, #7e22ce 100%)',
+                                    borderRadius: '6px',
+                                    transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
+                                }} />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Side-by-Side 2 Cards Layout */}
             <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
                 gap: '1.5rem',
                 alignItems: 'start'
             }}>
-                {/* Left Column: Select Class & Student */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    <div className="card" style={{
-                        background: '#ffffff',
-                        borderRadius: '12px',
-                        padding: '1.25rem',
-                        border: '1px solid #e2e8f0',
-                        boxShadow: '0 2px 8px -2px rgba(0,0,0,0.04)'
-                    }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '1.15rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.85rem' }}>
+                {/* Left Card: Daily Fee Submission Counter (Student Selector) */}
+                <div className="card" style={{
+                    background: '#ffffff',
+                    borderRadius: '14px',
+                    padding: '1.5rem',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 2px 8px -2px rgba(0,0,0,0.04)'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.15rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.85rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                             <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0078d4' }}>
                                 <Wallet size={20} />
                             </div>
@@ -2219,890 +2731,592 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             </div>
                         </div>
 
-                        {/* Instant Student Search Bar */}
-                        <div style={{ position: 'relative', width: '100%', marginBottom: '1rem' }}>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                Quick Student Search
-                            </label>
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                padding: '0.6rem 0.85rem',
-                                borderRadius: '6px',
-                                background: '#f8fafc',
-                                border: '1px solid #cbd5e1',
-                                transition: 'all 0.2s'
-                            }}>
-                                <Search size={16} color="#64748b" />
-                                <input
-                                    type="text"
-                                    placeholder="Type Name, Roll No, or Father..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    onFocus={() => {
-                                        if (searchQuery.trim().length > 0) setShowSearchDropdown(true);
-                                    }}
-                                    style={{
-                                        border: 'none',
-                                        outline: 'none',
-                                        background: 'transparent',
-                                        width: '100%',
-                                        fontSize: '0.875rem',
-                                        color: '#0f172a',
-                                        fontWeight: '500'
-                                    }}
-                                />
-                                {searchQuery && (
-                                    <button
-                                        type="button"
-                                        onClick={() => { setSearchQuery(''); setShowSearchDropdown(false); }}
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}
-                                    >
-                                        <X size={15} />
-                                    </button>
-                                )}
-                            </div>
-
-                            {/* Search Suggestions Dropdown */}
-                            {showSearchDropdown && searchResults.length > 0 && (
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '105%',
-                                    left: 0,
-                                    right: 0,
-                                    background: '#ffffff',
-                                    borderRadius: '8px',
-                                    boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)',
+                        {selectedStudent && (
+                            <button
+                                type="button"
+                                onClick={handleClearSelection}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.3rem',
+                                    padding: '4px 10px',
+                                    borderRadius: '6px',
+                                    background: '#f1f5f9',
                                     border: '1px solid #cbd5e1',
-                                    zIndex: 50,
-                                    maxHeight: '240px',
-                                    overflowY: 'auto'
-                                }}>
-                                    {searchResults.map(st => (
-                                        <div
-                                            key={st.id}
-                                            onClick={() => handleSelectStudent(st)}
-                                            style={{
-                                                padding: '0.65rem 0.85rem',
-                                                borderBottom: '1px solid #f1f5f9',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'space-between',
-                                                transition: 'background 0.15s'
-                                            }}
-                                            onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                        >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                                <div style={{
-                                                    width: '28px',
-                                                    height: '28px',
-                                                    borderRadius: '50%',
-                                                    background: '#e0f2fe',
-                                                    color: '#0369a1',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    fontWeight: '700',
-                                                    fontSize: '0.75rem'
-                                                }}>
-                                                    {st.name?.slice(0, 2).toUpperCase() || 'ST'}
-                                                </div>
-                                                <div>
-                                                    <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.85rem' }}>{st.name}</div>
-                                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                                                        {st.className} | Roll: {st.rollNo || 'N/A'}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <span style={{
-                                                fontSize: '0.7rem',
-                                                fontWeight: '700',
-                                                padding: '2px 6px',
-                                                borderRadius: '4px',
-                                                background: st.monthlyFeeStatus === 'paid' ? '#dcfce7' : '#fee2e2',
-                                                color: st.monthlyFeeStatus === 'paid' ? '#15803d' : '#b91c1c'
-                                            }}>
-                                                {st.monthlyFeeStatus === 'paid' ? 'Paid' : 'Unpaid'}
-                                            </span>
-                                        </div>
-                                    ))}
+                                    color: '#475569',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '700',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <X size={13} /> Clear
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Active Selected Student Notification Banner */}
+                    {selectedStudent && (
+                        <div style={{
+                            padding: '0.75rem 1rem',
+                            background: '#f0f9ff',
+                            border: '1px solid #bae6fd',
+                            borderRadius: '8px',
+                            marginBottom: '1rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                        }}>
+                            <div>
+                                <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0369a1' }}>
+                                    Active Selection: {selectedStudent.name}
                                 </div>
+                                <div style={{ fontSize: '0.75rem', color: '#0284c7' }}>
+                                    Class: {selectedStudent.className} | Roll: {selectedStudent.rollNo || 'N/A'}
+                                </div>
+                            </div>
+                            <span style={{
+                                fontSize: '0.7rem',
+                                fontWeight: '700',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                background: feeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
+                                color: feeCalculation?.isPaid ? '#15803d' : '#b91c1c'
+                            }}>
+                                {feeCalculation?.isPaid ? 'Paid' : 'Payment Due'}
+                            </span>
+                        </div>
+                    )}
+
+                    {/* Instant Student Search Bar */}
+                    <div style={{ position: 'relative', width: '100%', marginBottom: '1rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                            Quick Student Search
+                        </label>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            padding: '0.65rem 0.85rem',
+                            borderRadius: '8px',
+                            background: '#f8fafc',
+                            border: '1px solid #cbd5e1',
+                            transition: 'all 0.2s'
+                        }}>
+                            <Search size={16} color="#64748b" />
+                            <input
+                                type="text"
+                                placeholder="Type Name, Roll No, or Father..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onFocus={() => {
+                                    if (searchQuery.trim().length > 0) setShowSearchDropdown(true);
+                                }}
+                                style={{
+                                    border: 'none',
+                                    outline: 'none',
+                                    background: 'transparent',
+                                    width: '100%',
+                                    fontSize: '0.875rem',
+                                    color: '#0f172a',
+                                    fontWeight: '500'
+                                }}
+                            />
+                            {searchQuery && (
+                                <button
+                                    type="button"
+                                    onClick={() => { setSearchQuery(''); setShowSearchDropdown(false); }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}
+                                >
+                                    <X size={15} />
+                                </button>
                             )}
                         </div>
 
-                        {/* Divider */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: '#94a3b8', fontSize: '0.75rem', fontWeight: '700' }}>
-                            <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
-                            <span>OR CHOOSE MANUALLY</span>
-                            <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
-                        </div>
-
-                        {/* Class Dropdown */}
-                        <div style={{ marginBottom: '1rem' }}>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                Class
-                            </label>
-                            <select
-                                value={selectedClassId}
-                                onChange={(e) => {
-                                    setSelectedClassId(e.target.value);
-                                    setSelectedStudentId('');
-                                    setSelectedStudent(null);
-                                }}
-                                style={{
-                                    width: '100%',
-                                    padding: '0.65rem 0.85rem',
-                                    borderRadius: '6px',
-                                    border: '1px solid #cbd5e1',
-                                    outline: 'none',
-                                    background: '#ffffff',
-                                    fontWeight: '600',
-                                    color: '#0f172a',
-                                    fontSize: '0.9rem'
-                                }}
-                            >
-                                <option value="">-- Choose Class --</option>
-                                {classes.map(c => (
-                                    <option key={c.id} value={c.id}>{c.name}</option>
+                        {/* Search Suggestions Dropdown */}
+                        {showSearchDropdown && searchResults.length > 0 && (
+                            <div style={{
+                                position: 'absolute',
+                                top: '105%',
+                                left: 0,
+                                right: 0,
+                                background: '#ffffff',
+                                borderRadius: '8px',
+                                boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)',
+                                border: '1px solid #cbd5e1',
+                                zIndex: 50,
+                                maxHeight: '240px',
+                                overflowY: 'auto'
+                            }}>
+                                {searchResults.map(st => (
+                                    <div
+                                        key={st.id}
+                                        onClick={() => handleSelectStudent(st)}
+                                        style={{
+                                            padding: '0.65rem 0.85rem',
+                                            borderBottom: '1px solid #f1f5f9',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            transition: 'background 0.15s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                            <div style={{
+                                                width: '28px',
+                                                height: '28px',
+                                                borderRadius: '50%',
+                                                background: '#e0f2fe',
+                                                color: '#0369a1',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                fontWeight: '700',
+                                                fontSize: '0.75rem'
+                                            }}>
+                                                {st.name?.slice(0, 2).toUpperCase() || 'ST'}
+                                            </div>
+                                            <div>
+                                                <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.85rem' }}>{st.name}</div>
+                                                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                                    {st.className} | Roll: {st.rollNo || 'N/A'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <span style={{
+                                            fontSize: '0.7rem',
+                                            fontWeight: '700',
+                                            padding: '2px 6px',
+                                            borderRadius: '4px',
+                                            background: st.monthlyFeeStatus === 'paid' ? '#dcfce7' : '#fee2e2',
+                                            color: st.monthlyFeeStatus === 'paid' ? '#15803d' : '#b91c1c'
+                                        }}>
+                                            {st.monthlyFeeStatus === 'paid' ? 'Paid' : 'Unpaid'}
+                                        </span>
+                                    </div>
                                 ))}
-                            </select>
-                        </div>
+                            </div>
+                        )}
+                    </div>
 
-                        {/* Student Dropdown */}
-                        <div style={{ marginBottom: '0.5rem' }}>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                Student Name
-                            </label>
-                            <select
-                                value={selectedStudentId}
-                                onChange={(e) => {
-                                    const stId = e.target.value;
-                                    setSelectedStudentId(stId);
-                                    const stObj = classStudents.find(s => s.id === stId);
-                                    setSelectedStudent(stObj || null);
-                                }}
-                                disabled={!selectedClassId || loadingClassStudents}
-                                style={{
-                                    width: '100%',
-                                    padding: '0.65rem 0.85rem',
-                                    borderRadius: '6px',
-                                    border: '1px solid #cbd5e1',
-                                    outline: 'none',
-                                    background: !selectedClassId ? '#f1f5f9' : '#ffffff',
-                                    fontWeight: '600',
-                                    color: !selectedClassId ? '#94a3b8' : '#0f172a',
-                                    fontSize: '0.9rem',
-                                    cursor: !selectedClassId ? 'not-allowed' : 'pointer'
-                                }}
-                            >
-                                <option value="">-- Choose Student --</option>
-                                {classStudents.map(s => (
-                                    <option key={s.id} value={s.id}>
-                                        {s.name} (Roll: {s.rollNo || 'N/A'}) {s.monthlyFeeStatus === 'paid' ? '✓ Paid' : '✗ Unpaid'}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
+                    {/* Divider */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: '#94a3b8', fontSize: '0.75rem', fontWeight: '700' }}>
+                        <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
+                        <span>OR CHOOSE MANUALLY</span>
+                        <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
+                    </div>
+
+                    {/* Class Dropdown */}
+                    <div style={{ marginBottom: '1rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                            Class
+                        </label>
+                        <select
+                            value={selectedClassId}
+                            onChange={(e) => {
+                                setSelectedClassId(e.target.value);
+                                setSelectedStudentId('');
+                                setSelectedStudent(null);
+                            }}
+                            style={{
+                                width: '100%',
+                                padding: '0.65rem 0.85rem',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                outline: 'none',
+                                background: '#ffffff',
+                                fontWeight: '600',
+                                color: '#0f172a',
+                                fontSize: '0.9rem'
+                            }}
+                        >
+                            <option value="">-- Choose Class --</option>
+                            {classes.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Student Dropdown */}
+                    <div style={{ marginBottom: '0.5rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                            Student Name
+                        </label>
+                        <select
+                            value={selectedStudentId}
+                            onChange={(e) => {
+                                const stId = e.target.value;
+                                setSelectedStudentId(stId);
+                                const stObj = classStudents.find(s => s.id === stId);
+                                setSelectedStudent(stObj || null);
+                            }}
+                            disabled={!selectedClassId || loadingClassStudents}
+                            style={{
+                                width: '100%',
+                                padding: '0.65rem 0.85rem',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                outline: 'none',
+                                background: !selectedClassId ? '#f1f5f9' : '#ffffff',
+                                fontWeight: '600',
+                                color: !selectedClassId ? '#94a3b8' : '#0f172a',
+                                fontSize: '0.9rem',
+                                cursor: !selectedClassId ? 'not-allowed' : 'pointer'
+                            }}
+                        >
+                            <option value="">-- Choose Student --</option>
+                            {classStudents.map(s => (
+                                <option key={s.id} value={s.id}>
+                                    {s.name} (Roll: {s.rollNo || 'N/A'}) {s.monthlyFeeStatus === 'paid' ? '✓ Paid' : '✗ Unpaid'}
+                                </option>
+                            ))}
+                        </select>
                     </div>
                 </div>
 
-                {/* Right Column: Fee Details & Collection POS Counter OR Dynamic Today's Collections Chart */}
-                <div>
-                    {!selectedStudent ? (
-                        <div className="card animate-fade-in-up" style={{
-                            background: 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)',
-                            borderRadius: '16px',
-                            padding: '1.75rem',
-                            border: '1px solid #e2e8f0',
-                            boxShadow: '0 10px 25px -5px rgba(0, 120, 212, 0.07), 0 8px 10px -6px rgba(0, 0, 0, 0.03)',
-                            position: 'relative',
-                            overflow: 'hidden'
-                        }}>
-                            {/* Background Decorative Gradient Orbs */}
-                            <div style={{
-                                position: 'absolute',
-                                top: '-40px',
-                                right: '-40px',
-                                width: '160px',
-                                height: '160px',
-                                borderRadius: '50%',
-                                background: 'radial-gradient(circle, rgba(0,120,212,0.12) 0%, rgba(255,255,255,0) 70%)',
-                                pointerEvents: 'none'
-                            }} />
-                            <div style={{
-                                position: 'absolute',
-                                bottom: '-30px',
-                                left: '-30px',
-                                width: '140px',
-                                height: '140px',
-                                borderRadius: '50%',
-                                background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, rgba(255,255,255,0) 70%)',
-                                pointerEvents: 'none'
-                            }} />
-
-                            {/* Header with Live Pulse */}
-                            <div style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                flexWrap: 'wrap',
-                                gap: '0.75rem',
-                                marginBottom: '1.5rem',
-                                borderBottom: '1px solid #f1f5f9',
-                                paddingBottom: '1rem'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                    <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.4rem',
-                                        padding: '0.3rem 0.75rem',
-                                        borderRadius: '20px',
-                                        background: '#ecfdf5',
-                                        border: '1px solid #a7f3d0',
-                                        color: '#059669',
-                                        fontSize: '0.75rem',
-                                        fontWeight: '800',
-                                        letterSpacing: '0.04em'
-                                    }}>
-                                        <span style={{
-                                            display: 'inline-block',
-                                            width: '8px',
-                                            height: '8px',
-                                            borderRadius: '50%',
-                                            background: '#10b981',
-                                            boxShadow: '0 0 0 3px rgba(16, 185, 129, 0.25)'
-                                        }} className="animate-pulse" />
-                                        LIVE TODAY'S SUMMARY
-                                    </div>
-                                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#0f172a' }}>
-                                        Collections Overview
-                                    </h3>
-                                </div>
-
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: '#64748b', fontWeight: '600' }}>
-                                    <Calendar size={14} color="#0078d4" />
-                                    {todayMetrics.todayStr}
-                                </div>
+                {/* Right Card: Either Fee Assessment Form OR Today's Recent Fee Collections Log */}
+                {selectedStudent ? (
+                    <div className="card animate-fade-in-up" style={{
+                        background: '#ffffff',
+                        borderRadius: '14px',
+                        padding: '1.5rem',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 4px 16px -2px rgba(0,0,0,0.06)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                    Fee Assessment & Collection
+                                </h3>
+                                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                    Student: <strong style={{ color: '#0078d4' }}>{selectedStudent.name}</strong> ({selectedStudent.className})
+                                </span>
                             </div>
-
-                            {/* Top 2 Primary Highlight Stats */}
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                                gap: '1rem',
-                                marginBottom: '1.5rem'
-                            }}>
-                                {/* Total Collected Amount */}
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
-                                    borderRadius: '12px',
-                                    padding: '1.15rem 1.25rem',
-                                    color: '#ffffff',
-                                    boxShadow: '0 8px 18px -3px rgba(5, 150, 105, 0.3)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between'
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                <span style={{
+                                    fontSize: '0.75rem',
+                                    fontWeight: '700',
+                                    padding: '4px 10px',
+                                    borderRadius: '6px',
+                                    background: feeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
+                                    color: feeCalculation?.isPaid ? '#15803d' : '#b91c1c'
                                 }}>
-                                    <div>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#a7f3d0' }}>
-                                            Total Collected Today
-                                        </span>
-                                        <h2 style={{ margin: '0.35rem 0 0', fontSize: '1.65rem', fontWeight: '900', letterSpacing: '-0.02em' }}>
-                                            Rs {todayMetrics.totalAmount.toLocaleString()}
-                                        </h2>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', marginTop: '0.35rem', color: '#d1fae5' }}>
-                                            <TrendingUp size={13} /> Real-time instant sum
-                                        </div>
-                                    </div>
-                                    <div style={{
-                                        width: '48px',
-                                        height: '48px',
-                                        borderRadius: '12px',
-                                        background: 'rgba(255,255,255,0.15)',
-                                        backdropFilter: 'blur(8px)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        color: '#ffffff'
-                                    }}>
-                                        <Wallet size={26} />
-                                    </div>
-                                </div>
-
-                                {/* Total Slips Count */}
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
-                                    borderRadius: '12px',
-                                    padding: '1.15rem 1.25rem',
-                                    color: '#ffffff',
-                                    boxShadow: '0 8px 18px -3px rgba(0, 120, 212, 0.3)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between'
-                                }}>
-                                    <div>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#bfdbfe' }}>
-                                            Fee Slips Issued
-                                        </span>
-                                        <h2 style={{ margin: '0.35rem 0 0', fontSize: '1.65rem', fontWeight: '900', letterSpacing: '-0.02em' }}>
-                                            {todayMetrics.totalCount} <span style={{ fontSize: '1rem', fontWeight: '600' }}>Slips</span>
-                                        </h2>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', marginTop: '0.35rem', color: '#dbeafe' }}>
-                                            <Printer size={13} /> Recorded & Verified
-                                        </div>
-                                    </div>
-                                    <div style={{
-                                        width: '48px',
-                                        height: '48px',
-                                        borderRadius: '12px',
-                                        background: 'rgba(255,255,255,0.15)',
-                                        backdropFilter: 'blur(8px)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        color: '#ffffff'
-                                    }}>
-                                        <FileText size={26} />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Multi-Segment Motion Progress Bar Chart */}
-                            <div style={{ marginBottom: '1.5rem', background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
-                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#334155', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                        <Activity size={14} color="#0078d4" /> Payment Channels Distribution
-                                    </span>
-                                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '600' }}>
-                                        {todayMetrics.totalCount > 0 ? `${todayMetrics.totalCount} Total Transactions` : 'No transactions recorded today'}
-                                    </span>
-                                </div>
-
-                                {/* Dynamic Multi-Color Bar */}
-                                <div style={{
-                                    height: '14px',
-                                    width: '100%',
-                                    borderRadius: '10px',
-                                    background: '#e2e8f0',
-                                    overflow: 'hidden',
-                                    display: 'flex',
-                                    boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.1)'
-                                }}>
-                                    {todayMetrics.totalAmount === 0 ? (
-                                        <div style={{ width: '100%', height: '100%', background: '#cbd5e1' }} />
-                                    ) : (
-                                        <>
-                                            {todayMetrics.cashPct > 0 && (
-                                                <div
-                                                    style={{
-                                                        width: `${todayMetrics.cashPct}%`,
-                                                        height: '100%',
-                                                        background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
-                                                        transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
-                                                    }}
-                                                    title={`Cash: ${todayMetrics.cashPct}%`}
-                                                />
-                                            )}
-                                            {todayMetrics.bankPct > 0 && (
-                                                <div
-                                                    style={{
-                                                        width: `${todayMetrics.bankPct}%`,
-                                                        height: '100%',
-                                                        background: 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 100%)',
-                                                        transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
-                                                    }}
-                                                    title={`Bank: ${todayMetrics.bankPct}%`}
-                                                />
-                                            )}
-                                            {todayMetrics.onlinePct > 0 && (
-                                                <div
-                                                    style={{
-                                                        width: `${todayMetrics.onlinePct}%`,
-                                                        height: '100%',
-                                                        background: 'linear-gradient(90deg, #a855f7 0%, #7e22ce 100%)',
-                                                        transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
-                                                    }}
-                                                    title={`Online: ${todayMetrics.onlinePct}%`}
-                                                />
-                                            )}
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* 3 Payment Mode Cards Grid */}
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-                                gap: '0.85rem',
-                                marginBottom: '1.25rem'
-                            }}>
-                                {/* Cash Channel Card */}
-                                <div style={{
-                                    background: '#f0fdf4',
-                                    borderRadius: '12px',
-                                    padding: '1rem',
-                                    border: '1px solid #bbf7d0',
-                                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '0.35rem'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: '800', color: '#166534' }}>
-                                            <Wallet size={15} color="#16a34a" /> Cash
-                                        </span>
-                                        <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '2px 7px', borderRadius: '12px', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
-                                            {todayMetrics.cashPct}%
-                                        </span>
-                                    </div>
-                                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#14532d' }}>
-                                        Rs {todayMetrics.cashAmount.toLocaleString()}
-                                    </div>
-                                    <div style={{ fontSize: '0.75rem', color: '#15803d', fontWeight: '600' }}>
-                                        {todayMetrics.cashCount} {todayMetrics.cashCount === 1 ? 'Slip' : 'Slips'} Recorded
-                                    </div>
-                                </div>
-
-                                {/* Bank Transfer Channel Card */}
-                                <div style={{
-                                    background: '#eff6ff',
-                                    borderRadius: '12px',
-                                    padding: '1rem',
-                                    border: '1px solid #bfdbfe',
-                                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '0.35rem'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: '800', color: '#1e40af' }}>
-                                            <Landmark size={15} color="#2563eb" /> Bank Transfer
-                                        </span>
-                                        <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '2px 7px', borderRadius: '12px', background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
-                                            {todayMetrics.bankPct}%
-                                        </span>
-                                    </div>
-                                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#1e3a8a' }}>
-                                        Rs {todayMetrics.bankAmount.toLocaleString()}
-                                    </div>
-                                    <div style={{ fontSize: '0.75rem', color: '#1d4ed8', fontWeight: '600' }}>
-                                        {todayMetrics.bankCount} {todayMetrics.bankCount === 1 ? 'Slip' : 'Slips'} Recorded
-                                    </div>
-                                </div>
-
-                                {/* Online / EasyPaisa / JazzCash Channel Card */}
-                                <div style={{
-                                    background: '#faf5ff',
-                                    borderRadius: '12px',
-                                    padding: '1rem',
-                                    border: '1px solid #e9d5ff',
-                                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '0.35rem'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: '800', color: '#6b21a8' }}>
-                                            <Smartphone size={15} color="#9333ea" /> Online Wallets
-                                        </span>
-                                        <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '2px 7px', borderRadius: '12px', background: '#f3e8ff', color: '#7e22ce', border: '1px solid #d8b4fe' }}>
-                                            {todayMetrics.onlinePct}%
-                                        </span>
-                                    </div>
-                                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#581c87' }}>
-                                        Rs {todayMetrics.onlineAmount.toLocaleString()}
-                                    </div>
-                                    <div style={{ fontSize: '0.75rem', color: '#7e22ce', fontWeight: '600' }}>
-                                        {todayMetrics.onlineCount} {todayMetrics.onlineCount === 1 ? 'Slip' : 'Slips'} Recorded
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Bottom Helper Bar */}
-                            <div style={{
-                                padding: '0.75rem 1rem',
-                                borderRadius: '10px',
-                                background: '#f8fafc',
-                                border: '1px dashed #cbd5e1',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.65rem',
-                                color: '#475569',
-                                fontSize: '0.825rem'
-                            }}>
-                                <Sparkles size={16} color="#0078d4" />
-                                <span>
-                                    <strong>Counter Ready:</strong> Search a student above or pick from class list on the left to calculate fee and issue instant receipt slip.
+                                    {feeCalculation?.isPaid ? 'Already Paid' : 'Payment Due'}
                                 </span>
                             </div>
                         </div>
-                    ) : (
-                        <div className="card animate-fade-in-up" style={{
-                            background: '#ffffff',
-                            borderRadius: '12px',
-                            padding: '1.5rem',
-                            border: '1px solid #e2e8f0',
-                            boxShadow: '0 4px 16px -2px rgba(0,0,0,0.06)'
-                        }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem' }}>
-                                <div>
-                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                        Fee Assessment & Collection
-                                    </h3>
-                                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                                        Student: <strong style={{ color: '#0078d4' }}>{selectedStudent.name}</strong> ({selectedStudent.className})
-                                    </span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                    <span style={{
-                                        fontSize: '0.75rem',
-                                        fontWeight: '700',
-                                        padding: '4px 10px',
-                                        borderRadius: '6px',
-                                        background: feeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
-                                        color: feeCalculation?.isPaid ? '#15803d' : '#b91c1c'
-                                    }}>
-                                        {feeCalculation?.isPaid ? 'Already Paid' : 'Payment Due'}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={handleClearSelection}
-                                        style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '0.3rem',
-                                            padding: '4px 10px',
-                                            borderRadius: '6px',
-                                            background: '#f1f5f9',
-                                            border: '1px solid #cbd5e1',
-                                            color: '#475569',
-                                            fontSize: '0.75rem',
-                                            fontWeight: '700',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        <X size={13} /> Back to Overview
-                                    </button>
-                                </div>
-                            </div>
 
-                            {/* Fee Breakdown Table */}
-                            <div style={{ marginBottom: '1.5rem' }}>
-                                <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '0.6rem', textTransform: 'uppercase' }}>
-                                    Itemized Dues Breakdown
-                                </h4>
-                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                                        <thead>
-                                            <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                                                <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Fee Component</th>
-                                                <th style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '700', color: '#334155' }}>Amount</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {feeCalculation?.items.map((item, i) => (
-                                                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                    <td style={{ padding: '0.6rem 1rem', color: '#1e293b' }}>{item.name}</td>
-                                                    <td style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
-                                                        Rs {Number(item.amount).toLocaleString()}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            <tr style={{ background: '#f0fdf4', borderTop: '2px solid #cbd5e1' }}>
-                                                <td style={{ padding: '0.75rem 1rem', fontWeight: '800', color: '#166534', fontSize: '0.95rem' }}>Total Assessed Due</td>
-                                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: '800', color: '#166534', fontSize: '1.1rem' }}>
-                                                    Rs {feeCalculation?.totalDue.toLocaleString()}
+                        {/* Fee Breakdown Table */}
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '0.6rem', textTransform: 'uppercase' }}>
+                                Itemized Dues Breakdown
+                            </h4>
+                            <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                            <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Fee Component</th>
+                                            <th style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '700', color: '#334155' }}>Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {feeCalculation?.items.map((item, i) => (
+                                            <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                <td style={{ padding: '0.6rem 1rem', color: '#1e293b' }}>{item.name}</td>
+                                                <td style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
+                                                    Rs {Number(item.amount).toLocaleString()}
                                                 </td>
                                             </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
+                                        ))}
+                                        <tr style={{ background: '#f0fdf4', borderTop: '2px solid #cbd5e1' }}>
+                                            <td style={{ padding: '0.75rem 1rem', fontWeight: '800', color: '#166534', fontSize: '0.95rem' }}>Total Assessed Due</td>
+                                            <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: '800', color: '#166534', fontSize: '1.1rem' }}>
+                                                Rs {feeCalculation?.totalDue.toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
+                        </div>
 
-                            {/* Payment Input Section */}
-                            <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.5rem' }}>
-                                <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '0.85rem', textTransform: 'uppercase' }}>
-                                    Payment Submission Details
-                                </h4>
+                        {/* Payment Input Section */}
+                        <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.5rem' }}>
+                            <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '0.85rem', textTransform: 'uppercase' }}>
+                                Payment Submission Details
+                            </h4>
 
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
-                                    {/* Payment Mode */}
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                            Payment Method
-                                        </label>
-                                        <select
-                                            value={paymentMode}
-                                            onChange={(e) => setPaymentMode(e.target.value)}
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.6rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid #cbd5e1',
-                                                background: '#ffffff',
-                                                fontWeight: '600',
-                                                color: '#0f172a',
-                                                fontSize: '0.85rem',
-                                                outline: 'none'
-                                            }}
-                                        >
-                                            <option value="Cash">💵 Cash</option>
-                                            <option value="Bank Transfer">🏦 Bank Transfer</option>
-                                            <option value="Online (EasyPaisa/JazzCash)">📱 Online / EasyPaisa / JazzCash</option>
-                                        </select>
-                                    </div>
-
-                                    {/* Amount Received */}
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                            Amount Received (Rs)
-                                        </label>
-                                        <input
-                                            type="number"
-                                            value={receivedAmount}
-                                            onChange={(e) => setReceivedAmount(e.target.value)}
-                                            placeholder="e.g. 3500"
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.6rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid #cbd5e1',
-                                                background: '#ffffff',
-                                                fontWeight: '700',
-                                                color: '#0f172a',
-                                                fontSize: '0.95rem',
-                                                outline: 'none'
-                                            }}
-                                        />
-                                    </div>
-
-                                    {/* Discount / Concession */}
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                            Discount / Concession (Rs)
-                                        </label>
-                                        <input
-                                            type="number"
-                                            value={discountAmount}
-                                            onChange={(e) => setDiscountAmount(e.target.value)}
-                                            placeholder="e.g. 0"
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.6rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid #cbd5e1',
-                                                background: '#ffffff',
-                                                fontWeight: '600',
-                                                color: '#16a34a',
-                                                fontSize: '0.95rem',
-                                                outline: 'none'
-                                            }}
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Remarks / Notes */}
-                                <div style={{ marginBottom: '1rem' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
+                                {/* Payment Mode */}
+                                <div>
                                     <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                        Remarks / Receipt Notes (Optional)
+                                        Payment Method
                                     </label>
-                                    <input
-                                        type="text"
-                                        value={remarks}
-                                        onChange={(e) => setRemarks(e.target.value)}
-                                        placeholder="e.g. Paid online via Father's account"
+                                    <select
+                                        value={paymentMode}
+                                        onChange={(e) => setPaymentMode(e.target.value)}
                                         style={{
                                             width: '100%',
                                             padding: '0.6rem',
                                             borderRadius: '6px',
                                             border: '1px solid #cbd5e1',
                                             background: '#ffffff',
+                                            fontWeight: '600',
                                             color: '#0f172a',
                                             fontSize: '0.85rem',
+                                            outline: 'none'
+                                        }}
+                                    >
+                                        <option value="Cash">💵 Cash</option>
+                                        <option value="Bank Transfer">🏦 Bank Transfer</option>
+                                        <option value="Online (EasyPaisa/JazzCash)">📱 Online / EasyPaisa / JazzCash</option>
+                                    </select>
+                                </div>
+
+                                {/* Amount Received */}
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                        Amount Received (Rs)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={receivedAmount}
+                                        onChange={(e) => setReceivedAmount(e.target.value)}
+                                        placeholder="e.g. 3500"
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem',
+                                            borderRadius: '6px',
+                                            border: '1px solid #cbd5e1',
+                                            background: '#ffffff',
+                                            fontWeight: '700',
+                                            color: '#0f172a',
+                                            fontSize: '0.95rem',
                                             outline: 'none'
                                         }}
                                     />
                                 </div>
 
-                                {/* Conditional Proof Upload Box for Online / Bank Transfer */}
-                                {paymentMode !== 'Cash' && (
-                                    <div style={{
-                                        padding: '0.85rem 1rem',
-                                        background: '#eff6ff',
-                                        borderRadius: '8px',
-                                        border: '1px dashed #93c5fd',
-                                        marginTop: '0.5rem'
-                                    }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                            <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                <ImageIcon size={16} />
-                                                Attach Bank Deposit Slip / Online Screenshot (Optional)
-                                            </span>
-                                            {proofFile && (
-                                                <button
-                                                    onClick={handleRemoveProof}
-                                                    style={{
-                                                        background: '#fee2e2',
-                                                        border: 'none',
-                                                        color: '#dc2626',
-                                                        fontSize: '0.75rem',
-                                                        fontWeight: '600',
-                                                        padding: '2px 8px',
-                                                        borderRadius: '4px',
-                                                        cursor: 'pointer'
-                                                    }}
-                                                >
-                                                    Remove
-                                                </button>
-                                            )}
-                                        </div>
+                                {/* Discount / Concession */}
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                        Discount / Concession (Rs)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={discountAmount}
+                                        onChange={(e) => setDiscountAmount(e.target.value)}
+                                        placeholder="e.g. 0"
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem',
+                                            borderRadius: '6px',
+                                            border: '1px solid #cbd5e1',
+                                            background: '#ffffff',
+                                            fontWeight: '600',
+                                            color: '#16a34a',
+                                            fontSize: '0.95rem',
+                                            outline: 'none'
+                                        }}
+                                    />
+                                </div>
+                            </div>
 
-                                        {!proofFile ? (
-                                            <label style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                gap: '0.5rem',
-                                                padding: '0.75rem',
-                                                background: '#ffffff',
-                                                borderRadius: '6px',
-                                                border: '1px solid #bfdbfe',
-                                                cursor: 'pointer',
-                                                fontSize: '0.85rem',
-                                                color: '#0078d4',
-                                                fontWeight: '600',
-                                                transition: 'all 0.15s ease'
-                                            }}>
-                                                <Upload size={16} /> Choose File / Screenshot (PNG, JPG)
-                                                <input
-                                                    type="file"
-                                                    accept="image/*"
-                                                    onChange={handleProofChange}
-                                                    style={{ display: 'none' }}
-                                                />
-                                            </label>
-                                        ) : (
-                                            <div style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.75rem',
-                                                background: '#ffffff',
-                                                padding: '0.5rem 0.75rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid #bfdbfe'
-                                            }}>
-                                                <img
-                                                    src={proofPreview}
-                                                    alt="Preview"
-                                                    style={{
-                                                        width: '40px',
-                                                        height: '40px',
-                                                        objectFit: 'cover',
-                                                        borderRadius: '4px',
-                                                        border: '1px solid #e2e8f0'
-                                                    }}
-                                                />
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{
-                                                        fontSize: '0.8rem',
-                                                        fontWeight: '700',
-                                                        color: '#0f172a',
-                                                        whiteSpace: 'nowrap',
-                                                        overflow: 'hidden',
-                                                        textOverflow: 'ellipsis'
-                                                    }}>
-                                                        {proofFile.name}
-                                                    </div>
-                                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                                                        {(proofFile.size / 1024).toFixed(1)} KB - Ready to attach with transaction
-                                                    </div>
-                                                </div>
-                                            </div>
+                            {/* Remarks / Notes */}
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                    Remarks / Receipt Notes (Optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={remarks}
+                                    onChange={(e) => setRemarks(e.target.value)}
+                                    placeholder="e.g. Paid online via Father's account"
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.6rem',
+                                        borderRadius: '6px',
+                                        border: '1px solid #cbd5e1',
+                                        background: '#ffffff',
+                                        color: '#0f172a',
+                                        fontSize: '0.85rem',
+                                        outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            {/* Conditional Proof Upload Box for Online / Bank Transfer */}
+                            {paymentMode !== 'Cash' && (
+                                <div style={{
+                                    padding: '0.85rem 1rem',
+                                    background: '#eff6ff',
+                                    borderRadius: '8px',
+                                    border: '1px dashed #93c5fd',
+                                    marginTop: '0.5rem'
+                                }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <ImageIcon size={16} />
+                                            Attach Bank Deposit Slip / Online Screenshot (Optional)
+                                        </span>
+                                        {proofFile && (
+                                            <button
+                                                onClick={handleRemoveProof}
+                                                style={{
+                                                    background: '#fee2e2',
+                                                    border: 'none',
+                                                    color: '#dc2626',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '600',
+                                                    padding: '2px 8px',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Remove
+                                            </button>
                                         )}
                                     </div>
-                                )}
-                            </div>
 
-                            {/* Submit Button */}
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', alignItems: 'center' }}>
-                                <button
-                                    onClick={handleSubmitFee}
-                                    disabled={isSubmitting || !receivedAmount}
-                                    style={{
-                                        padding: '0.75rem 2rem',
-                                        borderRadius: '6px',
-                                        border: 'none',
-                                        background: isSubmitting ? '#94a3b8' : '#0078d4',
-                                        color: '#ffffff',
-                                        fontWeight: '700',
-                                        fontSize: '0.95rem',
-                                        cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.6rem',
-                                        boxShadow: '0 2px 6px rgba(0, 120, 212, 0.3)',
-                                        transition: 'all 0.2s ease'
-                                    }}
-                                    onMouseEnter={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0067b8'; }}
-                                    onMouseLeave={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0078d4'; }}
-                                >
-                                    {isSubmitting ? (
-                                        <>
-                                            <Loader2 size={18} className="animate-spin" /> Processing Payment & Uploading...
-                                        </>
+                                    {!proofFile ? (
+                                        <label style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '0.5rem',
+                                            padding: '0.75rem',
+                                            background: '#ffffff',
+                                            borderRadius: '6px',
+                                            border: '1px solid #bfdbfe',
+                                            cursor: 'pointer',
+                                            fontSize: '0.85rem',
+                                            color: '#0078d4',
+                                            fontWeight: '600',
+                                            transition: 'all 0.15s ease'
+                                        }}>
+                                            <Upload size={16} /> Choose File / Screenshot (PNG, JPG)
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={handleProofChange}
+                                                style={{ display: 'none' }}
+                                            />
+                                        </label>
                                     ) : (
-                                        <>
-                                            <Printer size={18} /> Submit Fee & Print Receipt Slip
-                                        </>
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.75rem',
+                                            background: '#ffffff',
+                                            padding: '0.5rem 0.75rem',
+                                            borderRadius: '6px',
+                                            border: '1px solid #bfdbfe'
+                                        }}>
+                                            <img
+                                                src={proofPreview}
+                                                alt="Preview"
+                                                style={{
+                                                    width: '40px',
+                                                    height: '40px',
+                                                    objectFit: 'cover',
+                                                    borderRadius: '4px',
+                                                    border: '1px solid #e2e8f0'
+                                                }}
+                                            />
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{
+                                                    fontSize: '0.8rem',
+                                                    fontWeight: '700',
+                                                    color: '#0f172a',
+                                                    whiteSpace: 'nowrap',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis'
+                                                }}>
+                                                    {proofFile.name}
+                                                </div>
+                                                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                                    {(proofFile.size / 1024).toFixed(1)} KB - Ready to attach with transaction
+                                                </div>
+                                            </div>
+                                        </div>
                                     )}
-                                </button>
-                            </div>
+                                </div>
+                            )}
                         </div>
-                    )}
 
-                    {/* Recent Fee Transactions Log Card */}
+                        {/* Submit Button */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', alignItems: 'center' }}>
+                            <button
+                                onClick={handleSubmitFee}
+                                disabled={isSubmitting || !receivedAmount}
+                                style={{
+                                    padding: '0.75rem 2rem',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: isSubmitting ? '#94a3b8' : '#0078d4',
+                                    color: '#ffffff',
+                                    fontWeight: '700',
+                                    fontSize: '0.95rem',
+                                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.6rem',
+                                    boxShadow: '0 2px 6px rgba(0, 120, 212, 0.3)',
+                                    transition: 'all 0.2s ease'
+                                }}
+                                onMouseEnter={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0067b8'; }}
+                                onMouseLeave={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0078d4'; }}
+                            >
+                                {isSubmitting ? (
+                                    <>
+                                        <Loader2 size={18} className="animate-spin" /> Processing Payment & Uploading...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Printer size={18} /> Submit Fee & Print Receipt Slip
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    /* When no student is selected, Right Card is Today's Recent Fee Collections Log */
                     <div className="card" style={{
                         background: '#ffffff',
-                        borderRadius: '12px',
-                        padding: '1.25rem',
+                        borderRadius: '14px',
+                        padding: '1.5rem',
                         border: '1px solid #e2e8f0',
-                        marginTop: '1.5rem',
                         boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                            <h3 style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <Clock size={18} color="#0078d4" />
                                 Today's Recent Fee Collections Log
                             </h3>
-                            <span style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>
-                                {recentTransactions.length} Recorded Slips
+                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '2px 8px', borderRadius: '6px' }}>
+                                {recentTransactions.length} Slips Recorded
                             </span>
                         </div>
 
                         {loadingTransactions ? (
-                            <div style={{ padding: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                            <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
                                 Loading transaction history...
                             </div>
                         ) : recentTransactions.length === 0 ? (
-                            <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
+                            <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
                                 No fee transactions recorded today yet.
                             </div>
                         ) : (
-                            <div style={{ maxHeight: '240px', overflowY: 'auto' }} className="custom-scrollbar">
+                            <div style={{ maxHeight: '360px', overflowY: 'auto' }} className="custom-scrollbar">
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                                     <thead>
                                         <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
                                             <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Slip #</th>
                                             <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Student</th>
                                             <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Class</th>
-                                            <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Amount Paid</th>
+                                            <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Amount</th>
                                             <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Mode</th>
-                                            <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Time</th>
                                             <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700', textAlign: 'right' }}>Action</th>
                                         </tr>
                                     </thead>
@@ -3116,7 +3330,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 <td style={{ padding: '0.6rem 0.75rem' }}>
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                                                         <span style={{ color: '#0f172a', fontWeight: '600' }}>{tx.paymentMode || 'Cash'}</span>
-                                                        {tx.proofUrl ? (
+                                                        {tx.proofUrl && (
                                                             <button
                                                                 onClick={() => setProofModal({
                                                                     isOpen: true,
@@ -3141,14 +3355,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             >
                                                                 <ImageIcon size={12} /> View Screenshot
                                                             </button>
-                                                        ) : (
-                                                            <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                                                                No Proof Attached
-                                                            </span>
                                                         )}
                                                     </div>
                                                 </td>
-                                                <td style={{ padding: '0.6rem 0.75rem', color: '#64748b' }}>{tx.timeString || tx.dateString}</td>
                                                 <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
                                                     <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
                                                         {tx.proofUrl && (
@@ -3207,16 +3416,156 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             </div>
                         )}
                     </div>
-                </div>
-
-                {/* Proof Lightbox Modal */}
-                <PaymentProofModal
-                    isOpen={proofModal.isOpen}
-                    onClose={() => setProofModal({ isOpen: false, url: '', title: '' })}
-                    proofUrl={proofModal.url}
-                    title={proofModal.title}
-                />
+                )}
             </div>
+
+            {/* When a student IS selected, also show Recent Fee Collections Log below the 2 columns */}
+            {selectedStudent && (
+                <div className="card" style={{
+                    background: '#ffffff',
+                    borderRadius: '14px',
+                    padding: '1.5rem',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <Clock size={18} color="#0078d4" />
+                            Today's Recent Fee Collections Log
+                        </h3>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '2px 8px', borderRadius: '6px' }}>
+                            {recentTransactions.length} Slips Recorded
+                        </span>
+                    </div>
+
+                    {loadingTransactions ? (
+                        <div style={{ padding: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                            Loading transaction history...
+                        </div>
+                    ) : recentTransactions.length === 0 ? (
+                        <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
+                            No fee transactions recorded today yet.
+                        </div>
+                    ) : (
+                        <div style={{ maxHeight: '260px', overflowY: 'auto' }} className="custom-scrollbar">
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                <thead>
+                                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
+                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Slip #</th>
+                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Student</th>
+                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Class</th>
+                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Amount Paid</th>
+                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Mode</th>
+                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Time</th>
+                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700', textAlign: 'right' }}>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {recentTransactions.map((tx) => (
+                                        <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#0078d4' }}>{tx.receiptNo}</td>
+                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600', color: '#0f172a' }}>{tx.studentName}</td>
+                                            <td style={{ padding: '0.5rem 0.75rem', color: '#475569' }}>{tx.className}</td>
+                                            <td style={{ padding: '0.6rem 0.75rem', fontWeight: '700', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
+                                            <td style={{ padding: '0.6rem 0.75rem' }}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                    <span style={{ color: '#0f172a', fontWeight: '600' }}>{tx.paymentMode || 'Cash'}</span>
+                                                    {tx.proofUrl && (
+                                                        <button
+                                                            onClick={() => setProofModal({
+                                                                isOpen: true,
+                                                                url: tx.proofUrl,
+                                                                title: `${tx.studentName} (${tx.receiptNo}) - ${tx.paymentMode} Slip`
+                                                            })}
+                                                            style={{
+                                                                padding: '0.2rem 0.5rem',
+                                                                borderRadius: '4px',
+                                                                border: '1px solid #93c5fd',
+                                                                background: '#eff6ff',
+                                                                color: '#0078d4',
+                                                                fontWeight: '700',
+                                                                fontSize: '0.72rem',
+                                                                cursor: 'pointer',
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '4px',
+                                                                width: 'fit-content'
+                                                            }}
+                                                            title="View payment receipt / bank slip screenshot"
+                                                        >
+                                                            <ImageIcon size={12} /> View Screenshot
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td style={{ padding: '0.6rem 0.75rem', color: '#64748b' }}>{tx.timeString || tx.dateString}</td>
+                                            <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
+                                                <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+                                                    {tx.proofUrl && (
+                                                        <button
+                                                            onClick={() => setProofModal({
+                                                                isOpen: true,
+                                                                url: tx.proofUrl,
+                                                                title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
+                                                            })}
+                                                            style={{
+                                                                padding: '0.3rem 0.6rem',
+                                                                borderRadius: '6px',
+                                                                border: '1px solid #86efac',
+                                                                background: '#f0fdf4',
+                                                                color: '#15803d',
+                                                                fontWeight: '700',
+                                                                fontSize: '0.75rem',
+                                                                cursor: 'pointer',
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '4px'
+                                                            }}
+                                                            title="View attached bank deposit slip / screenshot"
+                                                        >
+                                                            <Eye size={13} /> Proof
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => {
+                                                            setReceiptData(tx);
+                                                            setReceiptModalOpen(true);
+                                                        }}
+                                                        style={{
+                                                            padding: '0.3rem 0.6rem',
+                                                            borderRadius: '6px',
+                                                            border: '1px solid #cbd5e1',
+                                                            background: '#ffffff',
+                                                            color: '#0f172a',
+                                                            fontWeight: '700',
+                                                            fontSize: '0.75rem',
+                                                            cursor: 'pointer',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '4px'
+                                                        }}
+                                                        title="View & print official receipt slip"
+                                                    >
+                                                        <Printer size={13} /> Slip
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Proof Lightbox Modal */}
+            <PaymentProofModal
+                isOpen={proofModal.isOpen}
+                onClose={() => setProofModal({ isOpen: false, url: '', title: '' })}
+                proofUrl={proofModal.url}
+                title={proofModal.title}
+            />
         </div>
     );
 };
