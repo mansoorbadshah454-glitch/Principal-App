@@ -119,7 +119,13 @@ const MainLayout = () => {
         window.location.href = '/login';
     };
 
-    if (loading) return null;
+    if (loading) {
+        return (
+            <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc' }}>
+                <div className="animate-spin" style={{ width: '40px', height: '40px', border: '3px solid #6366f1', borderTopColor: 'transparent', borderRadius: '50%' }} />
+            </div>
+        );
+    }
 
     if (isSuspended) {
         return (

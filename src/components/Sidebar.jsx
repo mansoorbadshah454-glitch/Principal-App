@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
-    Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText, Tv
+    Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText, Tv, FileCheck
 } from 'lucide-react';
 import { auth } from '../firebase';
 
@@ -17,6 +17,7 @@ const Sidebar = () => {
         { icon: Users, label: 'Teachers', path: '/teachers' },
         { icon: UserCheck, label: 'Parents', path: '/parents' },
         { icon: Wallet, label: 'Collections', path: '/collections' },
+        { icon: FileCheck, label: 'Paper Generator', path: '/paper-generator' },
         { icon: TrendingUp, label: 'Promotions', path: '/promotions' },
         { icon: UserCog, label: 'User Admin', path: '/users' },
         { icon: Tv, label: 'Live Surveillance', path: '/surveillance' },
