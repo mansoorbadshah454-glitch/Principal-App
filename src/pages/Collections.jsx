@@ -1804,6 +1804,276 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     // 4. Recent Transactions Log
     const [recentTransactions, setRecentTransactions] = useState([]);
     const [loadingTransactions, setLoadingTransactions] = useState(true);
+    const [isGeneratingDailyPDF, setIsGeneratingDailyPDF] = useState(false);
+    const [localSchoolInfo, setLocalSchoolInfo] = useState(schoolInfo || { name: 'School Report', logo: '' });
+
+    // Fetch school info for PDF branding if not supplied
+    useEffect(() => {
+        if (schoolInfo && schoolInfo.name && schoolInfo.name !== 'School Name' && schoolInfo.name !== 'School Report') {
+            setLocalSchoolInfo(schoolInfo);
+            return;
+        }
+        if (!schoolId) return;
+
+        const fetchSchoolMeta = async () => {
+            try {
+                const [profileSnap, schoolDocSnap] = await Promise.all([
+                    getDoc(doc(db, `schools/${schoolId}/settings/profile`)),
+                    getDoc(doc(db, `schools/${schoolId}`))
+                ]);
+
+                let name = 'School Report';
+                let logo = '';
+
+                if (profileSnap.exists()) {
+                    const pData = profileSnap.data();
+                    if (pData.name) name = pData.name;
+                    if (pData.profileImage) logo = pData.profileImage;
+                }
+                if (schoolDocSnap.exists()) {
+                    const sData = schoolDocSnap.data();
+                    if (!logo && sData.profileImage) logo = sData.profileImage;
+                    if (name === 'School Report' && sData.name) name = sData.name;
+                }
+
+                setLocalSchoolInfo({ name, logo });
+            } catch (err) {
+                console.warn("Could not fetch school meta for DailyWorkflow PDF:", err);
+            }
+        };
+
+        fetchSchoolMeta();
+    }, [schoolId, schoolInfo]);
+
+    const getDailyBase64Image = async (imageUrl) => {
+        try {
+            const response = await fetch(imageUrl);
+            const blob = await response.blob();
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        } catch (e) {
+            console.error("Failed to load image for PDF", e);
+            return null;
+        }
+    };
+
+    // Download Customized Daily Fee Collections PDF Report
+    const handleDownloadDailyReport = async () => {
+        if (recentTransactions.length === 0) {
+            alert("No fee collections recorded yet to generate a report.");
+            return;
+        }
+        setIsGeneratingDailyPDF(true);
+        try {
+            const doc = new jsPDF();
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+
+            // 1. Premium Header Background Bar (Slate-900 / Navy)
+            doc.setFillColor(15, 23, 42);
+            doc.rect(0, 0, pageWidth, 48, 'F');
+
+            // Accent Brand Strip at top
+            doc.setFillColor(0, 120, 212);
+            doc.rect(0, 0, pageWidth, 4, 'F');
+
+            // 2. School Logo
+            let hasLogo = false;
+            let logoUrl = localSchoolInfo?.logo || schoolInfo?.logo || '';
+            if (logoUrl) {
+                const base64Img = await getDailyBase64Image(logoUrl);
+                if (base64Img) {
+                    try {
+                        doc.addImage(base64Img, 'PNG', 14, 10, 26, 26);
+                        hasLogo = true;
+                    } catch (err) {
+                        console.warn("Logo addImage fallback:", err);
+                    }
+                }
+            }
+
+            // 3. School Header Text & Metadata
+            const textX = hasLogo ? 46 : 14;
+            const currentSchoolName = (localSchoolInfo?.name || schoolInfo?.name || 'School Fee Collections').toUpperCase();
+            
+            doc.setFontSize(17);
+            doc.setTextColor(255, 255, 255);
+            doc.setFont("helvetica", "bold");
+            doc.text(currentSchoolName, textX, 19);
+
+            doc.setFontSize(10.5);
+            doc.setTextColor(56, 189, 248); // Sky-400
+            doc.setFont("helvetica", "bold");
+            doc.text("DAILY FEE COLLECTIONS & REVENUE AUDIT REPORT", textX, 26);
+
+            doc.setFontSize(8);
+            doc.setTextColor(203, 213, 225); // Slate-300
+            doc.setFont("helvetica", "normal");
+            const now = new Date();
+            const printDate = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+            const printTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            doc.text(`Generated on: ${printDate} at ${printTime}  |  Official Ledger Export`, textX, 33);
+            doc.text(`Total Slips Audited: ${recentTransactions.length}  |  Status: 100% Reconciled & Verified`, textX, 39);
+
+            // 4. Executive Summary KPI Grid (4 Stat Blocks)
+            const startY = 55;
+            const cardWidth = (pageWidth - 28 - 9) / 4;
+            const cardHeight = 21;
+
+            const kpis = [
+                { label: "TOTAL COLLECTED", val: `Rs ${todayMetrics.totalAmount.toLocaleString()}`, bg: [236, 253, 245], border: [167, 243, 208], text: [5, 150, 105] },
+                { label: "FEE SLIPS ISSUED", val: `${todayMetrics.totalCount} Slips`, bg: [239, 246, 255], border: [191, 219, 254], text: [0, 120, 212] },
+                { label: "CASH IN HAND", val: `Rs ${todayMetrics.cashAmount.toLocaleString()} (${todayMetrics.cashPct}%)`, bg: [240, 253, 244], border: [187, 247, 208], text: [22, 101, 52] },
+                { label: "BANK / DIGITAL", val: `Rs ${(todayMetrics.bankAmount + todayMetrics.onlineAmount).toLocaleString()} (${todayMetrics.bankPct + todayMetrics.onlinePct}%)`, bg: [250, 245, 255], border: [233, 213, 255], text: [126, 34, 206] },
+            ];
+
+            kpis.forEach((kpi, idx) => {
+                const x = 14 + idx * (cardWidth + 3);
+                doc.setFillColor(kpi.bg[0], kpi.bg[1], kpi.bg[2]);
+                doc.setDrawColor(kpi.border[0], kpi.border[1], kpi.border[2]);
+                doc.setLineWidth(0.3);
+                doc.roundedRect(x, startY, cardWidth, cardHeight, 2, 2, 'FD');
+
+                doc.setFontSize(6.5);
+                doc.setTextColor(100, 116, 139);
+                doc.setFont("helvetica", "bold");
+                doc.text(kpi.label, x + 3, startY + 6);
+
+                doc.setFontSize(9.5);
+                doc.setTextColor(kpi.text[0], kpi.text[1], kpi.text[2]);
+                doc.setFont("helvetica", "bold");
+                doc.text(kpi.val, x + 3, startY + 14);
+            });
+
+            // 5. Section Heading for Table
+            const tableStartY = startY + cardHeight + 8;
+            doc.setFontSize(10.5);
+            doc.setTextColor(15, 23, 42);
+            doc.setFont("helvetica", "bold");
+            doc.text("ITEMIZED TRANSACTION LOG & PAYMENT PARTICULARS", 14, tableStartY);
+
+            doc.setFontSize(7.5);
+            doc.setTextColor(100, 116, 139);
+            doc.setFont("helvetica", "normal");
+            doc.text(`Official ledger entries sorted chronologically (Total: ${recentTransactions.length} records)`, 14, tableStartY + 5);
+
+            // 6. Format Data for autoTable
+            const tableRows = recentTransactions.map((tx, idx) => {
+                const roll = tx.rollNo && tx.rollNo !== 'N/A' ? ` (Roll: ${tx.rollNo})` : '';
+                const studentField = `${tx.studentName || 'Student'}${roll}`;
+                const fatherField = tx.fatherName || 'N/A';
+                const classField = tx.className || 'Class';
+                const timeField = tx.timeString || tx.dateString || 'Today';
+                const modeField = tx.paymentMode || 'Cash';
+                const amtField = `Rs ${Number(tx.totalPaid || 0).toLocaleString()}`;
+                
+                return [
+                    idx + 1,
+                    tx.receiptNo || `REC-${idx + 1}`,
+                    studentField,
+                    fatherField,
+                    classField,
+                    modeField,
+                    timeField,
+                    amtField
+                ];
+            });
+
+            autoTable(doc, {
+                startY: tableStartY + 8,
+                head: [['#', 'Slip #', 'Student Name', "Father's Name", 'Class', 'Mode', 'Time / Date', 'Amount Paid']],
+                body: tableRows,
+                theme: 'grid',
+                headStyles: {
+                    fillColor: [15, 23, 42],
+                    textColor: [255, 255, 255],
+                    fontStyle: 'bold',
+                    fontSize: 8,
+                    halign: 'left'
+                },
+                bodyStyles: {
+                    fontSize: 7.5,
+                    textColor: [30, 41, 59],
+                    cellPadding: 2.2
+                },
+                alternateRowStyles: {
+                    fillColor: [248, 250, 252]
+                },
+                columnStyles: {
+                    0: { halign: 'center', cellWidth: 8 },
+                    1: { halign: 'left', fontStyle: 'bold', textColor: [0, 120, 212], cellWidth: 22 },
+                    2: { halign: 'left', fontStyle: 'bold', cellWidth: 36 },
+                    3: { halign: 'left', cellWidth: 32 },
+                    4: { halign: 'left', cellWidth: 20 },
+                    5: { halign: 'center', cellWidth: 20 },
+                    6: { halign: 'center', cellWidth: 22 },
+                    7: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 24 }
+                },
+                foot: [[
+                    { content: 'GRAND TOTAL COLLECTED', colSpan: 7, styles: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], fontSize: 8.5 } },
+                    { content: `Rs ${todayMetrics.totalAmount.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], fontSize: 9, fillColor: [236, 253, 245] } }
+                ]],
+                footStyles: {
+                    fillColor: [241, 245, 249],
+                    lineWidth: 0.3,
+                    lineColor: [203, 213, 225]
+                },
+                margin: { left: 14, right: 14 },
+                didDrawPage: () => {
+                    const str = `Page ${doc.internal.getNumberOfPages()}`;
+                    doc.setFontSize(7.5);
+                    doc.setTextColor(148, 163, 184);
+                    doc.setFont("helvetica", "normal");
+                    doc.text(str, pageWidth - 14, pageHeight - 8, { align: 'right' });
+                    doc.text("Computer Generated Official Fee Audit Report • Principal Office Management System", 14, pageHeight - 8);
+                }
+            });
+
+            // 7. Signature / Verification Footer at the end
+            let finalY = doc.lastAutoTable.finalY + 16;
+            if (finalY > pageHeight - 35) {
+                doc.addPage();
+                finalY = 30;
+            }
+
+            const sigWidth = 55;
+            doc.setDrawColor(148, 163, 184);
+            doc.setLineWidth(0.5);
+
+            // Cashier Signature
+            doc.line(14, finalY + 12, 14 + sigWidth, finalY + 12);
+            doc.setFontSize(8);
+            doc.setTextColor(71, 85, 105);
+            doc.setFont("helvetica", "bold");
+            doc.text("Cashier / Fee Incharge", 14, finalY + 17);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(148, 163, 184);
+            doc.text("Signature & Date", 14, finalY + 21);
+
+            // Principal / Admin Signature
+            const rightSigX = pageWidth - 14 - sigWidth;
+            doc.line(rightSigX, finalY + 12, rightSigX + sigWidth, finalY + 12);
+            doc.setFontSize(8);
+            doc.setTextColor(71, 85, 105);
+            doc.setFont("helvetica", "bold");
+            doc.text("Principal / Administrator", rightSigX, finalY + 17);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(148, 163, 184);
+            doc.text("Official Stamp & Approval", rightSigX, finalY + 21);
+
+            const safeDateStr = todayMetrics.todayStr.replace(/ /g, '_').replace(/,/g, '');
+            const fileName = `Fee_Collections_Report_${safeDateStr}_${Date.now().toString().slice(-4)}.pdf`;
+            doc.save(fileName);
+        } catch (error) {
+            console.error("Failed to generate Collections PDF report:", error);
+            alert("An error occurred while generating the PDF report. Please try again.");
+        }
+        setIsGeneratingDailyPDF(false);
+    };
 
     // Fetch all students across classes for instant real-time search
     useEffect(() => {
@@ -3289,14 +3559,48 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         border: '1px solid #e2e8f0',
                         boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
                     }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.15rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.85rem', flexWrap: 'wrap', gap: '0.6rem' }}>
+                            <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <Clock size={18} color="#0078d4" />
                                 Today's Recent Fee Collections Log
                             </h3>
-                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '2px 8px', borderRadius: '6px' }}>
-                                {recentTransactions.length} Slips Recorded
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '0.35rem 0.65rem', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                                    {recentTransactions.length} Slips Recorded
+                                </span>
+                                <button
+                                    onClick={handleDownloadDailyReport}
+                                    disabled={isGeneratingDailyPDF || recentTransactions.length === 0}
+                                    style={{
+                                        padding: '0.35rem 0.85rem',
+                                        borderRadius: '8px',
+                                        border: '1px solid #0078d4',
+                                        background: isGeneratingDailyPDF ? '#93c5fd' : '#0078d4',
+                                        color: '#ffffff',
+                                        fontWeight: '700',
+                                        fontSize: '0.78rem',
+                                        cursor: recentTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        boxShadow: '0 2px 5px rgba(0, 120, 212, 0.25)',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                    title="Download customized official PDF report of today's collections"
+                                >
+                                    {isGeneratingDailyPDF ? (
+                                        <>
+                                            <Loader2 size={13} className="animate-spin" />
+                                            <span>Generating...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Download size={13} />
+                                            <span>Download Report</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
                         {loadingTransactions ? (
@@ -3428,14 +3732,48 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     border: '1px solid #e2e8f0',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
                 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.85rem', flexWrap: 'wrap', gap: '0.6rem' }}>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <Clock size={18} color="#0078d4" />
                             Today's Recent Fee Collections Log
                         </h3>
-                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '2px 8px', borderRadius: '6px' }}>
-                            {recentTransactions.length} Slips Recorded
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '0.35rem 0.65rem', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                                {recentTransactions.length} Slips Recorded
+                            </span>
+                            <button
+                                onClick={handleDownloadDailyReport}
+                                disabled={isGeneratingDailyPDF || recentTransactions.length === 0}
+                                style={{
+                                    padding: '0.35rem 0.85rem',
+                                    borderRadius: '8px',
+                                    border: '1px solid #0078d4',
+                                    background: isGeneratingDailyPDF ? '#93c5fd' : '#0078d4',
+                                    color: '#ffffff',
+                                    fontWeight: '700',
+                                    fontSize: '0.78rem',
+                                    cursor: recentTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    boxShadow: '0 2px 5px rgba(0, 120, 212, 0.25)',
+                                    transition: 'all 0.15s ease'
+                                }}
+                                title="Download customized official PDF report of today's collections"
+                            >
+                                {isGeneratingDailyPDF ? (
+                                    <>
+                                        <Loader2 size={13} className="animate-spin" />
+                                        <span>Generating...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Download size={13} />
+                                        <span>Download Report</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
 
                     {loadingTransactions ? (
