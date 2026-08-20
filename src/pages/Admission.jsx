@@ -20,8 +20,11 @@ import {
   X,
   Printer,
   Download,
+  History,
+  UserPlus,
 } from "lucide-react";
 import { db, storage } from "../firebase";
+import AdmissionHistory from "./AdmissionHistory";
 import {
   collection,
   getDocs,
@@ -67,6 +70,8 @@ const RECURRING_CATEGORIES = [
 const ALL_CATEGORIES = [...RECURRING_CATEGORIES, ...ACTION_CATEGORIES].sort();
 
 const Admission = () => {
+  const [activeView, setActiveView] = useState("new_admission"); // "new_admission" | "history"
+
   const [parentDetails, setParentDetails] = useState({
     fatherName: "",
     occupation: "",
@@ -728,31 +733,127 @@ const Admission = () => {
         <div className="header-decor">
           <School size={160} />
         </div>
-        <header className="page-header">
+        <header className="page-header" style={{ maxWidth: "100%", padding: "0 2rem" }}>
           <div>
-            <h1 className="page-title">New Admission</h1>
+            <h1 className="page-title">
+              {activeView === "new_admission"
+                ? "New Admission"
+                : "Admissions History & Analytics"}
+            </h1>
             <p className="page-subtitle">
-              Enroll one or more students for the academic year
+              {activeView === "new_admission"
+                ? "Enroll one or more students for the academic year"
+                : "Comprehensive admissions tracking, sibling intake & class breakdown"}
             </p>
           </div>
           <div style={{ display: "flex", gap: "1rem" }}>
-            <button
-              className="submit-btn"
-              onClick={handleSubmit}
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <Loader2 size={20} className="animate-spin" />
-              ) : (
-                <Save size={20} />
-              )}
-              <span>{isLoading ? "Processing..." : "Complete Admission"}</span>
-            </button>
+            {activeView === "new_admission" ? (
+              <button
+                className="submit-btn"
+                onClick={handleSubmit}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <Save size={20} />
+                )}
+                <span>{isLoading ? "Processing..." : "Complete Admission"}</span>
+              </button>
+            ) : (
+              <button
+                className="submit-btn"
+                onClick={() => setActiveView("new_admission")}
+              >
+                <UserPlus size={20} />
+                <span>Enroll New Student</span>
+              </button>
+            )}
           </div>
         </header>
+
+        {/* Top Navigation Tabs */}
+        <div
+          style={{
+            maxWidth: "100%",
+            margin: "2rem auto 0",
+            padding: "0 2rem",
+            display: "flex",
+            gap: "0.75rem",
+            position: "relative",
+            zIndex: 2,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setActiveView("new_admission")}
+            style={{
+              padding: "0.75rem 1.5rem",
+              borderRadius: "14px",
+              fontWeight: "800",
+              fontSize: "0.95rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.6rem",
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              border:
+                activeView === "new_admission"
+                  ? "3px solid #ffffff"
+                  : "2px solid rgba(255, 255, 255, 0.3)",
+              background:
+                activeView === "new_admission"
+                  ? "#ffffff"
+                  : "rgba(255, 255, 255, 0.15)",
+              color: activeView === "new_admission" ? "#4338ca" : "#ffffff",
+              boxShadow:
+                activeView === "new_admission"
+                  ? "0 6px 16px rgba(0,0,0,0.15)"
+                  : "none",
+            }}
+          >
+            <UserPlus size={18} />
+            <span>New Admission Form</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveView("history")}
+            style={{
+              padding: "0.75rem 1.5rem",
+              borderRadius: "14px",
+              fontWeight: "800",
+              fontSize: "0.95rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.6rem",
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              border:
+                activeView === "history"
+                  ? "3px solid #ffffff"
+                  : "2px solid rgba(255, 255, 255, 0.3)",
+              background:
+                activeView === "history"
+                  ? "#ffffff"
+                  : "rgba(255, 255, 255, 0.15)",
+              color: activeView === "history" ? "#4338ca" : "#ffffff",
+              boxShadow:
+                activeView === "history"
+                  ? "0 6px 16px rgba(0,0,0,0.15)"
+                  : "none",
+            }}
+          >
+            <History size={18} />
+            <span>Admissions History</span>
+          </button>
+        </div>
       </div>
 
-      <div className="admission-container">
+      {activeView === "history" ? (
+        <AdmissionHistory />
+      ) : (
+        <div className="admission-container">
         <form onSubmit={handleSubmit}>
           {/* Parent Details Section */}
           <section
@@ -1829,6 +1930,7 @@ const Admission = () => {
           </div>
         </form>
       </div>
+      )}
 
       {/* Receipt Modal */}
       {showReceipt && receiptData && (
