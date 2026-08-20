@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, User, Phone, Mail, MapPin, Calendar, School, Search, Filter,
-  Download, Printer, Eye, Edit, ChevronDown, ArrowUpRight, ArrowDownRight,
+  Download, Printer, Eye, Edit, ChevronDown, ChevronLeft, ChevronRight, ArrowUpRight, ArrowDownRight,
   Sparkles, FileText, CheckCircle2, RefreshCw, BarChart3, TrendingUp,
   Layers, UserPlus, UserCheck, DollarSign, X, ArrowUpDown, Clock,
   CalendarDays, Award, Baby, CheckCircle, Shield
@@ -20,13 +20,22 @@ import autoTable from 'jspdf-autotable';
 
 const COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#3b82f6'];
 
+// Module-level in-memory cache to ensure ZERO duplicate Firestore DB reads across view toggles
+let memoryHistoryCache = {
+  schoolId: null,
+  classes: null,
+  parents: null,
+  students: null,
+  timestamp: 0
+};
+
 export default function AdmissionHistory() {
   const navigate = useNavigate();
   const [schoolId, setSchoolId] = useState(null);
-  const [students, setStudents] = useState([]);
-  const [classes, setClasses] = useState([]);
-  const [parents, setParents] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [students, setStudents] = useState(() => memoryHistoryCache.students || []);
+  const [classes, setClasses] = useState(() => memoryHistoryCache.classes || []);
+  const [parents, setParents] = useState(() => memoryHistoryCache.parents || []);
+  const [isLoading, setIsLoading] = useState(() => !memoryHistoryCache.students);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Filters & Search State
@@ -38,6 +47,15 @@ export default function AdmissionHistory() {
   const [selectedTypeFilter, setSelectedTypeFilter] = useState('all'); // 'all', 'fresh', 'sibling'
   const [sortBy, setSortBy] = useState('newest'); // 'newest', 'oldest', 'name'
 
+  // Pagination State for Super-Fast Table Rendering
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25); // 25 records per page
+
+  // Reset pagination when any filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [timeFilter, customStartDate, customEndDate, searchTerm, selectedClassFilter, selectedTypeFilter, sortBy]);
+
   // Modal / Receipt state for past records
   const [selectedStudentRecord, setSelectedStudentRecord] = useState(null);
   const [receiptData, setReceiptData] = useState(null);
@@ -45,35 +63,49 @@ export default function AdmissionHistory() {
   const [modalPos, setModalPos] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // Load School & Data
+  // Load School & Data (Fast Offline-First with In-Memory Cache)
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
+    let isMounted = true;
+
+    const fetchData = async (forceRefresh = false) => {
       try {
         const manualSession = localStorage.getItem('manual_session');
         let currentSchoolId = null;
         if (manualSession) {
           const userData = JSON.parse(manualSession);
           currentSchoolId = userData.schoolId;
-          setSchoolId(userData.schoolId);
+          if (isMounted) setSchoolId(userData.schoolId);
         }
 
         if (!currentSchoolId) {
-          setIsLoading(false);
+          if (isMounted) setIsLoading(false);
           return;
         }
+
+        // Check if we have active in-memory cache for this school and no force refresh requested
+        if (!forceRefresh && memoryHistoryCache.schoolId === currentSchoolId && memoryHistoryCache.students) {
+          if (isMounted) {
+            setClasses(memoryHistoryCache.classes);
+            setParents(memoryHistoryCache.parents);
+            setStudents(memoryHistoryCache.students);
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        if (isMounted) setIsLoading(true);
 
         // 1. Fetch Classes
         const classesQ = query(collection(db, `schools/${currentSchoolId}/classes`));
         const classesSnap = await getDocsFast(classesQ);
         const classList = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setClasses(classList);
+        if (isMounted) setClasses(classList);
 
         // 2. Fetch Parents
         const parentsQ = query(collection(db, `schools/${currentSchoolId}/parents`));
         const parentsSnap = await getDocsFast(parentsQ);
         const parentList = parentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setParents(parentList);
+        if (isMounted) setParents(parentList);
 
         // 3. Fetch Master Students Collection
         const studentsQ = query(collection(db, `schools/${currentSchoolId}/students`));
@@ -106,18 +138,31 @@ export default function AdmissionHistory() {
           studentList = nestedResults.flat();
         }
 
-        setStudents(studentList);
+        // Save to memory cache for zero DB reads on subsequent filter clicks/tab switches
+        memoryHistoryCache = {
+          schoolId: currentSchoolId,
+          classes: classList,
+          parents: parentList,
+          students: studentList,
+          timestamp: Date.now()
+        };
+
+        if (isMounted) setStudents(studentList);
       } catch (err) {
         console.error('Error fetching admission history data:', err);
       } finally {
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
       }
     };
 
-    fetchData();
+    fetchData(refreshKey > 0);
+
+    return () => {
+      isMounted = false;
+    };
   }, [refreshKey]);
 
-  // Helper: Extract Valid Timestamp
+  // Helper: Extract Valid Timestamp (Instant parse)
   const getStudentDate = (stu) => {
     if (stu.createdAt) {
       if (typeof stu.createdAt.toDate === 'function') {
@@ -132,18 +177,29 @@ export default function AdmissionHistory() {
     return new Date();
   };
 
-  // Helper: Determine if a student is a Sibling admission
+  // Helper: O(1) Fast Class Lookup Map
+  const classMap = useMemo(() => {
+    const map = new Map();
+    classes.forEach(c => {
+      if (c.id) map.set(c.id, c.name);
+      if (c.name) map.set(c.name, c.name);
+    });
+    return map;
+  }, [classes]);
+
+  // Helper: O(1) Fast Parent Lookup Map
   const parentMap = useMemo(() => {
     const map = new Map();
     parents.forEach(p => {
-      map.set(p.id, p);
+      if (p.id) map.set(p.id, p);
       if (p.phone) map.set(p.phone, p);
     });
     return map;
   }, [parents]);
 
+  // Fast pre-calculated students with O(1) lookups
   const studentsWithMetadata = useMemo(() => {
-    // Group students by parent identifier to detect siblings
+    // Group students by parent identifier to detect siblings in O(N)
     const parentChildrenCount = new Map();
 
     students.forEach(s => {
@@ -162,30 +218,30 @@ export default function AdmissionHistory() {
       const key = pId || pPhone;
       
       const parentObj = pId ? parentMap.get(pId) : (pPhone ? parentMap.get(pPhone) : null);
-      const totalLinked = parentObj?.linkedStudents?.length || parentChildrenCount.get(key) || 1;
-      
+      const totalLinked = parentObj?.linkedStudents?.length || (key ? parentChildrenCount.get(key) : 1) || 1;
       const isSibling = totalLinked > 1;
 
-      // Resolve Class Name accurately
+      // O(1) Fast Class Resolution
       const cId = stu.classId || stu.admissionClass;
-      const matchedClass = classes.find(c => c.id === cId || c.id === stu.className);
-      const resolvedClassName = matchedClass ? matchedClass.name : (stu.className || 'General');
+      const resolvedClassName = (cId && classMap.get(cId)) || stu.className || 'General';
 
-      // Extract Admission Fee
+      // Extract Admission & Tuition Fee
       let admissionFee = 0;
       let tuitionFee = 0;
       if (Array.isArray(stu.feeStructure)) {
-        stu.feeStructure.forEach(f => {
+        for (let i = 0; i < stu.feeStructure.length; i++) {
+          const f = stu.feeStructure[i];
           const lower = (f.name || '').toLowerCase();
           if (lower.includes('admission')) admissionFee += Number(f.amount || 0);
           if (lower.includes('tuition')) tuitionFee += Number(f.amount || 0);
-        });
+        }
       }
       if (Array.isArray(stu.individualActions)) {
-        stu.individualActions.forEach(f => {
+        for (let i = 0; i < stu.individualActions.length; i++) {
+          const f = stu.individualActions[i];
           const lower = (f.name || '').toLowerCase();
           if (lower.includes('admission')) admissionFee += Number(f.amount || 0);
-        });
+        }
       }
 
       return {
@@ -193,43 +249,41 @@ export default function AdmissionHistory() {
         className: resolvedClassName,
         classId: cId || stu.classId,
         admissionDate: date,
+        admissionTimestamp: date.getTime(),
+        admissionYear: date.getFullYear(),
+        admissionMonth: date.getMonth(),
         isSibling,
         admissionFee,
         tuitionFee,
         parentProfile: parentObj
       };
     });
-  }, [students, parents, parentMap, classes]);
+  }, [students, parentMap, classMap]);
 
-  // Date Range Filtering
+  // Instant Date Range Filtering (<1ms)
   const filteredByDateStudents = useMemo(() => {
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
 
-    return studentsWithMetadata.filter(stu => {
-      const d = stu.admissionDate;
-      if (!d) return false;
-
-      if (timeFilter === 'this_month') {
-        return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
-      } else if (timeFilter === 'last_month') {
-        const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
-        return d.getFullYear() === lastMonthDate.getFullYear() && d.getMonth() === lastMonthDate.getMonth();
-      } else if (timeFilter === 'this_year') {
-        return d.getFullYear() === currentYear;
-      } else if (timeFilter === 'custom') {
-        if (customStartDate && customEndDate) {
-          const start = new Date(customStartDate);
-          start.setHours(0, 0, 0, 0);
-          const end = new Date(customEndDate);
-          end.setHours(23, 59, 59, 999);
-          return d >= start && d <= end;
-        }
-        return true;
+    if (timeFilter === 'this_month') {
+      return studentsWithMetadata.filter(stu => stu.admissionYear === currentYear && stu.admissionMonth === currentMonth);
+    } else if (timeFilter === 'last_month') {
+      const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
+      const targetYear = lastMonthDate.getFullYear();
+      const targetMonth = lastMonthDate.getMonth();
+      return studentsWithMetadata.filter(stu => stu.admissionYear === targetYear && stu.admissionMonth === targetMonth);
+    } else if (timeFilter === 'this_year') {
+      return studentsWithMetadata.filter(stu => stu.admissionYear === currentYear);
+    } else if (timeFilter === 'custom') {
+      if (customStartDate && customEndDate) {
+        const start = new Date(customStartDate).setHours(0, 0, 0, 0);
+        const end = new Date(customEndDate).setHours(23, 59, 59, 999);
+        return studentsWithMetadata.filter(stu => stu.admissionTimestamp >= start && stu.admissionTimestamp <= end);
       }
-      return true; // 'all_time'
-    });
+      return studentsWithMetadata;
+    }
+    return studentsWithMetadata; // 'all_time'
   }, [studentsWithMetadata, timeFilter, customStartDate, customEndDate]);
 
   // Previous Period comparison (for KPI growth metrics)
@@ -240,23 +294,20 @@ export default function AdmissionHistory() {
 
     if (timeFilter === 'this_month') {
       const lastMonthDate = new Date(currentYear, currentMonth - 1, 1);
-      return studentsWithMetadata.filter(stu => {
-        const d = stu.admissionDate;
-        return d.getFullYear() === lastMonthDate.getFullYear() && d.getMonth() === lastMonthDate.getMonth();
-      }).length;
+      const targetYear = lastMonthDate.getFullYear();
+      const targetMonth = lastMonthDate.getMonth();
+      return studentsWithMetadata.filter(stu => stu.admissionYear === targetYear && stu.admissionMonth === targetMonth).length;
     } else if (timeFilter === 'this_year') {
-      return studentsWithMetadata.filter(stu => {
-        const d = stu.admissionDate;
-        return d.getFullYear() === currentYear - 1;
-      }).length;
+      const prevYear = currentYear - 1;
+      return studentsWithMetadata.filter(stu => stu.admissionYear === prevYear).length;
     }
     return null;
   }, [studentsWithMetadata, timeFilter]);
 
-  // KPI Calculations
+  // KPI Calculations (Instant)
   const totalAdmitted = filteredByDateStudents.length;
-  const freshIntake = filteredByDateStudents.filter(s => !s.isSibling).length;
-  const siblingIntake = filteredByDateStudents.filter(s => s.isSibling).length;
+  const freshIntake = useMemo(() => filteredByDateStudents.filter(s => !s.isSibling).length, [filteredByDateStudents]);
+  const siblingIntake = useMemo(() => filteredByDateStudents.filter(s => s.isSibling).length, [filteredByDateStudents]);
 
   const totalAdmissionRevenue = useMemo(() => {
     return filteredByDateStudents.reduce((acc, s) => acc + (s.admissionFee || 0), 0);
@@ -280,27 +331,30 @@ export default function AdmissionHistory() {
     return { name: topName, count: topCount };
   }, [filteredByDateStudents]);
 
-  // Search & Secondary Filtered List (for Table)
+  // Search & Secondary Filtered List (for Table & Full Exports)
   const displayedStudents = useMemo(() => {
+    const search = searchTerm.toLowerCase().trim();
+
     return filteredByDateStudents.filter(stu => {
       // Search
-      const search = searchTerm.toLowerCase().trim();
-      const name = (stu.name || `${stu.firstName || ''} ${stu.lastName || ''}`).toLowerCase();
-      const rollNo = (stu.rollNo || '').toLowerCase();
-      const admNo = (stu.admissionNo || '').toLowerCase();
-      const father = (stu.parentDetails?.fatherName || stu.parentProfile?.name || '').toLowerCase();
-      const phone = (stu.parentDetails?.phone || stu.parentProfile?.phone || '').toLowerCase();
-      const className = (stu.className || '').toLowerCase();
+      if (search) {
+        const name = (stu.name || `${stu.firstName || ''} ${stu.lastName || ''}`).toLowerCase();
+        const rollNo = (stu.rollNo || '').toLowerCase();
+        const admNo = (stu.admissionNo || '').toLowerCase();
+        const father = (stu.parentDetails?.fatherName || stu.parentProfile?.name || '').toLowerCase();
+        const phone = (stu.parentDetails?.phone || stu.parentProfile?.phone || '').toLowerCase();
+        const className = (stu.className || '').toLowerCase();
 
-      const matchesSearch = !search || 
-        name.includes(search) || 
-        rollNo.includes(search) || 
-        admNo.includes(search) || 
-        father.includes(search) || 
-        phone.includes(search) || 
-        className.includes(search);
+        const matchesSearch = 
+          name.includes(search) || 
+          rollNo.includes(search) || 
+          admNo.includes(search) || 
+          father.includes(search) || 
+          phone.includes(search) || 
+          className.includes(search);
 
-      if (!matchesSearch) return false;
+        if (!matchesSearch) return false;
+      }
 
       // Class Filter
       if (selectedClassFilter !== 'all') {
@@ -315,8 +369,8 @@ export default function AdmissionHistory() {
 
       return true;
     }).sort((a, b) => {
-      if (sortBy === 'newest') return b.admissionDate - a.admissionDate;
-      if (sortBy === 'oldest') return a.admissionDate - b.admissionDate;
+      if (sortBy === 'newest') return b.admissionTimestamp - a.admissionTimestamp;
+      if (sortBy === 'oldest') return a.admissionTimestamp - b.admissionTimestamp;
       if (sortBy === 'name') {
         const nameA = (a.name || a.firstName || '').toLowerCase();
         const nameB = (b.name || b.firstName || '').toLowerCase();
@@ -326,7 +380,14 @@ export default function AdmissionHistory() {
     });
   }, [filteredByDateStudents, searchTerm, selectedClassFilter, selectedTypeFilter, sortBy]);
 
-  // Chart 1: Class-Wise Intake
+  // Paginated Students (Instant slice for DOM rendering)
+  const totalPages = Math.max(1, Math.ceil(displayedStudents.length / pageSize));
+  const paginatedStudents = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return displayedStudents.slice(startIndex, startIndex + pageSize);
+  }, [displayedStudents, currentPage, pageSize]);
+
+  // Chart 1: Class-Wise Intake (Optimized)
   const classChartData = useMemo(() => {
     const map = {};
     classes.forEach(c => {
@@ -349,28 +410,7 @@ export default function AdmissionHistory() {
     return Object.values(map).filter(item => item.total > 0);
   }, [filteredByDateStudents, classes]);
 
-  // Chart 2: Timeline Trend Flow
-  const timelineChartData = useMemo(() => {
-    const dateMap = {};
-
-    filteredByDateStudents.forEach(s => {
-      const d = s.admissionDate;
-      let label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      if (timeFilter === 'this_year' || timeFilter === 'all_time') {
-        label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-      }
-      if (!dateMap[label]) {
-        dateMap[label] = { date: label, count: 0, fresh: 0, sibling: 0, rawDate: d.getTime() };
-      }
-      dateMap[label].count += 1;
-      if (s.isSibling) dateMap[label].sibling += 1;
-      else dateMap[label].fresh += 1;
-    });
-
-    return Object.values(dateMap).sort((a, b) => a.rawDate - b.rawDate);
-  }, [filteredByDateStudents, timeFilter]);
-
-  // Chart 3: Intake Ratio (Donut)
+  // Chart 2: Intake Ratio (Donut)
   const intakeRatioData = useMemo(() => {
     return [
       { name: 'Fresh Families', value: freshIntake, color: '#10b981' },
@@ -378,7 +418,7 @@ export default function AdmissionHistory() {
     ].filter(item => item.value > 0);
   }, [freshIntake, siblingIntake]);
 
-  // Export to CSV
+  // Export to CSV (Exports ALL filtered records)
   const handleExportCSV = () => {
     if (displayedStudents.length === 0) {
       alert('No admission records to export.');
@@ -410,30 +450,21 @@ export default function AdmissionHistory() {
     document.body.removeChild(link);
   };
 
-  // Open Past Receipt Modal (Positioned safely to the LEFT of Eye button & vertically centered on the row)
+  // Open Past Receipt Modal
   const handleOpenReceipt = (stu, e) => {
     if (e && e.currentTarget) {
       const rect = e.currentTarget.getBoundingClientRect();
       const popupWidth = Math.min(520, window.innerWidth - 48);
       const popupHeight = Math.min(600, window.innerHeight - 48);
 
-      // Horizontal: Place to the LEFT side of the Eye button with a 16px gap
       let right = (window.innerWidth - rect.left) + 16;
-      
-      // Ensure right boundary has minimum 24px margin
-      if (right < 24) {
-        right = 24;
-      }
-      // Ensure left boundary has minimum 24px margin
+      if (right < 24) right = 24;
       if (window.innerWidth - right - popupWidth < 24) {
         right = window.innerWidth - popupWidth - 24;
       }
 
-      // Vertical: Center the popup directly on the clicked Eye button row
       let top = (rect.top + (rect.height / 2)) - (popupHeight / 2);
-      if (top < 24) {
-        top = 24;
-      }
+      if (top < 24) top = 24;
       if (top + popupHeight > window.innerHeight - 24) {
         top = Math.max(24, window.innerHeight - popupHeight - 24);
       }
@@ -470,7 +501,7 @@ export default function AdmissionHistory() {
     setShowReceiptModal(true);
   };
 
-  // Download PDF
+  // Download Single Receipt PDF
   const handleDownloadPDF = async () => {
     setIsDownloading(true);
     try {
@@ -531,7 +562,6 @@ export default function AdmissionHistory() {
 
     setIsGeneratingLedgerPDF(true);
     try {
-      // Landscape A4 orientation for spacious, clear table presentation
       const doc = new jsPDF('l', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
@@ -542,15 +572,14 @@ export default function AdmissionHistory() {
       const schoolPhone = localStorage.getItem("schoolPhone") || "+92 300 1234567";
 
       // 1. Top Decorative Header Banner
-      doc.setFillColor(30, 27, 75); // Dark Indigo #1e1b4b
+      doc.setFillColor(30, 27, 75);
       doc.rect(0, 0, pageWidth, 36, 'F');
 
-      doc.setFillColor(67, 56, 202); // Vibrant Indigo Accent Bar #4338ca
+      doc.setFillColor(67, 56, 202);
       doc.rect(0, 36, pageWidth, 2.5, 'F');
 
       let textStartX = 14;
 
-      // School Logo Embedding
       if (schoolLogo) {
         const base64Img = await getBase64ImageFromUrl(schoolLogo);
         if (base64Img) {
@@ -572,16 +601,16 @@ export default function AdmissionHistory() {
       // Report Subtitle
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10.5);
-      doc.setTextColor(165, 180, 252); // Indigo-200
+      doc.setTextColor(165, 180, 252);
       doc.text("OFFICIAL STUDENT ADMISSIONS & ENROLLMENT LEDGER", textStartX, 22);
 
-      // School Address & Contact info
+      // Contact info
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8.5);
-      doc.setTextColor(226, 232, 240); // Slate-200
+      doc.setTextColor(226, 232, 240);
       doc.text(`${schoolAddress}  |  Contact: ${schoolPhone}`, textStartX, 29);
 
-      // Generation Metadata on Top Right
+      // Generation Metadata
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8.5);
       doc.setTextColor(199, 210, 254);
@@ -614,7 +643,7 @@ export default function AdmissionHistory() {
 
       currentY = doc.lastAutoTable.finalY + 4;
 
-      // 3. Main Data Table
+      // 3. Main Data Table (Exports ALL matching displayedStudents)
       const headers = [
         ['#', 'Date', 'Student Name', 'Roll No', 'Adm No', 'Class', 'Gender', 'Father / Guardian', 'Contact No', 'Intake Type', 'Adm. Fee', 'Tuition Fee']
       ];
@@ -647,7 +676,6 @@ export default function AdmissionHistory() {
         ];
       });
 
-      // Add Total Summary Footer Row
       tableRows.push([
         { content: 'TOTALS', colSpan: 10, styles: { halign: 'right', fontStyle: 'bold', fillColor: [241, 245, 249], textColor: [15, 23, 42] } },
         { content: `Rs ${sumAdmFee.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', fillColor: [241, 245, 249], textColor: [124, 58, 237] } },
@@ -660,7 +688,7 @@ export default function AdmissionHistory() {
         body: tableRows,
         theme: 'striped',
         headStyles: {
-          fillColor: [67, 56, 202], // Indigo-700
+          fillColor: [67, 56, 202],
           textColor: [255, 255, 255],
           fontStyle: 'bold',
           fontSize: 8.5,
@@ -692,10 +720,9 @@ export default function AdmissionHistory() {
           fillColor: [248, 250, 252]
         },
         didDrawPage: (data) => {
-          // Bottom Page Footer
           const pageNum = doc.internal.getNumberOfPages();
           doc.setFontSize(7.5);
-          doc.setTextColor(148, 163, 184); // Slate-400
+          doc.setTextColor(148, 163, 184);
           doc.text(
             `Official Student Admission Ledger  •  Principal Administrative Portal  •  Confidential`,
             14,
@@ -710,7 +737,6 @@ export default function AdmissionHistory() {
         }
       });
 
-      // Save PDF
       const fileName = `Admissions_Ledger_Report_${timeFilter}_${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(fileName);
     } catch (error) {
@@ -743,7 +769,7 @@ export default function AdmissionHistory() {
             <button
               key={tab.id}
               onClick={() => setTimeFilter(tab.id)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs md:text-sm font-bold transition-all duration-200 flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs md:text-sm font-bold transition-all duration-150 flex items-center gap-1.5 cursor-pointer ${
                 timeFilter === tab.id
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70 hover:text-slate-900'
@@ -757,10 +783,13 @@ export default function AdmissionHistory() {
         {/* Action Controls */}
         <div className="flex items-center gap-2.5 w-full md:w-auto justify-end">
           <button
-            onClick={() => setRefreshKey(k => k + 1)}
+            onClick={() => {
+              memoryHistoryCache = { schoolId: null, classes: null, parents: null, students: null, timestamp: 0 };
+              setRefreshKey(k => k + 1);
+            }}
             disabled={isLoading}
-            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-all text-xs font-semibold flex items-center gap-1.5"
-            title="Refresh Records"
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Refresh Records from Server"
           >
             <RefreshCw size={15} className={isLoading ? 'animate-spin text-indigo-600' : ''} />
             <span className="hidden sm:inline">Refresh</span>
@@ -768,7 +797,7 @@ export default function AdmissionHistory() {
 
           <button
             onClick={handleExportCSV}
-            className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs md:text-sm font-bold transition-all flex items-center gap-1.5 shadow-sm"
+            className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs md:text-sm font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
           >
             <Download size={15} />
             <span>Export CSV</span>
@@ -776,7 +805,7 @@ export default function AdmissionHistory() {
 
           <button
             onClick={() => window.print()}
-            className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs md:text-sm font-bold transition-all flex items-center gap-1.5 shadow-sm"
+            className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs md:text-sm font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
           >
             <Printer size={15} />
             <span>Print Report</span>
@@ -1170,8 +1199,8 @@ export default function AdmissionHistory() {
                     contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', fontSize: '12px' }}
                     formatter={(val, name) => [val, name === 'fresh' ? 'Fresh Intake' : 'Sibling Intake']}
                   />
-                  <Bar dataKey="fresh" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="sibling" stackId="a" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="fresh" stackId="a" fill="#10b981" isAnimationActive={false} radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="sibling" stackId="a" fill="#6366f1" isAnimationActive={false} radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -1204,6 +1233,7 @@ export default function AdmissionHistory() {
                     outerRadius={80}
                     paddingAngle={5}
                     dataKey="value"
+                    isAnimationActive={false}
                   >
                     {intakeRatioData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
@@ -1344,7 +1374,7 @@ export default function AdmissionHistory() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {displayedStudents.map((stu, idx) => {
+                {paginatedStudents.map((stu, idx) => {
                   const studentName = stu.name || `${stu.firstName || ''} ${stu.lastName || ''}`.trim() || 'Student';
                   const parentName = stu.parentDetails?.fatherName || stu.parentProfile?.name || 'Guardian';
                   const parentPhone = stu.parentDetails?.phone || stu.parentProfile?.phone || 'N/A';
@@ -1459,6 +1489,94 @@ export default function AdmissionHistory() {
             </table>
           )}
         </div>
+
+        {/* Ledger Pagination & Record Counter Footer */}
+        {!isLoading && displayedStudents.length > 0 && (
+          <div className="px-4 py-3 bg-slate-50/60 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+            
+            {/* Left: Range text */}
+            <div className="flex items-center gap-3">
+              <span>
+                Showing <strong className="text-slate-800 font-semibold">{((currentPage - 1) * pageSize) + 1}</strong> to{' '}
+                <strong className="text-slate-800 font-semibold">
+                  {Math.min(currentPage * pageSize, displayedStudents.length)}
+                </strong>{' '}
+                of <strong className="text-slate-800 font-semibold">{displayedStudents.length}</strong> admissions
+              </span>
+
+              {displayedStudents.length > 25 && (
+                <div className="flex items-center gap-1.5 ml-2 border-l border-slate-200 pl-3">
+                  <span className="text-[11px] text-slate-400">Rows:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="px-2 py-0.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 outline-none"
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Right: Page navigation buttons */}
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs flex items-center justify-center"
+                  title="Previous Page"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          currentPage === pageNum
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs flex items-center justify-center"
+                  title="Next Page"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
+
+          </div>
+        )}
 
       </div>
 
