@@ -733,7 +733,7 @@ const Admission = () => {
         <div className="header-decor">
           <School size={160} />
         </div>
-        <header className="page-header" style={{ maxWidth: "100%", padding: "0 2rem" }}>
+        <header className="page-header" style={{ width: "100%", maxWidth: "100%", padding: "0 2.5rem" }}>
           <div>
             <h1 className="page-title">
               {activeView === "new_admission"
@@ -775,9 +775,10 @@ const Admission = () => {
         {/* Top Navigation Tabs */}
         <div
           style={{
+            width: "100%",
             maxWidth: "100%",
-            margin: "2rem auto 0",
-            padding: "0 2rem",
+            margin: "1.75rem 0 0",
+            padding: "0 2.5rem",
             display: "flex",
             gap: "0.75rem",
             position: "relative",

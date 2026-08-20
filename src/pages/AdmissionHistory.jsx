@@ -42,6 +42,7 @@ export default function AdmissionHistory() {
   const [selectedStudentRecord, setSelectedStudentRecord] = useState(null);
   const [receiptData, setReceiptData] = useState(null);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [modalPos, setModalPos] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
 
   // Load School & Data
@@ -409,8 +410,39 @@ export default function AdmissionHistory() {
     document.body.removeChild(link);
   };
 
-  // Open Past Receipt Modal
-  const handleOpenReceipt = (stu) => {
+  // Open Past Receipt Modal (Positioned safely to the LEFT of Eye button & vertically centered on the row)
+  const handleOpenReceipt = (stu, e) => {
+    if (e && e.currentTarget) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const popupWidth = Math.min(520, window.innerWidth - 48);
+      const popupHeight = Math.min(600, window.innerHeight - 48);
+
+      // Horizontal: Place to the LEFT side of the Eye button with a 16px gap
+      let right = (window.innerWidth - rect.left) + 16;
+      
+      // Ensure right boundary has minimum 24px margin
+      if (right < 24) {
+        right = 24;
+      }
+      // Ensure left boundary has minimum 24px margin
+      if (window.innerWidth - right - popupWidth < 24) {
+        right = window.innerWidth - popupWidth - 24;
+      }
+
+      // Vertical: Center the popup directly on the clicked Eye button row
+      let top = (rect.top + (rect.height / 2)) - (popupHeight / 2);
+      if (top < 24) {
+        top = 24;
+      }
+      if (top + popupHeight > window.innerHeight - 24) {
+        top = Math.max(24, window.innerHeight - popupHeight - 24);
+      }
+
+      setModalPos({ top, right, width: popupWidth, maxHeight: popupHeight });
+    } else {
+      setModalPos(null);
+    }
+
     setSelectedStudentRecord(stu);
     setReceiptData({
       schoolName: localStorage.getItem("schoolName") || "Our School",
@@ -690,7 +722,7 @@ export default function AdmissionHistory() {
   };
 
   return (
-    <div className="w-full px-4 md:px-8 py-6 animate-fade-in-up font-sans">
+    <div className="w-full px-6 md:px-10 pb-10 animate-fade-in-up font-sans">
       
       {/* 1. TOP CONTROL & TIMEFRAME BAR */}
       <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200/80 shadow-sm mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -1402,8 +1434,8 @@ export default function AdmissionHistory() {
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <button
-                            onClick={() => handleOpenReceipt(stu)}
-                            className="p-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-all"
+                            onClick={(e) => handleOpenReceipt(stu, e)}
+                            className="p-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
                             title="View Official Receipt"
                           >
                             <Eye size={15} />
@@ -1411,7 +1443,7 @@ export default function AdmissionHistory() {
                           {stu.classId && stu.id && (
                             <button
                               onClick={() => navigate(`/student/edit/${stu.classId}/${stu.id}`)}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-all"
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-all cursor-pointer"
                               title="Edit Student Profile"
                             >
                               <Edit size={15} />
@@ -1430,122 +1462,151 @@ export default function AdmissionHistory() {
 
       </div>
 
-      {/* 5. OFFICIAL RECEIPT REPRINT MODAL */}
+      {/* 5. OFFICIAL RECEIPT REPRINT POPOVER MODAL (Positioned right adjacent to Eye button) */}
       {showReceiptModal && receiptData && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4 md:p-8 animate-fade-in">
-          
-          {/* Controls Bar */}
-          <div className="fixed top-5 right-5 flex flex-col gap-2 z-[100]">
-            <button
-              onClick={() => setShowReceiptModal(false)}
-              className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg transition-transform hover:scale-105"
-            >
-              <X size={24} />
-            </button>
-            <button
-              onClick={handleDownloadPDF}
-              disabled={isDownloading}
-              className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center gap-2 shadow-lg transition-transform hover:scale-105 font-bold text-xs md:text-sm"
-            >
-              <Download size={18} />
-              <span>{isDownloading ? 'Saving...' : 'Save PDF'}</span>
-            </button>
-          </div>
-
-          {/* Receipt Canvas */}
-          <div className="w-full max-w-[760px] bg-white rounded-3xl shadow-2xl overflow-hidden my-6 border border-slate-200 admission-receipt-history">
-            
-            {/* Top Wave Decor */}
-            <div className="h-4 bg-gradient-to-r from-indigo-500 via-blue-600 to-indigo-700" />
-
-            <div className="p-6 md:p-10">
-              
-              {/* Header */}
-              <div className="text-center border-b-2 border-slate-100 pb-6 mb-6">
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-                  {receiptData.schoolName.toUpperCase()}
-                </h2>
-                <div className="flex flex-wrap items-center justify-center gap-4 text-xs font-semibold text-slate-500 mt-2">
-                  <span className="flex items-center gap-1"><Phone size={13} className="text-indigo-600" /> {receiptData.schoolPhone}</span>
-                  <span className="flex items-center gap-1"><MapPin size={13} className="text-indigo-600" /> {receiptData.schoolAddress}</span>
-                </div>
-                <div className="mt-3 inline-block px-3 py-1 rounded-full bg-slate-100 text-slate-600 font-bold text-xs tracking-widest uppercase">
-                  Official Admission Record
-                </div>
+        <div 
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] animate-fade-in"
+          onClick={() => {
+            setShowReceiptModal(false);
+            setModalPos(null);
+          }}
+        >
+          {/* Receipt Popover Box */}
+          <div
+            className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-200 z-[60] flex flex-col"
+            style={{
+              position: 'fixed',
+              top: modalPos ? `${modalPos.top}px` : '50%',
+              right: modalPos ? `${modalPos.right}px` : 'auto',
+              left: modalPos ? 'auto' : '50%',
+              transform: modalPos ? 'none' : 'translate(-50%, -50%)',
+              width: modalPos ? `${modalPos.width}px` : 'min(520px, calc(100vw - 48px))',
+              maxHeight: modalPos ? `${modalPos.maxHeight}px` : 'min(600px, calc(100vh - 48px))',
+              height: 'auto',
+              animation: 'slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.08)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Popover Action Header */}
+            <div className="bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 px-4 py-3 text-white flex items-center justify-between flex-shrink-0 shadow-sm">
+              <div className="flex items-center gap-2">
+                <FileText size={16} className="text-indigo-200" />
+                <span className="font-bold text-xs tracking-wide">Admission Record Receipt</span>
               </div>
-
-              {/* Meta Grid */}
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-2">Admission Timestamp</span>
-                  <div className="text-xs font-bold text-slate-800">Date: {receiptData.date}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">Time: {receiptData.time}</div>
-                </div>
-
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-2">Parent / Guardian</span>
-                  <div className="text-xs font-bold text-slate-800">{receiptData.parentName}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">Contact: {receiptData.parentPhone}</div>
-                </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadPDF}
+                  disabled={isDownloading}
+                  className="px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center gap-1.5 font-bold text-xs transition-all cursor-pointer disabled:opacity-50"
+                  title="Save Receipt as PDF"
+                >
+                  <Download size={13} />
+                  <span>{isDownloading ? 'Saving...' : 'PDF'}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowReceiptModal(false);
+                    setModalPos(null);
+                  }}
+                  className="w-7 h-7 rounded-lg bg-white/10 hover:bg-red-500 text-white flex items-center justify-center transition-all cursor-pointer"
+                  title="Close"
+                >
+                  <X size={15} />
+                </button>
               </div>
+            </div>
 
-              {/* Student Details & Fees */}
-              <div className="mb-6">
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-3">Enrolled Student & Assigned Structure</h4>
-                {receiptData.students.map((stu, i) => (
-                  <div key={i} className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50">
-                    <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
-                      <div>
-                        <h3 className="text-sm font-extrabold text-slate-900">{stu.name.toUpperCase()}</h3>
-                        <span className="text-xs font-bold text-indigo-600">{stu.className}</span>
-                      </div>
-                      <div className="text-right text-xs">
-                        <div>Roll No: <strong className="font-mono">{stu.rollNo || 'N/A'}</strong></div>
-                        <div>Adm No: <strong className="font-mono">{stu.admissionNo || 'N/A'}</strong></div>
-                      </div>
-                    </div>
-
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-slate-400 border-b border-slate-200 text-[10px] font-bold uppercase">
-                          <th className="py-1 text-left">Fee Category</th>
-                          <th className="py-1 text-right">Amount (PKR)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {stu.feeStructure.map((f, idx) => (
-                          <tr key={idx} className="py-1">
-                            <td className="py-1.5 font-medium text-slate-700">{f.name}</td>
-                            <td className="py-1.5 text-right font-bold text-slate-900">Rs {Number(f.amount).toLocaleString()}</td>
-                          </tr>
-                        ))}
-                        {stu.individualActions.map((f, idx) => (
-                          <tr key={idx} className="py-1">
-                            <td className="py-1.5 font-medium text-slate-700">{f.name} (Action)</td>
-                            <td className="py-1.5 text-right font-bold text-slate-900">Rs {Number(f.amount).toLocaleString()}</td>
-                          </tr>
-                        ))}
-                        {stu.feeStructure.length === 0 && stu.individualActions.length === 0 && (
-                          <tr>
-                            <td colSpan="2" className="py-2 text-center text-slate-400 italic">No custom fees recorded</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+            {/* Receipt Body Canvas for download/view */}
+            <div className="overflow-y-auto p-4 md:p-6 custom-scrollbar flex-1 bg-slate-50/40">
+              <div className="bg-white rounded-xl p-5 border border-slate-200/80 shadow-sm admission-receipt-history">
+                
+                {/* Header */}
+                <div className="text-center border-b border-slate-100 pb-4 mb-4">
+                  <h2 className="text-base font-black text-slate-900 tracking-tight">
+                    {receiptData.schoolName.toUpperCase()}
+                  </h2>
+                  <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] font-semibold text-slate-500 mt-1">
+                    <span className="flex items-center gap-1"><Phone size={11} className="text-indigo-600" /> {receiptData.schoolPhone}</span>
+                    <span className="flex items-center gap-1"><MapPin size={11} className="text-indigo-600" /> {receiptData.schoolAddress}</span>
                   </div>
-                ))}
-              </div>
+                  <div className="mt-2 inline-block px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold text-[10px] tracking-wider uppercase">
+                    Official Admission Record
+                  </div>
+                </div>
 
-              {/* Footer */}
-              <div className="text-center pt-4 border-t border-slate-100 text-xs text-slate-400">
-                <p className="font-bold text-slate-600">Verified by Principal Portal</p>
-                <p className="text-[10px] mt-0.5">Official Student Enrollment Record • Generated for administrative purposes</p>
-              </div>
+                {/* Meta Grid */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/70">
+                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 block mb-1">Admission Timestamp</span>
+                    <div className="text-xs font-bold text-slate-800">Date: {receiptData.date}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">Time: {receiptData.time}</div>
+                  </div>
 
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/70">
+                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 block mb-1">Parent / Guardian</span>
+                    <div className="text-xs font-bold text-slate-800 truncate">{receiptData.parentName}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">{receiptData.parentPhone}</div>
+                  </div>
+                </div>
+
+                {/* Student Details & Fees */}
+                <div className="mb-4">
+                  <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-2">Enrolled Student & Assigned Structure</h4>
+                  {receiptData.students.map((stu, i) => (
+                    <div key={i} className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
+                      <div className="flex items-center justify-between mb-2 border-b border-slate-200 pb-1.5">
+                        <div>
+                          <h3 className="text-xs font-extrabold text-slate-900">{stu.name.toUpperCase()}</h3>
+                          <span className="text-[11px] font-bold text-indigo-600">{stu.className}</span>
+                        </div>
+                        <div className="text-right text-[11px]">
+                          <div>Roll: <strong className="font-mono">{stu.rollNo || 'N/A'}</strong></div>
+                          <div>Adm: <strong className="font-mono">{stu.admissionNo || 'N/A'}</strong></div>
+                        </div>
+                      </div>
+
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="text-slate-400 border-b border-slate-200 text-[9px] font-bold uppercase">
+                            <th className="py-1 text-left">Fee Category</th>
+                            <th className="py-1 text-right">Amount (PKR)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {stu.feeStructure.map((f, idx) => (
+                            <tr key={idx}>
+                              <td className="py-1 font-medium text-slate-700">{f.name}</td>
+                              <td className="py-1 text-right font-bold text-slate-900">Rs {Number(f.amount).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                          {stu.individualActions.map((f, idx) => (
+                            <tr key={idx}>
+                              <td className="py-1 font-medium text-slate-700">{f.name} (Action)</td>
+                              <td className="py-1 text-right font-bold text-slate-900">Rs {Number(f.amount).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                          {stu.feeStructure.length === 0 && stu.individualActions.length === 0 && (
+                            <tr>
+                              <td colSpan="2" className="py-2 text-center text-slate-400 italic text-[10px]">No custom fees recorded</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Footer */}
+                <div className="text-center pt-2.5 border-t border-slate-100 text-[10px] text-slate-400">
+                  <p className="font-bold text-slate-600">Verified by Principal Portal</p>
+                  <p className="text-[9px] mt-0.5">Official Student Enrollment Record • Generated for administrative purposes</p>
+                </div>
+
+              </div>
             </div>
 
           </div>
-
         </div>
       )}
 

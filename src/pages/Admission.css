@@ -1,25 +1,27 @@
 /* Admission Page Styles */
 
-.admission-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 2rem;
-    background: #f8fafc;
-    /* Clear off-white */
-    border-radius: 28px;
-    animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.admission-page {
+    width: calc(100% + 5rem);
+    margin: -2.5rem -2.5rem 0 -2.5rem;
+    min-height: 100%;
 }
 
-.admission-page {
+.admission-container {
     width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0 2.5rem 3rem 2.5rem;
+    background: transparent;
+    border-radius: 0;
+    animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .header-wrapper {
     width: 100%;
     background: #6366f1;
     /* Vibrant Indigo */
-    padding: 3rem 0;
-    margin-bottom: 4rem;
+    padding: 2.5rem 0 2rem 0;
+    margin-bottom: 2rem;
     border-bottom: 6px solid #4338ca;
     box-shadow: 0 8px 0px rgba(67, 56, 202, 0.2);
     position: relative;
@@ -37,9 +39,10 @@
 }
 
 .page-header {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 2rem;
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0 2.5rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
