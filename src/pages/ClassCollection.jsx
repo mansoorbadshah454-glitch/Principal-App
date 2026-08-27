@@ -423,6 +423,7 @@ const ClassCollection = () => {
     const [className, setClassName] = useState('');
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('all'); // 'all', 'paid', 'unpaid'
+    const [searchQuery, setSearchQuery] = useState('');
     const [schoolId, setSchoolId] = useState(null);
     const [currentAction, setCurrentAction] = useState(null);
     const [teacherName, setTeacherName] = useState('');
@@ -646,8 +647,14 @@ const ClassCollection = () => {
     };
 
     const filteredStudents = students.filter(s => {
-        if (activeTab === 'all') return true;
-        return (s.monthlyFeeStatus || 'unpaid') === activeTab;
+        const matchesTab = activeTab === 'all' || (s.monthlyFeeStatus || 'unpaid') === activeTab;
+        if (!matchesTab) return false;
+
+        if (!searchQuery.trim()) return true;
+        const term = searchQuery.trim().toLowerCase();
+        const nameMatch = (s.name || '').toLowerCase().includes(term);
+        const rollMatch = String(s.rollNo || s.roll_no || s.rollNumber || s.roll || '').toLowerCase().includes(term);
+        return nameMatch || rollMatch;
     });
 
     const generatePDF = async () => {
@@ -814,56 +821,110 @@ const ClassCollection = () => {
                 )}
             </header>
 
-            {/* Simple Filter */}
-            <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
-                <button
-                    onClick={() => setActiveTab('all')}
-                    style={{
-                        padding: '0.5rem 1.5rem', borderRadius: '10px', border: '1px solid #e2e8f0',
-                        background: activeTab === 'all' ? 'var(--text-main)' : 'white',
-                        color: activeTab === 'all' ? 'white' : 'var(--text-secondary)',
-                        cursor: 'pointer', fontWeight: '600'
-                    }}
-                >
-                    All Students
-                </button>
-                <button
-                    onClick={() => setActiveTab('paid')}
-                    style={{
-                        padding: '0.5rem 1.5rem', borderRadius: '10px', border: '1px solid #e2e8f0',
-                        background: activeTab === 'paid' ? '#dcfce7' : 'white',
-                        color: activeTab === 'paid' ? '#166534' : 'var(--text-secondary)',
-                        cursor: 'pointer', fontWeight: '600'
-                    }}
-                >
-                    Monthly Paid
-                </button>
-                <button
-                    onClick={() => setActiveTab('unpaid')}
-                    style={{
-                        padding: '0.5rem 1.5rem', borderRadius: '10px', border: '1px solid #e2e8f0',
-                        background: activeTab === 'unpaid' ? '#fee2e2' : 'white',
-                        color: activeTab === 'unpaid' ? '#991b1b' : 'var(--text-secondary)',
-                        cursor: 'pointer', fontWeight: '600'
-                    }}
-                >
-                    Monthly Unpaid
-                </button>
+            {/* Search Bar & Filter Controls */}
+            <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+                {/* Search Student Bar */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    background: 'white',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '12px',
+                    padding: '0.6rem 1rem',
+                    gap: '0.65rem',
+                    width: '100%',
+                    maxWidth: '380px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                }}>
+                    <Search size={18} color="#64748b" />
+                    <input
+                        type="text"
+                        placeholder="Search student by name or roll no..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        style={{
+                            border: 'none',
+                            outline: 'none',
+                            width: '100%',
+                            fontSize: '0.9rem',
+                            color: 'var(--text-main)',
+                            background: 'transparent'
+                        }}
+                    />
+                    {searchQuery && (
+                        <button
+                            onClick={() => setSearchQuery('')}
+                            style={{
+                                background: '#f1f5f9',
+                                border: 'none',
+                                borderRadius: '50%',
+                                width: '20px',
+                                height: '20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                color: '#64748b',
+                                padding: 0
+                            }}
+                            title="Clear search"
+                        >
+                            <X size={13} />
+                        </button>
+                    )}
+                </div>
 
-                <button
-                    onClick={generatePDF}
-                    style={{
-                        marginLeft: 'auto',
-                        padding: '0.5rem 1.5rem', borderRadius: '10px', border: 'none',
-                        background: 'var(--primary)',
-                        color: 'white',
-                        cursor: 'pointer', fontWeight: '600',
-                        display: 'flex', alignItems: 'center', gap: '0.5rem',
-                        boxShadow: '0 4px 6px -1px rgba(99, 102, 241, 0.3)'
-                    }}
-                >
-                    <Filter size={16} /> Download Report
-                </button>
+                {/* Filter Tabs & Action Buttons */}
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button
+                        onClick={() => setActiveTab('all')}
+                        style={{
+                            padding: '0.6rem 1.25rem', borderRadius: '10px', border: '1px solid #e2e8f0',
+                            background: activeTab === 'all' ? 'var(--text-main)' : 'white',
+                            color: activeTab === 'all' ? 'white' : 'var(--text-secondary)',
+                            cursor: 'pointer', fontWeight: '600', fontSize: '0.9rem'
+                        }}
+                    >
+                        All Students ({students.length})
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('paid')}
+                        style={{
+                            padding: '0.6rem 1.25rem', borderRadius: '10px', border: '1px solid #e2e8f0',
+                            background: activeTab === 'paid' ? '#dcfce7' : 'white',
+                            color: activeTab === 'paid' ? '#166534' : 'var(--text-secondary)',
+                            cursor: 'pointer', fontWeight: '600', fontSize: '0.9rem'
+                        }}
+                    >
+                        Monthly Paid ({students.filter(s => s.monthlyFeeStatus === 'paid').length})
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('unpaid')}
+                        style={{
+                            padding: '0.6rem 1.25rem', borderRadius: '10px', border: '1px solid #e2e8f0',
+                            background: activeTab === 'unpaid' ? '#fee2e2' : 'white',
+                            color: activeTab === 'unpaid' ? '#991b1b' : 'var(--text-secondary)',
+                            cursor: 'pointer', fontWeight: '600', fontSize: '0.9rem'
+                        }}
+                    >
+                        Monthly Unpaid ({students.filter(s => (s.monthlyFeeStatus || 'unpaid') === 'unpaid').length})
+                    </button>
+
+                    <button
+                        onClick={generatePDF}
+                        style={{
+                            padding: '0.6rem 1.25rem', borderRadius: '10px', border: 'none',
+                            background: 'var(--primary)',
+                            color: 'white',
+                            cursor: 'pointer', fontWeight: '600',
+                            display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            boxShadow: '0 4px 6px -1px rgba(99, 102, 241, 0.3)',
+                            fontSize: '0.9rem'
+                        }}
+                    >
+                        <Filter size={16} /> Download Report
+                    </button>
+                </div>
             </div>
 
             {/* Student List */}
