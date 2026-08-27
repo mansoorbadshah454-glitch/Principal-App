@@ -1196,8 +1196,47 @@ export default function AdmissionHistory() {
                   <XAxis dataKey="className" tick={{ fontSize: 11, fill: '#64748b' }} interval={0} angle={-25} textAnchor="end" />
                   <YAxis tick={{ fontSize: 11, fill: '#64748b' }} allowDecimals={false} />
                   <Tooltip
-                    contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', fontSize: '12px' }}
-                    formatter={(val, name) => [val, name === 'fresh' ? 'Fresh Intake' : 'Sibling Intake']}
+                    cursor={{ fill: 'rgba(99, 102, 241, 0.06)' }}
+                    content={({ active, payload, label }) => {
+                      if (active && payload && payload.length) {
+                        const fresh = payload.find(p => p.dataKey === 'fresh')?.value || 0;
+                        const sibling = payload.find(p => p.dataKey === 'sibling')?.value || 0;
+                        const total = fresh + sibling;
+
+                        return (
+                          <div className="bg-[#0b1329] text-white p-3.5 rounded-2xl shadow-2xl border border-slate-700/80 min-w-[210px] text-xs">
+                            <div className="font-extrabold text-sm text-white mb-2 pb-1.5 border-b border-slate-700/60 flex items-center justify-between">
+                              <span>{label}</span>
+                              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Class Intake</span>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="flex items-center gap-2 font-medium text-slate-200">
+                                  <span className="w-2.5 h-2.5 rounded-xs bg-[#10b981] inline-block shadow-xs shadow-emerald-500/50" />
+                                  Fresh Intake:
+                                </span>
+                                <span className="font-extrabold text-white text-sm">{fresh}</span>
+                              </div>
+
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="flex items-center gap-2 font-medium text-slate-200">
+                                  <span className="w-2.5 h-2.5 rounded-xs bg-[#6366f1] inline-block shadow-xs shadow-indigo-500/50" />
+                                  Sibling Intake:
+                                </span>
+                                <span className="font-extrabold text-white text-sm">{sibling}</span>
+                              </div>
+                            </div>
+
+                            <div className="mt-2.5 pt-2 border-t border-dashed border-slate-700/80 flex items-center justify-between">
+                              <span className="font-bold text-[11px] text-amber-400 uppercase tracking-wider">Total Enrolled:</span>
+                              <span className="font-black text-sm text-amber-400">{total}</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
                   />
                   <Bar dataKey="fresh" stackId="a" fill="#10b981" isAnimationActive={false} radius={[0, 0, 0, 0]} />
                   <Bar dataKey="sibling" stackId="a" fill="#6366f1" isAnimationActive={false} radius={[6, 6, 0, 0]} />
@@ -1240,8 +1279,29 @@ export default function AdmissionHistory() {
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }}
-                    formatter={(val, name) => [`${val} (${Math.round((val / totalAdmitted) * 100)}%)`, name]}
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0];
+                        const percentage = totalAdmitted > 0 ? Math.round((data.value / totalAdmitted) * 100) : 0;
+                        return (
+                          <div className="bg-[#0b1329] text-white p-3 rounded-2xl shadow-2xl border border-slate-700/80 min-w-[170px] text-xs">
+                            <div className="flex items-center gap-2 font-bold text-white mb-1.5 pb-1 border-b border-slate-700/60">
+                              <span className="w-2.5 h-2.5 rounded-xs inline-block" style={{ backgroundColor: data.payload.color }} />
+                              <span>{data.name}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-slate-300 py-0.5">
+                              <span>Intake Count:</span>
+                              <span className="font-extrabold text-white text-sm">{data.value}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-amber-400 font-bold mt-1 pt-1 border-t border-dashed border-slate-700/80">
+                              <span>Share Ratio:</span>
+                              <span className="font-extrabold text-sm">{percentage}%</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
                   />
                 </PieChart>
               </ResponsiveContainer>
