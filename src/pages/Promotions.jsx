@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, AlertCircle,
+    Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, ChevronDown, AlertCircle,
     Loader2, GraduationCap, X, UploadCloud, FileCheck, Eye, Upload
 } from 'lucide-react';
 import { db, auth, storage } from '../firebase';
@@ -30,6 +30,8 @@ const Promotions = () => {
     const [confirmLevel, setConfirmLevel] = useState(1); // 1 or 2 for dual confirmation
     const [schoolDetails, setSchoolDetails] = useState({ name: '', logo: '' });
     const [uploadingResultId, setUploadingResultId] = useState(null); // Tracks student ID for upload spinner
+    const [showPrimaryDept, setShowPrimaryDept] = useState(true);
+    const [showSecondaryDept, setShowSecondaryDept] = useState(true);
     const fileInputRefs = useRef({}); // Refs for hidden file inputs
 
 
@@ -588,7 +590,7 @@ const Promotions = () => {
 
     // --- RENDER ---
     return (
-        <div style={{ padding: '30px', maxWidth: '1400px', margin: '0 auto' }} className="animate-fade-in-up">
+        <div style={{ padding: '30px', width: '100%' }} className="animate-fade-in-up">
             {/* Header */}
             <div style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
@@ -637,65 +639,113 @@ const Promotions = () => {
 
             {/* Class Selection - Two Rows */}
             <div style={{ marginBottom: '40px' }}>
-                <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <ChevronRight size={20} color="var(--primary)" />
-                    Select Primary Department (Nursery - 5)
-                </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px', marginBottom: '30px' }}>
-                    {row1Classes.map(cls => (
-                        <div
-                            key={cls.id}
-                            onClick={() => handleClassSelect(cls)}
-                            style={{
-                                padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
-                                background: getClassColor(cls.name), color: 'white',
-                                border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
-                                boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
-                                transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
-                                position: 'relative'
-                            }}
-                        >
-                            <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
-                            <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
-                            <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
-                            {selectedClass?.id === cls.id && (
-                                <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
-                                    <CheckCircle size={18} />
-                                </div>
-                            )}
-                        </div>
-                    ))}
+                {/* Primary Department Header */}
+                <div
+                    onClick={() => setShowPrimaryDept(prev => !prev)}
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginBottom: showPrimaryDept ? '20px' : '30px',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        padding: '6px 10px',
+                        borderRadius: '10px',
+                        transition: 'background-color 0.2s'
+                    }}
+                    className="hover:bg-slate-100"
+                >
+                    {showPrimaryDept ? (
+                        <ChevronDown size={22} color="var(--primary)" />
+                    ) : (
+                        <ChevronRight size={22} color="var(--primary)" />
+                    )}
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', margin: 0 }}>
+                        Select Primary Department (Nursery - 5)
+                    </h3>
                 </div>
 
-                <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <ChevronRight size={20} color="var(--primary)" />
-                    Secondary & High School (6 - 10)
-                </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px' }}>
-                    {row2Classes.map(cls => (
-                        <div
-                            key={cls.id}
-                            onClick={() => handleClassSelect(cls)}
-                            style={{
-                                padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
-                                background: getClassColor(cls.name), color: 'white',
-                                border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
-                                boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
-                                transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
-                                position: 'relative'
-                            }}
-                        >
-                            <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
-                            <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
-                            <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
-                            {selectedClass?.id === cls.id && (
-                                <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
-                                    <CheckCircle size={18} />
-                                </div>
-                            )}
-                        </div>
-                    ))}
+                {showPrimaryDept && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px', marginBottom: '30px' }} className="animate-fade-in-up">
+                        {row1Classes.map(cls => (
+                            <div
+                                key={cls.id}
+                                onClick={() => handleClassSelect(cls)}
+                                style={{
+                                    padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
+                                    background: getClassColor(cls.name), color: 'white',
+                                    border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
+                                    boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
+                                    transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
+                                    position: 'relative'
+                                }}
+                            >
+                                <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
+                                <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
+                                <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
+                                {selectedClass?.id === cls.id && (
+                                    <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
+                                        <CheckCircle size={18} />
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Secondary Department Header */}
+                <div
+                    onClick={() => setShowSecondaryDept(prev => !prev)}
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginBottom: showSecondaryDept ? '20px' : '0px',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        padding: '6px 10px',
+                        borderRadius: '10px',
+                        transition: 'background-color 0.2s'
+                    }}
+                    className="hover:bg-slate-100"
+                >
+                    {showSecondaryDept ? (
+                        <ChevronDown size={22} color="var(--primary)" />
+                    ) : (
+                        <ChevronRight size={22} color="var(--primary)" />
+                    )}
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', margin: 0 }}>
+                        Secondary & High School (6 - 10)
+                    </h3>
                 </div>
+
+                {showSecondaryDept && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px' }} className="animate-fade-in-up">
+                        {row2Classes.map(cls => (
+                            <div
+                                key={cls.id}
+                                onClick={() => handleClassSelect(cls)}
+                                style={{
+                                    padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
+                                    background: getClassColor(cls.name), color: 'white',
+                                    border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
+                                    boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
+                                    transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
+                                    position: 'relative'
+                                }}
+                            >
+                                <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
+                                <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
+                                <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
+                                {selectedClass?.id === cls.id && (
+                                    <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
+                                        <CheckCircle size={18} />
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Student Management Section */}
