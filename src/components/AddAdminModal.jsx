@@ -156,7 +156,7 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                         </div>
                     )}
 
-                    <form id="admin-form" onSubmit={handleSubmit} className="space-y-6">
+                    <form id="admin-form" onSubmit={handleSubmit} autoComplete="off" className="space-y-6">
 
                         {/* Basic Info Section */}
                         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
@@ -170,6 +170,8 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                                     <label className="text-sm font-semibold text-slate-700">Display Name</label>
                                     <input
                                         type="text"
+                                        name="admin_display_name"
+                                        autoComplete="off"
                                         required
                                         className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-slate-700 placeholder:text-slate-400"
                                         placeholder="e.g. Sarah Connor"
@@ -182,6 +184,8 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                                     <label className="text-sm font-semibold text-slate-700">Email Address</label>
                                     <input
                                         type="email"
+                                        name="admin_email_address"
+                                        autoComplete="new-email"
                                         required
                                         disabled={!!userToEdit}
                                         className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-slate-700 placeholder:text-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
@@ -197,6 +201,8 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                                         <div className="relative">
                                             <input
                                                 type="password"
+                                                name="admin_account_password"
+                                                autoComplete="new-password"
                                                 required
                                                 minLength={6}
                                                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-slate-700 placeholder:text-slate-400"
@@ -218,6 +224,8 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
 
                                         <input
                                             type="password"
+                                            name="admin_reset_password"
+                                            autoComplete="new-password"
                                             minLength={6}
                                             className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-slate-700 placeholder:text-slate-400"
                                             placeholder="Enter new password to reset (leave empty to keep current)"
