@@ -11,9 +11,11 @@ import { getDocsFast } from '../utils/cacheUtils';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getStandardChapters } from '../data/curriculumData';
+import { useAlert } from '../context/AlertContext';
 
 // Internal Component for individual Teacher Card logic
 const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted, todayStr }) => {
+    const { showAlert } = useAlert();
     const [isEditing, setIsEditing] = useState(false);
     const [editStep, setEditStep] = useState(1);
     const [isSaving, setIsSaving] = useState(false);
@@ -65,10 +67,10 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
             await onUpdate(teacher.id, editedTeacher);
             setIsEditing(false);
             setEditStep(1);
-            alert("Teacher updated successfully!");
+            showAlert("Teacher updated successfully!", "success");
         } catch (error) {
             console.error("Error updating teacher:", error);
-            alert("Failed to update teacher.");
+            showAlert("Failed to update teacher: " + (error?.message || error), "error");
         } finally {
             setIsSaving(false);
         }
@@ -463,6 +465,7 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
 });
 
 const Teachers = () => {
+    const { showAlert } = useAlert();
     const getTodayStr = () => {
         const today = new Date();
         const year = today.getFullYear();
@@ -561,6 +564,7 @@ const Teachers = () => {
 
     const [showAddTeacher, setShowAddTeacher] = useState(false);
     const [step, setStep] = useState(1);
+    const [isSubmittingTeacher, setIsSubmittingTeacher] = useState(false);
     const [newTeacher, setNewTeacher] = useState({
         name: '',
         email: '',
@@ -1298,13 +1302,16 @@ const Teachers = () => {
 
     const handleAddTeacher = async (e) => {
         e.preventDefault();
+        if (isSubmittingTeacher) return;
         console.log("handleAddTeacher called. School ID:", schoolId);
 
         if (!schoolId) {
-            alert("Error: School ID is missing. Please reload the page or log in again.");
+            showAlert("Error: School ID is missing. Please reload the page or log in again.", "error");
             console.error("School ID is missing in handleAddTeacher");
             return;
         }
+
+        setIsSubmittingTeacher(true);
 
         try {
             if (isEditing) {
@@ -1389,140 +1396,100 @@ const Teachers = () => {
                 setStep(1);
                 setIsEditing(false);
                 setEditingId(null);
+                showAlert("Teacher updated successfully!", "success");
 
             } else {
                 // Add Logic - VIA CLOUD FUNCTION (Secure)
                 console.log("Creating new teacher account...");
-                setLoading(true);
 
-                try {
-                    const createSchoolUserFn = httpsCallable(functions, 'createSchoolUser');
-                    console.log("Calling Cloud Function: createSchoolUser");
+                const createSchoolUserFn = httpsCallable(functions, 'createSchoolUser');
+                console.log("Calling Cloud Function: createSchoolUser");
 
-                    const result = await createSchoolUserFn({
-                        email: newTeacher.username.trim() || newTeacher.email.trim(),
-                        password: newTeacher.password,
-                        name: newTeacher.name.trim(),
-                        role: 'teacher',
-                        schoolId: schoolId,
-                        // Pass extra fields directly to backend
-                        phone: newTeacher.phone.trim(),
-                        salary: Number(newTeacher.salary) || 0,
-                        subjects: [], // Force empty array so no timetable powers are given
-                        address: newTeacher.address,
-                        assignedClasses: newTeacher.assignedClasses,
-                        username: newTeacher.username.trim()
+                const result = await createSchoolUserFn({
+                    email: newTeacher.username.trim() || newTeacher.email.trim(),
+                    password: newTeacher.password,
+                    name: newTeacher.name.trim(),
+                    role: 'teacher',
+                    schoolId: schoolId,
+                    // Pass extra fields directly to backend
+                    phone: newTeacher.phone.trim(),
+                    salary: Number(newTeacher.salary) || 0,
+                    subjects: [], // Force empty array so no timetable powers are given
+                    address: newTeacher.address,
+                    assignedClasses: newTeacher.assignedClasses,
+                    username: newTeacher.username.trim()
+                });
+
+                console.log("Cloud Function Result:", result);
+                const newTeacherUid = result.data.uid;
+
+                // Immediately update the newly created document with the displaySubjects
+                await updateDoc(doc(db, `schools/${schoolId}/teachers`, newTeacherUid), {
+                    displaySubjects: newTeacher.subjects
+                });
+
+                // Note: Doc creation is now handled entirely by the Cloud Function.
+                // We only need to handle Class assignments in other collections if needed.
+
+                // 3. Handle Class Assignments
+                if (newTeacher.assignedClasses && newTeacher.assignedClasses.length > 0) {
+                    const updatePromises = newTeacher.assignedClasses.map(async (className) => {
+                        const q = query(
+                            collection(db, `schools/${schoolId}/classes`),
+                            where("name", "==", className)
+                        );
+                        const querySnapshot = await getDocsFast(q);
+                        if (!querySnapshot.empty) {
+                            const classDoc = querySnapshot.docs[0];
+                            await updateDoc(doc(db, `schools/${schoolId}/classes`, classDoc.id), {
+                                teacher: newTeacher.name,
+                                teacherId: newTeacherUid // Also link ID upon creation
+                            });
+                        }
                     });
-
-                    console.log("Cloud Function Result:", result);
-                    const newTeacherUid = result.data.uid;
-
-                    // Immediately update the newly created document with the displaySubjects
-                    await updateDoc(doc(db, `schools/${schoolId}/teachers`, newTeacherUid), {
-                        displaySubjects: newTeacher.subjects
-                    });
-
-                    // Note: Doc creation is now handled entirely by the Cloud Function.
-                    // We only need to handle Class assignments in other collections if needed.
-
-                    // 3. Handle Class Assignments
-                    if (newTeacher.assignedClasses && newTeacher.assignedClasses.length > 0) {
-                        const updatePromises = newTeacher.assignedClasses.map(async (className) => {
-                            const q = query(
-                                collection(db, `schools/${schoolId}/classes`),
-                                where("name", "==", className)
-                            );
-                            const querySnapshot = await getDocsFast(q);
-                            if (!querySnapshot.empty) {
-                                const classDoc = querySnapshot.docs[0];
-                                await updateDoc(doc(db, `schools/${schoolId}/classes`, classDoc.id), {
-                                    teacher: newTeacher.name,
-                                    teacherId: newTeacherUid // Also link ID upon creation
-                                });
-                            }
-                        });
-                        await Promise.all(updatePromises);
-                    }
-                    setLoading(false);
-
-                    setShowAddTeacher(false);
-                    setNewTeacher({ name: '', email: '', phone: '', salary: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
-                    setStep(1);
-                    setIsEditing(false);
-                    setEditingId(null);
-
-                } catch (error) {
-                    console.error("Error creating teacher:", error);
-                    alert("Failed to create teacher account. " + error.message);
-                    setLoading(false);
+                    await Promise.all(updatePromises);
                 }
+
+                setShowAddTeacher(false);
+                setNewTeacher({ name: '', email: '', phone: '', salary: '', subjects: [], address: '', assignedClasses: [], username: '', password: '' });
+                setStep(1);
+                setIsEditing(false);
+                setEditingId(null);
+                showAlert("Teacher account created successfully!", "success");
             }
         } catch (error) {
             console.error("Error saving teacher:", error);
-            alert("Failed to save teacher. " + error.message);
-            setLoading(false); // Ensure loading is turned off on error
+            showAlert("Failed to save teacher: " + (error?.message || error), "error");
+        } finally {
+            setIsSubmittingTeacher(false);
         }
     };
 
     // Delete Logic
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [teacherToDelete, setTeacherToDelete] = useState(null);
-    const [confirmPassword, setConfirmPassword] = useState('');
-    const [deleteError, setDeleteError] = useState('');
+    const [isDeletingTeacher, setIsDeletingTeacher] = useState(false);
 
     const handleDeleteClick = (id) => {
         setTeacherToDelete(id);
         setShowDeleteConfirm(true);
-        setConfirmPassword('');
-        setDeleteError('');
     };
 
     const confirmDelete = async (e) => {
-        e.preventDefault();
-        setDeleteError('');
+        if (e) e.preventDefault();
+        if (!teacherToDelete || isDeletingTeacher) return;
 
-        // Basic Manual Auth Check (same as Classes.jsx)
-        let isVerified = false;
-        const manualSession = localStorage.getItem('manual_session');
-
-        if (auth.currentUser) {
-            // Standard Auth Re-authentication
-            try {
-                const credential = EmailAuthProvider.credential(auth.currentUser.email, confirmPassword);
-                await reauthenticateWithCredential(auth.currentUser, credential);
-                isVerified = true;
-            } catch (err) {
-                console.error("Re-auth failed", err);
-                if (err.code === 'auth/wrong-password') {
-                    setDeleteError("Incorrect password.");
-                    return;
-                }
-            }
-        } else if (manualSession) {
-            // Legacy Manual Auth Check
-            try {
-                const userData = JSON.parse(manualSession);
-                const userDocRef = doc(db, `schools/${schoolId}/users`, userData.uid);
-                const snapshot = await getDoc(userDocRef);
-                if (snapshot.exists() && snapshot.data().manualPassword === confirmPassword) {
-                    isVerified = true;
-                }
-            } catch (err) {
-                console.error("Verification failed", err);
-            }
-        }
-
-        if (isVerified) {
-            try {
-                await deleteDoc(doc(db, `schools/${schoolId}/teachers`, teacherToDelete));
-                setShowDeleteConfirm(false);
-                setTeacherToDelete(null);
-            } catch (error) {
-                console.error("Error deleting teacher:", error);
-                setDeleteError("Failed to delete. Try again.");
-            }
-        } else {
-            setDeleteError("Incorrect password.");
+        setIsDeletingTeacher(true);
+        try {
+            await deleteDoc(doc(db, `schools/${schoolId}/teachers`, teacherToDelete));
+            setShowDeleteConfirm(false);
+            setTeacherToDelete(null);
+            showAlert("Teacher removed successfully!", "success");
+        } catch (error) {
+            console.error("Error deleting teacher:", error);
+            showAlert("Failed to delete teacher: " + (error?.message || error), "error");
+        } finally {
+            setIsDeletingTeacher(false);
         }
     };
 
@@ -2291,8 +2258,8 @@ const Teachers = () => {
             {showAddTeacher && (
                 <div
                     onClick={(e) => {
-                        // Close if clicked outside the modal content
-                        if (e.target === e.currentTarget) {
+                        // Close if clicked outside the modal content (only when not submitting)
+                        if (e.target === e.currentTarget && !isSubmittingTeacher) {
                             setShowAddTeacher(false);
                             setStep(1);
                         }
@@ -2302,7 +2269,7 @@ const Teachers = () => {
                         background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(2px)',
                         display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem',
                         paddingTop: '6rem', // Push modal down
-                        cursor: 'pointer' // Indicate clickable background
+                        cursor: isSubmittingTeacher ? 'not-allowed' : 'pointer' // Indicate clickable background
                     }}
                 >
                     <div
@@ -2319,7 +2286,12 @@ const Teachers = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                 {step === 2 && (
-                                    <button onClick={() => setStep(1)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex' }}>
+                                    <button 
+                                        type="button"
+                                        disabled={isSubmittingTeacher}
+                                        onClick={() => !isSubmittingTeacher && setStep(1)} 
+                                        style={{ background: 'none', border: 'none', cursor: isSubmittingTeacher ? 'not-allowed' : 'pointer', display: 'flex', opacity: isSubmittingTeacher ? 0.5 : 1 }}
+                                    >
                                         <MoreVertical size={24} color="var(--text-secondary)" style={{ transform: 'rotate(90deg)' }} />
                                     </button>
                                 )}
@@ -2331,18 +2303,31 @@ const Teachers = () => {
                             <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                                 {step === 1 && (
                                     <button
+                                        type="button"
+                                        disabled={isSubmittingTeacher}
                                         onClick={() => setStep(2)}
                                         style={{
                                             background: 'var(--primary)', border: 'none',
                                             width: '40px', height: '40px', borderRadius: '50%',
                                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                            cursor: 'pointer', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
+                                            cursor: isSubmittingTeacher ? 'not-allowed' : 'pointer', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
                                         }}
                                     >
                                         <ChevronRight size={24} color="white" />
                                     </button>
                                 )}
-                                <button onClick={() => { setShowAddTeacher(false); setStep(1); setIsEditing(false); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                                <button 
+                                    type="button"
+                                    disabled={isSubmittingTeacher}
+                                    onClick={() => { 
+                                        if (!isSubmittingTeacher) {
+                                            setShowAddTeacher(false); 
+                                            setStep(1); 
+                                            setIsEditing(false); 
+                                        }
+                                    }} 
+                                    style={{ background: 'none', border: 'none', cursor: isSubmittingTeacher ? 'not-allowed' : 'pointer', opacity: isSubmittingTeacher ? 0.5 : 1 }}
+                                >
                                     <X size={24} color="var(--text-secondary)" />
                                 </button>
                             </div>
@@ -2553,25 +2538,35 @@ const Teachers = () => {
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                         <button
                                             type="button"
+                                            disabled={isSubmittingTeacher}
                                             onClick={() => setStep(1)}
                                             style={{
                                                 padding: '0.75rem 1.5rem', borderRadius: '8px',
                                                 background: 'transparent', border: '1px solid #e2e8f0',
-                                                cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
+                                                cursor: isSubmittingTeacher ? 'not-allowed' : 'pointer', fontWeight: '600', color: 'var(--text-secondary)',
+                                                opacity: isSubmittingTeacher ? 0.5 : 1
                                             }}
                                         >
                                             Back
                                         </button>
                                         <button
                                             type="submit"
+                                            disabled={isSubmittingTeacher}
                                             className="btn-primary"
                                             style={{
                                                 padding: '0.75rem 2rem', borderRadius: '8px',
-                                                cursor: 'pointer', fontWeight: '600',
-                                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                                                cursor: isSubmittingTeacher ? 'not-allowed' : 'pointer', fontWeight: '600',
+                                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
+                                                opacity: isSubmittingTeacher ? 0.7 : 1,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem'
                                             }}
                                         >
-                                            {isEditing ? 'Update Teacher' : 'Save Teacher & Create Account'}
+                                            {isSubmittingTeacher && <Loader2 className="animate-spin" size={18} />}
+                                            {isSubmittingTeacher
+                                                ? (isEditing ? 'Updating Teacher...' : 'Creating Account...')
+                                                : (isEditing ? 'Update Teacher' : 'Save Teacher & Create Account')}
                                         </button>                        </div>
                                 </div>
                             )
@@ -2605,51 +2600,36 @@ const Teachers = () => {
                                 </p>
                             </div>
 
-                            <form onSubmit={confirmDelete}>
-                                <div style={{ marginBottom: '1.5rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                        Enter Password to Confirm
-                                    </label>
-                                    <input
-                                        type="password"
-                                        value={confirmPassword}
-                                        onChange={(e) => setConfirmPassword(e.target.value)}
-                                        placeholder="Your Password"
-                                        style={{
-                                            width: '100%', padding: '0.75rem', borderRadius: '8px',
-                                            border: deleteError ? '1px solid #ef4444' : '1px solid #e2e8f0',
-                                            outline: 'none', fontSize: '0.95rem'
-                                        }}
-                                        autoFocus
-                                        required
-                                    />
-                                    {deleteError && <p style={{ color: '#ef4444', fontSize: '0.85rem', marginTop: '0.5rem' }}>{deleteError}</p>}
-                                </div>
-
-                                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                                    <button
-                                        type="button"
-                                        onClick={() => { setShowDeleteConfirm(false); setConfirmPassword(''); }}
-                                        style={{
-                                            flex: 1, padding: '0.75rem', borderRadius: '8px',
-                                            background: 'transparent', border: '1px solid #e2e8f0',
-                                            cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
-                                        }}
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        style={{
-                                            flex: 1, padding: '0.75rem', borderRadius: '8px',
-                                            background: '#ef4444', border: 'none',
-                                            cursor: 'pointer', fontWeight: '600', color: 'white'
-                                        }}
-                                    >
-                                        Remove
-                                    </button>
-                                </div>
-                            </form>
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    disabled={isDeletingTeacher}
+                                    onClick={() => !isDeletingTeacher && setShowDeleteConfirm(false)}
+                                    style={{
+                                        flex: 1, padding: '0.75rem', borderRadius: '8px',
+                                        background: 'transparent', border: '1px solid #e2e8f0',
+                                        cursor: isDeletingTeacher ? 'not-allowed' : 'pointer', fontWeight: '600', color: 'var(--text-secondary)',
+                                        opacity: isDeletingTeacher ? 0.5 : 1
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isDeletingTeacher}
+                                    onClick={confirmDelete}
+                                    style={{
+                                        flex: 1, padding: '0.75rem', borderRadius: '8px',
+                                        background: '#ef4444', border: 'none',
+                                        cursor: isDeletingTeacher ? 'not-allowed' : 'pointer', fontWeight: '600', color: 'white',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                        opacity: isDeletingTeacher ? 0.7 : 1
+                                    }}
+                                >
+                                    {isDeletingTeacher && <Loader2 className="animate-spin" size={16} />}
+                                    {isDeletingTeacher ? 'Removing...' : 'Yes, Remove'}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )

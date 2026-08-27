@@ -6,9 +6,11 @@ import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, 
 import { getDocsFast } from '../utils/cacheUtils';
 import { auth } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
+import { useAlert } from '../context/AlertContext';
 
 // Internal Component for individual Parent Card logic
 const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbClasses, schoolId }) => {
+    const { showAlert } = useAlert();
     const [isExpanded, setIsExpanded] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [isMessaging, setIsMessaging] = useState(false);
@@ -114,9 +116,10 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
             await onUpdate(parent.id, editedParent);
             setIsEditing(false);
             setEditStep(1);
+            showAlert("Parent updated successfully!", "success");
         } catch (error) {
             console.error("Error updating parent:", error);
-            alert("Failed to update parent.");
+            showAlert("Failed to update parent: " + (error?.message || error), "error");
         }
     };
 
@@ -133,7 +136,7 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
             setLocalMessageText('');
         } catch (error) {
             console.error("Error sending message:", error);
-            alert("Failed to send message: " + (error.message || "Unknown error"));
+            showAlert("Failed to send message: " + (error.message || "Unknown error"), "error");
         }
     };
 
@@ -637,8 +640,10 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
 });
 
 const Parents = () => {
+    const { showAlert } = useAlert();
     const [showAddParent, setShowAddParent] = useState(false);
     const [step, setStep] = useState(1);
+    const [isSubmittingParent, setIsSubmittingParent] = useState(false);
     const [newParent, setNewParent] = useState({
         name: '',
         email: '',
@@ -968,6 +973,7 @@ const Parents = () => {
 
     const handleAddParent = async (e) => {
         e.preventDefault();
+        if (isSubmittingParent) return;
 
         // 1. Try State
         let activeSchoolId = schoolId;
@@ -991,9 +997,11 @@ const Parents = () => {
 
         // 3. Final Check
         if (!activeSchoolId) {
-            alert("Session Error: Could not find School ID in State or Storage. Please logout and login again.");
+            showAlert("Session Error: Could not find School ID in State or Storage. Please logout and login again.", "error");
             return;
         }
+
+        setIsSubmittingParent(true);
 
         try {
             console.log("Submitting Parent Data:", newParent, "SchoolID:", activeSchoolId);
@@ -1001,6 +1009,15 @@ const Parents = () => {
                 const updateData = { ...newParent };
                 // Optionally handle password logic if needed, but for now we update everything
                 await handleUpdateParent(editingId, updateData);
+                setShowAddParent(false);
+                setNewParent({ name: '', email: '', phone: '', address: '', username: '', password: '', linkedStudents: [] });
+                setStep(1);
+                setIsEditing(false);
+                setEditingId(null);
+                setSelectedClassId('');
+                setAvailableStudents([]);
+                setSelectedStudentId('');
+                showAlert("Parent updated successfully!", "success");
             } else {
                 // Use Cloud Function for Safe Creation (Auth + Firestore)
                 // Use imported 'functions' instance
@@ -1049,33 +1066,32 @@ const Parents = () => {
                     }
                     await batch.commit();
                 }
-            }
 
-            setShowAddParent(false);
-            setNewParent({ name: '', email: '', phone: '', address: '', username: '', password: '', linkedStudents: [] });
-            setStep(1);
-            setIsEditing(false);
-            setEditingId(null);
-            setSelectedClassId('');
-            setAvailableStudents([]);
-            setSelectedStudentId('');
+                setShowAddParent(false);
+                setNewParent({ name: '', email: '', phone: '', address: '', username: '', password: '', linkedStudents: [] });
+                setStep(1);
+                setIsEditing(false);
+                setEditingId(null);
+                setSelectedClassId('');
+                setAvailableStudents([]);
+                setSelectedStudentId('');
+                showAlert("Parent account created successfully!", "success");
+            }
         } catch (error) {
             console.error("Error saving parent:", error);
-            alert(`Failed to save parent: ${error.message || "Unknown error"}`);
+            showAlert(`Failed to save parent: ${error.message || "Unknown error"}`, "error");
+        } finally {
+            setIsSubmittingParent(false);
         }
     };
 
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [parentToDelete, setParentToDelete] = useState(null);
-    const [confirmPassword, setConfirmPassword] = useState('');
-    const [deleteError, setDeleteError] = useState('');
-
+    const [isDeletingParent, setIsDeletingParent] = useState(false);
 
     const handleDeleteClick = (id) => {
         setParentToDelete(id);
         setShowDeleteConfirm(true);
-        setConfirmPassword('');
-        setDeleteError('');
     };
 
     const handleSendMessage = async (parentId, text) => {
@@ -1146,43 +1162,27 @@ const Parents = () => {
     };
 
     const confirmDelete = async (e) => {
-        e.preventDefault();
-        setDeleteError('');
+        if (e) e.preventDefault();
+        if (!parentToDelete || isDeletingParent) return;
 
-        // Basic Manual Auth Check
-        let isVerified = false;
-        const manualSession = localStorage.getItem('manual_session');
-        if (manualSession) {
-            try {
-                const userData = JSON.parse(manualSession);
-                const userDocRef = doc(db, `schools/${schoolId}/users`, userData.uid);
-                const snapshot = await import('firebase/firestore').then(mod => mod.getDoc(userDocRef));
-                if (snapshot.exists() && snapshot.data().manualPassword === confirmPassword) {
-                    isVerified = true;
-                }
-            } catch (err) {
-                console.error("Verification failed", err);
-            }
-        }
+        setIsDeletingParent(true);
+        try {
+            // Call Cloud Function for Secure Full Delete (Auth + DB)
+            const deleteUserFn = httpsCallable(functions, 'deleteSchoolUser');
+            await deleteUserFn({
+                targetUid: parentToDelete,
+                role: 'parent',
+                schoolId: schoolId
+            });
 
-        if (isVerified) {
-            try {
-                // Call Cloud Function for Secure Full Delete (Auth + DB)
-                const deleteUserFn = httpsCallable(functions, 'deleteSchoolUser');
-                await deleteUserFn({
-                    targetUid: parentToDelete,
-                    role: 'parent',
-                    schoolId: schoolId
-                });
-
-                setShowDeleteConfirm(false);
-                setParentToDelete(null);
-            } catch (error) {
-                console.error("Error deleting parent:", error);
-                setDeleteError(`Failed to delete: ${error.message}`);
-            }
-        } else {
-            setDeleteError("Incorrect password.");
+            setShowDeleteConfirm(false);
+            setParentToDelete(null);
+            showAlert("Parent account removed successfully!", "success");
+        } catch (error) {
+            console.error("Error deleting parent:", error);
+            showAlert(`Failed to delete parent: ${error.message || "Unknown error"}`, "error");
+        } finally {
+            setIsDeletingParent(false);
         }
     };
 
@@ -1424,7 +1424,7 @@ const Parents = () => {
             {showAddParent && (
                 <div
                     onClick={(e) => {
-                        if (e.target === e.currentTarget) {
+                        if (e.target === e.currentTarget && !isSubmittingParent) {
                             setShowAddParent(false);
                             setStep(1);
                         }
@@ -1434,7 +1434,7 @@ const Parents = () => {
                         background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(2px)',
                         display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem',
                         paddingTop: '6rem',
-                        cursor: 'pointer'
+                        cursor: isSubmittingParent ? 'not-allowed' : 'pointer'
                     }}
                 >
                     <div
@@ -1451,7 +1451,12 @@ const Parents = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                 {step === 2 && (
-                                    <button onClick={() => setStep(1)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex' }}>
+                                    <button 
+                                        type="button"
+                                        disabled={isSubmittingParent}
+                                        onClick={() => !isSubmittingParent && setStep(1)} 
+                                        style={{ background: 'none', border: 'none', cursor: isSubmittingParent ? 'not-allowed' : 'pointer', display: 'flex', opacity: isSubmittingParent ? 0.5 : 1 }}
+                                    >
                                         <MoreVertical size={24} color="var(--text-secondary)" style={{ transform: 'rotate(90deg)' }} />
                                     </button>
                                 )}
@@ -1464,9 +1469,10 @@ const Parents = () => {
                                 {step === 1 && (
                                     <button
                                         type="button"
+                                        disabled={isSubmittingParent}
                                         onClick={() => {
                                             if (!newParent.name || !newParent.phone || !newParent.address) {
-                                                alert("Please fill in all required fields (Name, Phone, Address)");
+                                                showAlert("Please fill in all required fields (Name, Phone, Address)", "warning");
                                                 return;
                                             }
                                             setStep(2);
@@ -1475,13 +1481,24 @@ const Parents = () => {
                                             background: 'var(--primary)', border: 'none',
                                             width: '40px', height: '40px', borderRadius: '50%',
                                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                            cursor: 'pointer', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
+                                            cursor: isSubmittingParent ? 'not-allowed' : 'pointer', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
                                         }}
                                     >
                                         <ChevronRight size={24} color="white" />
                                     </button>
                                 )}
-                                <button type="button" onClick={() => { setShowAddParent(false); setStep(1); setIsEditing(false); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                                <button 
+                                    type="button" 
+                                    disabled={isSubmittingParent}
+                                    onClick={() => { 
+                                        if (!isSubmittingParent) {
+                                            setShowAddParent(false); 
+                                            setStep(1); 
+                                            setIsEditing(false); 
+                                        }
+                                    }} 
+                                    style={{ background: 'none', border: 'none', cursor: isSubmittingParent ? 'not-allowed' : 'pointer', opacity: isSubmittingParent ? 0.5 : 1 }}
+                                >
                                     <X size={24} color="var(--text-secondary)" />
                                 </button>
                             </div>
@@ -1712,25 +1729,35 @@ const Parents = () => {
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                         <button
                                             type="button"
+                                            disabled={isSubmittingParent}
                                             onClick={() => setStep(1)}
                                             style={{
                                                 padding: '0.75rem 1.5rem', borderRadius: '8px',
                                                 background: 'transparent', border: '1px solid #e2e8f0',
-                                                cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
+                                                cursor: isSubmittingParent ? 'not-allowed' : 'pointer', fontWeight: '600', color: 'var(--text-secondary)',
+                                                opacity: isSubmittingParent ? 0.5 : 1
                                             }}
                                         >
                                             Back
                                         </button>
                                         <button
                                             type="submit"
+                                            disabled={isSubmittingParent}
                                             className="btn-primary"
                                             style={{
                                                 padding: '0.75rem 2rem', borderRadius: '8px',
-                                                cursor: 'pointer', fontWeight: '600',
-                                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                                                cursor: isSubmittingParent ? 'not-allowed' : 'pointer', fontWeight: '600',
+                                                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)',
+                                                opacity: isSubmittingParent ? 0.7 : 1,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem'
                                             }}
                                         >
-                                            {isEditing ? 'Save Changes' : 'Create Parent Account'}
+                                            {isSubmittingParent && <Loader2 className="animate-spin" size={18} />}
+                                            {isSubmittingParent
+                                                ? (isEditing ? 'Saving Changes...' : 'Creating Account...')
+                                                : (isEditing ? 'Save Changes' : 'Create Parent Account')}
                                         </button>
                                     </div>
                                 </div>
@@ -1764,51 +1791,36 @@ const Parents = () => {
                                 </p>
                             </div>
 
-                            <form onSubmit={confirmDelete}>
-                                <div style={{ marginBottom: '1.5rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                                        Enter Password to Confirm
-                                    </label>
-                                    <input
-                                        type="password"
-                                        value={confirmPassword}
-                                        onChange={(e) => setConfirmPassword(e.target.value)}
-                                        placeholder="Your Password"
-                                        style={{
-                                            width: '100%', padding: '0.75rem', borderRadius: '8px',
-                                            border: deleteError ? '1px solid #ef4444' : '1px solid #e2e8f0',
-                                            outline: 'none', fontSize: '0.95rem'
-                                        }}
-                                        autoFocus
-                                        required
-                                    />
-                                    {deleteError && <p style={{ color: '#ef4444', fontSize: '0.85rem', marginTop: '0.5rem' }}>{deleteError}</p>}
-                                </div>
-
-                                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                                    <button
-                                        type="button"
-                                        onClick={() => { setShowDeleteConfirm(false); setConfirmPassword(''); }}
-                                        style={{
-                                            flex: 1, padding: '0.75rem', borderRadius: '8px',
-                                            background: 'transparent', border: '1px solid #e2e8f0',
-                                            cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)'
-                                        }}
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        style={{
-                                            flex: 1, padding: '0.75rem', borderRadius: '8px',
-                                            background: '#ef4444', border: 'none',
-                                            cursor: 'pointer', fontWeight: '600', color: 'white'
-                                        }}
-                                    >
-                                        Delete
-                                    </button>
-                                </div>
-                            </form>
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    disabled={isDeletingParent}
+                                    onClick={() => !isDeletingParent && setShowDeleteConfirm(false)}
+                                    style={{
+                                        flex: 1, padding: '0.75rem', borderRadius: '8px',
+                                        background: 'transparent', border: '1px solid #e2e8f0',
+                                        cursor: isDeletingParent ? 'not-allowed' : 'pointer', fontWeight: '600', color: 'var(--text-secondary)',
+                                        opacity: isDeletingParent ? 0.5 : 1
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isDeletingParent}
+                                    onClick={confirmDelete}
+                                    style={{
+                                        flex: 1, padding: '0.75rem', borderRadius: '8px',
+                                        background: '#ef4444', border: 'none',
+                                        cursor: isDeletingParent ? 'not-allowed' : 'pointer', fontWeight: '600', color: 'white',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                        opacity: isDeletingParent ? 0.7 : 1
+                                    }}
+                                >
+                                    {isDeletingParent && <Loader2 className="animate-spin" size={16} />}
+                                    {isDeletingParent ? 'Deleting...' : 'Yes, Delete'}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )

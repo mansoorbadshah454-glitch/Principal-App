@@ -4,6 +4,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
 
 import MainLayout from './layouts/MainLayout';
+import { AlertProvider } from './context/AlertContext';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Classes = lazy(() => import('./pages/Classes'));
@@ -82,30 +83,32 @@ function App() {
   }
 
   return (
-    <Suspense fallback={<PageLoader />}>
-      <Routes>
-        <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+    <AlertProvider>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
 
-        <Route path="/" element={user ? <MainLayout /> : <Navigate to="/login" />}>
-          <Route index element={<Dashboard />} />
-          <Route path="admission" element={<Admission />} />
-          <Route path="classes" element={<Classes />} />
-          <Route path="classes/:classId" element={<ClassDetails />} />
-          <Route path="student/edit/:classId/:studentId" element={<EditStudentProfile />} />
-          <Route path="teachers" element={<Teachers />} />
-          <Route path="parents" element={<Parents />} />
-          <Route path="collections" element={<Collections />} />
-          <Route path="collections/:classId" element={<ClassCollection />} />
-          <Route path="promotions" element={<Promotions />} />
-          <Route path="news-feed" element={<NewsFeed />} />
-          <Route path="inbox" element={<Inbox />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="users" element={<Users />} />
-          <Route path="surveillance" element={<LiveSurveillance />} />
-          <Route path="paper-generator" element={<PaperGenerator />} />
-        </Route>
-      </Routes>
-    </Suspense>
+          <Route path="/" element={user ? <MainLayout /> : <Navigate to="/login" />}>
+            <Route index element={<Dashboard />} />
+            <Route path="admission" element={<Admission />} />
+            <Route path="classes" element={<Classes />} />
+            <Route path="classes/:classId" element={<ClassDetails />} />
+            <Route path="student/edit/:classId/:studentId" element={<EditStudentProfile />} />
+            <Route path="teachers" element={<Teachers />} />
+            <Route path="parents" element={<Parents />} />
+            <Route path="collections" element={<Collections />} />
+            <Route path="collections/:classId" element={<ClassCollection />} />
+            <Route path="promotions" element={<Promotions />} />
+            <Route path="news-feed" element={<NewsFeed />} />
+            <Route path="inbox" element={<Inbox />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="users" element={<Users />} />
+            <Route path="surveillance" element={<LiveSurveillance />} />
+            <Route path="paper-generator" element={<PaperGenerator />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </AlertProvider>
   );
 }
 
