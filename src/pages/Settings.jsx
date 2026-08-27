@@ -1,11 +1,12 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase, Plus, Trash2, Users, Info } from 'lucide-react';
+import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase, Plus, Trash2, Users, Info, BookOpen } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
+import UploadSyllabusTab from '../components/UploadSyllabusTab';
 import CachedImage from '../components/CachedImage';
 
 const Settings = () => {
@@ -352,6 +353,18 @@ const Settings = () => {
                 }}
             >
                 <Users size={18} /> Import Students
+            </button>
+            <button
+                onClick={() => setActiveTab('upload_syllabus')}
+                style={{
+                    padding: '0.75rem 1rem', border: 'none', background: 'transparent',
+                    cursor: 'pointer', fontSize: '1rem', fontWeight: '600',
+                    color: activeTab === 'upload_syllabus' ? 'var(--primary)' : 'var(--text-secondary)',
+                    borderBottom: activeTab === 'upload_syllabus' ? '3px solid var(--primary)' : '3px solid transparent',
+                    display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s'
+                }}
+            >
+                <BookOpen size={18} /> Upload Syllabus
             </button>
         </div>
     );
@@ -732,6 +745,12 @@ const Settings = () => {
                 {activeTab === 'import' && (
                     <div style={{ animation: 'fadeIn 0.3s ease-out' }}>
                         {schoolId ? <BulkUploadCard schoolId={schoolId} /> : <div>Generating School ID...</div>}
+                    </div>
+                )}
+
+                {activeTab === 'upload_syllabus' && (
+                    <div style={{ animation: 'fadeIn 0.3s ease-out' }}>
+                        {schoolId ? <UploadSyllabusTab schoolId={schoolId} /> : <div>Generating School ID...</div>}
                     </div>
                 )}
             </div>

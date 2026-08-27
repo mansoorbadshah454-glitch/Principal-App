@@ -2222,29 +2222,92 @@ const Teachers = () => {
                                             No chapters added yet for this subject.
                                         </div>
                                     ) : (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.5rem' }} className="custom-scrollbar">
-                                            {syllabusChapters.map((chapter, index) => (
-                                                <div key={chapter.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                                        <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#eff6ff', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '0.9rem' }}>
-                                                            {index + 1}
-                                                        </div>
-                                                        <div>
-                                                            <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: '600', color: '#1e293b' }}>{chapter.title}</h4>
-                                                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.2rem' }}>
-                                                                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Time: {chapter.time}</span>
-                                                                <span style={{ fontSize: '0.8rem', color: chapter.status === 'Completed' ? '#10b981' : chapter.status === 'In Progress' ? '#f59e0b' : '#64748b' }}>Status: {chapter.status}</span>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '350px', overflowY: 'auto', paddingRight: '0.5rem' }} className="custom-scrollbar">
+                                            {syllabusChapters.map((chapter, index) => {
+                                                const isUrdu = /[\u0600-\u06FF]/.test(chapter.title || '');
+                                                return (
+                                                    <div 
+                                                        key={chapter.id} 
+                                                        style={{ 
+                                                            display: 'flex', 
+                                                            justifyContent: 'space-between', 
+                                                            alignItems: 'center', 
+                                                            padding: '0.85rem 1.25rem', 
+                                                            background: 'linear-gradient(135deg, #1e40af 0%, #2563eb 100%)', 
+                                                            border: '1px solid #1d4ed8', 
+                                                            borderRadius: '12px', 
+                                                            boxShadow: '0 2px 6px rgba(30, 64, 175, 0.18)',
+                                                            color: '#ffffff'
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
+                                                            <div style={{ 
+                                                                width: '32px', height: '32px', borderRadius: '50%', 
+                                                                background: '#ffffff', color: '#1e40af', 
+                                                                display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                                                fontWeight: '800', fontSize: '0.9rem', flexShrink: 0 
+                                                            }}>
+                                                                {index + 1}
+                                                            </div>
+                                                            <div style={{ flex: 1 }}>
+                                                                <h4 
+                                                                    style={{ 
+                                                                        margin: 0, 
+                                                                        fontSize: isUrdu ? '1.2rem' : '1rem', 
+                                                                        fontWeight: '700', 
+                                                                        color: '#ffffff',
+                                                                        fontFamily: isUrdu ? "'Noto Nastaliq Urdu', 'Jameel Noori Nastaliq', 'Urdu Typesetting', Tahoma, serif" : 'inherit',
+                                                                        lineHeight: isUrdu ? '2.0' : '1.4',
+                                                                        textShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                                                                    }}
+                                                                >
+                                                                    {chapter.title}
+                                                                </h4>
+                                                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                                                                    {chapter.time && (
+                                                                        <span style={{ 
+                                                                            fontSize: '0.75rem', 
+                                                                            background: 'rgba(255, 255, 255, 0.2)', 
+                                                                            color: '#ffffff', 
+                                                                            padding: '2px 8px', 
+                                                                            borderRadius: '20px',
+                                                                            border: '1px solid rgba(255, 255, 255, 0.3)'
+                                                                        }}>
+                                                                            Time: {chapter.time}
+                                                                        </span>
+                                                                    )}
+                                                                    <span style={{ 
+                                                                        fontSize: '0.75rem', 
+                                                                        fontWeight: '700',
+                                                                        background: chapter.status === 'Completed' ? 'rgba(34, 197, 94, 0.35)' : chapter.status === 'In Progress' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(255, 255, 255, 0.2)', 
+                                                                        color: '#ffffff',
+                                                                        padding: '2px 8px', 
+                                                                        borderRadius: '20px',
+                                                                        border: '1px solid rgba(255, 255, 255, 0.35)'
+                                                                    }}>
+                                                                        Status: {chapter.status || 'Pending'}
+                                                                    </span>
+                                                                </div>
                                                             </div>
                                                         </div>
+                                                        <button 
+                                                            onClick={() => handleDeleteChapter(chapter.id)}
+                                                            style={{ 
+                                                                background: 'rgba(239, 68, 68, 0.35)', 
+                                                                border: '1px solid rgba(255, 255, 255, 0.3)', 
+                                                                width: '36px', height: '36px', 
+                                                                borderRadius: '8px', 
+                                                                display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                                                cursor: 'pointer', color: '#ffffff',
+                                                                flexShrink: 0
+                                                            }}
+                                                            title="Delete Chapter"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                        </button>
                                                     </div>
-                                                    <button 
-                                                        onClick={() => handleDeleteChapter(chapter.id)}
-                                                        style={{ background: '#fef2f2', border: 'none', width: '36px', height: '36px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#ef4444' }}
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     )}
                                 </div>

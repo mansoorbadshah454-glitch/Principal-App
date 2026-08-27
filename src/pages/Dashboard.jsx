@@ -1057,38 +1057,77 @@ const Dashboard = () => {
                                                 <p style={{ color: '#64748b', fontSize: '0.875rem', margin: 0 }}>No chapters recorded for this subject yet.</p>
                                             </div>
                                         ) : (
-                                            <div style={{ maxHeight: '180px', overflowY: 'auto', paddingRight: '0.5rem' }} className="custom-scrollbar">
-                                                {syllabusWidgetData.map((chap, i) => (
-                                                    <div key={chap.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0', borderBottom: i < syllabusWidgetData.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                                                        {chap.status === 'Completed' ? (
-                                                            <CheckCircle2 size={18} color="#10b981" />
-                                                        ) : chap.status === 'In Progress' ? (
-                                                            <Activity size={18} color="#f59e0b" />
-                                                        ) : (
-                                                            <CircleDashed size={18} color="#94a3b8" />
-                                                        )}
-                                                        <div style={{ flex: 1 }}>
-                                                            <h4 style={{ margin: 0, fontSize: '0.875rem', color: '#0f172a', fontWeight: chap.status === 'Completed' ? '500' : '600', textDecoration: chap.status === 'Completed' ? 'line-through' : 'none' }}>{chap.title}</h4>
-                                                            {chap.time && <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{chap.time}</span>}
-                                                            {chap.topics && chap.topics.length > 0 && (
-                                                                <div style={{ marginTop: '0.35rem', padding: '0.3rem 0.55rem', background: '#f1f5f9', borderRadius: '4px', fontSize: '0.75rem', color: '#334155', border: '1px solid #e2e8f0' }}>
-                                                                    <strong>Topics:</strong> {chap.topics.join(', ')}
-                                                                </div>
-                                                            )}
+                                            <div style={{ maxHeight: '220px', overflowY: 'auto', paddingRight: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }} className="custom-scrollbar">
+                                                {syllabusWidgetData.map((chap, i) => {
+                                                    const isUrdu = /[\u0600-\u06FF]/.test(chap.title || '');
+                                                    return (
+                                                        <div 
+                                                            key={chap.id || i} 
+                                                            style={{ 
+                                                                display: 'flex', 
+                                                                alignItems: 'center', 
+                                                                gap: '0.75rem', 
+                                                                padding: '0.75rem 1rem', 
+                                                                background: 'linear-gradient(135deg, #1e40af 0%, #2563eb 100%)',
+                                                                borderRadius: '10px',
+                                                                color: '#ffffff',
+                                                                boxShadow: '0 2px 6px rgba(30, 64, 175, 0.18)',
+                                                                border: '1px solid #1d4ed8'
+                                                            }}
+                                                        >
+                                                            <div style={{ 
+                                                                width: '28px', height: '28px', borderRadius: '50%', 
+                                                                background: '#ffffff', color: '#1e40af', 
+                                                                display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                                                fontWeight: '800', fontSize: '0.85rem', flexShrink: 0 
+                                                            }}>
+                                                                {i + 1}
+                                                            </div>
+                                                            <div style={{ flex: 1 }}>
+                                                                <h4 
+                                                                    style={{ 
+                                                                        margin: 0, 
+                                                                        fontSize: isUrdu ? '1.15rem' : '0.95rem', 
+                                                                        color: '#ffffff', 
+                                                                        fontWeight: '700',
+                                                                        fontFamily: isUrdu ? "'Noto Nastaliq Urdu', 'Jameel Noori Nastaliq', 'Urdu Typesetting', Tahoma, serif" : 'inherit',
+                                                                        lineHeight: isUrdu ? '2.0' : '1.4',
+                                                                        textDecoration: chap.status === 'Completed' ? 'line-through' : 'none',
+                                                                        textShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                                                                    }}
+                                                                >
+                                                                    {chap.title}
+                                                                </h4>
+                                                                {chap.time && <span style={{ fontSize: '0.75rem', color: '#e0e7ff', fontWeight: '500' }}>Duration: {chap.time}</span>}
+                                                                {chap.topics && chap.topics.length > 0 && (
+                                                                    <div style={{ 
+                                                                        marginTop: '0.35rem', padding: '0.3rem 0.55rem', 
+                                                                        background: 'rgba(255, 255, 255, 0.15)', 
+                                                                        borderRadius: '6px', fontSize: '0.75rem', 
+                                                                        color: '#ffffff', border: '1px solid rgba(255, 255, 255, 0.25)',
+                                                                        fontFamily: isUrdu ? "'Noto Nastaliq Urdu', Tahoma, serif" : 'inherit',
+                                                                        lineHeight: isUrdu ? '1.8' : '1.3'
+                                                                    }}>
+                                                                        <strong>Topics:</strong> {chap.topics.join(', ')}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div style={{ 
+                                                                fontSize: '0.7rem', 
+                                                                fontWeight: '700', 
+                                                                padding: '4px 10px', 
+                                                                borderRadius: '20px', 
+                                                                background: chap.status === 'Completed' ? 'rgba(34, 197, 94, 0.35)' : chap.status === 'In Progress' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(255, 255, 255, 0.2)', 
+                                                                color: '#ffffff',
+                                                                border: '1px solid rgba(255, 255, 255, 0.4)',
+                                                                letterSpacing: '0.02em',
+                                                                flexShrink: 0
+                                                            }}>
+                                                                {chap.status || 'Pending'}
+                                                            </div>
                                                         </div>
-                                                        <div style={{ 
-                                                            fontSize: '0.7rem', 
-                                                            fontWeight: '700', 
-                                                            padding: '2px 8px', 
-                                                            borderRadius: '4px', 
-                                                            background: chap.status === 'Completed' ? '#dcfce7' : chap.status === 'In Progress' ? '#fef3c7' : '#f1f5f9', 
-                                                            color: chap.status === 'Completed' ? '#15803d' : chap.status === 'In Progress' ? '#b45309' : '#475569',
-                                                            border: `1px solid ${chap.status === 'Completed' ? '#bbf7d0' : chap.status === 'In Progress' ? '#fde68a' : '#e2e8f0'}`
-                                                        }}>
-                                                            {chap.status || 'Pending'}
-                                                        </div>
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>
