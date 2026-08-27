@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
-    Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap, MessageCircle, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed
+    Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap, MessageCircle, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
+    Wifi, WifiOff, RefreshCw, Loader2
 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, setDoc, doc } from 'firebase/firestore';
@@ -46,6 +47,49 @@ const Dashboard = () => {
     const [syllabusWidgetSubject, setSyllabusWidgetSubject] = useState('');
     const [syllabusWidgetData, setSyllabusWidgetData] = useState([]);
     const [syllabusWidgetLoading, setSyllabusWidgetLoading] = useState(false);
+
+    // Global System Connection & Offline Queues Monitor
+    const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+    const [pendingCount, setPendingCount] = useState(0);
+
+    const checkPendingQueues = () => {
+        try {
+            const manualSession = localStorage.getItem('manual_session');
+            const sid = schoolId || (manualSession ? JSON.parse(manualSession)?.schoolId : null);
+            if (!sid) {
+                setPendingCount(0);
+                return;
+            }
+            const feeQueue = JSON.parse(localStorage.getItem(`offline_fee_queue_${sid}`) || '[]');
+            const admQueue = JSON.parse(localStorage.getItem(`offline_admissions_queue_${sid}`) || '[]');
+            setPendingCount((feeQueue.length || 0) + (admQueue.length || 0));
+        } catch (e) {
+            setPendingCount(0);
+        }
+    };
+
+    useEffect(() => {
+        checkPendingQueues();
+        const handleOnline = () => {
+            setIsOnline(true);
+            checkPendingQueues();
+        };
+        const handleOffline = () => {
+            setIsOnline(false);
+            checkPendingQueues();
+        };
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        const interval = setInterval(checkPendingQueues, 4000);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+            clearInterval(interval);
+        };
+    }, [schoolId]);
 
     const getGreeting = () => {
         const hour = new Date().getHours();
@@ -755,7 +799,55 @@ const Dashboard = () => {
                     <h1 style={{ fontSize: '2rem', fontWeight: '700' }}>{getGreeting()}, {currentUserName}</h1>
                     <p style={{ color: 'var(--text-muted)' }}>Here's what's happening in your school today.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
+                <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center' }}>
+                    {/* Dynamic System Connection & Offline Queues Status Badge */}
+                    {!isOnline ? (
+                        <div className="card" style={{
+                            padding: '0.5rem 0.95rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            background: '#fff7ed',
+                            borderColor: '#fed7aa',
+                            color: '#ea580c'
+                        }}>
+                            <WifiOff size={16} color="#ea580c" />
+                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                Offline Mode {pendingCount > 0 ? `(${pendingCount} Saved)` : '(Local)'}
+                            </span>
+                        </div>
+                    ) : pendingCount > 0 ? (
+                        <div className="card" style={{
+                            padding: '0.5rem 0.95rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            background: '#eff6ff',
+                            borderColor: '#bfdbfe',
+                            color: '#2563eb'
+                        }}>
+                            <RefreshCw size={16} color="#2563eb" />
+                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                Online ({pendingCount} Syncing...)
+                            </span>
+                        </div>
+                    ) : (
+                        <div className="card" style={{
+                            padding: '0.5rem 0.95rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            background: '#ecfdf5',
+                            borderColor: '#a7f3d0',
+                            color: '#059669'
+                        }}>
+                            <Wifi size={16} color="#059669" />
+                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                Cloud Connected
+                            </span>
+                        </div>
+                    )}
+
                     <div className="card" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <Clock size={18} color="var(--primary)" />
                         <span style={{ fontWeight: '600' }}>{new Date().toLocaleDateString()}</span>
