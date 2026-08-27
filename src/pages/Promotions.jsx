@@ -590,31 +590,32 @@ const Promotions = () => {
 
     // --- RENDER ---
     return (
-        <div style={{ padding: '30px', width: '100%' }} className="animate-fade-in-up">
+        <div className="animate-fade-in-up">
             {/* Header */}
             <div style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-                marginBottom: '40px', background: 'white', padding: '25px', borderRadius: '20px',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.05)', border: '1px solid #F1F5F9'
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                marginBottom: '2rem'
             }}>
                 <div>
-                    <h1 style={{ fontSize: '28px', fontWeight: '800', color: '#1E293B', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <h1 style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--text-main)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <GraduationCap size={32} color="var(--primary)" />
                         Annual Promotions
                     </h1>
-                    <div style={{ color: '#64748B', fontSize: '16px' }}>
+                    <p style={{ color: 'var(--text-secondary)' }}>
                         Verify academic results and promote students to the next grade.
-                        {classes.length > 0 && (
-                            <div style={{ marginTop: '6px', color: '#F59E0B', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <AlertCircle size={16} />
-                                Please start promotions from Class {classes[classes.length - 1]?.name?.replace(/class/i, '').trim() || ''}
-                            </div>
-                        )}
-                    </div>
+                    </p>
+                    {classes.length > 0 && (
+                        <div style={{ marginTop: '6px', color: '#F59E0B', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <AlertCircle size={16} />
+                            Please start promotions from Class {classes[classes.length - 1]?.name?.replace(/class/i, '').trim() || ''}
+                        </div>
+                    )}
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '14px', color: '#94A3B8', marginBottom: '5px' }}>Academic Session</div>
-                    <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--primary)' }}>2025 - 2026</div>
+                <div style={{ textAlign: 'right', background: 'white', padding: '10px 20px', borderRadius: '12px', border: '1px solid #E2E8F0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                    <div style={{ fontSize: '12px', color: '#94A3B8', fontWeight: '600' }}>Academic Session</div>
+                    <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--primary)' }}>2025 - 2026</div>
                 </div>
             </div>
 
@@ -909,38 +910,42 @@ const Promotions = () => {
                                                         onClick={() => handleResultToggle(student.id, 'pass')}
                                                         style={{
                                                             flex: 1, padding: '8px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                                            background: isPass ? '#10B981' : '#F1F5F9', color: isPass ? 'white' : '#64748B',
-                                                            fontWeight: '700', fontSize: '12px', transition: 'all 0.2s'
+                                                            background: isPass ? '#10B981' : 'white', color: isPass ? 'white' : '#1E293B',
+                                                            fontWeight: '700', fontSize: '12px', transition: 'all 0.2s',
+                                                            boxShadow: isPass ? '0 2px 4px rgba(16, 185, 129, 0.2)' : '0 1px 2px rgba(0,0,0,0.05)'
                                                         }}
                                                     >PASS</button>
                                                     <button
                                                         onClick={() => handleResultToggle(student.id, 'fail')}
                                                         style={{
                                                             flex: 1, padding: '8px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                                            background: !isPass ? '#EF4444' : '#F1F5F9', color: !isPass ? 'white' : '#64748B',
-                                                            fontWeight: '700', fontSize: '12px', transition: 'all 0.2s'
+                                                            background: !isPass ? '#EF4444' : 'white', color: !isPass ? 'white' : '#1E293B',
+                                                            fontWeight: '700', fontSize: '12px', transition: 'all 0.2s',
+                                                            boxShadow: !isPass ? '0 2px 4px rgba(239, 68, 68, 0.2)' : '0 1px 2px rgba(0,0,0,0.05)'
                                                         }}
                                                     >FAIL</button>
                                                 </div>
-                                                <div style={{ width: '1px', height: '20px', background: '#E2E8F0' }} />
+                                                <div style={{ width: '1px', height: '20px', background: 'rgba(255,255,255,0.4)' }} />
                                                 <div style={{ flex: 2, display: 'flex', gap: '4px' }}>
                                                     <button
                                                         onClick={() => handleIndividualAction(student.id, 'promote')}
                                                         title={`To: ${student.nextClassName}`}
                                                         style={{
                                                             flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                                            background: status === 'promote' ? '#10B981' : 'rgba(255,255,255,0.2)',
-                                                            color: status === 'promote' ? 'white' : 'rgba(255,255,255,0.85)',
-                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
+                                                            background: status === 'promote' ? '#10B981' : 'white',
+                                                            color: status === 'promote' ? 'white' : '#1E293B',
+                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s',
+                                                            boxShadow: status === 'promote' ? '0 2px 4px rgba(16, 185, 129, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
                                                         }}
                                                     >Promote</button>
                                                     <button
                                                         onClick={() => handleIndividualAction(student.id, 'retain')}
                                                         style={{
                                                             flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                                            background: status === 'retain' ? '#EA580C' : 'rgba(255,255,255,0.2)',
-                                                            color: status === 'retain' ? 'white' : 'rgba(255,255,255,0.85)',
-                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
+                                                            background: status === 'retain' ? '#EA580C' : 'white',
+                                                            color: status === 'retain' ? 'white' : '#1E293B',
+                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s',
+                                                            boxShadow: status === 'retain' ? '0 2px 4px rgba(234, 88, 12, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
                                                         }}
                                                     >Retain</button>
                                                     {student.previousClassId && (
@@ -949,9 +954,10 @@ const Promotions = () => {
                                                             title={`Back to: ${student.previousClassName}`}
                                                             style={{
                                                                 flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                                                background: status === 'demote' ? '#EAB308' : 'rgba(255,255,255,0.2)',
-                                                                color: status === 'demote' ? 'white' : 'rgba(255,255,255,0.85)',
-                                                                fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
+                                                                background: status === 'demote' ? '#EAB308' : 'white',
+                                                                color: status === 'demote' ? 'white' : '#1E293B',
+                                                                fontWeight: '700', fontSize: '10px', transition: 'all 0.2s',
+                                                                boxShadow: status === 'demote' ? '0 2px 4px rgba(234, 179, 8, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
                                                             }}
                                                         >Demote</button>
                                                     )}
@@ -959,9 +965,10 @@ const Promotions = () => {
                                                         onClick={() => handleIndividualAction(student.id, 'leave')}
                                                         style={{
                                                             flex: 1, padding: '8px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                                            background: status === 'leave' ? '#DC2626' : 'rgba(255,255,255,0.2)',
-                                                            color: status === 'leave' ? 'white' : 'rgba(255,255,255,0.85)',
-                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s'
+                                                            background: status === 'leave' ? '#DC2626' : 'white',
+                                                            color: status === 'leave' ? 'white' : '#1E293B',
+                                                            fontWeight: '700', fontSize: '10px', transition: 'all 0.2s',
+                                                            boxShadow: status === 'leave' ? '0 2px 4px rgba(220, 38, 38, 0.3)' : '0 1px 2px rgba(0,0,0,0.05)'
                                                         }}
                                                     >Leave</button>
                                                 </div>
