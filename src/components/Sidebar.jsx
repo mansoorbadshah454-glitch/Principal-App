@@ -2,27 +2,35 @@ import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
-    Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText, Tv, FileCheck
+    Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText, Tv, FileCheck, Mail
 } from 'lucide-react';
 import { auth } from '../firebase';
+import { useAuthPermissions } from '../context/AuthPermissionsContext';
 
 const Sidebar = () => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { hasAccess, role, isPrincipal } = useAuthPermissions();
+
     const menuItems = [
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-        { icon: FileText, label: 'News Feeds', path: '/news-feed' },
-        { icon: UserPlus, label: 'New Admission', path: '/admission' },
-        { icon: GraduationCap, label: 'Classes', path: '/classes' },
-        { icon: Users, label: 'Teachers', path: '/teachers' },
-        { icon: UserCheck, label: 'Parents', path: '/parents' },
-        { icon: Wallet, label: 'Collections', path: '/collections' },
-        { icon: FileCheck, label: 'Paper Generator', path: '/paper-generator' },
-        { icon: TrendingUp, label: 'Promotions', path: '/promotions' },
-        { icon: UserCog, label: 'User Admin', path: '/users' },
-        { icon: Tv, label: 'Live Surveillance', path: '/surveillance' },
-        { icon: SettingsIcon, label: 'Settings', path: '/settings' },
+        { icon: LayoutDashboard, label: 'Dashboard', path: '/', permission: 'canViewDashboard' },
+        { icon: FileText, label: 'News Feeds', path: '/news-feed', permission: 'canManageNewsFeed' },
+        { icon: UserPlus, label: 'New Admission', path: '/admission', permission: 'canManageAdmissions' },
+        { icon: GraduationCap, label: 'Classes', path: '/classes', permission: 'canManageClasses' },
+        { icon: Users, label: 'Teachers', path: '/teachers', permission: 'canManageTeachers' },
+        { icon: UserCheck, label: 'Parents', path: '/parents', permission: 'canManageParents' },
+        { icon: Wallet, label: 'Collections', path: '/collections', permission: 'canManageCollections' },
+        { icon: FileCheck, label: 'Paper Generator', path: '/paper-generator', permission: 'canManagePaperGenerator' },
+        { icon: TrendingUp, label: 'Promotions', path: '/promotions', permission: 'canManagePromotions' },
+        { icon: UserCog, label: 'User Admin', path: '/users', permission: 'canManageUsers' },
+        { icon: Tv, label: 'Live Surveillance', path: '/surveillance', permission: 'canManageSurveillance' },
+        { icon: SettingsIcon, label: 'Settings', path: '/settings', permission: 'canManageSettings' },
     ];
+
+    const accessibleMenuItems = menuItems.filter(item => {
+        if (isPrincipal) return true;
+        return hasAccess(item.permission);
+    });
 
     const handleLogout = async () => {
         localStorage.removeItem('manual_session');
@@ -47,7 +55,7 @@ const Sidebar = () => {
             </div>
 
             <nav className="sidebar-nav">
-                {menuItems.map((item) => {
+                {accessibleMenuItems.map((item) => {
                     const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
                     return (
                         <a

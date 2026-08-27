@@ -5,6 +5,8 @@ import { auth } from './firebase';
 
 import MainLayout from './layouts/MainLayout';
 import { AlertProvider } from './context/AlertContext';
+import { AuthPermissionsProvider } from './context/AuthPermissionsContext';
+import ProtectedRoute from './components/ProtectedRoute';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Classes = lazy(() => import('./pages/Classes'));
@@ -84,30 +86,96 @@ function App() {
 
   return (
     <AlertProvider>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+      <AuthPermissionsProvider>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
 
-          <Route path="/" element={user ? <MainLayout /> : <Navigate to="/login" />}>
-            <Route index element={<Dashboard />} />
-            <Route path="admission" element={<Admission />} />
-            <Route path="classes" element={<Classes />} />
-            <Route path="classes/:classId" element={<ClassDetails />} />
-            <Route path="student/edit/:classId/:studentId" element={<EditStudentProfile />} />
-            <Route path="teachers" element={<Teachers />} />
-            <Route path="parents" element={<Parents />} />
-            <Route path="collections" element={<Collections />} />
-            <Route path="collections/:classId" element={<ClassCollection />} />
-            <Route path="promotions" element={<Promotions />} />
-            <Route path="news-feed" element={<NewsFeed />} />
-            <Route path="inbox" element={<Inbox />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="users" element={<Users />} />
-            <Route path="surveillance" element={<LiveSurveillance />} />
-            <Route path="paper-generator" element={<PaperGenerator />} />
-          </Route>
-        </Routes>
-      </Suspense>
+            <Route path="/" element={user ? <MainLayout /> : <Navigate to="/login" />}>
+              <Route index element={
+                <ProtectedRoute requiredPermission="canViewDashboard" pageName="Dashboard">
+                  <Dashboard />
+                </ProtectedRoute>
+              } />
+              <Route path="admission" element={
+                <ProtectedRoute requiredPermission="canManageAdmissions" pageName="New Admissions">
+                  <Admission />
+                </ProtectedRoute>
+              } />
+              <Route path="classes" element={
+                <ProtectedRoute requiredPermission="canManageClasses" pageName="Classes">
+                  <Classes />
+                </ProtectedRoute>
+              } />
+              <Route path="classes/:classId" element={
+                <ProtectedRoute requiredPermission="canManageClasses" pageName="Class Details">
+                  <ClassDetails />
+                </ProtectedRoute>
+              } />
+              <Route path="student/edit/:classId/:studentId" element={
+                <ProtectedRoute requiredPermission="canManageClasses" pageName="Edit Student">
+                  <EditStudentProfile />
+                </ProtectedRoute>
+              } />
+              <Route path="teachers" element={
+                <ProtectedRoute requiredPermission="canManageTeachers" pageName="Teachers & Staff">
+                  <Teachers />
+                </ProtectedRoute>
+              } />
+              <Route path="parents" element={
+                <ProtectedRoute requiredPermission="canManageParents" pageName="Parents Directory">
+                  <Parents />
+                </ProtectedRoute>
+              } />
+              <Route path="collections" element={
+                <ProtectedRoute requiredPermission="canManageCollections" pageName="Fee Collections">
+                  <Collections />
+                </ProtectedRoute>
+              } />
+              <Route path="collections/:classId" element={
+                <ProtectedRoute requiredPermission="canManageCollections" pageName="Class Collection">
+                  <ClassCollection />
+                </ProtectedRoute>
+              } />
+              <Route path="promotions" element={
+                <ProtectedRoute requiredPermission="canManagePromotions" pageName="Promotions">
+                  <Promotions />
+                </ProtectedRoute>
+              } />
+              <Route path="news-feed" element={
+                <ProtectedRoute requiredPermission="canManageNewsFeed" pageName="News Feeds">
+                  <NewsFeed />
+                </ProtectedRoute>
+              } />
+              <Route path="inbox" element={
+                <ProtectedRoute requiredPermission="canManageInbox" pageName="Inbox">
+                  <Inbox />
+                </ProtectedRoute>
+              } />
+              <Route path="settings" element={
+                <ProtectedRoute requiredPermission="canManageSettings" pageName="Settings">
+                  <Settings />
+                </ProtectedRoute>
+              } />
+              <Route path="users" element={
+                <ProtectedRoute requiredPermission="canManageUsers" pageName="User Administration">
+                  <Users />
+                </ProtectedRoute>
+              } />
+              <Route path="surveillance" element={
+                <ProtectedRoute requiredPermission="canManageSurveillance" pageName="Live Surveillance">
+                  <LiveSurveillance />
+                </ProtectedRoute>
+              } />
+              <Route path="paper-generator" element={
+                <ProtectedRoute requiredPermission="canManagePaperGenerator" pageName="Paper Generator">
+                  <PaperGenerator />
+                </ProtectedRoute>
+              } />
+            </Route>
+          </Routes>
+        </Suspense>
+      </AuthPermissionsProvider>
     </AlertProvider>
   );
 }

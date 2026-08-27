@@ -1,9 +1,16 @@
 import React from 'react';
-import { User, Trash2, Edit2, Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { User, Trash2, Edit2, Shield, ShieldAlert, ShieldCheck, Sparkles } from 'lucide-react';
+import { PERMISSIONS_LIST, checkPermission } from '../constants/permissions';
 
 const UserCard = ({ user, onDelete, onEdit, isPrincipal = true }) => {
+    const activePermissions = PERMISSIONS_LIST.filter(perm => 
+        checkPermission(user.role || 'school Admin', user.permissions, perm.id)
+    );
+
+    const hasAll = activePermissions.length === PERMISSIONS_LIST.length;
+
     return (
-        <div className="card hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-slate-100 bg-white overflow-hidden group relative">
+        <div className="card hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-slate-100 bg-white overflow-hidden group relative rounded-2xl">
             {/* Top decorative gradient line */}
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
@@ -53,38 +60,31 @@ const UserCard = ({ user, onDelete, onEdit, isPrincipal = true }) => {
                 </div>
 
                 <div className="border-t border-slate-50 pt-4 mt-2">
-                    <div className="flex items-center gap-2 mb-3">
-                        <ShieldCheck size={14} className="text-indigo-500" />
-                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Active Permissions</span>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-1.5">
+                            <ShieldCheck size={14} className="text-indigo-500" />
+                            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Active Permissions</span>
+                        </div>
+                        <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                            {activePermissions.length} / {PERMISSIONS_LIST.length}
+                        </span>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 min-h-[40px]">
-                        {user.permissions && Object.entries(user.permissions).map(([key, value]) => {
-                            if (!value) return null;
-                            // Format the key for display
-                            // e.g. 'canEditStudents' -> 'Students'
-                            let label = key.replace(/^can(Edit|Manage|View)?/, '').replace(/([A-Z])/g, ' $1').trim();
-
-                            // Fallback/Custom adjustment
-                            if (key === 'canManageNewsFeed') label = 'News Feed';
-                            if (key === 'canManageSettings') label = 'Settings';
-                            if (key === 'canViewReports') label = 'Reports';
-                            if (key === 'canManageAdmissions') label = 'Admissions';
-                            if (key === 'canManageParents') label = 'Parents';
-                            if (key === 'canManagePromotions') label = 'Promotions';
-
-                            if (!label) label = key; // Safety
-
-                            return (
-                                <span key={key} className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100/50">
-                                    {label}
+                    <div className="flex flex-wrap gap-1.5 min-h-[44px]">
+                        {activePermissions.length > 0 ? (
+                            activePermissions.map(perm => (
+                                <span
+                                    key={perm.id}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50/80 text-indigo-700 border border-indigo-100/70 shadow-2xs"
+                                    title={perm.description}
+                                >
+                                    {perm.label}
                                 </span>
-                            );
-                        })}
-                        {(!user.permissions || Object.values(user.permissions).every(v => !v)) && (
-                            <span className="text-xs text-slate-400 italic flex items-center gap-1 pl-1">
-                                <ShieldAlert size={12} />
-                                No specific permissions
+                            ))
+                        ) : (
+                            <span className="text-xs text-rose-500 italic flex items-center gap-1 pl-1 font-medium">
+                                <ShieldAlert size={13} />
+                                No active permissions (Restricted)
                             </span>
                         )}
                     </div>
@@ -93,7 +93,7 @@ const UserCard = ({ user, onDelete, onEdit, isPrincipal = true }) => {
 
             <div className="bg-slate-50/80 px-5 py-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400 font-medium">
                 <span>Joined</span>
-                <span>{user.createdAt?.toDate().toLocaleDateString() || 'N/A'}</span>
+                <span>{user.createdAt?.toDate ? user.createdAt.toDate().toLocaleDateString() : (user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A')}</span>
             </div>
         </div>
     );

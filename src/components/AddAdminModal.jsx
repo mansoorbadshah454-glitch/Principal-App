@@ -1,40 +1,39 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Save, Shield, Check, Loader2 } from 'lucide-react';
+import { X, Save, Shield, Check, Loader2, CheckCheck, Square } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { doc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { db, functions } from '../firebase';
+import { PERMISSIONS_LIST, DEFAULT_ADMIN_PERMISSIONS } from '../constants/permissions';
 
-const PERMISSIONS_LIST = [
-    { id: 'canManageAdmissions', label: 'New Admissions' },
-    { id: 'canEditStudents', label: 'Manage Students' },
-    { id: 'canEditTeachers', label: 'Manage Teachers' },
-    { id: 'canManageParents', label: 'Manage Parents' },
-    { id: 'canEditFees', label: 'Manage Fees & Collections' },
-    { id: 'canEditClasses', label: 'Manage Classes' },
-    { id: 'canManagePromotions', label: 'Promotions' },
-    { id: 'canManageNewsFeed', label: 'News Feed' },
-    { id: 'canViewReports', label: 'View Reports' },
-    { id: 'canManageSettings', label: 'System Settings' }
-];
+const normalizePermissions = (rawPerms) => {
+    if (!rawPerms) return { ...DEFAULT_ADMIN_PERMISSIONS };
+    const normalized = { ...DEFAULT_ADMIN_PERMISSIONS };
+
+    PERMISSIONS_LIST.forEach(perm => {
+        if (typeof rawPerms[perm.id] === 'boolean') {
+            normalized[perm.id] = rawPerms[perm.id];
+        } else {
+            // Legacy fallbacks only when the new key is not defined at all
+            if (perm.id === 'canManageCollections') {
+                normalized.canManageCollections = rawPerms.canEditFees === true;
+            } else if (perm.id === 'canManageClasses') {
+                normalized.canManageClasses = rawPerms.canEditClasses === true || rawPerms.canEditStudents === true;
+            } else if (perm.id === 'canManageTeachers') {
+                normalized.canManageTeachers = rawPerms.canEditTeachers === true;
+            }
+        }
+    });
+
+    return normalized;
+};
 
 const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
     const [formData, setFormData] = useState({
-        displayName: userToEdit?.displayName || '',
+        displayName: userToEdit?.displayName || userToEdit?.name || '',
         email: userToEdit?.email || '',
         password: '', // Only for new users
-        permissions: userToEdit?.permissions || {
-            canManageAdmissions: true,
-            canEditStudents: true,
-            canEditTeachers: false,
-            canManageParents: false,
-            canEditFees: false,
-            canEditClasses: false,
-            canManagePromotions: false,
-            canManageNewsFeed: false,
-            canViewReports: true,
-            canManageSettings: false
-        }
+        permissions: normalizePermissions(userToEdit?.permissions)
     });
 
     const [loading, setLoading] = useState(false);
@@ -47,6 +46,17 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                 ...prev.permissions,
                 [permId]: !prev.permissions[permId]
             }
+        }));
+    };
+
+    const handleSelectAll = (select) => {
+        const updated = {};
+        PERMISSIONS_LIST.forEach(p => {
+            updated[p.id] = select;
+        });
+        setFormData(prev => ({
+            ...prev,
+            permissions: updated
         }));
     };
 
@@ -222,38 +232,72 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
 
                         {/* Permissions Section */}
                         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
-                                <span className="w-1 h-4 bg-emerald-500 rounded-full"></span>
-                                Access Control
-                            </h3>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                                    <span className="w-1 h-4 bg-emerald-500 rounded-full"></span>
+                                    Access Control & Page Permissions
+                                </h3>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSelectAll(true)}
+                                        className="text-xs px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-semibold transition-colors flex items-center gap-1"
+                                    >
+                                        <CheckCheck size={14} />
+                                        Select All
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSelectAll(false)}
+                                        className="text-xs px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold transition-colors flex items-center gap-1"
+                                    >
+                                        <Square size={12} />
+                                        Clear All
+                                    </button>
+                                </div>
+                            </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {PERMISSIONS_LIST.map(perm => (
-                                    <label
-                                        key={perm.id}
-                                        className={`group flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all duration-200 ${formData.permissions[perm.id]
-                                            ? 'bg-indigo-50/50 border-indigo-200 shadow-sm'
-                                            : 'bg-slate-50/50 border-slate-100 hover:bg-white hover:border-slate-300 hover:shadow-sm'
-                                            }`}
-                                    >
-                                        <div className={`relative flex-shrink-0 w-5 h-5 rounded-md border-2 transition-all duration-200 flex items-center justify-center ${formData.permissions[perm.id]
-                                            ? 'bg-indigo-600 border-indigo-600'
-                                            : 'bg-white border-slate-300 group-hover:border-indigo-400'
-                                            }`}>
-                                            <Check size={12} className={`text-white transition-transform duration-200 ${formData.permissions[perm.id] ? 'scale-100' : 'scale-0'}`} strokeWidth={3} />
-                                        </div>
-                                        <input
-                                            type="checkbox"
-                                            className="hidden"
-                                            checked={!!formData.permissions[perm.id]}
-                                            onChange={() => handlePermissionChange(perm.id)}
-                                        />
-                                        <span className={`text-sm font-medium transition-colors ${formData.permissions[perm.id] ? 'text-indigo-900' : 'text-slate-600 group-hover:text-slate-900'
-                                            }`}>
-                                            {perm.label}
-                                        </span>
-                                    </label>
-                                ))}
+                                {PERMISSIONS_LIST.map(perm => {
+                                    const isChecked = !!formData.permissions[perm.id];
+                                    return (
+                                        <label
+                                            key={perm.id}
+                                            className={`group flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all duration-200 ${isChecked
+                                                ? 'bg-indigo-50/60 border-indigo-200 shadow-sm ring-1 ring-indigo-500/10'
+                                                : 'bg-slate-50/50 border-slate-200/80 hover:bg-white hover:border-slate-300 hover:shadow-sm'
+                                                }`}
+                                        >
+                                            <div className={`mt-0.5 relative flex-shrink-0 w-5 h-5 rounded-md border-2 transition-all duration-200 flex items-center justify-center ${isChecked
+                                                ? 'bg-indigo-600 border-indigo-600'
+                                                : 'bg-white border-slate-300 group-hover:border-indigo-400'
+                                                }`}>
+                                                <Check size={12} className={`text-white transition-transform duration-200 ${isChecked ? 'scale-100' : 'scale-0'}`} strokeWidth={3} />
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                className="hidden"
+                                                checked={isChecked}
+                                                onChange={() => handlePermissionChange(perm.id)}
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center justify-between gap-1">
+                                                    <span className={`text-sm font-semibold transition-colors ${isChecked ? 'text-indigo-950' : 'text-slate-700 group-hover:text-slate-900'}`}>
+                                                        {perm.label}
+                                                    </span>
+                                                    {perm.category && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-medium">
+                                                            {perm.category}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">
+                                                    {perm.description}
+                                                </p>
+                                            </div>
+                                        </label>
+                                    );
+                                })}
                             </div>
                         </div>
 
