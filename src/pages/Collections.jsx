@@ -1045,6 +1045,9 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const currentMonthIso = useMemo(() => new Date().toISOString().slice(0, 7), []);
     const [selectedMonth, setSelectedMonth] = useState(currentMonthIso);
 
+    // Cash Flow Progression View Mode: 'monthly' (12-Month Yearly Trend) | 'weekly' (5-Week Selected Month Breakdown)
+    const [cashFlowViewMode, setCashFlowViewMode] = useState('monthly');
+
     // Sub Tabs: 'analytics' | 'fee_slips' | 'incomes_expenses' | 'class_performance'
     const [activeSubTab, setActiveSubTab] = useState('analytics');
 
@@ -1355,6 +1358,123 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             chartData,
             pieData
         };
+    }, [selectedMonth, feeTransactions, financesData]);
+
+    // 5b. Selected Month Label Helper
+    const selectedMonthLabel = useMemo(() => {
+        return monthOptions.find(m => m.value === selectedMonth)?.label || selectedMonth;
+    }, [monthOptions, selectedMonth]);
+
+    // 5c. Annual Multi-Month Time-Series Aggregator (12 Months of Selected Year)
+    const yearlyCashFlowData = useMemo(() => {
+        const [targetYear] = selectedMonth.split('-').map(Number);
+        const monthsNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        
+        const yearMonths = monthsNames.map((mName, idx) => {
+            const mNum = idx + 1;
+            const mIso = `${targetYear}-${String(mNum).padStart(2, '0')}`;
+            return {
+                name: mName,
+                monthIso: mIso,
+                fees: 0,
+                incomes: 0,
+                expenses: 0,
+                receipts: 0
+            };
+        });
+
+        // 1. Fee transactions aggregation by month
+        (feeTransactions || []).forEach(tx => {
+            let txYear = 0;
+            let txMonth = 0;
+            if (tx.dateIso) {
+                const parts = tx.dateIso.split('-');
+                txYear = Number(parts[0]);
+                txMonth = Number(parts[1]);
+            } else if (tx.timestamp?.seconds) {
+                const d = new Date(tx.timestamp.seconds * 1000);
+                txYear = d.getFullYear();
+                txMonth = d.getMonth() + 1;
+            } else if (tx.dateString) {
+                const d = new Date(tx.dateString);
+                if (!isNaN(d.getTime())) {
+                    txYear = d.getFullYear();
+                    txMonth = d.getMonth() + 1;
+                }
+            }
+
+            if (txYear === targetYear && txMonth >= 1 && txMonth <= 12) {
+                const item = yearMonths[txMonth - 1];
+                if (item) {
+                    item.fees += (Number(tx.totalPaid) || 0);
+                    item.receipts += 1;
+                }
+            }
+        });
+
+        // 2. Incomes aggregation by month
+        (financesData.incomes || []).forEach(inc => {
+            if (inc.type === 'permanent') {
+                // Permanent applies to each of the 12 months
+                yearMonths.forEach(m => {
+                    m.incomes += (Number(inc.amount) || 0);
+                });
+            } else {
+                let incYear = 0;
+                let incMonth = 0;
+                const dStr = inc.createdAt || inc.date;
+                if (dStr) {
+                    const d = new Date(dStr);
+                    if (!isNaN(d.getTime())) {
+                        incYear = d.getFullYear();
+                        incMonth = d.getMonth() + 1;
+                    }
+                }
+                if (incYear === targetYear && incMonth >= 1 && incMonth <= 12) {
+                    const item = yearMonths[incMonth - 1];
+                    if (item) {
+                        item.incomes += (Number(inc.amount) || 0);
+                    }
+                }
+            }
+        });
+
+        // 3. Operational Expenses aggregation by month (Excluding teacher salaries)
+        (financesData.expenses || []).forEach(exp => {
+            if (exp.type === 'permanent') {
+                // Permanent applies to each of the 12 months
+                yearMonths.forEach(m => {
+                    m.expenses += (Number(exp.amount) || 0);
+                });
+            } else {
+                let expYear = 0;
+                let expMonth = 0;
+                const dStr = exp.createdAt || exp.date;
+                if (dStr) {
+                    const d = new Date(dStr);
+                    if (!isNaN(d.getTime())) {
+                        expYear = d.getFullYear();
+                        expMonth = d.getMonth() + 1;
+                    }
+                }
+                if (expYear === targetYear && expMonth >= 1 && expMonth <= 12) {
+                    const item = yearMonths[expMonth - 1];
+                    if (item) {
+                        item.expenses += (Number(exp.amount) || 0);
+                    }
+                }
+            }
+        });
+
+        return yearMonths.map(m => ({
+            name: m.name,
+            monthIso: m.monthIso,
+            inflow: m.fees + m.incomes,
+            expenses: m.expenses,
+            net: (m.fees + m.incomes) - m.expenses,
+            receipts: m.receipts,
+            isCurrentSelected: m.monthIso === selectedMonth
+        }));
     }, [selectedMonth, feeTransactions, financesData]);
 
     // 6. Expected School Target Calculations from Students Data
@@ -2106,32 +2226,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     </div>
                 </div>
 
-                {/* 3. Gross Total Revenue */}
-                <div className="card" style={{
-                    background: '#ffffff',
-                    border: '1px solid #e0e7ff',
-                    borderLeft: '4px solid #4f46e5',
-                    borderRadius: '14px',
-                    padding: '1.2rem',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            Gross Revenue
-                        </span>
-                        <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4f46e5' }}>
-                            <DollarSign size={16} />
-                        </div>
-                    </div>
-                    <div style={{ fontSize: '1.65rem', fontWeight: '800', color: '#0f172a', marginTop: '0.4rem' }}>
-                        Rs {monthlyMetrics.grossRevenue.toLocaleString()}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.4rem', fontSize: '0.78rem', color: '#64748b' }}>
-                        <span>Total Monthly Inflow</span>
-                    </div>
-                </div>
-
-                {/* 4. Total Operational Expenses (Strictly Excludes Teacher Salary) */}
+                {/* 3. Total Operational Expenses (Strictly Excludes Teacher Salary) */}
                 <div className="card" style={{
                     background: '#ffffff',
                     border: '1px solid #fee2e2',
@@ -2153,6 +2248,31 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.4rem', fontSize: '0.75rem', color: '#991b1b', fontWeight: '600' }}>
                         <span>School Operational (Excl. Salary)</span>
+                    </div>
+                </div>
+
+                {/* 4. Gross Total Revenue */}
+                <div className="card" style={{
+                    background: '#ffffff',
+                    border: '1px solid #e0e7ff',
+                    borderLeft: '4px solid #4f46e5',
+                    borderRadius: '14px',
+                    padding: '1.2rem',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            Gross Revenue
+                        </span>
+                        <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4f46e5' }}>
+                            <DollarSign size={16} />
+                        </div>
+                    </div>
+                    <div style={{ fontSize: '1.65rem', fontWeight: '800', color: '#0f172a', marginTop: '0.4rem' }}>
+                        Rs {monthlyMetrics.grossRevenue.toLocaleString()}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.4rem', fontSize: '0.78rem', color: '#64748b' }}>
+                        <span>Total Monthly Inflow</span>
                     </div>
                 </div>
 
@@ -2336,7 +2456,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     {/* Charts Grid */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '1.5rem' }}>
                         
-                        {/* 1. Weekly Inflow vs Outflow Cashflow Chart */}
+                        {/* 1. Monthly / Weekly Inflow vs Outflow Cashflow Chart */}
                         <div className="card" style={{
                             background: '#ffffff',
                             borderRadius: '16px',
@@ -2344,38 +2464,164 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             border: '1px solid #e2e8f0',
                             boxShadow: '0 2px 4px rgba(0,0,0,0.03)'
                         }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.25rem' }}>
                                 <div>
                                     <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                         <BarChart3 size={18} color="#0078d4" />
-                                        Weekly Cash Flow Progression
+                                        {cashFlowViewMode === 'monthly' 
+                                            ? `Monthly Cash Flow Progression (${selectedMonth.split('-')[0]})` 
+                                            : `Weekly Cash Flow Progression (${selectedMonthLabel})`}
                                     </h3>
-                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-                                        Paisa aya (Inflow) vs Paisa gaya (Expenses) week-by-week
+                                    <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                                        {cashFlowViewMode === 'monthly'
+                                            ? 'Paisa aya (Inflow) vs Kharcha (Expenses) pore saal ka mahana jaiza'
+                                            : 'Paisa aya (Inflow) vs Paisa gaya (Expenses) week-by-week (5 Weeks)'}
                                     </p>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.75rem', fontWeight: '700' }}>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#16a34a' }}>
-                                        <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#16a34a' }} /> Inflow
-                                    </span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#dc2626' }}>
-                                        <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#dc2626' }} /> Expenses
-                                    </span>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                    {/* View Mode Toggle Switch */}
+                                    <div style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        background: '#f1f5f9',
+                                        padding: '3px',
+                                        borderRadius: '10px',
+                                        border: '1px solid #e2e8f0'
+                                    }}>
+                                        <button
+                                            onClick={() => setCashFlowViewMode('monthly')}
+                                            style={{
+                                                border: 'none',
+                                                background: cashFlowViewMode === 'monthly' ? '#ffffff' : 'transparent',
+                                                color: cashFlowViewMode === 'monthly' ? '#0078d4' : '#64748b',
+                                                fontWeight: cashFlowViewMode === 'monthly' ? '800' : '600',
+                                                padding: '4px 10px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.75rem',
+                                                cursor: 'pointer',
+                                                boxShadow: cashFlowViewMode === 'monthly' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                        >
+                                            <BarChart3 size={13} /> Monthly (12M)
+                                        </button>
+                                        <button
+                                            onClick={() => setCashFlowViewMode('weekly')}
+                                            style={{
+                                                border: 'none',
+                                                background: cashFlowViewMode === 'weekly' ? '#ffffff' : 'transparent',
+                                                color: cashFlowViewMode === 'weekly' ? '#0078d4' : '#64748b',
+                                                fontWeight: cashFlowViewMode === 'weekly' ? '800' : '600',
+                                                padding: '4px 10px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.75rem',
+                                                cursor: 'pointer',
+                                                boxShadow: cashFlowViewMode === 'weekly' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                        >
+                                            <Calendar size={13} /> Weekly (5W)
+                                        </button>
+                                    </div>
+
+                                    {/* Inflow / Expense Color Keys */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.75rem', fontWeight: '700' }}>
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#16a34a' }}>
+                                            <span style={{ width: '9px', height: '9px', borderRadius: '3px', background: '#16a34a' }} /> Inflow
+                                        </span>
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#dc2626' }}>
+                                            <span style={{ width: '9px', height: '9px', borderRadius: '3px', background: '#dc2626' }} /> Expenses
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
 
                             <div style={{ height: '260px', width: '100%' }}>
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={monthlyMetrics.chartData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                                    <BarChart
+                                        data={cashFlowViewMode === 'monthly' ? yearlyCashFlowData : monthlyMetrics.chartData}
+                                        margin={{ top: 10, right: 10, left: -15, bottom: 0 }}
+                                        onClick={(e) => {
+                                            if (cashFlowViewMode === 'monthly' && e && e.activePayload?.[0]?.payload?.monthIso) {
+                                                setSelectedMonth(e.activePayload[0].payload.monthIso);
+                                                setCashFlowViewMode('weekly');
+                                            }
+                                        }}
+                                    >
                                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                                         <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} />
                                         <YAxis stroke="#64748b" fontSize={11} tickFormatter={(val) => `Rs ${val >= 1000 ? `${(val/1000).toFixed(0)}k` : val}`} />
                                         <RechartsTooltip
-                                            formatter={(value, name) => [`Rs ${Number(value).toLocaleString()}`, name === 'inflow' ? 'Total Inflow' : 'Operational Expenses']}
-                                            contentStyle={{ background: '#0f172a', color: '#ffffff', borderRadius: '8px', border: 'none', fontSize: '0.82rem' }}
+                                            content={({ active, payload, label }) => {
+                                                if (!active || !payload || !payload.length) return null;
+                                                const data = payload[0]?.payload || {};
+                                                const inflowVal = Number(data.inflow) || 0;
+                                                const expVal = Number(data.expenses) || 0;
+                                                const netVal = Number(data.net !== undefined ? data.net : (inflowVal - expVal));
+                                                const isSurplus = netVal >= 0;
+
+                                                return (
+                                                    <div style={{
+                                                        background: '#0f172a',
+                                                        color: '#ffffff',
+                                                        borderRadius: '10px',
+                                                        padding: '0.75rem 1rem',
+                                                        fontSize: '0.82rem',
+                                                        boxShadow: '0 10px 25px -5px rgba(0,0,0,0.4)',
+                                                        border: '1px solid #334155',
+                                                        minWidth: '210px'
+                                                    }}>
+                                                        <div style={{ fontWeight: '800', fontSize: '0.88rem', borderBottom: '1px solid #334155', paddingBottom: '0.4rem', marginBottom: '0.5rem', color: '#f8fafc' }}>
+                                                            {label}
+                                                            {cashFlowViewMode === 'monthly' && (
+                                                                <span style={{ display: 'block', fontSize: '0.72rem', color: '#94a3b8', fontWeight: '500', marginTop: '2px' }}>
+                                                                    (Click bar to open Weekly)
+                                                                </span>
+                                                            )}
+                                                        </div>
+
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                                            {/* 1. Gross Revenue */}
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                                                                <span style={{ color: '#4ade80', display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: '600' }}>
+                                                                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: '#22c55e' }} />
+                                                                    Gross Revenue:
+                                                                </span>
+                                                                <strong style={{ color: '#ffffff' }}>Rs {inflowVal.toLocaleString()}</strong>
+                                                            </div>
+
+                                                            {/* 2. Operational Expenses */}
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                                                                <span style={{ color: '#f87171', display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: '600' }}>
+                                                                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: '#ef4444' }} />
+                                                                    Operational Expenses:
+                                                                </span>
+                                                                <strong style={{ color: '#ffffff' }}>Rs {expVal.toLocaleString()}</strong>
+                                                            </div>
+
+                                                            {/* 3. Net Balance */}
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', borderTop: '1px dashed #334155', paddingTop: '0.35rem', marginTop: '0.2rem' }}>
+                                                                <span style={{ color: isSurplus ? '#38bdf8' : '#fb923c', fontWeight: '700' }}>
+                                                                    Net Balance:
+                                                                </span>
+                                                                <strong style={{ color: isSurplus ? '#38bdf8' : '#fb923c' }}>
+                                                                    {netVal < 0 ? '-' : ''}Rs {Math.abs(netVal).toLocaleString()}
+                                                                </strong>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }}
                                         />
-                                        <Bar dataKey="inflow" fill="#16a34a" radius={[6, 6, 0, 0]} name="Inflow" />
-                                        <Bar dataKey="expenses" fill="#dc2626" radius={[6, 6, 0, 0]} name="Expenses" />
+                                        <Bar dataKey="inflow" fill="#16a34a" radius={[6, 6, 0, 0]} name="Inflow" cursor={cashFlowViewMode === 'monthly' ? 'pointer' : 'default'} />
+                                        <Bar dataKey="expenses" fill="#dc2626" radius={[6, 6, 0, 0]} name="Expenses" cursor={cashFlowViewMode === 'monthly' ? 'pointer' : 'default'} />
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
