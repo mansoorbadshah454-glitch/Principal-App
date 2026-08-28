@@ -264,6 +264,18 @@ Extract all exercise questions into this strict JSON format:
       "marks": 1
     },
     {
+      "type": "blank",
+      "question": "The sun rises in the ______ direction.",
+      "correctAnswer": "East",
+      "marks": 1
+    },
+    {
+      "type": "true_false",
+      "question": "Plants produce oxygen during photosynthesis.",
+      "correctAnswer": "True",
+      "marks": 1
+    },
+    {
       "type": "short",
       "question": "Short question text",
       "marks": 2
@@ -277,7 +289,7 @@ Extract all exercise questions into this strict JSON format:
 }
 
 RULES:
-1. Accurately categorize MCQs (with 4 options), Short Questions, and Long Questions.
+1. Accurately categorize question types: 'mcq' (with 4 options), 'blank' (Fill in the blanks with ______), 'true_false' (True/False), 'short', and 'long'.
 2. Return ONLY JSON without markdown code fences.
 3. Capture exact Urdu or English text.
 `;
@@ -311,3 +323,127 @@ RULES:
         topics: parsed.topics || []
     };
 };
+
+/**
+ * Scans a Multi-Page Book / Exercise PDF or Batch Scanned Images
+ * Automatically detects all chapters and extracts all exercise questions (MCQs, Blanks, True/False, Shorts, Longs) grouped by chapter.
+ */
+export const scanCompleteBookPdf = async (base64Data, mimeType, subjectName, className) => {
+    const activeKey = await resolveMasterGeminiKey();
+    if (!activeKey) {
+        throw new Error("AI Engine not configured. Please open Super Admin WebApp -> Settings and save your free Gemini API Key.");
+    }
+
+    const promptText = `
+You are an elite educational textbook parser for Pakistani & International School Curriculums.
+Subject: "${subjectName}"
+Target Class: "${className || 'General'}"
+
+Analyze this entire document / multi-page scanned PDF.
+The document contains textbook index pages and/or chapter exercise pages (scanned via CamScanner or digital PDF).
+
+TASK:
+1. Identify all distinct Chapters / Units / Sabaq present in this document.
+2. Under each chapter, extract ALL exercise questions found in the pages:
+   - MCQs (Multiple Choice Questions) with all 4 options and correct answer.
+   - Fill in the Blanks (with target blank position denoted by '______').
+   - True / False statements.
+   - Short Questions / Conceptual Questions / Review Questions.
+   - Long Questions / Comprehensive / Analytical / Descriptive Questions / Numericals.
+3. If the textbook is in Urdu, Sindhi, or Arabic, accurately preserve native script and correct typography.
+4. If the textbook is bilingual (English & Urdu), capture both English and Urdu text.
+
+Strictly output ONLY valid JSON in this exact structure without markdown code fences or backticks:
+{
+  "chapters": [
+    {
+      "chapterNumber": 1,
+      "title": "Chapter 1: Physical Quantities and Measurement",
+      "topics": ["SI Units", "Significant Figures", "Measuring Instruments"],
+      "questions": [
+        {
+          "type": "mcq",
+          "question": "The number of base units in SI is:",
+          "options": ["3", "6", "7", "9"],
+          "correctAnswer": "7",
+          "marks": 1
+        },
+        {
+          "type": "blank",
+          "question": "The least count of Vernier Calipers is ______ mm.",
+          "correctAnswer": "0.1",
+          "marks": 1
+        },
+        {
+          "type": "true_false",
+          "question": "Kilogram is a base unit in SI system.",
+          "correctAnswer": "True",
+          "marks": 1
+        },
+        {
+          "type": "short",
+          "question": "What is the least count of a Vernier Calipers?",
+          "marks": 2
+        },
+        {
+          "type": "long",
+          "question": "Describe the construction and working of a screw gauge with diagram explanation.",
+          "marks": 5
+        }
+      ]
+    }
+  ]
+}
+
+RULES:
+1. Do not skip any chapters or questions present in the scanned pages.
+2. Group each question under its correct chapter.
+3. Every MCQ MUST have 4 options in the options array.
+4. Fill in the blanks MUST have '______' in the question text.
+5. Question types MUST be one of: 'mcq', 'blank', 'true_false', 'short', 'long'.
+6. Marks: MCQ = 1, Blank = 1, True/False = 1, Short = 2 or 3, Long = 4 or 5.
+7. Return clean, raw JSON ONLY.
+`;
+
+    const payload = {
+        contents: [
+            {
+                parts: [
+                    { text: promptText },
+                    {
+                        inlineData: {
+                            data: base64Data,
+                            mimeType: mimeType || 'application/pdf'
+                        }
+                    }
+                ]
+            }
+        ],
+        generationConfig: {
+            temperature: 0.1
+        }
+    };
+
+    const rawText = await executeGeminiRequest(activeKey, payload);
+
+    let cleanJsonStr = rawText.trim();
+    if (cleanJsonStr.startsWith('```json')) {
+        cleanJsonStr = cleanJsonStr.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (cleanJsonStr.startsWith('```')) {
+        cleanJsonStr = cleanJsonStr.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    }
+
+    try {
+        const parsed = JSON.parse(cleanJsonStr);
+        return parsed.chapters || [];
+    } catch (parseErr) {
+        // Fallback: try to extract JSON from anywhere in text
+        const jsonMatch = cleanJsonStr.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const fallbackParsed = JSON.parse(jsonMatch[0]);
+            return fallbackParsed.chapters || [];
+        }
+        throw new Error("Could not parse AI response into structured chapters. Please ensure the PDF is legible.");
+    }
+};
+

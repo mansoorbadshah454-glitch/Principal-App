@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 256 256" preserveAspectRatio="xMidYMid meet" fill="none">
+  <!-- Mortarboard Cap Top (Diamond) -->
+  <polygon points="128,4 252,98 128,192 4,98" fill="#2563EB"/>
+  
+  <!-- Right Tassel Drop -->
+  <polygon points="224,98 252,98 252,200 224,200" fill="#2563EB"/>
+  
+  <!-- Lower Skullcap Chevron Band -->
+  <polygon points="56,155 128,208 200,155 200,198 128,252 56,198" fill="#2563EB"/>
+</svg>

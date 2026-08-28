@@ -22,10 +22,12 @@ const COMPREHENSIVE_SUBJECTS = [
 ];
 
 const EXAM_PRESETS = [
-    { id: 'mid_term', name: 'Mid Term Exam (50 Marks)', badge: '50 Marks', totalMarks: 50, timeAllowed: '1 Hour 30 Mins', mcqCount: 10, mcqMarksEach: 1, shortCount: 8, shortAttempt: 6, shortMarksEach: 3, longCount: 3, longAttempt: 2, longMarksEach: 6 },
-    { id: 'monthly_test', name: 'Monthly Class Test (25 Marks)', badge: '25 Marks', totalMarks: 25, timeAllowed: '45 Minutes', mcqCount: 5, mcqMarksEach: 1, shortCount: 6, shortAttempt: 4, shortMarksEach: 2, longCount: 2, longAttempt: 1, longMarksEach: 6 },
-    { id: 'final_board', name: 'Annual / Board Pattern (75 Marks)', badge: '75 Marks', totalMarks: 75, timeAllowed: '3 Hours', mcqCount: 15, mcqMarksEach: 1, shortCount: 15, shortAttempt: 10, shortMarksEach: 2, longCount: 5, longAttempt: 3, longMarksEach: 8 },
-    { id: 'grand_test', name: 'Grand Test / Pre-Board (100 Marks)', badge: '100 Marks', totalMarks: 100, timeAllowed: '3 Hours', mcqCount: 20, mcqMarksEach: 1, shortCount: 18, shortAttempt: 12, shortMarksEach: 2, longCount: 6, longAttempt: 4, longMarksEach: 8 }
+    { id: 'primary_worksheet', name: 'Primary School Worksheet (25 Marks)', badge: 'Class 1-5', totalMarks: 25, timeAllowed: '45 Minutes', mcqCount: 5, mcqMarksEach: 1, blankCount: 5, blankMarksEach: 1, tfCount: 5, tfMarksEach: 1, shortCount: 5, shortAttempt: 5, shortMarksEach: 2, longCount: 0, longAttempt: 0, longMarksEach: 0, showAnswerLines: true },
+    { id: 'primary_comprehensive', name: 'Primary Term Exam (50 Marks)', badge: 'Class 1-5', totalMarks: 50, timeAllowed: '1 Hour 30 Mins', mcqCount: 10, mcqMarksEach: 1, blankCount: 10, blankMarksEach: 1, tfCount: 5, tfMarksEach: 1, shortCount: 8, shortAttempt: 8, shortMarksEach: 2, longCount: 1, longAttempt: 1, longMarksEach: 5, showAnswerLines: true },
+    { id: 'monthly_test', name: 'Monthly Class Test (25 Marks)', badge: 'Class 6-10', totalMarks: 25, timeAllowed: '45 Minutes', mcqCount: 5, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 6, shortAttempt: 4, shortMarksEach: 2, longCount: 2, longAttempt: 1, longMarksEach: 6, showAnswerLines: false },
+    { id: 'mid_term', name: 'Mid Term Exam (50 Marks)', badge: 'Standard 50M', totalMarks: 50, timeAllowed: '1 Hour 30 Mins', mcqCount: 10, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 8, shortAttempt: 6, shortMarksEach: 3, longCount: 3, longAttempt: 2, longMarksEach: 6, showAnswerLines: false },
+    { id: 'final_board', name: 'Annual / Board Pattern (75 Marks)', badge: 'Board 75M', totalMarks: 75, timeAllowed: '3 Hours', mcqCount: 15, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 15, shortAttempt: 10, shortMarksEach: 2, longCount: 5, longAttempt: 3, longMarksEach: 8, showAnswerLines: false },
+    { id: 'grand_test', name: 'Grand Test / Pre-Board (100 Marks)', badge: 'Pre-Board 100M', totalMarks: 100, timeAllowed: '3 Hours', mcqCount: 20, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 18, shortAttempt: 12, shortMarksEach: 2, longCount: 6, longAttempt: 4, longMarksEach: 8, showAnswerLines: false }
 ];
 
 const PaperGenerator = () => {
@@ -69,9 +71,18 @@ const PaperGenerator = () => {
     const [mcqCount, setMcqCount] = useState(10);
     const [mcqMarksEach, setMcqMarksEach] = useState(1);
 
+    // Fill in the Blanks & True/False (Primary / Activity Style)
+    const [blankCount, setBlankCount] = useState(0);
+    const [blankMarksEach, setBlankMarksEach] = useState(1);
+
+    const [tfCount, setTfCount] = useState(0);
+    const [tfMarksEach, setTfMarksEach] = useState(1);
+
     const [shortCount, setShortCount] = useState(8);
     const [shortAttempt, setShortAttempt] = useState(6);
     const [shortMarksEach, setShortMarksEach] = useState(3);
+    const [showAnswerLines, setShowAnswerLines] = useState(false);
+    const [answerLineCount, setAnswerLineCount] = useState(2);
 
     const [longCount, setLongCount] = useState(3);
     const [longAttempt, setLongAttempt] = useState(2);
@@ -80,16 +91,22 @@ const PaperGenerator = () => {
     // 3. Typesetting & Language
     const [languageMode, setLanguageMode] = useState('bilingual'); // 'english' | 'urdu' | 'bilingual'
     const [paperStyle, setPaperStyle] = useState('board_standard');
-    const [fontSize, setFontSize] = useState('normal');
+    const [fontSize, setFontSize] = useState('normal'); // 'compact' | 'normal' | 'large'
+    const [mcqLayout, setMcqLayout] = useState('4_col'); // '2_col' | '4_col'
+    const [urduOptionFormat, setUrduOptionFormat] = useState('alif_bay'); // 'alif_bay' | 'abcd'
     const [showAnswerKey, setShowAnswerKey] = useState(true);
 
     // Calculated Blueprint Metrics
-    const totalMarks = (mcqCount * mcqMarksEach) + (shortAttempt * shortMarksEach) + (longAttempt * longMarksEach);
+    const totalMarks = (mcqCount * mcqMarksEach) + 
+                       (blankCount * blankMarksEach) + 
+                       (tfCount * tfMarksEach) + 
+                       (shortAttempt * shortMarksEach) + 
+                       (longAttempt * longMarksEach);
 
     // --- STEP 2: GENERATED PAPER STATE ---
     const [isGenerating, setIsGenerating] = useState(false);
     const [generatedPaper, setGeneratedPaper] = useState(null);
-    const [availablePool, setAvailablePool] = useState({ mcqs: [], shorts: [], longs: [] });
+    const [availablePool, setAvailablePool] = useState({ mcqs: [], blanks: [], true_false: [], shorts: [], longs: [] });
     const [activeView, setActiveView] = useState('config'); // 'config' | 'preview'
     const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
@@ -100,6 +117,26 @@ const PaperGenerator = () => {
         if (!title) return 999;
         const match = title.match(/(?:chapter|unit|ch|sabaq|unwan)?\s*(\d+)/i) || title.match(/\d+/);
         return match ? parseInt(match[1] || match[0], 10) : 999;
+    };
+
+    // Helper: Accurately detect if text is predominantly Urdu or English (prevents BiDi scramble for inline Arabic Durood)
+    const isUrduText = (text, subject = '') => {
+        if (!text) return false;
+        const isUrduSubject = /^(urdu|islamiat|islamiyat|arabic|sindhi|pashto|tarjuma)/i.test((subject || '').trim());
+        
+        const urduChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
+        const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
+
+        // If text has significantly more Urdu characters than English/Latin characters
+        if (urduChars > latinChars && urduChars > 3) return true;
+        
+        // If text has NO English characters and has Urdu/Arabic
+        if (latinChars === 0 && urduChars > 0) return true;
+        
+        // If subject is specifically Urdu/Islamiat and has very few Latin characters
+        if (isUrduSubject && latinChars < 5 && urduChars > 0) return true;
+
+        return false;
     };
 
     // 1. Resolve School Details & Classes from Firestore
@@ -161,7 +198,7 @@ const PaperGenerator = () => {
         resolveSchool();
     }, []);
 
-    // 2. Update Subjects when Class changes
+    // 2. Update Subjects when Class changes & auto-recommend preset
     useEffect(() => {
         if (!selectedClassId) return;
         const currentClass = classes.find(c => c.id === selectedClassId);
@@ -172,6 +209,13 @@ const PaperGenerator = () => {
             setAvailableSubjects(combined);
             if (!combined.includes(selectedSubject)) {
                 setSelectedSubject(combined[0]);
+            }
+
+            // Smart preset recommendation for Primary (Class 1-5) vs Secondary (Class 6-10)
+            const classNameLower = (currentClass.name || '').toLowerCase();
+            const isPrimary = /\b(1|2|3|4|5|nursery|kg|prep|primary|playgroup)\b/.test(classNameLower);
+            if (isPrimary && (selectedPreset === 'mid_term' || selectedPreset === 'final_board')) {
+                handleApplyPreset('primary_worksheet');
             }
         }
     }, [selectedClassId, classes]);
@@ -245,12 +289,19 @@ const PaperGenerator = () => {
             setTimeAllowed(preset.timeAllowed);
             setMcqCount(preset.mcqCount);
             setMcqMarksEach(preset.mcqMarksEach);
+            setBlankCount(preset.blankCount || 0);
+            setBlankMarksEach(preset.blankMarksEach || 1);
+            setTfCount(preset.tfCount || 0);
+            setTfMarksEach(preset.tfMarksEach || 1);
             setShortCount(preset.shortCount);
             setShortAttempt(preset.shortAttempt);
             setShortMarksEach(preset.shortMarksEach);
             setLongCount(preset.longCount);
             setLongAttempt(preset.longAttempt);
             setLongMarksEach(preset.longMarksEach);
+            if (typeof preset.showAnswerLines === 'boolean') {
+                setShowAnswerLines(preset.showAnswerLines);
+            }
         }
     };
 
@@ -284,29 +335,37 @@ const PaperGenerator = () => {
             });
 
             if (allQuestions.length === 0) {
-                alert(`No exercise questions have been saved yet for the selected chapters of ${selectedSubject}.\n\nPlease go to "Settings -> Upload Syllabus", select the chapter, and scan exercise photos to save questions.`);
+                alert(`No exercise questions have been saved yet for the selected chapters of ${selectedSubject}.\n\nPlease go to "Settings -> Upload Syllabus", select the chapter, and scan exercise photos or upload PDF to save questions.`);
                 setIsGenerating(false);
                 return;
             }
 
             // Segregate by Type
             let mcqPool = allQuestions.filter(q => q.type === 'mcq');
-            let shortPool = allQuestions.filter(q => q.type === 'short' || !q.type);
+            let blankPool = allQuestions.filter(q => q.type === 'blank');
+            let tfPool = allQuestions.filter(q => q.type === 'true_false');
+            let shortPool = allQuestions.filter(q => q.type === 'short' || (!q.type && q.type !== 'mcq' && q.type !== 'long'));
             let longPool = allQuestions.filter(q => q.type === 'long');
 
             // Fisher-Yates Shuffle
             const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
 
             const shuffledMcqs = shuffle(mcqPool);
+            const shuffledBlanks = shuffle(blankPool);
+            const shuffledTfs = shuffle(tfPool);
             const shuffledShorts = shuffle(shortPool);
             const shuffledLongs = shuffle(longPool);
 
             // Determine actual questions to display
             const targetMcqs = Math.min(mcqCount, shuffledMcqs.length);
+            const targetBlanks = Math.min(blankCount, shuffledBlanks.length);
+            const targetTfs = Math.min(tfCount, shuffledTfs.length);
             const targetShorts = Math.min(shortCount, shuffledShorts.length);
             const targetLongs = Math.min(longCount, shuffledLongs.length);
 
             const pickedMcqs = shuffledMcqs.slice(0, targetMcqs);
+            const pickedBlanks = shuffledBlanks.slice(0, targetBlanks);
+            const pickedTfs = shuffledTfs.slice(0, targetTfs);
             const pickedShorts = shuffledShorts.slice(0, targetShorts);
             const pickedLongs = shuffledLongs.slice(0, targetLongs);
 
@@ -314,11 +373,15 @@ const PaperGenerator = () => {
             const actualLongAttempt = Math.min(longAttempt, targetLongs);
 
             const actualTotalMarks = (targetMcqs * mcqMarksEach) + 
+                                     (targetBlanks * blankMarksEach) + 
+                                     (targetTfs * tfMarksEach) + 
                                      (actualShortAttempt * shortMarksEach) + 
                                      (actualLongAttempt * longMarksEach);
 
             setAvailablePool({
                 mcqs: shuffledMcqs.slice(targetMcqs),
+                blanks: shuffledBlanks.slice(targetBlanks),
+                true_false: shuffledTfs.slice(targetTfs),
                 shorts: shuffledShorts.slice(targetShorts),
                 longs: shuffledLongs.slice(targetLongs)
             });
@@ -339,11 +402,19 @@ const PaperGenerator = () => {
                 languageMode,
                 paperStyle,
                 fontSize,
+                mcqLayout,
+                urduOptionFormat,
+                showAnswerLines,
+                answerLineCount,
                 totalMarks: actualTotalMarks,
                 mcqs: pickedMcqs,
+                blanks: pickedBlanks,
+                true_false: pickedTfs,
                 shorts: pickedShorts,
                 longs: pickedLongs,
                 mcqMarksEach,
+                blankMarksEach,
+                tfMarksEach,
                 shortMarksEach,
                 longMarksEach,
                 shortAttempt: actualShortAttempt,
@@ -365,12 +436,12 @@ const PaperGenerator = () => {
     const handleSwapQuestion = (type, index) => {
         if (!generatedPaper) return;
 
-        let poolKey = type === 'mcq' ? 'mcqs' : type === 'short' ? 'shorts' : 'longs';
-        let currentPool = [...availablePool[poolKey]];
-        let currentList = [...generatedPaper[poolKey]];
+        let poolKey = type === 'mcq' ? 'mcqs' : type === 'blank' ? 'blanks' : type === 'true_false' ? 'true_false' : type === 'short' ? 'shorts' : 'longs';
+        let currentPool = [...(availablePool[poolKey] || [])];
+        let currentList = [...(generatedPaper[poolKey] || [])];
 
         if (currentPool.length === 0) {
-            alert(`No more alternate ${type.toUpperCase()} questions available in the current scanned pool.`);
+            alert(`No more alternate ${type.toUpperCase().replace('_', ' ')} questions available in the current scanned pool.`);
             return;
         }
 
@@ -801,7 +872,7 @@ const PaperGenerator = () => {
                                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '0.85rem' }}>
                                                 {firestoreChapters.map((ch, idx) => {
                                                     const isSelected = selectedChapterIds.includes(ch.id);
-                                                    const isUrdu = /[\u0600-\u06FF]/.test(ch.title || '');
+                                                    const isUrdu = isUrduText(ch.title, selectedSubject);
                                                     const qCount = ch.questions?.length || 0;
                                                     const mcqCountInChapter = (ch.questions || []).filter(q => q.type === 'mcq').length;
                                                     const shortCountInChapter = (ch.questions || []).filter(q => q.type === 'short' || !q.type).length;
@@ -811,6 +882,7 @@ const PaperGenerator = () => {
                                                         <div
                                                             key={ch.id}
                                                             onClick={() => handleToggleChapter(ch.id)}
+                                                            dir={isUrdu ? "rtl" : "ltr"}
                                                             style={{
                                                                 padding: '1rem',
                                                                 borderRadius: '12px',
@@ -847,13 +919,14 @@ const PaperGenerator = () => {
 
                                                             <div style={{ flex: 1 }}>
                                                                 <div 
-                                                                    className={isUrdu ? 'urdu-paper-font' : ''}
+                                                                    dir={isUrdu ? "rtl" : "ltr"}
                                                                     style={{ 
-                                                                        fontSize: isUrdu ? '1.2rem' : '0.95rem', 
+                                                                        fontSize: isUrdu ? '1.08rem' : '0.95rem', 
                                                                         fontWeight: '700', 
                                                                         color: isSelected ? '#ffffff' : '#1e293b',
-                                                                        lineHeight: isUrdu ? '2.0' : '1.4',
-                                                                        textShadow: isSelected ? '0 1px 2px rgba(0,0,0,0.2)' : 'none'
+                                                                        lineHeight: isUrdu ? '1.8' : '1.4',
+                                                                        fontFamily: isUrdu ? '"Noto Nastaliq Urdu", "Noto Sans Arabic", "Jameel Noori Nastaleeq", serif' : 'inherit',
+                                                                        textAlign: isUrdu ? 'right' : 'left'
                                                                     }}
                                                                 >
                                                                     {ch.title}
@@ -893,51 +966,17 @@ const PaperGenerator = () => {
                                         Paper Blueprint & Question Sections
                                     </h2>
                                     <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.2rem' }}>
-                                        Choose standard official board presets or customize question counts, choices, and marks for each section.
+                                        Customize your question counts, choice options, and marks for each section below. Total marks are calculated automatically.
                                     </p>
-                                </div>
-
-                                {/* Preset Selector Cards */}
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.5rem' }}>Select Standard Pattern Preset</label>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-                                        {EXAM_PRESETS.map(preset => {
-                                            const isSelected = selectedPreset === preset.id;
-                                            return (
-                                                <div
-                                                    key={preset.id}
-                                                    onClick={() => handleApplyPreset(preset.id)}
-                                                    style={{
-                                                        padding: '1rem',
-                                                        borderRadius: '12px',
-                                                        border: '2px solid ' + (isSelected ? '#1e40af' : '#e2e8f0'),
-                                                        background: isSelected ? '#eff6ff' : '#ffffff',
-                                                        cursor: 'pointer',
-                                                        transition: 'all 0.2s ease'
-                                                    }}
-                                                >
-                                                    <span style={{ fontSize: '0.68rem', padding: '0.2rem 0.5rem', borderRadius: '4px', background: isSelected ? '#1e40af' : '#f1f5f9', color: isSelected ? '#fff' : '#64748b', fontWeight: '700' }}>
-                                                        {preset.badge}
-                                                    </span>
-                                                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#1e293b', margin: '0.5rem 0 0.25rem' }}>
-                                                        {preset.name}
-                                                    </h3>
-                                                    <div style={{ fontSize: '0.8rem', color: '#1e40af', fontWeight: '700' }}>
-                                                        {preset.totalMarks} Marks &nbsp;|&nbsp; {preset.timeAllowed}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
                                 </div>
 
                                 {/* Granular Section Settings */}
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
                                     
-                                    {/* SECTION A */}
+                                    {/* SECTION 1: MCQs */}
                                     <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section A: Objective (MCQs)</span>
+                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 1: Objective (MCQs)</span>
                                             <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
                                                 {mcqCount * mcqMarksEach} Marks
                                             </span>
@@ -969,21 +1008,91 @@ const PaperGenerator = () => {
                                         </div>
                                     </div>
 
-                                    {/* SECTION B */}
+                                    {/* SECTION 2: FILL IN THE BLANKS */}
                                     <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section B: Short Questions</span>
+                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 2: Fill in the Blanks (خالی جگہ)</span>
+                                            <span style={{ background: '#059669', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
+                                                {blankCount * blankMarksEach} Marks
+                                            </span>
+                                        </div>
+
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                            <div>
+                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Number of Blanks</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max="30"
+                                                    value={blankCount}
+                                                    onChange={(e) => setBlankCount(Number(e.target.value))}
+                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Marks Each</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="5"
+                                                    value={blankMarksEach}
+                                                    onChange={(e) => setBlankMarksEach(Number(e.target.value))}
+                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* SECTION 3: TRUE / FALSE */}
+                                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 3: True / False (درست یا غلط)</span>
+                                            <span style={{ background: '#7c3aed', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
+                                                {tfCount * tfMarksEach} Marks
+                                            </span>
+                                        </div>
+
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                            <div>
+                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Number of True/False</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max="30"
+                                                    value={tfCount}
+                                                    onChange={(e) => setTfCount(Number(e.target.value))}
+                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Marks Each</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="5"
+                                                    value={tfMarksEach}
+                                                    onChange={(e) => setTfMarksEach(Number(e.target.value))}
+                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* SECTION 4: SHORT QUESTIONS */}
+                                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 4: Short Questions</span>
                                             <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
                                                 {shortAttempt * shortMarksEach} Marks
                                             </span>
                                         </div>
 
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
                                             <div>
                                                 <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Given Qs</label>
                                                 <input
                                                     type="number"
-                                                    min="1"
+                                                    min="0"
                                                     max="30"
                                                     value={shortCount}
                                                     onChange={(e) => setShortCount(Number(e.target.value))}
@@ -994,7 +1103,7 @@ const PaperGenerator = () => {
                                                 <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>To Attempt</label>
                                                 <input
                                                     type="number"
-                                                    min="1"
+                                                    min="0"
                                                     max={shortCount}
                                                     value={shortAttempt}
                                                     onChange={(e) => setShortAttempt(Number(e.target.value))}
@@ -1013,13 +1122,37 @@ const PaperGenerator = () => {
                                                 />
                                             </div>
                                         </div>
+
+                                        {/* Answer Writing Ruled Lines Toggle (Primary Worksheet Style) */}
+                                        <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: '600', color: '#334155', cursor: 'pointer' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={showAnswerLines}
+                                                    onChange={(e) => setShowAnswerLines(e.target.checked)}
+                                                    style={{ width: '16px', height: '16px', accentColor: '#1e40af' }}
+                                                />
+                                                Add Student Writing Lines (Worksheet Style)
+                                            </label>
+                                            {showAnswerLines && (
+                                                <select
+                                                    value={answerLineCount}
+                                                    onChange={(e) => setAnswerLineCount(Number(e.target.value))}
+                                                    style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.75rem' }}
+                                                >
+                                                    <option value="2">2 Ruled Lines</option>
+                                                    <option value="3">3 Ruled Lines</option>
+                                                    <option value="4">4 Ruled Lines</option>
+                                                </select>
+                                            )}
+                                        </div>
                                     </div>
 
-                                    {/* SECTION C */}
+                                    {/* SECTION 5: LONG QUESTIONS */}
                                     <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section C: Long Questions</span>
-                                            <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
+                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 5: Long Questions</span>
+                                            <span style={{ background: '#b45309', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
                                                 {longAttempt * longMarksEach} Marks
                                             </span>
                                         </div>
@@ -1029,7 +1162,7 @@ const PaperGenerator = () => {
                                                 <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Given Qs</label>
                                                 <input
                                                     type="number"
-                                                    min="1"
+                                                    min="0"
                                                     max="10"
                                                     value={longCount}
                                                     onChange={(e) => setLongCount(Number(e.target.value))}
@@ -1040,7 +1173,7 @@ const PaperGenerator = () => {
                                                 <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>To Attempt</label>
                                                 <input
                                                     type="number"
-                                                    min="1"
+                                                    min="0"
                                                     max={longCount}
                                                     value={longAttempt}
                                                     onChange={(e) => setLongAttempt(Number(e.target.value))}
@@ -1383,7 +1516,9 @@ const PaperGenerator = () => {
 
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                                     {generatedPaper.mcqs.map((q, idx) => {
-                                        const isUrduQ = /[\u0600-\u06FF]/.test(q.question || '');
+                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
+                                        const urduAlpha = ['(الف)', '(ب)', '(ج)', '(د)'];
+
                                         return (
                                             <div key={q.id || idx} className="question-item" style={{ breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem' }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
@@ -1392,19 +1527,22 @@ const PaperGenerator = () => {
                                                         style={{ 
                                                             display: 'flex', 
                                                             alignItems: 'baseline', 
-                                                            gap: '0.5rem', 
+                                                            gap: '0.4rem', 
                                                             flex: 1,
                                                             direction: isUrduQ ? 'rtl' : 'ltr',
                                                             textAlign: isUrduQ ? 'right' : 'left'
                                                         }}
                                                     >
-                                                        <strong style={{ flexShrink: 0, fontSize: '0.95rem' }}>({idx + 1})</strong>
+                                                        <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
                                                         <span 
                                                             className={isUrduQ ? 'urdu-paper-font' : ''} 
                                                             style={{ 
-                                                                fontSize: isUrduQ ? '1.15rem' : '0.95rem', 
-                                                                fontWeight: '600', 
-                                                                lineHeight: isUrduQ ? '2.2' : '1.4'
+                                                                fontSize: isUrduQ 
+                                                                    ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem') 
+                                                                    : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
+                                                                fontWeight: isUrduQ ? '600' : '500', 
+                                                                lineHeight: isUrduQ ? '2.2' : '1.5',
+                                                                flex: 1
                                                             }}
                                                         >
                                                             {q.question}
@@ -1428,7 +1566,7 @@ const PaperGenerator = () => {
                                                         dir={isUrduQ ? "rtl" : "ltr"}
                                                         style={{ 
                                                             display: 'grid', 
-                                                            gridTemplateColumns: 'repeat(4, 1fr)', 
+                                                            gridTemplateColumns: generatedPaper.mcqLayout === '2_col' ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', 
                                                             gap: '0.5rem', 
                                                             marginTop: '0.35rem', 
                                                             paddingLeft: isUrduQ ? '0' : '1.25rem',
@@ -1440,7 +1578,12 @@ const PaperGenerator = () => {
                                                     >
                                                         {q.options.map((opt, oIdx) => (
                                                             <div key={oIdx} className={isUrduQ ? 'urdu-paper-font' : ''}>
-                                                                <strong>({String.fromCharCode(65 + oIdx)})</strong> {opt}
+                                                                <strong>
+                                                                    {isUrduQ && generatedPaper.urduOptionFormat === 'alif_bay' 
+                                                                        ? (urduAlpha[oIdx] || `(${String.fromCharCode(65 + oIdx)})`) 
+                                                                        : `(${String.fromCharCode(65 + oIdx)})`
+                                                                    }
+                                                                </strong> {opt}
                                                             </div>
                                                         ))}
                                                     </div>
@@ -1452,24 +1595,29 @@ const PaperGenerator = () => {
                             </div>
                         )}
 
-                        {/* SECTION B: SHORT QUESTIONS */}
-                        {generatedPaper.shorts?.length > 0 && (
+                        {/* SECTION B: FILL IN THE BLANKS (خالی جگہ پر کریں) */}
+                        {generatedPaper.blanks?.length > 0 && (
                             <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
                                 <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
                                     <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
-                                        Section - B (Short Questions)
+                                        Section - B: Fill in the Blanks (خالی جگہ پر کریں)
                                     </h3>
                                     <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
-                                        [Marks: {generatedPaper.shortAttempt * generatedPaper.shortMarksEach}]
+                                        [Marks: {generatedPaper.blanks.length * generatedPaper.blankMarksEach}]
                                     </span>
                                 </div>
                                 <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
-                                    <strong>Q.2:</strong> Answer any <strong>{generatedPaper.shortAttempt}</strong> out of the following <strong>{generatedPaper.shorts.length}</strong> questions. Each carries {generatedPaper.shortMarksEach} marks.
+                                    <strong>Q.2:</strong> Fill in the blanks with suitable words / answers. Each question carries {generatedPaper.blankMarksEach} mark.
                                 </p>
 
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                    {generatedPaper.shorts.map((q, idx) => {
-                                        const isUrduQ = /[\u0600-\u06FF]/.test(q.question || '');
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                    {generatedPaper.blanks.map((q, idx) => {
+                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
+                                        let displayText = q.question || '';
+                                        if (!displayText.includes('____')) {
+                                            displayText += ' ______________________';
+                                        }
+
                                         return (
                                             <div key={q.id || idx} className="question-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem', gap: '0.75rem' }}>
                                                 <div 
@@ -1477,30 +1625,33 @@ const PaperGenerator = () => {
                                                     style={{ 
                                                         display: 'flex', 
                                                         alignItems: 'baseline', 
-                                                        gap: '0.5rem', 
+                                                        gap: '0.4rem', 
                                                         flex: 1,
                                                         direction: isUrduQ ? 'rtl' : 'ltr',
                                                         textAlign: isUrduQ ? 'right' : 'left'
                                                     }}
                                                 >
-                                                    <strong style={{ flexShrink: 0, fontSize: '0.95rem' }}>({idx + 1})</strong>
+                                                    <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
                                                     <span 
                                                         className={isUrduQ ? 'urdu-paper-font' : ''} 
                                                         style={{ 
-                                                            fontSize: isUrduQ ? '1.15rem' : '0.95rem', 
-                                                            lineHeight: isUrduQ ? '2.2' : '1.4'
+                                                            fontSize: isUrduQ 
+                                                                ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
+                                                                : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
+                                                            lineHeight: isUrduQ ? '2.2' : '1.5',
+                                                            flex: 1
                                                         }}
                                                     >
-                                                        {q.question}
+                                                        {displayText}
                                                     </span>
                                                 </div>
 
                                                 <button
-                                                    onClick={() => handleSwapQuestion('short', idx)}
+                                                    onClick={() => handleSwapQuestion('blank', idx)}
                                                     data-html2canvas-ignore="true"
                                                     className="no-print"
                                                     style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.5rem', flexShrink: 0 }}
-                                                    title="Swap question"
+                                                    title="Swap blank question"
                                                 >
                                                     <RefreshCw size={11} /> Swap
                                                 </button>
@@ -1511,12 +1662,164 @@ const PaperGenerator = () => {
                             </div>
                         )}
 
-                        {/* SECTION C: LONG / DETAILED QUESTIONS */}
+                        {/* SECTION C: TRUE / FALSE (درست یا غلط) */}
+                        {generatedPaper.true_false?.length > 0 && (
+                            <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
+                                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
+                                    <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
+                                        Section - C: State True or False (درست یا غلط کی نشان دہی کریں)
+                                    </h3>
+                                    <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
+                                        [Marks: {generatedPaper.true_false.length * generatedPaper.tfMarksEach}]
+                                    </span>
+                                </div>
+                                <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
+                                    <strong>Q.3:</strong> Read the following statements and mark <strong>True (T)</strong> or <strong>False (F)</strong> in the box provided.
+                                </p>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                    {generatedPaper.true_false.map((q, idx) => {
+                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
+
+                                        return (
+                                            <div key={q.id || idx} className="question-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem', gap: '0.75rem' }}>
+                                                <div 
+                                                    dir={isUrduQ ? "rtl" : "ltr"}
+                                                    style={{ 
+                                                        display: 'flex', 
+                                                        alignItems: 'baseline', 
+                                                        gap: '0.4rem', 
+                                                        flex: 1,
+                                                        direction: isUrduQ ? 'rtl' : 'ltr',
+                                                        textAlign: isUrduQ ? 'right' : 'left'
+                                                    }}
+                                                >
+                                                    <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
+                                                    <span 
+                                                        className={isUrduQ ? 'urdu-paper-font' : ''} 
+                                                        style={{ 
+                                                            fontSize: isUrduQ 
+                                                                ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
+                                                                : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
+                                                            lineHeight: isUrduQ ? '2.2' : '1.5',
+                                                            flex: 1
+                                                        }}
+                                                    >
+                                                        {q.question}
+                                                    </span>
+                                                </div>
+
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                                                    {/* Bracket / Box for marking */}
+                                                    <span style={{ 
+                                                        border: '1.5px solid #000', 
+                                                        padding: '2px 14px', 
+                                                        borderRadius: '4px', 
+                                                        fontSize: '0.85rem', 
+                                                        fontWeight: '700',
+                                                        minWidth: '50px',
+                                                        textAlign: 'center'
+                                                    }}>
+                                                        [&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]
+                                                    </span>
+
+                                                    <button
+                                                        onClick={() => handleSwapQuestion('true_false', idx)}
+                                                        data-html2canvas-ignore="true"
+                                                        className="no-print"
+                                                        style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
+                                                        title="Swap true/false question"
+                                                    >
+                                                        <RefreshCw size={11} /> Swap
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* SECTION D: SHORT QUESTIONS */}
+                        {generatedPaper.shorts?.length > 0 && (
+                            <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
+                                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
+                                    <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
+                                        Section - {generatedPaper.blanks?.length > 0 || generatedPaper.true_false?.length > 0 ? 'D' : 'B'} (Short Questions / مختصر جوابات)
+                                    </h3>
+                                    <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
+                                        [Marks: {generatedPaper.shortAttempt * generatedPaper.shortMarksEach}]
+                                    </span>
+                                </div>
+                                <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
+                                    <strong>Q.4:</strong> Answer any <strong>{generatedPaper.shortAttempt}</strong> out of the following <strong>{generatedPaper.shorts.length}</strong> questions. Each carries {generatedPaper.shortMarksEach} marks.
+                                </p>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                    {generatedPaper.shorts.map((q, idx) => {
+                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
+
+                                        return (
+                                            <div key={q.id || idx} className="question-item" style={{ display: 'flex', flexDirection: 'column', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.5rem' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
+                                                    <div 
+                                                        dir={isUrduQ ? "rtl" : "ltr"}
+                                                        style={{ 
+                                                            display: 'flex', 
+                                                            alignItems: 'baseline', 
+                                                            gap: '0.4rem', 
+                                                            flex: 1,
+                                                            direction: isUrduQ ? 'rtl' : 'ltr',
+                                                            textAlign: isUrduQ ? 'right' : 'left'
+                                                        }}
+                                                    >
+                                                        <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
+                                                        <span 
+                                                            className={isUrduQ ? 'urdu-paper-font' : ''} 
+                                                            style={{ 
+                                                                fontSize: isUrduQ 
+                                                                    ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
+                                                                    : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
+                                                                lineHeight: isUrduQ ? '2.2' : '1.5',
+                                                                flex: 1
+                                                            }}
+                                                        >
+                                                            {q.question}
+                                                        </span>
+                                                    </div>
+
+                                                    <button
+                                                        onClick={() => handleSwapQuestion('short', idx)}
+                                                        data-html2canvas-ignore="true"
+                                                        className="no-print"
+                                                        style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.5rem', flexShrink: 0 }}
+                                                        title="Swap question"
+                                                    >
+                                                        <RefreshCw size={11} /> Swap
+                                                    </button>
+                                                </div>
+
+                                                {/* Student Answer Writing Ruled Lines (Primary Worksheet Mode) */}
+                                                {generatedPaper.showAnswerLines && (
+                                                    <div style={{ marginTop: '0.5rem', paddingLeft: isUrduQ ? '0' : '1.25rem', paddingRight: isUrduQ ? '1.25rem' : '0', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                                                        {Array.from({ length: generatedPaper.answerLineCount || 2 }).map((_, lineIdx) => (
+                                                            <div key={lineIdx} style={{ borderBottom: '1px dotted #94a3b8', height: '18px', width: '100%' }} />
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* SECTION E: LONG / DETAILED QUESTIONS */}
                         {generatedPaper.longs?.length > 0 && (
                             <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
                                 <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
                                     <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
-                                        Section - C (Long / Descriptive Questions)
+                                        Section - {generatedPaper.blanks?.length > 0 || generatedPaper.true_false?.length > 0 ? 'E' : 'C'} (Long / Descriptive Questions)
                                     </h3>
                                     <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
                                         [Marks: {generatedPaper.longAttempt * generatedPaper.longMarksEach}]
@@ -1528,7 +1831,7 @@ const PaperGenerator = () => {
 
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                                     {generatedPaper.longs.map((q, idx) => {
-                                        const isUrduQ = /[\u0600-\u06FF]/.test(q.question || '');
+                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
                                         return (
                                             <div key={q.id || idx} className="question-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem', gap: '0.75rem' }}>
                                                 <div 
@@ -1536,18 +1839,21 @@ const PaperGenerator = () => {
                                                     style={{ 
                                                         display: 'flex', 
                                                         alignItems: 'baseline', 
-                                                        gap: '0.5rem', 
+                                                        gap: '0.4rem', 
                                                         flex: 1,
                                                         direction: isUrduQ ? 'rtl' : 'ltr',
                                                         textAlign: isUrduQ ? 'right' : 'left'
                                                     }}
                                                 >
-                                                    <strong style={{ flexShrink: 0, fontSize: '0.95rem' }}>Q.{idx + 3}:</strong>
+                                                    <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>Q.{idx + 5}:</strong>
                                                     <span 
                                                         className={isUrduQ ? 'urdu-paper-font' : ''} 
                                                         style={{ 
-                                                            fontSize: isUrduQ ? '1.15rem' : '0.95rem', 
-                                                            lineHeight: isUrduQ ? '2.2' : '1.4'
+                                                            fontSize: isUrduQ 
+                                                                ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
+                                                                : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
+                                                            lineHeight: isUrduQ ? '2.2' : '1.5',
+                                                            flex: 1
                                                         }}
                                                     >
                                                         {q.question}
@@ -1591,7 +1897,28 @@ const PaperGenerator = () => {
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.4rem', fontSize: '0.85rem' }}>
                                             {generatedPaper.mcqs.map((q, idx) => (
                                                 <div key={idx} style={{ padding: '0.25rem 0.5rem', background: '#f8fafc', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
-                                                    <strong>Q.{idx + 1}:</strong> {q.correctAnswer || 'Answer Key'}
+                                                    <strong>Q.{idx + 1}:</strong> {q.correctAnswer || 'Key'}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Blanks & True/False Solutions */}
+                                {(generatedPaper.blanks?.length > 0 || generatedPaper.true_false?.length > 0) && (
+                                    <div style={{ marginBottom: '1.25rem' }}>
+                                        <h4 style={{ fontSize: '0.95rem', fontWeight: '700', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.25rem', marginBottom: '0.5rem' }}>
+                                            Section B & C: Blanks & True/False Keys
+                                        </h4>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.4rem', fontSize: '0.85rem' }}>
+                                            {generatedPaper.blanks?.map((q, idx) => (
+                                                <div key={`b_${idx}`} style={{ padding: '0.25rem 0.5rem', background: '#f0fdf4', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
+                                                    <strong>Blank {idx + 1}:</strong> {q.correctAnswer || 'Key'}
+                                                </div>
+                                            ))}
+                                            {generatedPaper.true_false?.map((q, idx) => (
+                                                <div key={`tf_${idx}`} style={{ padding: '0.25rem 0.5rem', background: '#faf5ff', borderRadius: '4px', border: '1px solid #e9d5ff' }}>
+                                                    <strong>T/F {idx + 1}:</strong> {q.correctAnswer || 'Key'}
                                                 </div>
                                             ))}
                                         </div>

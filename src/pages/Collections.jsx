@@ -3640,6 +3640,39 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         fetchTeachers();
     }, [schoolId]);
 
+    // Dynamic Today's Incomes & Expenses (Strict 24-Hour Day Match - Auto Resets at 12 AM Midnight)
+    const todayFinances = useMemo(() => {
+        const now = new Date();
+        const todayStr = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const endOfToday = startOfToday + 86400000;
+
+        const isToday = (item) => {
+            if (!item) return false;
+            if (item.dateString && item.dateString === todayStr) return true;
+            if (item.createdAt) {
+                const itemDate = new Date(item.createdAt);
+                if (!isNaN(itemDate.getTime())) {
+                    const itemDateStr = itemDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+                    if (itemDateStr === todayStr) return true;
+                }
+            }
+            if (item.id) {
+                const ts = Number(String(item.id).split('_')[0]);
+                if (!isNaN(ts) && ts >= startOfToday && ts < endOfToday) return true;
+            }
+            return false;
+        };
+
+        const todayIncomes = (financesData.incomes || []).filter(isToday);
+        const todayExpenses = (financesData.expenses || []).filter(isToday);
+
+        return {
+            incomes: todayIncomes,
+            expenses: todayExpenses
+        };
+    }, [financesData]);
+
     const handleAddFinance = async (type, category, itemData, setSaving, setForm) => {
         const manualSession = localStorage.getItem('manual_session');
         if (manualSession) {
@@ -3652,6 +3685,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         if (!itemData.name || !itemData.amount) return;
         setSaving(true);
 
+        const now = new Date();
         const newItem = {
             id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             name: itemData.name.trim(),
@@ -3659,7 +3693,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             remarks: itemData.remarks ? itemData.remarks.trim() : '',
             type: type, // 'one-time' or 'permanent'
             category: category,
-            createdAt: new Date().toISOString()
+            createdAt: now.toISOString(),
+            dateString: now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
         };
 
         // 1. Instant Optimistic State Update (100% Offline Working)
@@ -3775,8 +3810,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
     // Download Customized Daily Fee Collections PDF Report
     const handleDownloadDailyReport = async () => {
-        if (recentTransactions.length === 0) {
-            alert("No fee collections recorded yet to generate a report.");
+        if (todayTransactions.length === 0) {
+            alert("No fee collections recorded today yet to generate a daily report.");
             return;
         }
         setIsGeneratingDailyPDF(true);
@@ -3829,7 +3864,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const printDate = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
             const printTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             doc.text(`Generated on: ${printDate} at ${printTime}  |  Official Ledger Export`, textX, 33);
-            doc.text(`Total Slips Audited: ${recentTransactions.length}  |  Status: 100% Reconciled & Verified`, textX, 39);
+            doc.text(`Total Slips Audited Today: ${todayTransactions.length}  |  Status: 100% Reconciled & Verified`, textX, 39);
 
             // 4. Executive Summary KPI Grid (4 Stat Blocks)
             const startY = 55;
@@ -3871,10 +3906,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             doc.setFontSize(7.5);
             doc.setTextColor(100, 116, 139);
             doc.setFont("helvetica", "normal");
-            doc.text(`Official ledger entries sorted chronologically (Total: ${recentTransactions.length} records)`, 14, tableStartY + 5);
+            doc.text(`Official ledger entries for today (Total: ${todayTransactions.length} records)`, 14, tableStartY + 5);
 
             // 6. Format Data for autoTable
-            const tableRows = recentTransactions.map((tx, idx) => {
+            const tableRows = todayTransactions.map((tx, idx) => {
                 const roll = tx.rollNo && tx.rollNo !== 'N/A' ? ` (Roll: ${tx.rollNo})` : '';
                 const studentField = `${tx.studentName || 'Student'}${roll}`;
                 const fatherField = tx.fatherName || 'N/A';
@@ -3989,15 +4024,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
     // Download Customized Finances (Income & Expenses Breakdown) PDF Report
     const handleDownloadFinancesReport = async () => {
-        const totalManualIncomes = financesData.incomes.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+        const totalManualIncomes = todayFinances.incomes.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
         const actionAmt = currentAction ? Number(currentAction.amount || 0) : 0;
         const totalIncomes = totalManualIncomes + actionAmt;
 
-        const totalExpenses = financesData.expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+        const totalExpenses = todayFinances.expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
         const netBalance = totalIncomes - totalExpenses;
 
-        if (financesData.incomes.length === 0 && financesData.expenses.length === 0 && actionAmt === 0) {
-            alert("No income or expense entries recorded yet to generate a report.");
+        if (todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && actionAmt === 0) {
+            alert("No income or expense entries recorded today yet to generate a daily report.");
             return;
         }
 
@@ -4051,7 +4086,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const printDate = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
             const printTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             doc.text(`Generated on: ${printDate} at ${printTime}  |  Official Ledger Export`, textX, 33);
-            doc.text(`Total Records Audited: ${financesData.incomes.length + financesData.expenses.length + (currentAction ? 1 : 0)}  |  Financial Status: ${netBalance >= 0 ? 'Surplus / Positive' : 'Deficit / Negative'}`, textX, 39);
+            doc.text(`Total Records Audited Today: ${todayFinances.incomes.length + todayFinances.expenses.length + (currentAction ? 1 : 0)}  |  Financial Status: ${netBalance >= 0 ? 'Surplus / Positive' : 'Deficit / Negative'}`, textX, 39);
 
             // 4. Executive Summary KPI Grid (3 Stat Blocks)
             const startY = 55;
@@ -4092,7 +4127,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             doc.setFontSize(7.5);
             doc.setTextColor(100, 116, 139);
             doc.setFont("helvetica", "normal");
-            doc.text(`Official ledger entries including active actions, incomes & expenses`, 14, tableStartY + 5);
+            doc.text(`Official ledger entries for today including active actions, incomes & expenses`, 14, tableStartY + 5);
 
             // 6. Format Data for autoTable
             const rows = [];
@@ -4109,7 +4144,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 ]);
             }
 
-            financesData.incomes.forEach(inc => {
+            todayFinances.incomes.forEach(inc => {
                 rows.push([
                     counter++,
                     'Income',
@@ -4120,7 +4155,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 ]);
             });
 
-            financesData.expenses.forEach(exp => {
+            todayFinances.expenses.forEach(exp => {
                 rows.push([
                     counter++,
                     'Expense',
@@ -4345,12 +4380,27 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         return () => unsubTrans();
     }, [schoolId]);
 
-    // Dynamic Today's Collections Metrics & Chart Data
+    // Dynamic Today's Collections Metrics & Chart Data (Strict 24-Hour Day Match - Auto Resets at 12 AM Midnight)
+    const todayTransactions = useMemo(() => {
+        const now = new Date();
+        const todayStr = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+        return recentTransactions.filter(t => {
+            if (t.dateString) {
+                return t.dateString === todayStr;
+            }
+            if (t.timestamp?.seconds) {
+                const txDate = new Date(t.timestamp.seconds * 1000);
+                const txDateStr = txDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+                return txDateStr === todayStr;
+            }
+            return false;
+        });
+    }, [recentTransactions]);
+
     const todayMetrics = useMemo(() => {
         const now = new Date();
         const todayStr = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-        const todayList = recentTransactions.filter(t => !t.dateString || t.dateString === todayStr);
-        const activeList = todayList.length > 0 ? todayList : recentTransactions;
+        const activeList = todayTransactions;
 
         const totalCount = activeList.length;
         const totalAmount = activeList.reduce((sum, t) => sum + (Number(t.totalPaid) || 0), 0);
@@ -4374,9 +4424,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             }
         });
 
-        const cashPct = totalAmount > 0 ? Math.round((cashAmount / totalAmount) * 100) : (totalCount > 0 ? Math.round((cashCount / totalCount) * 100) : 0);
-        const bankPct = totalAmount > 0 ? Math.round((bankAmount / totalAmount) * 100) : (totalCount > 0 ? Math.round((bankCount / totalCount) * 100) : 0);
-        const onlinePct = totalAmount > 0 ? Math.round((onlineAmount / totalAmount) * 100) : (totalCount > 0 ? Math.round((onlineCount / totalCount) * 100) : 0);
+        const cashPct = totalAmount > 0 ? Math.round((cashAmount / totalAmount) * 100) : 0;
+        const bankPct = totalAmount > 0 ? Math.round((bankAmount / totalAmount) * 100) : 0;
+        const onlinePct = totalAmount > 0 ? Math.round((onlineAmount / totalAmount) * 100) : 0;
 
         return {
             todayStr,
@@ -4392,7 +4442,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             onlineAmount,
             onlinePct
         };
-    }, [recentTransactions]);
+    }, [todayTransactions]);
 
     // Handle Selecting a Student
     const handleSelectStudent = (student) => {
@@ -6058,14 +6108,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     gap: '4px'
                                 }}
                             >
-                                <TrendingUp size={13} /> Breakdown ({financesData.incomes.length} Inc / {financesData.expenses.length} Exp)
+                                <TrendingUp size={13} /> Breakdown ({todayFinances.incomes.length} Inc / {todayFinances.expenses.length} Exp)
                             </button>
                         </div>
 
                         {rightCardTab === 'fee_slips' ? (
                             <button
                                 onClick={handleDownloadDailyReport}
-                                disabled={isGeneratingDailyPDF || recentTransactions.length === 0}
+                                disabled={isGeneratingDailyPDF || todayTransactions.length === 0}
                                 style={{
                                     padding: '0.35rem 0.85rem',
                                     borderRadius: '8px',
@@ -6074,7 +6124,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     color: '#ffffff',
                                     fontWeight: '700',
                                     fontSize: '0.78rem',
-                                    cursor: recentTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
+                                    cursor: todayTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     gap: '0.4rem',
@@ -6098,7 +6148,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         ) : (
                             <button
                                 onClick={handleDownloadFinancesReport}
-                                disabled={isGeneratingFinancesPDF || (financesData.incomes.length === 0 && financesData.expenses.length === 0 && teachersSalary === 0 && !currentAction)}
+                                disabled={isGeneratingFinancesPDF || (todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && !currentAction)}
                                 style={{
                                     padding: '0.35rem 0.85rem',
                                     borderRadius: '8px',
@@ -6107,7 +6157,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     color: '#ffffff',
                                     fontWeight: '700',
                                     fontSize: '0.78rem',
-                                    cursor: (financesData.incomes.length === 0 && financesData.expenses.length === 0 && teachersSalary === 0 && !currentAction) || isGeneratingFinancesPDF ? 'not-allowed' : 'pointer',
+                                    cursor: (todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && !currentAction) || isGeneratingFinancesPDF ? 'not-allowed' : 'pointer',
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     gap: '0.4rem',
@@ -6138,9 +6188,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
                             Loading transaction history...
                         </div>
-                    ) : recentTransactions.length === 0 ? (
-                        <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
-                            No fee transactions recorded today yet.
+                    ) : todayTransactions.length === 0 ? (
+                        <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
+                            <p style={{ margin: 0, fontWeight: '700', color: '#64748b' }}>No fee collections recorded today yet.</p>
+                            <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>All previous days' receipts remain safely archived in the Finances tab.</span>
                         </div>
                     ) : (
                         <div style={{ maxHeight: '360px', overflowY: 'auto' }} className="custom-scrollbar">
@@ -6156,7 +6207,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {recentTransactions.map((tx) => (
+                                    {todayTransactions.map((tx) => (
                                         <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                             <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#0078d4' }}>{tx.receiptNo}</td>
                                             <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600', color: '#0f172a' }}>{tx.studentName}</td>
@@ -6290,7 +6341,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         )}
 
                         {/* Incomes List */}
-                        {financesData.incomes.map(inc => (
+                        {todayFinances.incomes.map(inc => (
                             <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #dcfce7' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                                     <div style={{ background: '#86efac', padding: '0.25rem', borderRadius: '50%' }}>
@@ -6310,20 +6361,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                     <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '0.9rem' }}>Rs {Number(inc.amount).toLocaleString()}</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleDeleteFinance(inc.id, 'incomes')}
-                                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
-                                        title="Delete Income"
-                                    >
-                                        <Trash2 size={15} />
-                                    </button>
                                 </div>
                             </div>
                         ))}
 
                         {/* Expenses List */}
-                        {financesData.expenses.map(exp => (
+                        {todayFinances.expenses.map(exp => (
                             <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#ffffff', borderRadius: '10px', border: '1px solid #fee2e2' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                                     <div style={{ background: '#fca5a5', padding: '0.25rem', borderRadius: '50%' }}>
@@ -6343,21 +6386,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                     <span style={{ fontWeight: '800', color: '#dc2626', fontSize: '0.9rem' }}>Rs {Number(exp.amount).toLocaleString()}</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleDeleteFinance(exp.id, 'expenses')}
-                                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
-                                        title="Delete Expense"
-                                    >
-                                        <Trash2 size={15} />
-                                    </button>
                                 </div>
                             </div>
                         ))}
 
-                        {financesData.incomes.length === 0 && financesData.expenses.length === 0 && teachersSalary === 0 && (
-                            <div style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
-                                No incomes or expenses added yet.
+                        {todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && (
+                            <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
+                                <p style={{ margin: 0, fontWeight: '700', color: '#64748b' }}>No incomes or expenses recorded today yet.</p>
+                                <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>All previous days remain safely archived in the Finances tab.</span>
                             </div>
                         )}
                     </div>
@@ -6382,11 +6418,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         </h3>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '0.35rem 0.65rem', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
-                                {recentTransactions.length} Slips Recorded
+                                {todayTransactions.length} Slips Recorded Today
                             </span>
                             <button
                                 onClick={handleDownloadDailyReport}
-                                disabled={isGeneratingDailyPDF || recentTransactions.length === 0}
+                                disabled={isGeneratingDailyPDF || todayTransactions.length === 0}
                                 style={{
                                     padding: '0.35rem 0.85rem',
                                     borderRadius: '8px',
@@ -6395,7 +6431,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     color: '#ffffff',
                                     fontWeight: '700',
                                     fontSize: '0.78rem',
-                                    cursor: recentTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
+                                    cursor: todayTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     gap: '0.4rem',
@@ -6423,7 +6459,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         <div style={{ padding: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
                             Loading transaction history...
                         </div>
-                    ) : recentTransactions.length === 0 ? (
+                    ) : todayTransactions.length === 0 ? (
                         <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
                             No fee transactions recorded today yet.
                         </div>
@@ -6442,7 +6478,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {recentTransactions.map((tx) => (
+                                    {todayTransactions.map((tx) => (
                                         <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                             <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#0078d4' }}>{tx.receiptNo}</td>
                                             <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600', color: '#0f172a' }}>{tx.studentName}</td>
