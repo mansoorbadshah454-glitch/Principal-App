@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
-    Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap, MessageCircle, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
+    Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap, MessageCircle, MessagesSquare, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
     Wifi, WifiOff, RefreshCw, Loader2
 } from 'lucide-react';
 import { db, auth, functions } from '../firebase';
@@ -12,6 +12,68 @@ import {
     ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
     CartesianGrid, Tooltip, BarChart, Bar, Cell, LineChart, Line, RadialBarChart, RadialBar, Legend
 } from 'recharts';
+
+const MetricTooltipPill = ({ label, value, fullTitle, weight }) => {
+    const [showTooltip, setShowTooltip] = useState(false);
+    return (
+        <div 
+            style={{ position: 'relative', display: 'inline-flex' }}
+            onMouseEnter={(e) => { e.stopPropagation(); setShowTooltip(true); }}
+            onMouseLeave={(e) => { e.stopPropagation(); setShowTooltip(false); }}
+        >
+            <span style={{ 
+                fontSize: '0.65rem', 
+                padding: '2px 7px', 
+                borderRadius: '4px', 
+                background: showTooltip ? '#dbeafe' : '#eff6ff', 
+                color: '#1d4ed8', 
+                fontWeight: '600', 
+                border: showTooltip ? '1px solid #93c5fd' : '1px solid #dbeafe',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                display: 'inline-flex',
+                alignItems: 'center',
+                whiteSpace: 'nowrap'
+            }}>
+                {label}: {value}%
+            </span>
+            {showTooltip && (
+                <div style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% + 7px)',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: '#0f172a',
+                    color: '#ffffff',
+                    padding: '5px 10px',
+                    borderRadius: '7px',
+                    fontSize: '0.72rem',
+                    fontWeight: '600',
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 6px 16px rgba(0,0,0,0.3)',
+                    zIndex: 9999,
+                    pointerEvents: 'none',
+                    border: '1px solid rgba(255,255,255,0.1)'
+                }}>
+                    <span style={{ color: '#f8fafc' }}>{fullTitle}: </span>
+                    <span style={{ color: '#38bdf8', fontWeight: '800' }}>{value}% </span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.65rem', fontWeight: '500' }}>({weight}% Weight)</span>
+                    <div style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        width: 0,
+                        height: 0,
+                        borderLeft: '5px solid transparent',
+                        borderRight: '5px solid transparent',
+                        borderTop: '5px solid #0f172a'
+                    }} />
+                </div>
+            )}
+        </div>
+    );
+};
 
 const Dashboard = () => {
     const navigate = useNavigate();
@@ -1885,8 +1947,8 @@ const Dashboard = () => {
                                             e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.15)';
                                         }}
                                     >
-                                        <MessageCircle size={18} />
-                                        <span>Inbox</span>
+                                        <MessagesSquare size={18} />
+                                        <span>Chat</span>
 
                                         {messages.filter(m => m.read === false).length > 0 && (
                                             <span style={{
@@ -1908,16 +1970,16 @@ const Dashboard = () => {
                             </div>
                             <div className="custom-scrollbar" style={{ padding: '1rem', maxHeight: '400px', overflowY: 'auto', position: 'relative', zIndex: 2 }}>
                                 {teachers.map((teacher, i) => (
-                                    <div key={i} className="flex-between" style={{ padding: '1rem', borderRadius: '12px', transition: 'var(--transition)' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                    <div key={i} className="flex-between" style={{ padding: '0.85rem 1rem', borderRadius: '12px', transition: 'background 0.2s ease', borderBottom: '1px solid rgba(241, 245, 249, 0.6)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
                                             <div style={{ position: 'relative' }}>
-                                                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#f1f5f9', display: 'flex', alignItems: 'center', justify: 'center' }}>
+                                                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                     <User size={20} color="#64748b" />
                                                 </div>
                                                 <div style={{
                                                     position: 'absolute', bottom: '-2px', right: '-2px',
                                                     width: '12px', height: '12px', borderRadius: '50%', border: '2px solid white',
-                                                    background: teacher.status === 'on' ? 'var(--success)' : 'var(--danger)'
+                                                    background: teacher.status === 'on' ? '#10b981' : '#ef4444'
                                                 }} />
                                             </div>
                                             <div>
@@ -1936,35 +1998,48 @@ const Dashboard = () => {
                                                         }
                                                     }}
                                                     style={{
-                                                        fontWeight: '600',
+                                                        fontWeight: '700',
                                                         fontSize: '0.9rem',
+                                                        color: '#1e293b',
                                                         cursor: 'pointer',
-                                                        transition: 'var(--transition)'
+                                                        margin: 0,
+                                                        transition: 'color 0.2s ease'
                                                     }}
-                                                    onMouseEnter={(e) => e.target.style.color = 'var(--primary)'}
-                                                    onMouseLeave={(e) => e.target.style.color = 'inherit'}
+                                                    onMouseEnter={(e) => { e.currentTarget.style.color = '#4f46e5'; }}
+                                                    onMouseLeave={(e) => { e.currentTarget.style.color = '#1e293b'; }}
                                                 >
                                                     {teacher.name}
-                                                    <span style={{
-                                                        marginLeft: '0.75rem',
-                                                        fontSize: '0.65rem',
-                                                        padding: '0.2rem 0.5rem',
-                                                        borderRadius: '8px',
-                                                        background: teacher.isPresent ? '#3b82f6' : '#ef4444',
-                                                        color: 'white',
-                                                        verticalAlign: 'middle',
-                                                        fontWeight: '600'
-                                                    }}>
-                                                        {teacher.isPresent ? 'Present' : 'Absent'}
-                                                    </span>
                                                 </p>
-                                                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{teacher.class}</p>
+                                                <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '2px 0 0 0' }}>{teacher.class || 'No Class'}</p>
                                             </div>
                                         </div>
-                                        <div style={{ textAlign: 'right' }}>
-                                            <p style={{ fontSize: '0.7rem', color: teacher.status === 'on' ? 'var(--success)' : 'var(--danger)', fontWeight: '600' }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                                            {/* Present / Absent Badge (Stacked on Top) */}
+                                            <span style={{
+                                                fontSize: '0.65rem',
+                                                padding: '2px 8px',
+                                                borderRadius: '6px',
+                                                background: teacher.isPresent ? '#3b82f6' : '#ef4444',
+                                                color: '#ffffff',
+                                                fontWeight: '700',
+                                                letterSpacing: '0.3px',
+                                                display: 'inline-block'
+                                            }}>
+                                                {teacher.isPresent ? 'Present' : 'Absent'}
+                                            </span>
+
+                                            {/* On / Off Class Status (Stacked on Bottom) */}
+                                            <span style={{
+                                                fontSize: '0.68rem',
+                                                color: teacher.status === 'on' ? '#10b981' : '#ef4444',
+                                                fontWeight: '600',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}>
+                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: teacher.status === 'on' ? '#10b981' : '#ef4444' }} />
                                                 {teacher.status === 'on' ? 'On Class' : 'Off Class'}
-                                            </p>
+                                            </span>
                                         </div>
                                     </div>
                                 ))}
@@ -2072,20 +2147,32 @@ const Dashboard = () => {
                                                                     {teacher.class || 'All Classes'}
                                                                 </span>
 
-                                                                {/* 4 Pillars Breakdown Pills (All Unified Blue) */}
-                                                                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                                                                    <span title="Student Academic Performance in Teacher's Subjects (35% Weight)" style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', fontWeight: '600', border: '1px solid #dbeafe' }}>
-                                                                        Academics: {b.academicScore ?? 80}%
-                                                                    </span>
-                                                                    <span title="Monthly Syllabus Progress (30% Weight)" style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', fontWeight: '600', border: '1px solid #dbeafe' }}>
-                                                                        Syllabus (30d): {b.syllabusScore ?? 75}%
-                                                                    </span>
-                                                                    <span title="Teacher Attendance over 30 Days (25% Weight)" style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', fontWeight: '600', border: '1px solid #dbeafe' }}>
-                                                                        Attendance (30d): {b.attendanceScore ?? 90}%
-                                                                    </span>
-                                                                    <span title="Class Duty & Punctuality (10% Weight)" style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', fontWeight: '600', border: '1px solid #dbeafe' }}>
-                                                                        Duty: {b.engagementScore ?? 100}%
-                                                                    </span>
+                                                                {/* 4 Pillars Breakdown Pills with Floating Tooltips */}
+                                                                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
+                                                                    <MetricTooltipPill
+                                                                        label="Academics"
+                                                                        value={b.academicScore ?? 80}
+                                                                        fullTitle="🎓 Student Academic Performance"
+                                                                        weight={35}
+                                                                    />
+                                                                    <MetricTooltipPill
+                                                                        label="Syllabus (30d)"
+                                                                        value={b.syllabusScore ?? 75}
+                                                                        fullTitle="📖 Monthly Syllabus Progress"
+                                                                        weight={30}
+                                                                    />
+                                                                    <MetricTooltipPill
+                                                                        label="Attendance (30d)"
+                                                                        value={b.attendanceScore ?? 90}
+                                                                        fullTitle="🕒 Teacher 30-Day Attendance"
+                                                                        weight={25}
+                                                                    />
+                                                                    <MetricTooltipPill
+                                                                        label="Duty"
+                                                                        value={b.engagementScore ?? 100}
+                                                                        fullTitle="🎯 Class Duty & Punctuality"
+                                                                        weight={10}
+                                                                    />
                                                                 </div>
                                                             </div>
                                                         </div>
