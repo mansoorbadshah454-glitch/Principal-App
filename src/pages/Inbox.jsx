@@ -191,7 +191,9 @@ const Inbox = () => {
         }
     }, [schoolId, currentUserRole, currentUserId]);
 
-    // 2.5 Fetch Global Unread Counts
+    const [contactMeta, setContactMeta] = useState({}); // { [contactId]: { lastTime, lastText, unreadCount, timestampObj } }
+
+    // 2.5 Fetch Global Message Metadata (Latest message time, preview, and unread counts)
     useEffect(() => {
         if (!schoolId || !messagingId) return;
 
@@ -201,22 +203,54 @@ const Inbox = () => {
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
+            const meta = {};
             const counts = {};
+
             snapshot.forEach(docSnap => {
                 const data = docSnap.data();
+                const isFromMe = (data.fromId === messagingId || data.fromId === currentUserId || data.from === messagingId);
 
-                // Only count unread messages
-                if (data.read === true) return;
+                // Determine other participant ID
+                let otherId = null;
+                if (data.toId === 'all_teachers' || data.type === 'principal-broadcast') {
+                    otherId = 'all_teachers';
+                } else if (isFromMe) {
+                    otherId = data.toId || data.to;
+                } else {
+                    otherId = data.fromId || data.from;
+                }
 
-                const senderId = data.fromId || data.from;
-                if (senderId && senderId !== messagingId) {
-                    // Check if it's meant for me (either via UID or alias)
+                if (!otherId) return;
+
+                if (!meta[otherId]) {
+                    meta[otherId] = {
+                        lastTime: 0,
+                        lastText: '',
+                        unreadCount: 0,
+                        timestampObj: null
+                    };
+                }
+
+                const msgMillis = data.timestamp?.toMillis ? data.timestamp.toMillis() : (data.timestamp?.seconds ? data.timestamp.seconds * 1000 : 0);
+                if (msgMillis > meta[otherId].lastTime) {
+                    meta[otherId].lastTime = msgMillis;
+                    meta[otherId].lastText = data.text || (data.attachment ? `📎 ${data.attachment.name || 'Attachment'}` : 'Message');
+                    meta[otherId].timestampObj = data.timestamp;
+                }
+
+                // Unread count
+                if (!isFromMe && data.read === false) {
                     if (data.toId === messagingId || data.to === messagingId || data.toId === currentUserId) {
-                        counts[senderId] = (counts[senderId] || 0) + 1;
+                        meta[otherId].unreadCount = (meta[otherId].unreadCount || 0) + 1;
+                        counts[otherId] = (counts[otherId] || 0) + 1;
                     }
                 }
             });
+
+            setContactMeta(meta);
             setUnreadCounts(counts);
+        }, (err) => {
+            console.error("[Inbox] Message Listener Error:", err);
         });
 
         return () => unsubscribe();
@@ -464,17 +498,38 @@ const Inbox = () => {
         }
     };
 
-    const allContacts = [...principalContact, ...admins, ...teachers];
+    // Auto-sort contacts by latest message timestamp (WhatsApp Style)
+    const sortedContacts = useMemo(() => {
+        const all = [...principalContact, ...admins, ...teachers];
+        return all.sort((a, b) => {
+            const timeA = contactMeta[a.id]?.lastTime || 0;
+            const timeB = contactMeta[b.id]?.lastTime || 0;
+            if (timeA !== timeB) {
+                return timeB - timeA; // Most recent message first
+            }
+            return (a.name || '').localeCompare(b.name || '');
+        });
+    }, [principalContact, admins, teachers, contactMeta]);
 
-    const filteredTeachers = allContacts.filter(t =>
+    const filteredTeachers = sortedContacts.filter(t =>
         t.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         t.class?.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const formatMessageTime = (timestamp) => {
         if (!timestamp) return '';
-        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const date = timestamp.toDate ? timestamp.toDate() : (typeof timestamp === 'number' ? new Date(timestamp) : new Date(timestamp));
+        const now = new Date();
+        const isToday = date.toDateString() === now.toDateString();
+        if (isToday) {
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (date.toDateString() === yesterday.toDateString()) {
+            return 'Yesterday';
+        }
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     };
 
     const formatMessageDate = (timestamp) => {
@@ -500,41 +555,141 @@ const Inbox = () => {
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '10px', padding: '10px 20px', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
+                {/* High-Contrast Segmented Switcher (List vs Group) */}
+                <div style={{ display: 'flex', gap: '8px', padding: '10px 16px', background: '#0f172a', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                     <button 
                         onClick={() => { setActiveTab('list'); setSelectedTeacher(null); }}
-                        style={{ flex: 1, padding: '8px', borderRadius: '6px', border: 'none', background: activeTab === 'list' ? 'var(--primary-color, #4f46e5)' : 'transparent', color: activeTab === 'list' ? '#fff' : 'inherit', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
-                    >List</button>
+                        style={{ 
+                            flex: 1, 
+                            padding: '8px 12px', 
+                            borderRadius: '8px', 
+                            border: 'none', 
+                            background: activeTab === 'list' ? '#4f46e5' : 'rgba(255, 255, 255, 0.08)', 
+                            color: activeTab === 'list' ? '#ffffff' : '#94a3b8', 
+                            fontWeight: 700, 
+                            fontSize: '0.875rem',
+                            cursor: 'pointer', 
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: activeTab === 'list' ? '0 2px 8px rgba(79, 70, 229, 0.4)' : 'none'
+                        }}
+                    >
+                        List
+                    </button>
                     <button 
                         onClick={() => { setActiveTab('group'); setSelectedTeacher({ id: 'all_teachers', name: 'All Teachers Group', role: 'Group' }); }}
-                        style={{ flex: 1, padding: '8px', borderRadius: '6px', border: 'none', background: activeTab === 'group' ? 'var(--primary-color, #4f46e5)' : 'transparent', color: activeTab === 'group' ? '#fff' : 'inherit', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
-                    >Group</button>
+                        style={{ 
+                            flex: 1, 
+                            padding: '8px 12px', 
+                            borderRadius: '8px', 
+                            border: 'none', 
+                            background: activeTab === 'group' ? '#4f46e5' : 'rgba(255, 255, 255, 0.08)', 
+                            color: activeTab === 'group' ? '#ffffff' : '#94a3b8', 
+                            fontWeight: 700, 
+                            fontSize: '0.875rem',
+                            cursor: 'pointer', 
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: activeTab === 'group' ? '0 2px 8px rgba(79, 70, 229, 0.4)' : 'none'
+                        }}
+                    >
+                        Group
+                    </button>
                 </div>
 
                 <div className="inbox-teacher-list custom-scrollbar">
                     {activeTab === 'list' ? (
                         <>
-                            {filteredTeachers.map(teacher => (
-                                <div
-                                    key={teacher.id}
-                                    className={`inbox-teacher-item ${selectedTeacher?.id === teacher.id ? 'active' : ''}`}
-                                    onClick={() => setSelectedTeacher(teacher)}
-                                >
-                                    <div className="teacher-avatar">
-                                        {teacher.name ? teacher.name.charAt(0).toUpperCase() : 'T'}
-                                        {teacher.status === 'on' && <span className="status-indicator online"></span>}
-                                    </div>
-                                    <div className="teacher-info">
-                                        <div className="teacher-name-row">
-                                            <span className="teacher-name">{teacher.name || 'Unnamed Teacher'}</span>
-                                            {unreadCounts[teacher.id] > 0 && (
-                                                <span className="unread-badge">{unreadCounts[teacher.id]}</span>
-                                            )}
+                            {filteredTeachers.map(teacher => {
+                                const meta = contactMeta[teacher.id] || {};
+                                const hasUnread = (meta.unreadCount || unreadCounts[teacher.id] || 0) > 0;
+                                const unreadCount = meta.unreadCount || unreadCounts[teacher.id] || 0;
+                                const isSelected = selectedTeacher?.id === teacher.id;
+
+                                return (
+                                    <div
+                                        key={teacher.id}
+                                        className={`inbox-teacher-item ${isSelected ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setSelectedTeacher(teacher);
+                                            if (hasUnread) {
+                                                setContactMeta(prev => ({
+                                                    ...prev,
+                                                    [teacher.id]: { ...prev[teacher.id], unreadCount: 0 }
+                                                }));
+                                                setUnreadCounts(prev => ({ ...prev, [teacher.id]: 0 }));
+                                            }
+                                        }}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            padding: '0.85rem 1rem',
+                                            gap: '0.85rem',
+                                            cursor: 'pointer',
+                                            background: isSelected ? '#0f172a' : 'transparent',
+                                            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                                            transition: 'background 0.15s ease'
+                                        }}
+                                    >
+                                        <div className="teacher-avatar" style={{ position: 'relative' }}>
+                                            {teacher.name ? teacher.name.charAt(0).toUpperCase() : 'T'}
+                                            {teacher.status === 'on' && <span className="status-indicator online"></span>}
                                         </div>
-                                        <span className="teacher-class">{teacher.class || 'No Class'}</span>
+                                        <div className="teacher-info" style={{ flex: 1, minWidth: 0 }}>
+                                            <div className="teacher-name-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span className="teacher-name" style={{ fontWeight: hasUnread ? '700' : '500', color: hasUnread ? '#ffffff' : '#f8fafc', fontSize: '0.95rem' }}>
+                                                    {teacher.name || 'Unnamed Teacher'}
+                                                </span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                    {meta.lastTime > 0 && (
+                                                        <span style={{ fontSize: '0.7rem', color: hasUnread ? '#10b981' : '#94a3b8', fontWeight: hasUnread ? '700' : '500' }}>
+                                                            {formatMessageTime(meta.timestampObj || meta.lastTime)}
+                                                        </span>
+                                                    )}
+                                                    {hasUnread && (
+                                                        <span style={{
+                                                            background: '#10b981',
+                                                            color: '#ffffff',
+                                                            fontSize: '0.7rem',
+                                                            fontWeight: '800',
+                                                            minWidth: '20px',
+                                                            height: '20px',
+                                                            borderRadius: '10px',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            padding: '0 5px',
+                                                            boxShadow: '0 2px 4px rgba(16, 185, 129, 0.4)'
+                                                        }}>
+                                                            {unreadCount}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                                                <span style={{
+                                                    fontSize: '0.8rem',
+                                                    color: hasUnread ? '#e2e8f0' : '#94a3b8',
+                                                    fontWeight: hasUnread ? '600' : '400',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                    maxWidth: '75%'
+                                                }}>
+                                                    {meta.lastText || teacher.class || 'No Class'}
+                                                </span>
+                                                <span style={{ fontSize: '0.65rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>
+                                                    {teacher.role === 'Admin' ? 'Admin' : (teacher.class || 'Teacher')}
+                                                </span>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                             {filteredTeachers.length === 0 && (
                                 <div className="no-results">No contacts found.</div>
                             )}
@@ -543,15 +698,37 @@ const Inbox = () => {
                         <div
                             className={`inbox-teacher-item ${selectedTeacher?.id === 'all_teachers' ? 'active' : ''}`}
                             onClick={() => setSelectedTeacher({ id: 'all_teachers', name: 'All Teachers Group', role: 'Group' })}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: '0.85rem 1rem',
+                                gap: '0.85rem',
+                                cursor: 'pointer',
+                                background: selectedTeacher?.id === 'all_teachers' ? '#0f172a' : 'transparent',
+                                borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                                transition: 'background 0.15s ease'
+                            }}
                         >
-                            <div className="teacher-avatar" style={{ background: '#10b981' }}>
+                            <div className="teacher-avatar" style={{ background: '#10b981', color: '#ffffff' }}>
                                 G
                             </div>
-                            <div className="teacher-info">
-                                <div className="teacher-name-row">
-                                    <span className="teacher-name">All Teachers Group</span>
+                            <div className="teacher-info" style={{ flex: 1 }}>
+                                <div className="teacher-name-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span className="teacher-name" style={{ fontWeight: '700', color: '#f8fafc', fontSize: '0.95rem' }}>All Teachers Group</span>
+                                    {contactMeta['all_teachers']?.lastTime > 0 && (
+                                        <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                            {formatMessageTime(contactMeta['all_teachers'].timestampObj || contactMeta['all_teachers'].lastTime)}
+                                        </span>
+                                    )}
                                 </div>
-                                <span className="teacher-class">Broadcast to everyone</span>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                                    <span style={{ fontSize: '0.8rem', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '75%' }}>
+                                        {contactMeta['all_teachers']?.lastText || 'Broadcast to everyone'}
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>
+                                        Group
+                                    </span>
+                                </div>
                             </div>
                         </div>
                     )}
