@@ -41,10 +41,8 @@ const UploadSyllabusTab = ({ schoolId }) => {
     // School Classes & Subjects
     const [classes, setClasses] = useState([]);
     const [selectedClassId, setSelectedClassId] = useState('');
-    const [availableSubjects, setAvailableSubjects] = useState(COMPREHENSIVE_SUBJECTS);
-    const [selectedSubject, setSelectedSubject] = useState('Urdu');
-    const [customSubjectInput, setCustomSubjectInput] = useState('');
-    const [showCustomSubjectModal, setShowCustomSubjectModal] = useState(false);
+    const [availableSubjects, setAvailableSubjects] = useState([]);
+    const [selectedSubject, setSelectedSubject] = useState('');
 
     // Chapters in Firestore for the chosen Class & Subject
     const [chapters, setChapters] = useState([]);
@@ -74,7 +72,7 @@ const UploadSyllabusTab = ({ schoolId }) => {
                 const list = snap.docs.map(d => ({
                     id: d.id,
                     name: d.data().name || d.id,
-                    subjects: d.data().subjects || []
+                    subjects: Array.isArray(d.data().subjects) ? d.data().subjects : []
                 }));
                 list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
                 setClasses(list);
@@ -88,31 +86,24 @@ const UploadSyllabusTab = ({ schoolId }) => {
         fetchClasses();
     }, [schoolId]);
 
-    // 2. Update Subjects when Class changes (Combine Class subjects + Comprehensive List)
+    // 2. Update Subjects when Class changes (Exclusively class assigned subjects)
     useEffect(() => {
-        if (!selectedClassId) return;
+        if (!selectedClassId) {
+            setAvailableSubjects([]);
+            setSelectedSubject('');
+            return;
+        }
         const currentClass = classes.find(c => c.id === selectedClassId);
-        const classSubjects = currentClass?.subjects || [];
+        const classSubjects = (currentClass && Array.isArray(currentClass.subjects)) ? currentClass.subjects : [];
         
-        const combined = Array.from(new Set([...classSubjects, ...COMPREHENSIVE_SUBJECTS]));
-        setAvailableSubjects(combined);
+        setAvailableSubjects(classSubjects);
         
-        if (combined.length > 0) {
-            setSelectedSubject(prev => combined.includes(prev) ? prev : combined[0]);
+        if (classSubjects.length > 0) {
+            setSelectedSubject(prev => classSubjects.includes(prev) ? prev : classSubjects[0]);
+        } else {
+            setSelectedSubject('');
         }
     }, [selectedClassId, classes]);
-
-    // Add Custom Subject Handler
-    const handleAddCustomSubject = () => {
-        const trimmed = customSubjectInput.trim();
-        if (!trimmed) return;
-        if (!availableSubjects.includes(trimmed)) {
-            setAvailableSubjects(prev => [trimmed, ...prev]);
-        }
-        setSelectedSubject(trimmed);
-        setCustomSubjectInput('');
-        setShowCustomSubjectModal(false);
-    };
 
     // Helper: Extract Chapter Number
     const extractChapterNumber = (title) => {
@@ -359,79 +350,31 @@ const UploadSyllabusTab = ({ schoolId }) => {
                     </div>
 
                     <div style={{ minWidth: '240px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                            <label style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569' }}>
-                                2. Select Subject
-                            </label>
-                            <button
-                                onClick={() => setShowCustomSubjectModal(true)}
-                                style={{
-                                    border: 'none', background: 'transparent', color: '#4f46e5',
-                                    fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px'
-                                }}
-                            >
-                                <Plus size={14} /> Add Custom
-                            </button>
-                        </div>
+                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                            2. Select Subject
+                        </label>
                         <select
                             value={selectedSubject}
                             onChange={(e) => setSelectedSubject(e.target.value)}
-                            style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', fontWeight: '700', color: '#1e293b' }}
+                            disabled={availableSubjects.length === 0}
+                            style={{
+                                width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1',
+                                background: availableSubjects.length === 0 ? '#f8fafc' : 'white',
+                                fontWeight: '700', color: availableSubjects.length === 0 ? '#94a3b8' : '#1e293b',
+                                cursor: availableSubjects.length === 0 ? 'not-allowed' : 'pointer'
+                            }}
                         >
-                            {availableSubjects.map(s => (
-                                <option key={s} value={s}>{s}</option>
-                            ))}
+                            {availableSubjects.length === 0 ? (
+                                <option value="">No subjects assigned to this class</option>
+                            ) : (
+                                availableSubjects.map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))
+                            )}
                         </select>
                     </div>
                 </div>
             </div>
-
-            {/* Add Custom Subject Modal */}
-            {showCustomSubjectModal && (
-                <div style={{
-                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
-                }}>
-                    <div style={{ background: 'white', borderRadius: '12px', padding: '1.75rem', width: '100%', maxWidth: '400px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                            <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: '#1e293b' }}>
-                                + Add Custom Subject
-                            </h3>
-                            <button onClick={() => setShowCustomSubjectModal(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b' }}>
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '0.75rem' }}>
-                            Enter the subject name (e.g. <em>Tarjuma-tul-Quran, Coding, Robotics, German</em>):
-                        </p>
-                        <input
-                            type="text"
-                            value={customSubjectInput}
-                            onChange={(e) => setCustomSubjectInput(e.target.value)}
-                            placeholder="Subject name..."
-                            autoFocus
-                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.95rem', marginBottom: '1.25rem' }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleAddCustomSubject();
-                            }}
-                        />
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                            <button
-                                onClick={() => setShowCustomSubjectModal(false)}
-                                style={{ padding: '0.5rem 1rem', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleAddCustomSubject}
-                                style={{ padding: '0.5rem 1.2rem', borderRadius: '6px', border: 'none', background: 'var(--primary, #4f46e5)', color: 'white', fontWeight: '600', cursor: 'pointer' }}
-                            >
-                                Add Subject
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
 
             {/* ========================================================================= */}

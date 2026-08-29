@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode, Sparkles } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as QRCodeLib from 'qrcode';
@@ -10,7 +10,6 @@ import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, 
 import { getDocsFast } from '../utils/cacheUtils';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getStandardChapters } from '../data/curriculumData';
 import { useAlert } from '../context/AlertContext';
 
 // Internal Component for individual Teacher Card logic
@@ -477,19 +476,6 @@ const Teachers = () => {
 
     const [activeTab, setActiveTab] = useState('list');
 
-    // Syllabus States
-    const [selectedSyllabusClass, setSelectedSyllabusClass] = useState('');
-    const [selectedSyllabusSubject, setSelectedSyllabusSubject] = useState('');
-    const [syllabusChapters, setSyllabusChapters] = useState([]);
-    const [newChapterTitle, setNewChapterTitle] = useState('');
-    const [newChapterTime, setNewChapterTime] = useState('');
-    const [loadingSyllabus, setLoadingSyllabus] = useState(false);
-    const [isImportingStandard, setIsImportingStandard] = useState(false);
-
-    const standardChapters = useMemo(() => {
-        return getStandardChapters(selectedSyllabusClass, selectedSyllabusSubject);
-    }, [selectedSyllabusClass, selectedSyllabusSubject]);
-
     const [selectedAttendanceTeacher, setSelectedAttendanceTeacher] = useState(null);
     const [attendanceMonth, setAttendanceMonth] = useState(new Date().getMonth());
     const [attendanceYear, setAttendanceYear] = useState(new Date().getFullYear());
@@ -605,10 +591,185 @@ const Teachers = () => {
         fetchMasterTimetable();
     }, [schoolId]);
 
+    const getSubjectAssignmentInfo = (targetClass, subject, currentTeacherId, currentRowIndex) => {
+        if (!targetClass || !subject || targetClass === 'FREE' || targetClass === 'BREAK') {
+            return { isAssigned: false, assignedTeacherName: null };
+        }
+
+        for (let rIdx = 0; rIdx < timeTableRows.length; rIdx++) {
+            const r = timeTableRows[rIdx];
+            const isDifferentTeacher = r.teacherId && currentTeacherId && r.teacherId !== currentTeacherId;
+            const isDifferentRow = rIdx !== currentRowIndex;
+
+            if (isDifferentTeacher || (!currentTeacherId && isDifferentRow)) {
+                const hasAssignment = (r.cells || []).some(c => c.class === targetClass && c.subject === subject);
+                if (hasAssignment) {
+                    const assignedTeacher = teachers.find(t => t.id === r.teacherId);
+                    const teacherName = assignedTeacher?.name || (r.teacherId ? 'Assigned' : 'Another Teacher');
+                    return { isAssigned: true, assignedTeacherName: teacherName };
+                }
+            }
+        }
+        return { isAssigned: false, assignedTeacherName: null };
+    };
+
+    const handleDownloadTimetablePDF = () => {
+        try {
+            const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+            
+            // Header: School Name & Timetable Title
+            doc.setFontSize(20);
+            doc.setTextColor('#5b21b6');
+            doc.text(schoolName || 'School Name', 14, 18);
+
+            doc.setFontSize(13);
+            doc.setTextColor('#1e293b');
+            doc.text('WEEKLY MASTER TIME TABLE', 14, 26);
+
+            // Sub-info / metadata
+            doc.setFontSize(9);
+            doc.setTextColor('#64748b');
+            const now = new Date();
+            const dateStr = now.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            doc.text(`Generated: ${dateStr} at ${timeStr}  |  Official Break: ${globalBreakStartTime || '10:30'} - ${globalBreakEndTime || '11:00'}`, 14, 32);
+
+            // Build Headings
+            const headCols = ['Teacher'];
+            timeTableCols.forEach((col, idx) => {
+                const isBreak = col === globalBreakStartTime;
+                headCols.push(isBreak ? `BREAK\n${col}` : `Period ${idx + 1}\n${col || '--:--'}`);
+            });
+
+            // Build Body Rows
+            const tableBody = timeTableRows.map((row) => {
+                const teacherObj = teachers.find(t => t.id === row.teacherId);
+                const teacherName = teacherObj ? teacherObj.name : (row.teacherId ? 'Teacher' : 'Unassigned');
+                
+                const rowData = [teacherName];
+                (row.cells || []).forEach((cell, colIndex) => {
+                    const isGlobalBreak = timeTableCols[colIndex] === globalBreakStartTime;
+                    const effectiveClass = isGlobalBreak ? 'BREAK' : cell.class;
+                    
+                    if (effectiveClass === 'BREAK') {
+                        rowData.push('BREAK');
+                    } else if (effectiveClass === 'FREE') {
+                        rowData.push('FREE');
+                    } else if (effectiveClass && cell.subject) {
+                        rowData.push(`${effectiveClass}\n(${cell.subject})`);
+                    } else if (effectiveClass) {
+                        rowData.push(effectiveClass);
+                    } else {
+                        rowData.push('-');
+                    }
+                });
+                return rowData;
+            });
+
+            // Render AutoTable
+            autoTable(doc, {
+                startY: 36,
+                head: [headCols],
+                body: tableBody,
+                theme: 'grid',
+                headStyles: {
+                    fillColor: '#6d28d9',
+                    textColor: '#ffffff',
+                    fontStyle: 'bold',
+                    halign: 'center',
+                    valign: 'middle',
+                    fontSize: 9,
+                    cellPadding: 3
+                },
+                bodyStyles: {
+                    fontSize: 8.5,
+                    cellPadding: 3.5,
+                    valign: 'middle',
+                    halign: 'center',
+                    textColor: '#334155'
+                },
+                columnStyles: {
+                    0: { halign: 'left', fontStyle: 'bold', textColor: '#1e293b' }
+                },
+                alternateRowStyles: {
+                    fillColor: '#f8fafc'
+                },
+                didParseCell: function(data) {
+                    if (data.section === 'body') {
+                        const cellVal = String(data.cell.raw || '');
+                        if (cellVal === 'BREAK') {
+                            data.cell.styles.fillColor = '#fef3c7';
+                            data.cell.styles.textColor = '#d97706';
+                            data.cell.styles.fontStyle = 'bold';
+                        } else if (cellVal === 'FREE') {
+                            data.cell.styles.fillColor = '#ecfdf5';
+                            data.cell.styles.textColor = '#059669';
+                            data.cell.styles.fontStyle = 'italic';
+                        } else if (cellVal === '-') {
+                            data.cell.styles.textColor = '#94a3b8';
+                        }
+                    }
+                },
+                margin: { left: 14, right: 14 }
+            });
+
+            const pageCount = doc.internal.getNumberOfPages();
+            for (let i = 1; i <= pageCount; i++) {
+                doc.setPage(i);
+                doc.setFontSize(8);
+                doc.setTextColor('#94a3b8');
+                doc.text(
+                    `Page ${i} of ${pageCount} — ${schoolName || 'School Management'}`,
+                    doc.internal.pageSize.getWidth() / 2,
+                    doc.internal.pageSize.getHeight() - 8,
+                    { align: 'center' }
+                );
+            }
+
+            const fileName = `${(schoolName || 'School').replace(/[^a-zA-Z0-9_-]/g, '_')}_Weekly_Timetable.pdf`;
+            doc.save(fileName);
+            showAlert("Timetable PDF downloaded successfully!", "success");
+        } catch (err) {
+            console.error("Error generating timetable PDF:", err);
+            showAlert("Failed to generate Timetable PDF: " + (err.message || err), "error");
+        }
+    };
+
     const handleSaveTimeTable = async () => {
         if (!schoolId) return;
         setIsPublishingTimeTable(true);
         try {
+            // Validation: Check for duplicate subject assignments across different teachers
+            const conflictMap = new Map();
+            let conflictError = null;
+
+            for (let r of timeTableRows) {
+                if (!r.teacherId) continue;
+                const teacherObj = teachers.find(t => t.id === r.teacherId);
+                const teacherName = teacherObj?.name || 'Unknown Teacher';
+
+                for (let c of (r.cells || [])) {
+                    if (!c.class || !c.subject || c.class === 'FREE' || c.class === 'BREAK') continue;
+                    const key = `${c.class}:::${c.subject}`;
+                    if (conflictMap.has(key)) {
+                        const existing = conflictMap.get(key);
+                        if (existing.teacherId !== r.teacherId) {
+                            conflictError = `Conflict detected: "${c.subject}" for ${c.class} is assigned to both ${existing.teacherName} and ${teacherName}. Please resolve before publishing.`;
+                            break;
+                        }
+                    } else {
+                        conflictMap.set(key, { teacherId: r.teacherId, teacherName });
+                    }
+                }
+                if (conflictError) break;
+            }
+
+            if (conflictError) {
+                showAlert(conflictError, "error");
+                setIsPublishingTimeTable(false);
+                return;
+            }
+
             const enforcedRows = timeTableRows.map(row => ({
                 ...row,
                 cells: row.cells.map((cell, colIndex) => {
@@ -627,10 +788,10 @@ const Teachers = () => {
                 rows: enforcedRows,
                 notificationType: publishType
             });
-            alert(result.data.message || 'Timetable published successfully!');
+            showAlert(result.data?.message || 'Timetable published successfully!', 'success');
         } catch (error) {
             console.error("Publish failed:", error);
-            alert("Failed to publish timetable: " + error.message);
+            showAlert("Failed to publish timetable: " + error.message, "error");
         } finally {
             setIsPublishingTimeTable(false);
         }
@@ -1080,127 +1241,6 @@ const Teachers = () => {
         }
     }, [location.state, loading, teachers]);
 
-    // Fetch Syllabus
-    useEffect(() => {
-        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject) {
-            setSyllabusChapters([]);
-            return;
-        }
-        setLoadingSyllabus(true);
-        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
-        if (!classObj) {
-            setSyllabusChapters([]);
-            setLoadingSyllabus(false);
-            return;
-        }
-
-        const chaptersRef = collection(db, `schools/${schoolId}/classes/${classObj.id}/syllabus/${selectedSyllabusSubject}/chapters`);
-        const q = query(chaptersRef, orderBy('createdAt'));
-        
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const chapters = [];
-            snapshot.forEach((docSnap) => {
-                chapters.push({ id: docSnap.id, ...docSnap.data() });
-            });
-            setSyllabusChapters(chapters);
-            setLoadingSyllabus(false);
-        }, (error) => {
-            console.error("Error fetching syllabus chapters:", error);
-            setLoadingSyllabus(false);
-        });
-
-        return () => unsubscribe();
-    }, [schoolId, selectedSyllabusClass, selectedSyllabusSubject, dbClassesData]);
-
-    const handleAddChapter = async (e) => {
-        e.preventDefault();
-        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject || !newChapterTitle.trim()) return;
-
-        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
-        if (!classObj) return;
-
-        const chaptersRef = collection(db, `schools/${schoolId}/classes/${classObj.id}/syllabus/${selectedSyllabusSubject}/chapters`);
-        try {
-            await addDoc(chaptersRef, {
-                title: newChapterTitle.trim(),
-                time: newChapterTime.trim() || 'Not specified',
-                status: 'Pending',
-                topics: [],
-                createdAt: serverTimestamp()
-            });
-
-            setNewChapterTitle('');
-            setNewChapterTime('');
-        } catch (err) {
-            console.error("Error adding chapter:", err);
-            alert("Failed to add chapter.");
-        }
-    };
-
-    const handleDeleteChapter = async (chapterId) => {
-        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject) return;
-        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass);
-        if (!classObj) return;
-
-        const chapterDocRef = doc(db, `schools/${schoolId}/classes/${classObj.id}/syllabus/${selectedSyllabusSubject}/chapters`, chapterId);
-        try {
-            await deleteDoc(chapterDocRef);
-        } catch (err) {
-            console.error("Error deleting chapter:", err);
-            alert("Failed to delete chapter.");
-        }
-    };
-
-    const handleImportStandardChapters = async () => {
-        if (!schoolId || !selectedSyllabusClass || !selectedSyllabusSubject || standardChapters.length === 0) return;
-        const classObj = dbClassesData.find(c => c.name === selectedSyllabusClass || c.id === selectedSyllabusClass);
-        if (!classObj) {
-            alert("Could not identify the selected class.");
-            return;
-        }
-
-        setIsImportingStandard(true);
-        try {
-            const cleanSubject = selectedSyllabusSubject.trim();
-            const chaptersRef = collection(db, 'schools', schoolId, 'classes', classObj.id, 'syllabus', cleanSubject, 'chapters');
-            
-            const existingTitles = new Set(syllabusChapters.map(c => (c.title || '').toLowerCase().trim()));
-            const toAdd = standardChapters.filter(ch => {
-                const titleWithPrefix = `Chapter ${ch.num}: ${ch.name}`.toLowerCase().trim();
-                const plainTitle = (ch.name || '').toLowerCase().trim();
-                return !existingTitles.has(titleWithPrefix) && !existingTitles.has(plainTitle);
-            });
-
-            if (toAdd.length === 0) {
-                alert("All standard chapters for this subject are already present in the syllabus!");
-                setIsImportingStandard(false);
-                return;
-            }
-
-            const batch = writeBatch(db);
-            const baseTime = Date.now();
-            toAdd.forEach((ch, idx) => {
-                const newDocRef = doc(chaptersRef);
-                const chapterNum = Number(ch.num) || (idx + 1);
-                batch.set(newDocRef, {
-                    title: `Chapter ${ch.num}: ${ch.name}`,
-                    time: '2 Weeks',
-                    status: 'Pending',
-                    topics: [],
-                    createdAt: new Date(baseTime + chapterNum * 1000)
-                });
-            });
-
-            await batch.commit();
-            alert(`Successfully imported ${toAdd.length} standard chapters!`);
-        } catch (err) {
-            console.error("Error importing standard chapters:", err);
-            alert(`Failed to import standard chapters: ${err?.message || err}`);
-        } finally {
-            setIsImportingStandard(false);
-        }
-    };
-
     const [isEditing, setIsEditing] = useState(false);
     const [editingId, setEditingId] = useState(null);
 
@@ -1619,19 +1659,6 @@ const Teachers = () => {
                     Time table
                 </button>
                 <button
-                    onClick={() => setActiveTab('syllabus')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'syllabus' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'syllabus' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0'
-                    }}
-                >
-                    Syllabus
-                </button>
-                <button
                     onClick={() => setActiveTab('attendance')}
                     style={{
                         background: 'none', border: 'none', cursor: 'pointer',
@@ -1885,16 +1912,31 @@ const Teachers = () => {
                                     <input type="time" value={globalBreakEndTime} onChange={(e) => handleUpdateBreakTime('end', e.target.value)} style={{ padding: '0.2rem', borderRadius: '4px', border: '1px solid #fcd34d', outline: 'none', background: 'white', color: '#92400e', fontWeight: 'bold' }} />
                                 </div>
                             </div>
-                            <button
-                                onClick={handleAddTimeRow}
-                                className="btn-primary"
-                                style={{
-                                    display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', borderRadius: '8px',
-                                    background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', border: 'none', color: 'white', fontWeight: '600', cursor: 'pointer'
-                                }}
-                            >
-                                <Plus size={16} /> Add Row
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <button
+                                    onClick={handleDownloadTimetablePDF}
+                                    className="btn-primary"
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.1rem', borderRadius: '8px',
+                                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', border: 'none', color: 'white', fontWeight: '600', cursor: 'pointer',
+                                        boxShadow: '0 2px 6px rgba(16, 185, 129, 0.25)', transition: 'all 0.2s'
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
+                                    onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                                >
+                                    <DownloadCloud size={16} /> Download Timetable
+                                </button>
+                                <button
+                                    onClick={handleAddTimeRow}
+                                    className="btn-primary"
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', borderRadius: '8px',
+                                        background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', border: 'none', color: 'white', fontWeight: '600', cursor: 'pointer'
+                                    }}
+                                >
+                                    <Plus size={16} /> Add Row
+                                </button>
+                            </div>
                         </div>
 
                         <div style={{ minWidth: '600px' }}>
@@ -1975,9 +2017,20 @@ const Teachers = () => {
                                                             style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '500', color: '#475569', background: 'white', cursor: 'pointer' }}
                                                         >
                                                             <option value="">Select Subject</option>
-                                                            {allowedSubjects.map(s => (
-                                                                <option key={s} value={s}>{s}</option>
-                                                            ))}
+                                                            {allowedSubjects.map(s => {
+                                                                const assignment = getSubjectAssignmentInfo(effectiveClass, s, row.teacherId, rowIndex);
+                                                                const isAssignedToOther = assignment.isAssigned && cell.subject !== s;
+                                                                return (
+                                                                    <option 
+                                                                        key={s} 
+                                                                        value={s}
+                                                                        disabled={isAssignedToOther}
+                                                                        style={isAssignedToOther ? { color: '#94a3b8', fontStyle: 'italic', background: '#f8fafc' } : {}}
+                                                                    >
+                                                                        {s} {isAssignedToOther ? `(Assigned: ${assignment.assignedTeacherName})` : ''}
+                                                                    </option>
+                                                                );
+                                                            })}
                                                         </select>
                                                     );
                                                 })()}
@@ -2050,269 +2103,6 @@ const Teachers = () => {
                             {isPublishingTimeTable ? <Loader2 size={20} className="animate-spin" /> : null}
                             {isPublishingTimeTable ? 'Publishing...' : 'Save & Publish'}
                         </button>
-                    </div>
-                </div>
-            )}
-            {activeTab === 'syllabus' && (
-                <div className="animate-fade-in-up">
-                    <div className="card" style={{ 
-                        padding: '2rem', 
-                        background: 'rgba(255, 255, 255, 0.7)', 
-                        backdropFilter: 'blur(20px)',
-                        borderRadius: '24px', 
-                        border: '1px solid rgba(255, 255, 255, 0.6)', 
-                        boxShadow: '0 10px 30px -5px rgba(14, 165, 233, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.9)',
-                        position: 'relative',
-                        overflow: 'hidden'
-                    }}>
-                        <div style={{ marginBottom: '2rem', position: 'relative', zIndex: 1 }}>
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#1e293b', marginBottom: '0.2rem' }}>Syllabus Management</h2>
-                            <p style={{ color: '#64748b', fontSize: '0.95rem', fontWeight: '500' }}>Define chapters and topics for each class and subject.</p>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Select Class</label>
-                                <select 
-                                    value={selectedSyllabusClass} 
-                                    onChange={(e) => {
-                                        setSelectedSyllabusClass(e.target.value);
-                                        setSelectedSyllabusSubject('');
-                                    }}
-                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
-                                >
-                                    <option value="">-- Choose Class --</option>
-                                    {dbClassesData.map(c => (
-                                        <option key={c.id} value={c.name}>{c.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Select Subject</label>
-                                <select 
-                                    value={selectedSyllabusSubject} 
-                                    onChange={(e) => setSelectedSyllabusSubject(e.target.value)}
-                                    disabled={!selectedSyllabusClass}
-                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', background: !selectedSyllabusClass ? '#f8fafc' : 'white' }}
-                                >
-                                    <option value="">-- Choose Subject --</option>
-                                    {selectedSyllabusClass && dbClassesData.find(c => c.name === selectedSyllabusClass)?.subjects?.map(s => (
-                                        <option key={s} value={s}>{s}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-
-                        {selectedSyllabusClass && selectedSyllabusSubject && (
-                            <>
-                                {standardChapters.length > 0 && (
-                                    <div style={{
-                                        background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
-                                        border: '1px solid #c4b5fd',
-                                        borderRadius: '16px',
-                                        padding: '1.25rem 1.5rem',
-                                        marginBottom: '1.5rem',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        flexWrap: 'wrap',
-                                        gap: '1rem',
-                                        boxShadow: '0 4px 15px -3px rgba(124, 58, 237, 0.1)'
-                                    }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                            <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#7c3aed', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                                <Sparkles size={20} />
-                                            </div>
-                                            <div>
-                                                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700', color: '#5b21b6' }}>
-                                                    Standard Curriculum Available ({standardChapters.length} Chapters)
-                                                </h4>
-                                                <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: '#6d28d9' }}>
-                                                    Auto-populate all official chapters for {selectedSyllabusSubject} with 1-click.
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={handleImportStandardChapters}
-                                            disabled={isImportingStandard}
-                                            style={{
-                                                background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
-                                                color: 'white',
-                                                border: 'none',
-                                                padding: '0.65rem 1.25rem',
-                                                borderRadius: '10px',
-                                                fontWeight: '700',
-                                                fontSize: '0.85rem',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.5rem',
-                                                cursor: isImportingStandard ? 'not-allowed' : 'pointer',
-                                                boxShadow: '0 4px 12px rgba(124, 58, 237, 0.25)',
-                                                transition: 'all 0.2s'
-                                            }}
-                                        >
-                                            {isImportingStandard ? (
-                                                <>
-                                                    <Loader2 size={16} className="animate-spin" />
-                                                    <span>Importing...</span>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Sparkles size={16} />
-                                                    <span>⚡ Import Standard Syllabus</span>
-                                                </>
-                                            )}
-                                        </button>
-                                    </div>
-                                )}
-
-                                <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '2rem' }}>
-                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1e293b', marginBottom: '1rem' }}>Add New Chapter</h3>
-                                    <form onSubmit={handleAddChapter} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
-                                        <div style={{ flex: 2 }}>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.3rem', color: 'var(--text-secondary)' }}>Chapter Title</label>
-                                            <input 
-                                                type="text" 
-                                                list="standard-chapters-datalist"
-                                                value={newChapterTitle}
-                                                onChange={(e) => setNewChapterTitle(e.target.value)}
-                                                placeholder="e.g. Chapter 1: Basic Algebra"
-                                                required
-                                                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
-                                            />
-                                            {standardChapters.length > 0 && (
-                                                <datalist id="standard-chapters-datalist">
-                                                    {standardChapters.map(ch => (
-                                                        <option key={ch.num} value={`Chapter ${ch.num}: ${ch.name}`} />
-                                                    ))}
-                                                </datalist>
-                                            )}
-                                        </div>
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.3rem', color: 'var(--text-secondary)' }}>Estimated Time</label>
-                                            <input 
-                                                type="text" 
-                                                value={newChapterTime}
-                                                onChange={(e) => setNewChapterTime(e.target.value)}
-                                                placeholder="e.g. 2 Weeks"
-                                                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
-                                            />
-                                        </div>
-                                        <button 
-                                            type="submit"
-                                            className="btn-primary"
-                                            style={{ padding: '0.75rem 1.5rem', borderRadius: '8px', height: '46px', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '600' }}
-                                        >
-                                            <Plus size={18} />
-                                            Add
-                                        </button>
-                                    </form>
-                                </div>
-
-                                <div>
-                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1e293b', marginBottom: '1rem' }}>Chapters List</h3>
-                                    {loadingSyllabus ? (
-                                        <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
-                                            <Loader2 className="animate-spin" size={24} color="var(--primary)" />
-                                        </div>
-                                    ) : syllabusChapters.length === 0 ? (
-                                        <div style={{ textAlign: 'center', padding: '2rem', background: '#f8fafc', borderRadius: '12px', color: '#64748b' }}>
-                                            No chapters added yet for this subject.
-                                        </div>
-                                    ) : (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '350px', overflowY: 'auto', paddingRight: '0.5rem' }} className="custom-scrollbar">
-                                            {syllabusChapters.map((chapter, index) => {
-                                                const isUrdu = /[\u0600-\u06FF]/.test(chapter.title || '');
-                                                return (
-                                                    <div 
-                                                        key={chapter.id} 
-                                                        style={{ 
-                                                            display: 'flex', 
-                                                            justifyContent: 'space-between', 
-                                                            alignItems: 'center', 
-                                                            padding: '0.85rem 1.25rem', 
-                                                            background: 'linear-gradient(135deg, #1e40af 0%, #2563eb 100%)', 
-                                                            border: '1px solid #1d4ed8', 
-                                                            borderRadius: '12px', 
-                                                            boxShadow: '0 2px 6px rgba(30, 64, 175, 0.18)',
-                                                            color: '#ffffff'
-                                                        }}
-                                                    >
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
-                                                            <div style={{ 
-                                                                width: '32px', height: '32px', borderRadius: '50%', 
-                                                                background: '#ffffff', color: '#1e40af', 
-                                                                display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                                                                fontWeight: '800', fontSize: '0.9rem', flexShrink: 0 
-                                                            }}>
-                                                                {index + 1}
-                                                            </div>
-                                                            <div style={{ flex: 1 }}>
-                                                                <h4 
-                                                                    style={{ 
-                                                                        margin: 0, 
-                                                                        fontSize: isUrdu ? '1.2rem' : '1rem', 
-                                                                        fontWeight: '700', 
-                                                                        color: '#ffffff',
-                                                                        fontFamily: isUrdu ? "'Noto Nastaliq Urdu', 'Jameel Noori Nastaliq', 'Urdu Typesetting', Tahoma, serif" : 'inherit',
-                                                                        lineHeight: isUrdu ? '2.0' : '1.4',
-                                                                        textShadow: '0 1px 2px rgba(0,0,0,0.2)'
-                                                                    }}
-                                                                >
-                                                                    {chapter.title}
-                                                                </h4>
-                                                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
-                                                                    {chapter.time && (
-                                                                        <span style={{ 
-                                                                            fontSize: '0.75rem', 
-                                                                            background: 'rgba(255, 255, 255, 0.2)', 
-                                                                            color: '#ffffff', 
-                                                                            padding: '2px 8px', 
-                                                                            borderRadius: '20px',
-                                                                            border: '1px solid rgba(255, 255, 255, 0.3)'
-                                                                        }}>
-                                                                            Time: {chapter.time}
-                                                                        </span>
-                                                                    )}
-                                                                    <span style={{ 
-                                                                        fontSize: '0.75rem', 
-                                                                        fontWeight: '700',
-                                                                        background: chapter.status === 'Completed' ? 'rgba(34, 197, 94, 0.35)' : chapter.status === 'In Progress' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(255, 255, 255, 0.2)', 
-                                                                        color: '#ffffff',
-                                                                        padding: '2px 8px', 
-                                                                        borderRadius: '20px',
-                                                                        border: '1px solid rgba(255, 255, 255, 0.35)'
-                                                                    }}>
-                                                                        Status: {chapter.status || 'Pending'}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                        <button 
-                                                            onClick={() => handleDeleteChapter(chapter.id)}
-                                                            style={{ 
-                                                                background: 'rgba(239, 68, 68, 0.35)', 
-                                                                border: '1px solid rgba(255, 255, 255, 0.3)', 
-                                                                width: '36px', height: '36px', 
-                                                                borderRadius: '8px', 
-                                                                display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                                                                cursor: 'pointer', color: '#ffffff',
-                                                                flexShrink: 0
-                                                            }}
-                                                            title="Delete Chapter"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            </>
-                        )}
                     </div>
                 </div>
             )}
