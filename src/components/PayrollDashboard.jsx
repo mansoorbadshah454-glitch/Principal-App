@@ -84,10 +84,24 @@ const PayrollDashboard = ({ schoolId, schoolInfo }) => {
     // Modal states
     const [selectedTeacherModal, setSelectedTeacherModal] = useState(null);
     const [modalActiveTab, setModalActiveTab] = useState('timeline'); // 'timeline' | 'adjustments' | 'slip'
+    const [timelineFilter, setTimelineFilter] = useState('all'); // 'all' | 'upto_today' | 'presents' | 'absents'
     const [newAdjustment, setNewAdjustment] = useState({ title: '', amount: '', type: 'bonus' });
     const [isSavingAdjustment, setIsSavingAdjustment] = useState(false);
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
     const [isSyncingFinances, setIsSyncingFinances] = useState(false);
+
+    // Auto-scroll timeline to today's date when modal opens
+    useEffect(() => {
+        if (selectedTeacherModal && modalActiveTab === 'timeline') {
+            const timer = setTimeout(() => {
+                const todayEl = document.getElementById('inspect-today-row');
+                if (todayEl) {
+                    todayEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 200);
+            return () => clearTimeout(timer);
+        }
+    }, [selectedTeacherModal, modalActiveTab]);
 
     // 1. Fetch School Timings
     useEffect(() => {
@@ -1787,85 +1801,205 @@ const PayrollDashboard = ({ schoolId, schoolInfo }) => {
 
                             {/* TAB 1: Attendance Timeline */}
                             {modalActiveTab === 'timeline' && (
-                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
-                                        <thead>
-                                            <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#475569', fontWeight: '700' }}>
-                                                <th style={{ padding: '0.65rem 1rem' }}>Date & Day</th>
-                                                <th style={{ padding: '0.65rem 0.75rem' }}>Check-In</th>
-                                                <th style={{ padding: '0.65rem 0.75rem' }}>Check-Out</th>
-                                                <th style={{ padding: '0.65rem 0.75rem' }}>Status</th>
-                                                <th style={{ padding: '0.65rem 0.75rem' }}>Deduction</th>
-                                                <th style={{ padding: '0.65rem 1rem', textAlign: 'right' }}>Override</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {activeModalPayroll.timeline.map((item, idx) => {
-                                                const isWeekend = item.isSunday;
-                                                const isUpcoming = item.isFuture && !item.isToday;
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                    {/* Quick Timeline Filter Pills */}
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setTimelineFilter('all')}
+                                                style={{
+                                                    padding: '0.3rem 0.65rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: '700',
+                                                    border: timelineFilter === 'all' ? '1px solid #059669' : '1px solid #e2e8f0',
+                                                    background: timelineFilter === 'all' ? '#059669' : '#ffffff',
+                                                    color: timelineFilter === 'all' ? '#ffffff' : '#64748b',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                All ({activeModalPayroll.timeline.length} Days)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setTimelineFilter('upto_today')}
+                                                style={{
+                                                    padding: '0.3rem 0.65rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: '700',
+                                                    border: timelineFilter === 'upto_today' ? '1px solid #0284c7' : '1px solid #e2e8f0',
+                                                    background: timelineFilter === 'upto_today' ? '#0284c7' : '#ffffff',
+                                                    color: timelineFilter === 'upto_today' ? '#ffffff' : '#64748b',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Up to Today (1 - {new Date().getDate()} {MONTH_NAMES[selectedMonth - 1]?.slice(0, 3)})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setTimelineFilter('presents')}
+                                                style={{
+                                                    padding: '0.3rem 0.65rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: '700',
+                                                    border: timelineFilter === 'presents' ? '1px solid #16a34a' : '1px solid #e2e8f0',
+                                                    background: timelineFilter === 'presents' ? '#16a34a' : '#ffffff',
+                                                    color: timelineFilter === 'presents' ? '#ffffff' : '#64748b',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Presents ({activeModalPayroll.timeline.filter(t => t.status.includes('Present') || t.status.includes('Late') || t.status.includes('Half')).length})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setTimelineFilter('absents')}
+                                                style={{
+                                                    padding: '0.3rem 0.65rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: '700',
+                                                    border: timelineFilter === 'absents' ? '1px solid #dc2626' : '1px solid #e2e8f0',
+                                                    background: timelineFilter === 'absents' ? '#dc2626' : '#ffffff',
+                                                    color: timelineFilter === 'absents' ? '#ffffff' : '#64748b',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Absents ({activeModalPayroll.timeline.filter(t => t.status.includes('Absent')).length})
+                                            </button>
+                                        </div>
 
-                                                let statusColor = '#059669';
-                                                let statusBg = '#ecfdf5';
-                                                if (item.status.includes('Absent')) {
-                                                    statusColor = '#dc2626';
-                                                    statusBg = '#fef2f2';
-                                                } else if (item.status.includes('Half') || item.status.includes('Early')) {
-                                                    statusColor = '#2563eb';
-                                                    statusBg = '#eff6ff';
-                                                } else if (item.status.includes('Late')) {
-                                                    statusColor = '#d97706';
-                                                    statusBg = '#fffbeb';
-                                                } else if (isWeekend || isUpcoming) {
-                                                    statusColor = '#64748b';
-                                                    statusBg = '#f1f5f9';
-                                                }
+                                        <span style={{ fontSize: '0.72rem', color: '#64748b', fontStyle: 'italic' }}>
+                                            Scroll inside table to view all 31 days
+                                        </span>
+                                    </div>
 
-                                                return (
-                                                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9', background: item.isOverride ? '#fefce8' : 'white' }}>
-                                                        <td style={{ padding: '0.6rem 1rem', fontWeight: '700', color: '#0f172a' }}>
-                                                            {item.day} {MONTH_NAMES[selectedMonth - 1].slice(0, 3)} ({item.dayName})
-                                                            {item.isToday && <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', background: '#059669', color: 'white', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>TODAY</span>}
-                                                        </td>
-                                                        <td style={{ padding: '0.6rem 0.75rem', color: '#334155' }}>
-                                                            {item.checkInFormatted}
-                                                        </td>
-                                                        <td style={{ padding: '0.6rem 0.75rem', color: '#334155' }}>
-                                                            {item.checkOutFormatted}
-                                                        </td>
-                                                        <td style={{ padding: '0.6rem 0.75rem' }}>
-                                                            <span style={{
-                                                                padding: '0.2rem 0.5rem', borderRadius: '6px',
-                                                                background: statusBg, color: statusColor, fontWeight: '700', fontSize: '0.75rem'
-                                                            }}>
-                                                                {item.status}
-                                                            </span>
-                                                        </td>
-                                                        <td style={{ padding: '0.6rem 0.75rem', fontWeight: '700', color: item.deduction > 0 ? '#dc2626' : '#64748b' }}>
-                                                            {item.deduction > 0 ? `- Rs ${item.deduction.toLocaleString()}` : 'Rs 0'}
-                                                        </td>
-                                                        <td style={{ padding: '0.6rem 1rem', textAlign: 'right' }}>
-                                                            {!isWeekend && !isUpcoming && (
-                                                                <select
-                                                                    value={item.isOverride ? item.status : ''}
-                                                                    onChange={(e) => handleOverrideDay(activeModalPayroll.teacher.id, item.dateStr, e.target.value)}
-                                                                    style={{
-                                                                        fontSize: '0.75rem', padding: '0.25rem 0.5rem',
-                                                                        borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none'
-                                                                    }}
-                                                                >
-                                                                    <option value="">Auto (Default)</option>
-                                                                    <option value="Present">Force Present (0 Ded)</option>
-                                                                    <option value="Approved Leave">Approved Leave (0 Ded)</option>
-                                                                    <option value="Half Day">Force Half Day</option>
-                                                                    <option value="Absent">Force Absent</option>
-                                                                </select>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
+                                    {/* Dedicated In-Card Scrollable Table Container */}
+                                    <div style={{
+                                        border: '1px solid #e2e8f0',
+                                        borderRadius: '12px',
+                                        overflowY: 'auto',
+                                        maxHeight: '430px',
+                                        background: '#ffffff',
+                                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+                                    }} className="custom-scrollbar">
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+                                            <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f8fafc', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                                                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#475569', fontWeight: '700' }}>
+                                                    <th style={{ padding: '0.75rem 1rem' }}>Date & Day</th>
+                                                    <th style={{ padding: '0.75rem 0.75rem' }}>Check-In</th>
+                                                    <th style={{ padding: '0.75rem 0.75rem' }}>Check-Out</th>
+                                                    <th style={{ padding: '0.75rem 0.75rem' }}>Status</th>
+                                                    <th style={{ padding: '0.75rem 0.75rem' }}>Deduction</th>
+                                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Override</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {activeModalPayroll.timeline
+                                                    .filter(item => {
+                                                        if (timelineFilter === 'upto_today') return !item.isFuture || item.isToday;
+                                                        if (timelineFilter === 'presents') return item.status.includes('Present') || item.status.includes('Late') || item.status.includes('Half');
+                                                        if (timelineFilter === 'absents') return item.status.includes('Absent');
+                                                        return true;
+                                                    })
+                                                    .map((item, idx) => {
+                                                        const isWeekend = item.isSunday;
+                                                        const isUpcoming = item.isFuture && !item.isToday;
+
+                                                        let statusColor = '#059669';
+                                                        let statusBg = '#ecfdf5';
+                                                        if (item.status.includes('Absent')) {
+                                                            statusColor = '#dc2626';
+                                                            statusBg = '#fef2f2';
+                                                        } else if (item.status.includes('Half') || item.status.includes('Early')) {
+                                                            statusColor = '#2563eb';
+                                                            statusBg = '#eff6ff';
+                                                        } else if (item.status.includes('Late')) {
+                                                            statusColor = '#d97706';
+                                                            statusBg = '#fffbeb';
+                                                        } else if (isWeekend || isUpcoming) {
+                                                            statusColor = '#64748b';
+                                                            statusBg = '#f1f5f9';
+                                                        }
+
+                                                        const hasCheckInTime = item.checkInFormatted && item.checkInFormatted !== '-' && item.checkInFormatted !== 'No Check-In' && item.checkInFormatted !== 'Pending';
+                                                        const hasCheckOutTime = item.checkOutFormatted && item.checkOutFormatted !== '-' && item.checkOutFormatted !== 'No Check-Out' && item.checkOutFormatted !== 'Pending';
+
+                                                        return (
+                                                            <tr 
+                                                                key={idx} 
+                                                                id={item.isToday ? 'inspect-today-row' : undefined}
+                                                                style={{ 
+                                                                    borderBottom: '1px solid #f1f5f9', 
+                                                                    background: item.isToday ? '#f0fdf4' : item.isOverride ? '#fefce8' : 'white',
+                                                                    borderLeft: item.isToday ? '4px solid #10b981' : undefined
+                                                                }}
+                                                            >
+                                                                <td style={{ padding: '0.65rem 1rem', fontWeight: '700', color: '#0f172a' }}>
+                                                                    {item.day} {MONTH_NAMES[selectedMonth - 1].slice(0, 3)} ({item.dayName})
+                                                                    {item.isToday && (
+                                                                        <span style={{ marginLeft: '0.45rem', fontSize: '0.65rem', background: '#059669', color: 'white', padding: '0.15rem 0.4rem', borderRadius: '4px', fontWeight: '800' }}>
+                                                                            TODAY
+                                                                        </span>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ padding: '0.65rem 0.75rem' }}>
+                                                                    {hasCheckInTime ? (
+                                                                        <span style={{ color: '#0f172a', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }}></span>
+                                                                            {item.checkInFormatted}
+                                                                        </span>
+                                                                    ) : item.checkInFormatted === 'Pending' ? (
+                                                                        <span style={{ color: '#d97706', fontSize: '0.74rem', fontWeight: '700', background: '#fef3c7', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                            ⏳ Pending
+                                                                        </span>
+                                                                    ) : item.checkInFormatted === 'No Check-In' ? (
+                                                                        <span style={{ color: '#94a3b8', fontSize: '0.74rem' }}>No Check-In</span>
+                                                                    ) : (
+                                                                        <span style={{ color: '#cbd5e1' }}>—</span>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ padding: '0.65rem 0.75rem' }}>
+                                                                    {hasCheckOutTime ? (
+                                                                        <span style={{ color: '#0f172a', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#0284c7' }}></span>
+                                                                            {item.checkOutFormatted}
+                                                                        </span>
+                                                                    ) : item.checkOutFormatted === 'Pending' ? (
+                                                                        <span style={{ color: '#d97706', fontSize: '0.74rem', fontWeight: '700', background: '#fef3c7', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                            ⏳ Pending
+                                                                        </span>
+                                                                    ) : item.checkOutFormatted === 'No Check-Out' ? (
+                                                                        <span style={{ color: '#94a3b8', fontSize: '0.74rem' }}>No Check-Out</span>
+                                                                    ) : (
+                                                                        <span style={{ color: '#cbd5e1' }}>—</span>
+                                                                    )}
+                                                                </td>
+                                                                <td style={{ padding: '0.65rem 0.75rem' }}>
+                                                                    <span style={{
+                                                                        padding: '0.2rem 0.5rem', borderRadius: '6px',
+                                                                        background: statusBg, color: statusColor, fontWeight: '700', fontSize: '0.75rem'
+                                                                    }}>
+                                                                        {item.status}
+                                                                    </span>
+                                                                </td>
+                                                                <td style={{ padding: '0.65rem 0.75rem', fontWeight: '700', color: item.deduction > 0 ? '#dc2626' : '#64748b' }}>
+                                                                    {item.deduction > 0 ? `- Rs ${item.deduction.toLocaleString()}` : 'Rs 0'}
+                                                                </td>
+                                                                <td style={{ padding: '0.65rem 1rem', textAlign: 'right' }}>
+                                                                    {!isWeekend && !isUpcoming && (
+                                                                        <select
+                                                                            value={item.isOverride ? item.status : ''}
+                                                                            onChange={(e) => handleOverrideDay(activeModalPayroll.teacher.id, item.dateStr, e.target.value)}
+                                                                            style={{
+                                                                                fontSize: '0.75rem', padding: '0.25rem 0.5rem',
+                                                                                borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', background: 'white'
+                                                                            }}
+                                                                        >
+                                                                            <option value="">Auto (Default)</option>
+                                                                            <option value="Present">Force Present (0 Ded)</option>
+                                                                            <option value="Approved Leave">Approved Leave (0 Ded)</option>
+                                                                            <option value="Half Day">Force Half Day</option>
+                                                                            <option value="Absent">Force Absent</option>
+                                                                        </select>
+                                                                    )}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
                             )}
 
