@@ -649,27 +649,43 @@ const PayrollDashboard = ({ schoolId, schoolInfo }) => {
                 const finDocRef = doc(db, `schools/${schoolId}/settings`, 'finances');
                 const finDocSnap = await getDocFast(finDocRef);
                 const currentFinData = finDocSnap.exists() ? finDocSnap.data() : { incomes: [], expenses: [] };
-                const currentExpenses = currentFinData.expenses || [];
+                let currentExpenses = [...(currentFinData.expenses || [])];
 
+                const expenseId = `payroll-${payrollDocId}-${teacherId}`;
                 const expenseTitle = `Teacher Salary: ${payrollItem.teacher.name} (${MONTH_NAMES[selectedMonth - 1]} ${selectedYear})`;
                 
-                // Avoid duplicates
-                const exists = currentExpenses.some(e => e.name === expenseTitle);
-                if (!exists) {
-                    currentExpenses.push({
-                        id: `payroll-${payrollDocId}-${teacherId}`,
-                        name: expenseTitle,
-                        amount: payrollItem.netSalary,
-                        type: 'one-time',
-                        category: 'Salary',
-                        date: paidDateStr,
-                        remarks: `Auto-recorded from Payroll for ${payrollItem.teacher.name}`,
-                        timestamp: new Date().toISOString()
-                    });
+                // Remove existing if any to avoid duplication
+                currentExpenses = currentExpenses.filter(e => e.id !== expenseId && e.name !== expenseTitle);
 
+                currentExpenses.push({
+                    id: expenseId,
+                    name: expenseTitle,
+                    amount: Number(payrollItem.netSalary),
+                    type: 'one-time',
+                    category: 'Salary',
+                    date: paidDateStr,
+                    dateString: paidDateStr,
+                    remarks: `Auto-recorded from Payroll for ${payrollItem.teacher.name}`,
+                    timestamp: new Date().toISOString(),
+                    createdAt: new Date().toISOString()
+                });
+
+                await setDoc(finDocRef, {
+                    ...currentFinData,
+                    expenses: currentExpenses
+                }, { merge: true });
+            } else if (!willBePaid) {
+                // If unmarking as paid, remove the auto-recorded expense
+                const finDocRef = doc(db, `schools/${schoolId}/settings`, 'finances');
+                const finDocSnap = await getDocFast(finDocRef);
+                if (finDocSnap.exists()) {
+                    const currentFinData = finDocSnap.data();
+                    const expenseId = `payroll-${payrollDocId}-${teacherId}`;
+                    const expenseTitle = `Teacher Salary: ${payrollItem.teacher.name} (${MONTH_NAMES[selectedMonth - 1]} ${selectedYear})`;
+                    const filteredExpenses = (currentFinData.expenses || []).filter(e => e.id !== expenseId && e.name !== expenseTitle);
                     await setDoc(finDocRef, {
                         ...currentFinData,
-                        expenses: currentExpenses
+                        expenses: filteredExpenses
                     }, { merge: true });
                 }
             }

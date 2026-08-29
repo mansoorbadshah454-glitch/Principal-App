@@ -3406,6 +3406,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     // 6. Offline Resilience & Auto-Sync Engine States
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const [isSyncing, setIsSyncing] = useState(false);
+    const isSyncingRef = useRef(false);
     const [pendingOfflineTxs, setPendingOfflineTxs] = useState(() => {
         try {
             const saved = localStorage.getItem(`offline_fee_queue_${schoolId}`);
@@ -3443,134 +3444,141 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     };
 
     const triggerAutoSync = async () => {
-        if (!navigator.onLine || isSyncing || !schoolId) return;
+        if (!navigator.onLine || isSyncingRef.current || !schoolId) return;
+        isSyncingRef.current = true;
         setIsSyncing(true);
 
-        // 1. Sync Pending Fees & Proofs
-        let currentQueue = [];
         try {
-            const saved = localStorage.getItem(`offline_fee_queue_${schoolId}`);
-            currentQueue = saved ? JSON.parse(saved) : [];
-        } catch (e) {
-            currentQueue = [];
-        }
+            // 1. Sync Pending Fees & Proofs
+            let currentQueue = [];
+            try {
+                const saved = localStorage.getItem(`offline_fee_queue_${schoolId}`);
+                currentQueue = saved ? JSON.parse(saved) : [];
+            } catch (e) {
+                currentQueue = [];
+            }
 
-        if (currentQueue.length > 0) {
-            const remainingQueue = [...currentQueue];
+            if (currentQueue.length > 0) {
+                const remainingQueue = [...currentQueue];
 
-            for (const tx of currentQueue) {
-                try {
-                    let proofUrl = tx.proofUrl;
-
-                    // If proof is Base64 and online, try uploading to Storage
-                    if (proofUrl && proofUrl.startsWith('data:image')) {
-                        try {
-                            const blobRes = await fetch(proofUrl);
-                            const blobData = await blobRes.blob();
-                            const storagePath = `schools/${schoolId}/paymentProofs/proof_sync_${Date.now()}_${tx.studentId}.jpg`;
-                            const storageRef = ref(storage, storagePath);
-                            const uploadSnap = await uploadBytes(storageRef, blobData);
-                            proofUrl = await getDownloadURL(uploadSnap.ref);
-                        } catch (uploadErr) {
-                            console.warn("Base64 storage upload fallback during sync:", uploadErr);
-                        }
-                    }
-
-                    const studentRef = doc(db, `schools/${schoolId}/classes/${tx.classId}/students`, tx.studentId);
-                    const masterStudentRef = doc(db, `schools/${schoolId}/students`, tx.studentId);
-
-                    const studentUpdatePayload = {
-                        monthlyFeeStatus: 'paid',
-                        monthlyFeeDate: tx.dateIso || new Date().toISOString(),
-                        lastPaymentMode: tx.paymentMode,
-                        lastReceiptNo: tx.receiptNo,
-                        lastPaymentAmount: tx.totalPaid,
-                        lastPaymentProofUrl: proofUrl || null,
-                        individualActions: tx.updatedIndividualActions || []
-                    };
-
-                    if (tx.customPayments) {
-                        studentUpdatePayload.customPayments = tx.customPayments;
-                    }
-
-                    await setDoc(studentRef, studentUpdatePayload, { merge: true });
+                for (const tx of currentQueue) {
                     try {
-                        await setDoc(masterStudentRef, studentUpdatePayload, { merge: true });
-                    } catch (e) {
-                        console.warn("Master student sync skipped:", e);
+                        let proofUrl = tx.proofUrl;
+
+                        // If proof is Base64 and online, try uploading to Storage
+                        if (proofUrl && proofUrl.startsWith('data:image')) {
+                            try {
+                                const blobRes = await fetch(proofUrl);
+                                const blobData = await blobRes.blob();
+                                const storagePath = `schools/${schoolId}/paymentProofs/proof_sync_${Date.now()}_${tx.studentId}.jpg`;
+                                const storageRef = ref(storage, storagePath);
+                                const uploadSnap = await uploadBytes(storageRef, blobData);
+                                proofUrl = await getDownloadURL(uploadSnap.ref);
+                            } catch (uploadErr) {
+                                console.warn("Base64 storage upload fallback during sync:", uploadErr);
+                            }
+                        }
+
+                        const studentRef = doc(db, `schools/${schoolId}/classes/${tx.classId}/students`, tx.studentId);
+                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, tx.studentId);
+
+                        const studentUpdatePayload = {
+                            monthlyFeeStatus: 'paid',
+                            monthlyFeeDate: tx.dateIso || new Date().toISOString(),
+                            lastPaymentMode: tx.paymentMode,
+                            lastReceiptNo: tx.receiptNo,
+                            lastPaymentAmount: tx.totalPaid,
+                            lastPaymentProofUrl: proofUrl || null,
+                            individualActions: tx.updatedIndividualActions || []
+                        };
+
+                        if (tx.customPayments) {
+                            studentUpdatePayload.customPayments = tx.customPayments;
+                        }
+
+                        await setDoc(studentRef, studentUpdatePayload, { merge: true });
+                        try {
+                            await setDoc(masterStudentRef, studentUpdatePayload, { merge: true });
+                        } catch (e) {
+                            console.warn("Master student sync skipped:", e);
+                        }
+
+                        const transactionRecord = {
+                            id: tx.receiptNo,
+                            receiptNo: tx.receiptNo,
+                            studentId: tx.studentId,
+                            studentName: tx.studentName,
+                            rollNo: tx.rollNo || 'N/A',
+                            classId: tx.classId,
+                            className: tx.className,
+                            fatherName: tx.fatherName || 'N/A',
+                            items: tx.items || [],
+                            baseFee: tx.baseFee || 0,
+                            actionsFee: tx.actionsFee || 0,
+                            fineAmount: tx.fineAmount || 0,
+                            discount: tx.discount || 0,
+                            totalPaid: tx.totalPaid,
+                            paymentMode: tx.paymentMode,
+                            proofUrl: proofUrl || null,
+                            remarks: tx.remarks || '',
+                            timestamp: serverTimestamp(),
+                            dateString: tx.dateString,
+                            timeString: tx.timeString,
+                            collectedBy: tx.collectedBy || 'Principal Office'
+                        };
+
+                        // Zero-Duplicate: Use deterministic receiptNo as the document ID
+                        const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, tx.receiptNo);
+                        await setDoc(txDocRef, transactionRecord, { merge: true });
+
+                        const index = remainingQueue.findIndex(item => item.queueId === tx.queueId || item.receiptNo === tx.receiptNo);
+                        if (index !== -1) {
+                            remainingQueue.splice(index, 1);
+                        }
+                    } catch (syncErr) {
+                        console.error("Failed to sync offline fee item:", tx.receiptNo, syncErr);
+                        if (!navigator.onLine) break;
                     }
+                }
 
-                    const transactionRecord = {
-                        receiptNo: tx.receiptNo,
-                        studentId: tx.studentId,
-                        studentName: tx.studentName,
-                        rollNo: tx.rollNo || 'N/A',
-                        classId: tx.classId,
-                        className: tx.className,
-                        fatherName: tx.fatherName || 'N/A',
-                        items: tx.items || [],
-                        baseFee: tx.baseFee || 0,
-                        actionsFee: tx.actionsFee || 0,
-                        fineAmount: tx.fineAmount || 0,
-                        discount: tx.discount || 0,
-                        totalPaid: tx.totalPaid,
-                        paymentMode: tx.paymentMode,
-                        proofUrl: proofUrl || null,
-                        remarks: tx.remarks || '',
-                        timestamp: serverTimestamp(),
-                        dateString: tx.dateString,
-                        timeString: tx.timeString,
-                        collectedBy: tx.collectedBy || 'Principal Office'
-                    };
+                savePendingQueue(remainingQueue);
+            }
 
-                    await addDoc(collection(db, `schools/${schoolId}/feeTransactions`), transactionRecord);
+            // 2. Sync Pending Finances (Incomes & Expenses)
+            let currentFinancesQueue = [];
+            try {
+                const savedFin = localStorage.getItem(`offline_finances_queue_${schoolId}`);
+                currentFinancesQueue = savedFin ? JSON.parse(savedFin) : [];
+            } catch (e) {
+                currentFinancesQueue = [];
+            }
 
-                    const index = remainingQueue.findIndex(item => item.queueId === tx.queueId);
-                    if (index !== -1) {
-                        remainingQueue.splice(index, 1);
-                    }
-                } catch (syncErr) {
-                    console.error("Failed to sync offline fee item:", tx.receiptNo, syncErr);
-                    if (!navigator.onLine) break;
+            if (currentFinancesQueue.length > 0) {
+                try {
+                    const docRef = doc(db, `schools/${schoolId}/settings/finances`);
+                    const docSnap = await getDoc(docRef);
+                    const serverData = docSnap.exists() ? docSnap.data() : { incomes: [], expenses: [] };
+                    let serverIncomes = [...(serverData.incomes || [])];
+                    let serverExpenses = [...(serverData.expenses || [])];
+
+                    currentFinancesQueue.forEach(item => {
+                        if (item.category === 'incomes') {
+                            if (!serverIncomes.some(i => i.id === item.id)) serverIncomes.push(item);
+                        } else if (item.category === 'expenses') {
+                            if (!serverExpenses.some(e => e.id === item.id)) serverExpenses.push(item);
+                        }
+                    });
+
+                    await setDoc(docRef, { incomes: serverIncomes, expenses: serverExpenses }, { merge: true });
+                    savePendingFinancesQueue([]);
+                } catch (finSyncErr) {
+                    console.warn("Finances background sync postponed:", finSyncErr);
                 }
             }
-
-            savePendingQueue(remainingQueue);
+        } finally {
+            isSyncingRef.current = false;
+            setIsSyncing(false);
         }
-
-        // 2. Sync Pending Finances (Incomes & Expenses)
-        let currentFinancesQueue = [];
-        try {
-            const savedFin = localStorage.getItem(`offline_finances_queue_${schoolId}`);
-            currentFinancesQueue = savedFin ? JSON.parse(savedFin) : [];
-        } catch (e) {
-            currentFinancesQueue = [];
-        }
-
-        if (currentFinancesQueue.length > 0) {
-            try {
-                const docRef = doc(db, `schools/${schoolId}/settings/finances`);
-                const docSnap = await getDoc(docRef);
-                const serverData = docSnap.exists() ? docSnap.data() : { incomes: [], expenses: [] };
-                let serverIncomes = [...(serverData.incomes || [])];
-                let serverExpenses = [...(serverData.expenses || [])];
-
-                currentFinancesQueue.forEach(item => {
-                    if (item.category === 'incomes') {
-                        if (!serverIncomes.some(i => i.id === item.id)) serverIncomes.push(item);
-                    } else if (item.category === 'expenses') {
-                        if (!serverExpenses.some(e => e.id === item.id)) serverExpenses.push(item);
-                    }
-                });
-
-                await setDoc(docRef, { incomes: serverIncomes, expenses: serverExpenses }, { merge: true });
-                savePendingFinancesQueue([]);
-            } catch (finSyncErr) {
-                console.warn("Finances background sync postponed:", finSyncErr);
-            }
-        }
-
-        setIsSyncing(false);
     };
 
     // Live Network Connection & Auto-Sync Event Listeners
@@ -3598,12 +3606,49 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     
     // 7. Finances Data & Operations for Daily Workflow
     const [financesData, setFinancesData] = useState({ incomes: [], expenses: [] });
-    const [teachersSalary, setTeachersSalary] = useState(0);
     const [newIncome, setNewIncome] = useState({ name: '', amount: '', remarks: '' });
     const [newExpense, setNewExpense] = useState({ name: '', amount: '', remarks: '' });
+    const [incomeProofFile, setIncomeProofFile] = useState(null);
+    const [incomeProofPreview, setIncomeProofPreview] = useState(null);
+    const [expenseProofFile, setExpenseProofFile] = useState(null);
+    const [expenseProofPreview, setExpenseProofPreview] = useState(null);
     const [isSavingIncome, setIsSavingIncome] = useState(false);
     const [isSavingExpense, setIsSavingExpense] = useState(false);
     const [rightCardTab, setRightCardTab] = useState('fee_slips'); // 'fee_slips' | 'finances_breakdown'
+
+    const handleIncomeProofChange = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            setIncomeProofFile(file);
+            const previewUrl = URL.createObjectURL(file);
+            setIncomeProofPreview(previewUrl);
+        }
+    };
+
+    const handleRemoveIncomeProof = () => {
+        setIncomeProofFile(null);
+        if (incomeProofPreview) {
+            URL.revokeObjectURL(incomeProofPreview);
+        }
+        setIncomeProofPreview(null);
+    };
+
+    const handleExpenseProofChange = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            setExpenseProofFile(file);
+            const previewUrl = URL.createObjectURL(file);
+            setExpenseProofPreview(previewUrl);
+        }
+    };
+
+    const handleRemoveExpenseProof = () => {
+        setExpenseProofFile(null);
+        if (expenseProofPreview) {
+            URL.revokeObjectURL(expenseProofPreview);
+        }
+        setExpenseProofPreview(null);
+    };
 
     // Live Finances Listener (Incomes & Expenses)
     useEffect(() => {
@@ -3622,24 +3667,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         return () => unsub();
     }, [schoolId]);
 
-    // Live/Fetched Teachers Total Salary for Breakdown
-    useEffect(() => {
-        if (!schoolId) return;
-        const fetchTeachers = async () => {
-            try {
-                const teachersSnap = await getDocs(collection(db, `schools/${schoolId}/teachers`));
-                let totalSalary = 0;
-                teachersSnap.docs.forEach(doc => {
-                    totalSalary += (Number(doc.data().salary) || 0);
-                });
-                setTeachersSalary(totalSalary);
-            } catch (err) {
-                console.warn("Could not fetch teachers salary for breakdown:", err);
-            }
-        };
-        fetchTeachers();
-    }, [schoolId]);
-
     // Dynamic Today's Incomes & Expenses (Strict 24-Hour Day Match - Auto Resets at 12 AM Midnight)
     const todayFinances = useMemo(() => {
         const now = new Date();
@@ -3650,8 +3677,16 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const isToday = (item) => {
             if (!item) return false;
             if (item.dateString && item.dateString === todayStr) return true;
+            if (item.date && item.date === todayStr) return true;
             if (item.createdAt) {
                 const itemDate = new Date(item.createdAt);
+                if (!isNaN(itemDate.getTime())) {
+                    const itemDateStr = itemDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+                    if (itemDateStr === todayStr) return true;
+                }
+            }
+            if (item.timestamp) {
+                const itemDate = new Date(item.timestamp);
                 if (!isNaN(itemDate.getTime())) {
                     const itemDateStr = itemDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
                     if (itemDateStr === todayStr) return true;
@@ -3673,7 +3708,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         };
     }, [financesData]);
 
-    const handleAddFinance = async (type, category, itemData, setSaving, setForm) => {
+    const handleAddFinance = async (type, category, itemData, setSaving, setForm, proofFileToUpload, clearProofFn) => {
         const manualSession = localStorage.getItem('manual_session');
         if (manualSession) {
             const session = JSON.parse(manualSession);
@@ -3685,12 +3720,27 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         if (!itemData.name || !itemData.amount) return;
         setSaving(true);
 
+        let proofUrl = null;
+        if (proofFileToUpload) {
+            try {
+                proofUrl = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = () => resolve(null);
+                    reader.readAsDataURL(proofFileToUpload);
+                });
+            } catch (e) {
+                console.warn("Finance proof conversion fallback:", e);
+            }
+        }
+
         const now = new Date();
         const newItem = {
             id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             name: itemData.name.trim(),
             amount: Number(itemData.amount),
             remarks: itemData.remarks ? itemData.remarks.trim() : '',
+            proofUrl: proofUrl || null,
             type: type, // 'one-time' or 'permanent'
             category: category,
             createdAt: now.toISOString(),
@@ -3710,6 +3760,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
         // 3. Clear Form & Switch to Breakdown View (<50ms)
         setForm({ name: '', amount: '', remarks: '' });
+        if (clearProofFn) clearProofFn();
         setRightCardTab('finances_breakdown');
         setSaving(false);
 
@@ -4369,8 +4420,20 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         );
 
         const unsubTrans = onSnapshot(qTrans, (snapshot) => {
-            const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-            setRecentTransactions(list);
+            const rawList = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            // Defensive UI Deduplication by receiptNo
+            const seenReceipts = new Set();
+            const uniqueList = [];
+            rawList.forEach(item => {
+                const key = item.receiptNo || item.id;
+                if (key && !seenReceipts.has(key)) {
+                    seenReceipts.add(key);
+                    uniqueList.push(item);
+                } else if (!key) {
+                    uniqueList.push(item);
+                }
+            });
+            setRecentTransactions(uniqueList);
             setLoadingTransactions(false);
         }, (err) => {
             console.error("Recent Transactions error:", err);
@@ -4384,7 +4447,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const todayTransactions = useMemo(() => {
         const now = new Date();
         const todayStr = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+        const seen = new Set();
         return recentTransactions.filter(t => {
+            const key = t.receiptNo || t.id;
+            if (key) {
+                if (seen.has(key)) return false;
+                seen.add(key);
+            }
             if (t.dateString) {
                 return t.dateString === todayStr;
             }
@@ -4443,6 +4512,23 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             onlinePct
         };
     }, [todayTransactions]);
+
+    // Dynamic Today's Financial Overview (Income vs Expense Breakdown)
+    const todayFinancialSummary = useMemo(() => {
+        const totalIncomes = (todayFinances.incomes || []).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+        const totalExpenses = (todayFinances.expenses || []).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+        const netBalance = totalIncomes - totalExpenses;
+        const incomeCount = (todayFinances.incomes || []).length;
+        const expenseCount = (todayFinances.expenses || []).length;
+
+        return {
+            totalIncomes,
+            totalExpenses,
+            netBalance,
+            incomeCount,
+            expenseCount
+        };
+    }, [todayFinances]);
 
     // Handle Selecting a Student
     const handleSelectStudent = (student) => {
@@ -4692,7 +4778,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             handleClearSelection();
             setIsSubmitting(false);
 
-            // 6. Background Firestore Write (Zero-Latency UI)
+            // 6. Background Firestore Write (Zero-Latency UI, Zero-Duplicate Guaranteed)
             (async () => {
                 try {
                     await setDoc(studentRef, studentUpdatePayload, { merge: true });
@@ -4701,15 +4787,17 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     } catch (e) {
                         console.warn("Master student update skipped:", e);
                     }
-                    await addDoc(collection(db, `schools/${schoolId}/feeTransactions`), {
+                    const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+                    await setDoc(txDocRef, {
                         ...transactionRecord,
+                        id: receiptNo,
                         timestamp: serverTimestamp()
-                    });
+                    }, { merge: true });
 
                     // If currently online, clear this item from queue since direct write was committed
                     if (navigator.onLine) {
                         const currentQ = JSON.parse(localStorage.getItem(`offline_fee_queue_${schoolId}`) || '[]');
-                        savePendingQueue(currentQ.filter(item => item.queueId !== queueId));
+                        savePendingQueue(currentQ.filter(item => item.queueId !== queueId && item.receiptNo !== receiptNo));
                     }
                 } catch (writeErr) {
                     console.warn("Offline cache buffered write:", writeErr);
@@ -5285,6 +5373,227 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         </div>
                     </div>
                 </div>
+
+                {/* Dedicated Income & Expenses Breakdown Row inside Collections Overview */}
+                <div style={{
+                    marginTop: '1.25rem',
+                    paddingTop: '1.15rem',
+                    borderTop: '1px solid #f1f5f9'
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: '0.85rem',
+                        flexWrap: 'wrap',
+                        gap: '0.5rem'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ width: '26px', height: '26px', borderRadius: '7px', background: '#f0fdf4', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #bbf7d0' }}>
+                                <TrendingUp size={15} />
+                            </div>
+                            <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.01em' }}>
+                                Daily Income & Expenses Breakdown
+                            </span>
+                            <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '1px 8px', borderRadius: '12px' }}>
+                                Today's Ledger
+                            </span>
+                        </div>
+
+                        <button
+                            onClick={() => {
+                                setActiveDailyMode('income_expense');
+                                setRightCardTab('finances_breakdown');
+                            }}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.35rem',
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#0078d4',
+                                fontSize: '0.78rem',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                padding: '4px 8px',
+                                borderRadius: '6px'
+                            }}
+                        >
+                            <span>Manage / View Details</span>
+                            <ArrowRight size={14} />
+                        </button>
+                    </div>
+
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                        gap: '0.9rem'
+                    }}>
+                        {/* 1. Today Total Income Card */}
+                        <div 
+                            onClick={() => {
+                                setActiveDailyMode('income_expense');
+                                setRightCardTab('finances_breakdown');
+                            }}
+                            style={{
+                                background: '#f0fdf4',
+                                border: '1px solid #bbf7d0',
+                                borderRadius: '12px',
+                                padding: '0.9rem 1.1rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                boxShadow: '0 1px 3px rgba(16, 185, 129, 0.06)',
+                                cursor: 'pointer',
+                                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                        >
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                        Today's Incomes
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', color: '#15803d', background: '#dcfce7', padding: '1px 6px', borderRadius: '6px', border: '1px solid #86efac' }}>
+                                        {todayFinancialSummary.incomeCount} {todayFinancialSummary.incomeCount === 1 ? 'Entry' : 'Entries'}
+                                    </span>
+                                </div>
+                                <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: '900', color: '#14532d', letterSpacing: '-0.02em' }}>
+                                    Rs {todayFinancialSummary.totalIncomes.toLocaleString()}
+                                </h3>
+                                <span style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: '600' }}>
+                                    Receipts & other collections
+                                </span>
+                            </div>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '10px',
+                                background: '#dcfce7',
+                                color: '#16a34a',
+                                border: '1px solid #86efac',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}>
+                                <ArrowUpRight size={20} />
+                            </div>
+                        </div>
+
+                        {/* 2. Today Total Expenses Card */}
+                        <div 
+                            onClick={() => {
+                                setActiveDailyMode('income_expense');
+                                setRightCardTab('finances_breakdown');
+                            }}
+                            style={{
+                                background: '#fef2f2',
+                                border: '1px solid #fecaca',
+                                borderRadius: '12px',
+                                padding: '0.9rem 1.1rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                boxShadow: '0 1px 3px rgba(239, 68, 68, 0.06)',
+                                cursor: 'pointer',
+                                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                        >
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#991b1b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                        Today's Expenses
+                                    </span>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', color: '#b91c1c', background: '#fee2e2', padding: '1px 6px', borderRadius: '6px', border: '1px solid #fca5a5' }}>
+                                        {todayFinancialSummary.expenseCount} {todayFinancialSummary.expenseCount === 1 ? 'Entry' : 'Entries'}
+                                    </span>
+                                </div>
+                                <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: '900', color: '#7f1d1d', letterSpacing: '-0.02em' }}>
+                                    Rs {todayFinancialSummary.totalExpenses.toLocaleString()}
+                                </h3>
+                                <span style={{ fontSize: '0.7rem', color: '#b91c1c', fontWeight: '600' }}>
+                                    Daily bills, maintenance & supplies
+                                </span>
+                            </div>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '10px',
+                                background: '#fee2e2',
+                                color: '#dc2626',
+                                border: '1px solid #fca5a5',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}>
+                                <ArrowDownRight size={20} />
+                            </div>
+                        </div>
+
+                        {/* 3. Today Net Surplus / Deficit Card */}
+                        <div 
+                            onClick={() => {
+                                setActiveDailyMode('income_expense');
+                                setRightCardTab('finances_breakdown');
+                            }}
+                            style={{
+                                background: todayFinancialSummary.netBalance >= 0 ? '#f0fdf4' : '#fff1f2',
+                                border: `1px solid ${todayFinancialSummary.netBalance >= 0 ? '#bbf7d0' : '#fecdd3'}`,
+                                borderRadius: '12px',
+                                padding: '0.9rem 1.1rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+                                cursor: 'pointer',
+                                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                        >
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', color: todayFinancialSummary.netBalance >= 0 ? '#166534' : '#9f1239', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                        Net Daily Balance
+                                    </span>
+                                    <span style={{
+                                        fontSize: '0.65rem',
+                                        fontWeight: '800',
+                                        color: todayFinancialSummary.netBalance >= 0 ? '#15803d' : '#be123c',
+                                        background: todayFinancialSummary.netBalance >= 0 ? '#dcfce7' : '#ffe4e6',
+                                        padding: '1px 6px',
+                                        borderRadius: '6px',
+                                        border: `1px solid ${todayFinancialSummary.netBalance >= 0 ? '#86efac' : '#fda4af'}`
+                                    }}>
+                                        {todayFinancialSummary.netBalance >= 0 ? 'Surplus' : 'Deficit'}
+                                    </span>
+                                </div>
+                                <h3 style={{
+                                    margin: 0,
+                                    fontSize: '1.35rem',
+                                    fontWeight: '900',
+                                    color: todayFinancialSummary.netBalance >= 0 ? '#14532d' : '#881337',
+                                    letterSpacing: '-0.02em'
+                                }}>
+                                    {todayFinancialSummary.netBalance < 0 ? `- Rs ${Math.abs(todayFinancialSummary.netBalance).toLocaleString()}` : `Rs ${todayFinancialSummary.netBalance.toLocaleString()}`}
+                                </h3>
+                                <span style={{ fontSize: '0.7rem', color: todayFinancialSummary.netBalance >= 0 ? '#15803d' : '#9f1239', fontWeight: '600' }}>
+                                    {todayFinancialSummary.netBalance >= 0 ? 'Positive net cashflow today' : 'Expenses exceed income today'}
+                                </span>
+                            </div>
+                            <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '10px',
+                                background: todayFinancialSummary.netBalance >= 0 ? '#dcfce7' : '#ffe4e6',
+                                color: todayFinancialSummary.netBalance >= 0 ? '#16a34a' : '#e11d48',
+                                border: `1px solid ${todayFinancialSummary.netBalance >= 0 ? '#86efac' : '#fda4af'}`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}>
+                                <Activity size={20} />
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Side-by-Side 2 Cards Layout */}
@@ -5429,7 +5738,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
                                     />
                                 </div>
-                                <div style={{ marginBottom: '1rem' }}>
+                                <div style={{ marginBottom: '0.85rem' }}>
                                     <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Remarks / Notes (Optional)</label>
                                     <input 
                                         type="text" 
@@ -5439,24 +5748,64 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
                                     />
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <button 
-                                        type="button"
-                                        onClick={() => handleAddFinance('one-time', 'incomes', newIncome, setIsSavingIncome, setNewIncome)}
-                                        disabled={isSavingIncome || !newIncome.name || !newIncome.amount}
-                                        style={{ flex: 1, padding: '0.55rem', borderRadius: '8px', background: '#ffffff', border: '1px solid #16a34a', color: '#16a34a', fontWeight: '700', fontSize: '0.8rem', cursor: isSavingIncome || !newIncome.name || !newIncome.amount ? 'not-allowed' : 'pointer' }}
-                                    >
-                                        Save
-                                    </button>
-                                    <button 
-                                        type="button"
-                                        onClick={() => handleAddFinance('permanent', 'incomes', newIncome, setIsSavingIncome, setNewIncome)}
-                                        disabled={isSavingIncome || !newIncome.name || !newIncome.amount}
-                                        style={{ flex: 1, padding: '0.55rem', borderRadius: '8px', background: '#16a34a', border: '1px solid #16a34a', color: 'white', fontWeight: '700', fontSize: '0.8rem', cursor: isSavingIncome || !newIncome.name || !newIncome.amount ? 'not-allowed' : 'pointer' }}
-                                    >
-                                        Save as Permanent
-                                    </button>
+
+                                {/* Income Proof Upload Box */}
+                                <div style={{
+                                    padding: '0.65rem 0.85rem',
+                                    borderRadius: '8px',
+                                    background: '#ffffff',
+                                    border: '1px dashed #16a34a',
+                                    marginBottom: '1rem'
+                                }}>
+                                    <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: '800', color: '#166534', marginBottom: '0.3rem' }}>
+                                        Attach Payment Proof / Receipt Slip (Optional)
+                                    </label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleIncomeProofChange}
+                                            style={{ fontSize: '0.78rem', color: '#475569' }}
+                                        />
+                                        {incomeProofPreview && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                <img src={incomeProofPreview} alt="Income Proof" style={{ width: '34px', height: '34px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #86efac' }} />
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRemoveIncomeProof}
+                                                    style={{ padding: '2px 6px', borderRadius: '4px', background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '0.7rem', fontWeight: '700', cursor: 'pointer' }}
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
+
+                                <button 
+                                    type="button"
+                                    onClick={() => handleAddFinance('one-time', 'incomes', newIncome, setIsSavingIncome, setNewIncome, incomeProofFile, handleRemoveIncomeProof)}
+                                    disabled={isSavingIncome || !newIncome.name || !newIncome.amount}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.65rem 1rem',
+                                        borderRadius: '8px',
+                                        background: isSavingIncome || !newIncome.name || !newIncome.amount ? '#86efac' : '#16a34a',
+                                        border: 'none',
+                                        color: '#ffffff',
+                                        fontWeight: '700',
+                                        fontSize: '0.85rem',
+                                        cursor: isSavingIncome || !newIncome.name || !newIncome.amount ? 'not-allowed' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '0.45rem',
+                                        boxShadow: '0 2px 6px rgba(22, 163, 74, 0.2)'
+                                    }}
+                                >
+                                    {isSavingIncome ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                                    <span>{isSavingIncome ? 'Saving...' : 'Save'}</span>
+                                </button>
                             </div>
 
                             {/* Add Manual Expense Form */}
@@ -5484,7 +5833,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
                                     />
                                 </div>
-                                <div style={{ marginBottom: '1rem' }}>
+                                <div style={{ marginBottom: '0.85rem' }}>
                                     <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Remarks / Notes (Optional)</label>
                                     <input 
                                         type="text" 
@@ -5494,24 +5843,64 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
                                     />
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <button 
-                                        type="button"
-                                        onClick={() => handleAddFinance('one-time', 'expenses', newExpense, setIsSavingExpense, setNewExpense)}
-                                        disabled={isSavingExpense || !newExpense.name || !newExpense.amount}
-                                        style={{ flex: 1, padding: '0.55rem', borderRadius: '8px', background: '#ffffff', border: '1px solid #dc2626', color: '#dc2626', fontWeight: '700', fontSize: '0.8rem', cursor: isSavingExpense || !newExpense.name || !newExpense.amount ? 'not-allowed' : 'pointer' }}
-                                    >
-                                        Save
-                                    </button>
-                                    <button 
-                                        type="button"
-                                        onClick={() => handleAddFinance('permanent', 'expenses', newExpense, setIsSavingExpense, setNewExpense)}
-                                        disabled={isSavingExpense || !newExpense.name || !newExpense.amount}
-                                        style={{ flex: 1, padding: '0.55rem', borderRadius: '8px', background: '#dc2626', border: '1px solid #dc2626', color: 'white', fontWeight: '700', fontSize: '0.8rem', cursor: isSavingExpense || !newExpense.name || !newExpense.amount ? 'not-allowed' : 'pointer' }}
-                                    >
-                                        Save as Permanent
-                                    </button>
+
+                                {/* Expense Proof Upload Box */}
+                                <div style={{
+                                    padding: '0.65rem 0.85rem',
+                                    borderRadius: '8px',
+                                    background: '#ffffff',
+                                    border: '1px dashed #dc2626',
+                                    marginBottom: '1rem'
+                                }}>
+                                    <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: '800', color: '#991b1b', marginBottom: '0.3rem' }}>
+                                        Attach Expense Bill / Receipt Slip (Optional)
+                                    </label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleExpenseProofChange}
+                                            style={{ fontSize: '0.78rem', color: '#475569' }}
+                                        />
+                                        {expenseProofPreview && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                <img src={expenseProofPreview} alt="Expense Proof" style={{ width: '34px', height: '34px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #fca5a5' }} />
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRemoveExpenseProof}
+                                                    style={{ padding: '2px 6px', borderRadius: '4px', background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '0.7rem', fontWeight: '700', cursor: 'pointer' }}
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
+
+                                <button 
+                                    type="button"
+                                    onClick={() => handleAddFinance('one-time', 'expenses', newExpense, setIsSavingExpense, setNewExpense, expenseProofFile, handleRemoveExpenseProof)}
+                                    disabled={isSavingExpense || !newExpense.name || !newExpense.amount}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.65rem 1rem',
+                                        borderRadius: '8px',
+                                        background: isSavingExpense || !newExpense.name || !newExpense.amount ? '#fca5a5' : '#dc2626',
+                                        border: 'none',
+                                        color: '#ffffff',
+                                        fontWeight: '700',
+                                        fontSize: '0.85rem',
+                                        cursor: isSavingExpense || !newExpense.name || !newExpense.amount ? 'not-allowed' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '0.45rem',
+                                        boxShadow: '0 2px 6px rgba(220, 38, 38, 0.2)'
+                                    }}
+                                >
+                                    {isSavingExpense ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                                    <span>{isSavingExpense ? 'Saving...' : 'Save'}</span>
+                                </button>
                             </div>
                         </div>
                     ) : (
@@ -6304,24 +6693,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 ) : (
                     /* Income & Expenses Breakdown List */
                     <div style={{ maxHeight: '360px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem' }} className="custom-scrollbar">
-                        {/* Teachers Salary Auto Row */}
-                        {teachersSalary > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#fef2f2', borderRadius: '10px', border: '1px solid #fee2e2' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                    <div style={{ background: '#fca5a5', padding: '0.25rem', borderRadius: '50%' }}>
-                                        <ArrowDownRight size={15} color="#991b1b" />
-                                    </div>
-                                    <div>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '700', fontSize: '0.85rem', color: '#0f172a' }}>
-                                            Teachers Salaries <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem', background: '#e2e8f0', color: '#475569', borderRadius: '8px', textTransform: 'uppercase', fontWeight: '700' }}>Auto</span>
-                                        </span>
-                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Aggregated from all staff profiles</span>
-                                    </div>
-                                </div>
-                                <span style={{ fontWeight: '800', color: '#dc2626', fontSize: '0.9rem' }}>Rs {teachersSalary.toLocaleString()}</span>
-                            </div>
-                        )}
-
                         {/* Global Action (If Active) */}
                         {currentAction && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #dcfce7' }}>
@@ -6349,10 +6720,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     </div>
                                     <div>
                                         <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '700', fontSize: '0.85rem', color: '#0f172a' }}>
-                                            {inc.name} 
-                                            <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem', background: inc.type === 'permanent' ? '#dcfce7' : '#e2e8f0', color: inc.type === 'permanent' ? '#15803d' : '#475569', borderRadius: '8px', textTransform: 'uppercase', fontWeight: '700' }}>
-                                                {inc.type === 'permanent' ? 'Permanent' : 'One-time'}
-                                            </span>
+                                            {inc.name}
                                         </span>
                                         <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
                                             {inc.remarks ? `Note: ${inc.remarks}` : 'Income Entry'}
@@ -6360,6 +6728,32 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                    {inc.proofUrl && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setProofModal({
+                                                isOpen: true,
+                                                url: inc.proofUrl,
+                                                title: `${inc.name} (Payment Proof)`
+                                            })}
+                                            style={{
+                                                padding: '0.25rem 0.55rem',
+                                                borderRadius: '6px',
+                                                border: '1px solid #86efac',
+                                                background: '#ffffff',
+                                                color: '#15803d',
+                                                fontWeight: '700',
+                                                fontSize: '0.72rem',
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title="View Payment Proof Slip"
+                                        >
+                                            <Eye size={12} /> Proof
+                                        </button>
+                                    )}
                                     <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '0.9rem' }}>Rs {Number(inc.amount).toLocaleString()}</span>
                                 </div>
                             </div>
@@ -6374,10 +6768,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     </div>
                                     <div>
                                         <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '700', fontSize: '0.85rem', color: '#0f172a' }}>
-                                            {exp.name} 
-                                            <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem', background: exp.type === 'permanent' ? '#fee2e2' : '#e2e8f0', color: exp.type === 'permanent' ? '#b91c1c' : '#475569', borderRadius: '8px', textTransform: 'uppercase', fontWeight: '700' }}>
-                                                {exp.type === 'permanent' ? 'Permanent' : 'One-time'}
-                                            </span>
+                                            {exp.name}
                                         </span>
                                         <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
                                             {exp.remarks ? `Note: ${exp.remarks}` : 'Expense Entry'}
@@ -6385,6 +6776,32 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                    {exp.proofUrl && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setProofModal({
+                                                isOpen: true,
+                                                url: exp.proofUrl,
+                                                title: `${exp.name} (Expense Voucher / Bill)`
+                                            })}
+                                            style={{
+                                                padding: '0.25rem 0.55rem',
+                                                borderRadius: '6px',
+                                                border: '1px solid #fca5a5',
+                                                background: '#ffffff',
+                                                color: '#b91c1c',
+                                                fontWeight: '700',
+                                                fontSize: '0.72rem',
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title="View Expense Bill / Receipt"
+                                        >
+                                            <Eye size={12} /> Proof
+                                        </button>
+                                    )}
                                     <span style={{ fontWeight: '800', color: '#dc2626', fontSize: '0.9rem' }}>Rs {Number(exp.amount).toLocaleString()}</span>
                                 </div>
                             </div>
