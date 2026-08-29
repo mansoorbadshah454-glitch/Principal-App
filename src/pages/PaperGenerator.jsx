@@ -96,6 +96,68 @@ const PaperGenerator = () => {
     const [urduOptionFormat, setUrduOptionFormat] = useState('alif_bay'); // 'alif_bay' | 'abcd'
     const [showAnswerKey, setShowAnswerKey] = useState(true);
 
+    // Dynamic question pool aggregated strictly from selected chapters
+    const selectedChapterObjs = firestoreChapters.filter(c => selectedChapterIds.includes(c.id));
+    const allSelectedQuestions = selectedChapterObjs.flatMap(c => (c.questions || []));
+
+    const availableCounts = {
+        mcq: allSelectedQuestions.filter(q => q.type === 'mcq').length,
+        blank: allSelectedQuestions.filter(q => q.type === 'blank').length,
+        true_false: allSelectedQuestions.filter(q => q.type === 'true_false').length,
+        short: allSelectedQuestions.filter(q => q.type === 'short' || (!q.type && q.type !== 'mcq' && q.type !== 'long' && q.type !== 'blank' && q.type !== 'true_false')).length,
+        long: allSelectedQuestions.filter(q => q.type === 'long').length,
+        total: allSelectedQuestions.length
+    };
+
+    // Auto-adjust default counts when availableCounts changes to prevent out-of-bound configurations
+    useEffect(() => {
+        if (availableCounts.mcq > 0) {
+            setMcqCount(prev => prev === 0 ? Math.min(10, availableCounts.mcq) : Math.min(prev, availableCounts.mcq));
+        } else {
+            setMcqCount(0);
+        }
+
+        if (availableCounts.blank > 0) {
+            setBlankCount(prev => prev === 0 ? Math.min(5, availableCounts.blank) : Math.min(prev, availableCounts.blank));
+        } else {
+            setBlankCount(0);
+        }
+
+        if (availableCounts.true_false > 0) {
+            setTfCount(prev => prev === 0 ? Math.min(5, availableCounts.true_false) : Math.min(prev, availableCounts.true_false));
+        } else {
+            setTfCount(0);
+        }
+
+        if (availableCounts.short > 0) {
+            setShortCount(prev => {
+                const target = prev === 0 ? Math.min(8, availableCounts.short) : Math.min(prev, availableCounts.short);
+                return target;
+            });
+            setShortAttempt(prev => {
+                const maxShort = Math.min(shortCount || 8, availableCounts.short);
+                return prev === 0 ? Math.min(6, maxShort) : Math.min(prev, maxShort);
+            });
+        } else {
+            setShortCount(0);
+            setShortAttempt(0);
+        }
+
+        if (availableCounts.long > 0) {
+            setLongCount(prev => {
+                const target = prev === 0 ? Math.min(3, availableCounts.long) : Math.min(prev, availableCounts.long);
+                return target;
+            });
+            setLongAttempt(prev => {
+                const maxLong = Math.min(longCount || 3, availableCounts.long);
+                return prev === 0 ? Math.min(2, maxLong) : Math.min(prev, maxLong);
+            });
+        } else {
+            setLongCount(0);
+            setLongAttempt(0);
+        }
+    }, [selectedChapterIds, firestoreChapters]);
+
     // Calculated Blueprint Metrics
     const totalMarks = (mcqCount * mcqMarksEach) + 
                        (blankCount * blankMarksEach) + 
@@ -288,23 +350,25 @@ const PaperGenerator = () => {
         });
     };
 
-    // Apply Preset
+    // Apply Preset (Clamped to available questions in syllabus)
     const handleApplyPreset = (presetId) => {
         setSelectedPreset(presetId);
         const preset = EXAM_PRESETS.find(p => p.id === presetId);
         if (preset) {
             setTimeAllowed(preset.timeAllowed);
-            setMcqCount(preset.mcqCount);
+            setMcqCount(Math.min(preset.mcqCount, availableCounts.mcq));
             setMcqMarksEach(preset.mcqMarksEach);
-            setBlankCount(preset.blankCount || 0);
+            setBlankCount(Math.min(preset.blankCount || 0, availableCounts.blank));
             setBlankMarksEach(preset.blankMarksEach || 1);
-            setTfCount(preset.tfCount || 0);
+            setTfCount(Math.min(preset.tfCount || 0, availableCounts.true_false));
             setTfMarksEach(preset.tfMarksEach || 1);
-            setShortCount(preset.shortCount);
-            setShortAttempt(preset.shortAttempt);
+            const targetShort = Math.min(preset.shortCount, availableCounts.short);
+            setShortCount(targetShort);
+            setShortAttempt(Math.min(preset.shortAttempt, targetShort));
             setShortMarksEach(preset.shortMarksEach);
-            setLongCount(preset.longCount);
-            setLongAttempt(preset.longAttempt);
+            const targetLong = Math.min(preset.longCount, availableCounts.long);
+            setLongCount(targetLong);
+            setLongAttempt(Math.min(preset.longAttempt, targetLong));
             setLongMarksEach(preset.longMarksEach);
             if (typeof preset.showAnswerLines === 'boolean') {
                 setShowAnswerLines(preset.showAnswerLines);
@@ -653,26 +717,6 @@ const PaperGenerator = () => {
                             </button>
 
                             <button
-                                onClick={() => setShowAnswerKey(!showAnswerKey)}
-                                style={{
-                                    padding: '0.6rem 1.2rem',
-                                    borderRadius: '10px',
-                                    fontWeight: '600',
-                                    fontSize: '0.875rem',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.4rem',
-                                    background: showAnswerKey ? '#10b981' : '#f1f5f9',
-                                    color: showAnswerKey ? '#ffffff' : '#475569',
-                                    border: '1px solid ' + (showAnswerKey ? '#10b981' : '#cbd5e1')
-                                }}
-                            >
-                                <CheckSquare size={16} />
-                                {showAnswerKey ? 'Answer Key (ON)' : 'Answer Key (OFF)'}
-                            </button>
-
-                            <button
                                 onClick={handleDownloadPdf}
                                 disabled={isDownloadingPdf}
                                 style={{
@@ -701,27 +745,6 @@ const PaperGenerator = () => {
                                         Download PDF
                                     </>
                                 )}
-                            </button>
-
-                            <button
-                                onClick={handlePrintPaper}
-                                style={{
-                                    padding: '0.6rem 1.3rem',
-                                    borderRadius: '10px',
-                                    fontWeight: '700',
-                                    fontSize: '0.875rem',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                    background: 'linear-gradient(135deg, #059669, #10b981)',
-                                    color: '#ffffff',
-                                    border: 'none',
-                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
-                                }}
-                            >
-                                <Printer size={16} />
-                                Print
                             </button>
                         </>
                     )}
@@ -974,243 +997,467 @@ const PaperGenerator = () => {
                             </div>
                         )}
 
-                        {/* TAB 2: BLUEPRINT & MARKS SCHEME */}
+                        {/* TAB 2: BLUEPRINT & MARKS SCHEME (100% Dynamic & Syllabus-Adaptive) */}
                         {activeSettingsTab === 'blueprint' && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                                 <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem' }}>
                                     <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                         <Sliders size={22} color="#1e40af" />
-                                        Paper Blueprint & Question Sections
+                                        Paper Blueprint & Marks Scheme
                                     </h2>
                                     <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.2rem' }}>
-                                        Customize your question counts, choice options, and marks for each section below. Total marks are calculated automatically.
+                                        Customized automatically based on your <strong>Step 1 Syllabus & Chapter Selection</strong>. Only available question types are shown.
                                     </p>
                                 </div>
 
-                                {/* Granular Section Settings */}
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
-                                    
-                                    {/* SECTION 1: MCQs */}
-                                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 1: Objective (MCQs)</span>
-                                            <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
-                                                {mcqCount * mcqMarksEach} Marks
+                                {/* Dynamic Scope & Pool Breakdown Banner */}
+                                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '12px', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                <BookOpen size={16} />
+                                                Syllabus Scope:
+                                            </span>
+                                            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#0c4a6e' }}>
+                                                {selectedClassName || 'No Class'} • {selectedSubject || 'No Subject'} ({selectedChapterIds.length} of {firestoreChapters.length} Chapters Selected)
                                             </span>
                                         </div>
-
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Number of MCQs</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="50"
-                                                    value={mcqCount}
-                                                    onChange={(e) => setMcqCount(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Marks Each</label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    max="5"
-                                                    value={mcqMarksEach}
-                                                    onChange={(e) => setMcqMarksEach(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                        </div>
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#0284c7', background: '#e0f2fe', padding: '3px 12px', borderRadius: '20px', border: '1px solid #bae6fd' }}>
+                                            {availableCounts.total} Questions in Selected Syllabus
+                                        </span>
                                     </div>
 
-                                    {/* SECTION 2: FILL IN THE BLANKS */}
-                                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 2: Fill in the Blanks (خالی جگہ)</span>
-                                            <span style={{ background: '#059669', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
-                                                {blankCount * blankMarksEach} Marks
+                                    {/* Breakdown Tags */}
+                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px dashed #bae6fd' }}>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>Detected Pools:</span>
+                                        {availableCounts.mcq > 0 ? (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#dbeafe', color: '#1e40af', fontWeight: '700', border: '1px solid #bfdbfe' }}>
+                                                ✓ {availableCounts.mcq} MCQs
                                             </span>
-                                        </div>
-
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Number of Blanks</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="30"
-                                                    value={blankCount}
-                                                    onChange={(e) => setBlankCount(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Marks Each</label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    max="5"
-                                                    value={blankMarksEach}
-                                                    onChange={(e) => setBlankMarksEach(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* SECTION 3: TRUE / FALSE */}
-                                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 3: True / False (درست یا غلط)</span>
-                                            <span style={{ background: '#7c3aed', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
-                                                {tfCount * tfMarksEach} Marks
+                                        ) : (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
+                                                0 MCQs
                                             </span>
-                                        </div>
-
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Number of True/False</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="30"
-                                                    value={tfCount}
-                                                    onChange={(e) => setTfCount(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Marks Each</label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    max="5"
-                                                    value={tfMarksEach}
-                                                    onChange={(e) => setTfMarksEach(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* SECTION 4: SHORT QUESTIONS */}
-                                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 4: Short Questions</span>
-                                            <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
-                                                {shortAttempt * shortMarksEach} Marks
+                                        )}
+                                        
+                                        {availableCounts.blank > 0 ? (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#d1fae5', color: '#065f46', fontWeight: '700', border: '1px solid #a7f3d0' }}>
+                                                ✓ {availableCounts.blank} Blanks
                                             </span>
-                                        </div>
-
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Given Qs</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="30"
-                                                    value={shortCount}
-                                                    onChange={(e) => setShortCount(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>To Attempt</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max={shortCount}
-                                                    value={shortAttempt}
-                                                    onChange={(e) => setShortAttempt(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Marks Each</label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    max="10"
-                                                    value={shortMarksEach}
-                                                    onChange={(e) => setShortMarksEach(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {/* Answer Writing Ruled Lines Toggle (Primary Worksheet Style) */}
-                                        <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: '600', color: '#334155', cursor: 'pointer' }}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={showAnswerLines}
-                                                    onChange={(e) => setShowAnswerLines(e.target.checked)}
-                                                    style={{ width: '16px', height: '16px', accentColor: '#1e40af' }}
-                                                />
-                                                Add Student Writing Lines (Worksheet Style)
-                                            </label>
-                                            {showAnswerLines && (
-                                                <select
-                                                    value={answerLineCount}
-                                                    onChange={(e) => setAnswerLineCount(Number(e.target.value))}
-                                                    style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.75rem' }}
-                                                >
-                                                    <option value="2">2 Ruled Lines</option>
-                                                    <option value="3">3 Ruled Lines</option>
-                                                    <option value="4">4 Ruled Lines</option>
-                                                </select>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* SECTION 5: LONG QUESTIONS */}
-                                    <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                            <span style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Section 5: Long Questions</span>
-                                            <span style={{ background: '#b45309', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem' }}>
-                                                {longAttempt * longMarksEach} Marks
+                                        ) : (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
+                                                0 Blanks
                                             </span>
-                                        </div>
+                                        )}
 
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Given Qs</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="10"
-                                                    value={longCount}
-                                                    onChange={(e) => setLongCount(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>To Attempt</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max={longCount}
-                                                    value={longAttempt}
-                                                    onChange={(e) => setLongAttempt(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>Marks Each</label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    max="15"
-                                                    value={longMarksEach}
-                                                    onChange={(e) => setLongMarksEach(Number(e.target.value))}
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                                />
-                                            </div>
-                                        </div>
+                                        {availableCounts.true_false > 0 ? (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#ede9fe', color: '#5b21b6', fontWeight: '700', border: '1px solid #ddd6fe' }}>
+                                                ✓ {availableCounts.true_false} True/False
+                                            </span>
+                                        ) : (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
+                                                0 True/False
+                                            </span>
+                                        )}
+
+                                        {availableCounts.short > 0 ? (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#e0e7ff', color: '#3730a3', fontWeight: '700', border: '1px solid #c7d2fe' }}>
+                                                ✓ {availableCounts.short} Short Qs
+                                            </span>
+                                        ) : (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
+                                                0 Short Qs
+                                            </span>
+                                        )}
+
+                                        {availableCounts.long > 0 ? (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#fef3c7', color: '#92400e', fontWeight: '700', border: '1px solid #fde68a' }}>
+                                                ✓ {availableCounts.long} Long Qs
+                                            </span>
+                                        ) : (
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
+                                                0 Long Qs
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
+
+                                {availableCounts.total === 0 ? (
+                                    /* Empty State Warning if no questions exist in chosen chapters */
+                                    <div style={{ padding: '2.5rem', background: '#fffbeb', borderRadius: '12px', border: '2px dashed #fcd34d', textAlign: 'center' }}>
+                                        <AlertTriangle size={40} color="#d97706" style={{ margin: '0 auto 0.75rem' }} />
+                                        <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#92400e', margin: 0 }}>
+                                            No Scanned Questions Found in Selected Chapters
+                                        </h3>
+                                        <p style={{ fontSize: '0.9rem', color: '#b45309', margin: '0.5rem 0 1.25rem 0', maxWidth: '600px', marginLeft: 'auto', marginRight: 'auto' }}>
+                                            The chapters currently selected in <strong>Step 1</strong> do not have any scanned exercise questions saved yet. Please go to <strong>Settings &rarr; Upload Syllabus</strong> to scan book exercises, or select other chapters with questions.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveSettingsTab('syllabus')}
+                                            style={{
+                                                padding: '0.65rem 1.5rem',
+                                                borderRadius: '8px',
+                                                background: '#1e40af',
+                                                color: '#fff',
+                                                fontWeight: '700',
+                                                fontSize: '0.875rem',
+                                                border: 'none',
+                                                cursor: 'pointer',
+                                                boxShadow: '0 2px 8px rgba(30,64,175,0.25)'
+                                            }}
+                                        >
+                                            &larr; Return to Step 1 (Chapter Selector)
+                                        </button>
+                                    </div>
+                                ) : (
+                                    /* Dynamic Question Sections Grid */
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
+                                        
+                                        {/* SECTION: MCQs (Shown only if MCQs exist in selected chapters) */}
+                                        {availableCounts.mcq > 0 && (
+                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                                <div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                                                        <div>
+                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Objective MCQs</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>کثیر الانتخابی سوالات</div>
+                                                        </div>
+                                                        <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                                                            {mcqCount * mcqMarksEach} Marks
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Live Availability Badge */}
+                                                    <div style={{ marginBottom: '1rem' }}>
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#1e40af', background: '#dbeafe', padding: '3px 8px', borderRadius: '6px' }}>
+                                                            🟢 Available in Syllabus: {availableCounts.mcq} MCQs
+                                                        </span>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                Number of MCQs
+                                                                <span style={{ color: '#64748b', fontWeight: '400', marginLeft: '4px' }}>(Max: {availableCounts.mcq})</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={availableCounts.mcq}
+                                                                value={mcqCount}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    setMcqCount(Math.min(Math.max(0, val), availableCounts.mcq));
+                                                                }}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Marks Each</label>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                max="5"
+                                                                value={mcqMarksEach}
+                                                                onChange={(e) => setMcqMarksEach(Math.max(1, Number(e.target.value)))}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* SECTION: FILL IN THE BLANKS (Shown only if Blanks exist in selected chapters) */}
+                                        {availableCounts.blank > 0 && (
+                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                                <div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                                                        <div>
+                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Fill in the Blanks</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>خالی جگہ پر کریں</div>
+                                                        </div>
+                                                        <span style={{ background: '#059669', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                                                            {blankCount * blankMarksEach} Marks
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Live Availability Badge */}
+                                                    <div style={{ marginBottom: '1rem' }}>
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#065f46', background: '#d1fae5', padding: '3px 8px', borderRadius: '6px' }}>
+                                                            🟢 Available in Syllabus: {availableCounts.blank} Blanks
+                                                        </span>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                Number of Blanks
+                                                                <span style={{ color: '#64748b', fontWeight: '400', marginLeft: '4px' }}>(Max: {availableCounts.blank})</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={availableCounts.blank}
+                                                                value={blankCount}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    setBlankCount(Math.min(Math.max(0, val), availableCounts.blank));
+                                                                }}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Marks Each</label>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                max="5"
+                                                                value={blankMarksEach}
+                                                                onChange={(e) => setBlankMarksEach(Math.max(1, Number(e.target.value)))}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* SECTION: TRUE / FALSE (Shown only if True/False exist in selected chapters) */}
+                                        {availableCounts.true_false > 0 && (
+                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                                <div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                                                        <div>
+                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>True / False</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>درست یا غلط</div>
+                                                        </div>
+                                                        <span style={{ background: '#7c3aed', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                                                            {tfCount * tfMarksEach} Marks
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Live Availability Badge */}
+                                                    <div style={{ marginBottom: '1rem' }}>
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#5b21b6', background: '#ede9fe', padding: '3px 8px', borderRadius: '6px' }}>
+                                                            🟢 Available in Syllabus: {availableCounts.true_false} Questions
+                                                        </span>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                Number of True/False
+                                                                <span style={{ color: '#64748b', fontWeight: '400', marginLeft: '4px' }}>(Max: {availableCounts.true_false})</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={availableCounts.true_false}
+                                                                value={tfCount}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    setTfCount(Math.min(Math.max(0, val), availableCounts.true_false));
+                                                                }}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Marks Each</label>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                max="5"
+                                                                value={tfMarksEach}
+                                                                onChange={(e) => setTfMarksEach(Math.max(1, Number(e.target.value)))}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* SECTION: SHORT QUESTIONS (Shown only if Short Qs exist in selected chapters) */}
+                                        {availableCounts.short > 0 && (
+                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                                <div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                                                        <div>
+                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Short Questions</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>مختصر سوالات</div>
+                                                        </div>
+                                                        <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                                                            {shortAttempt * shortMarksEach} Marks
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Live Availability Badge */}
+                                                    <div style={{ marginBottom: '1rem' }}>
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#1e40af', background: '#dbeafe', padding: '3px 8px', borderRadius: '6px' }}>
+                                                            🟢 Available in Syllabus: {availableCounts.short} Short Questions
+                                                        </span>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                Given Qs
+                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {availableCounts.short})</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={availableCounts.short}
+                                                                value={shortCount}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    const clamped = Math.min(Math.max(0, val), availableCounts.short);
+                                                                    setShortCount(clamped);
+                                                                    if (shortAttempt > clamped) setShortAttempt(clamped);
+                                                                }}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                To Attempt
+                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {shortCount})</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={shortCount}
+                                                                value={shortAttempt}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    setShortAttempt(Math.min(Math.max(0, val), shortCount));
+                                                                }}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                Marks Each
+                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>&nbsp;</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                max="10"
+                                                                value={shortMarksEach}
+                                                                onChange={(e) => setShortMarksEach(Math.max(1, Number(e.target.value)))}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Answer Writing Ruled Lines Toggle */}
+                                                    <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: '600', color: '#334155', cursor: 'pointer' }}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={showAnswerLines}
+                                                                onChange={(e) => setShowAnswerLines(e.target.checked)}
+                                                                style={{ width: '16px', height: '16px', accentColor: '#1e40af' }}
+                                                            />
+                                                            Student Ruled Lines
+                                                        </label>
+                                                        {showAnswerLines && (
+                                                            <select
+                                                                value={answerLineCount}
+                                                                onChange={(e) => setAnswerLineCount(Number(e.target.value))}
+                                                                style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600' }}
+                                                            >
+                                                                <option value="2">2 Lines</option>
+                                                                <option value="3">3 Lines</option>
+                                                                <option value="4">4 Lines</option>
+                                                            </select>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* SECTION: LONG QUESTIONS (Shown only if Long Qs exist in selected chapters) */}
+                                        {availableCounts.long > 0 && (
+                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                                <div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                                                        <div>
+                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Long Questions</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>تفصیلی سوالات</div>
+                                                        </div>
+                                                        <span style={{ background: '#b45309', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                                                            {longAttempt * longMarksEach} Marks
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Live Availability Badge */}
+                                                    <div style={{ marginBottom: '1rem' }}>
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#92400e', background: '#fef3c7', padding: '3px 8px', borderRadius: '6px' }}>
+                                                            🟢 Available in Syllabus: {availableCounts.long} Long Questions
+                                                        </span>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                Given Qs
+                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {availableCounts.long})</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={availableCounts.long}
+                                                                value={longCount}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    const clamped = Math.min(Math.max(0, val), availableCounts.long);
+                                                                    setLongCount(clamped);
+                                                                    if (longAttempt > clamped) setLongAttempt(clamped);
+                                                                }}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                To Attempt
+                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {longCount})</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max={longCount}
+                                                                value={longAttempt}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    setLongAttempt(Math.min(Math.max(0, val), longCount));
+                                                                }}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
+                                                                Marks Each
+                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>&nbsp;</span>
+                                                            </label>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                max="15"
+                                                                value={longMarksEach}
+                                                                onChange={(e) => setLongMarksEach(Math.max(1, Number(e.target.value)))}
+                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -1422,7 +1669,7 @@ const PaperGenerator = () => {
                             <button
                                 onClick={handleDownloadPdf}
                                 disabled={isDownloadingPdf}
-                                style={{ padding: '0.45rem 1rem', background: '#1e40af', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', fontSize: '0.8rem', cursor: isDownloadingPdf ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                                style={{ padding: '0.45rem 1.1rem', background: '#1e40af', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', fontSize: '0.8rem', cursor: isDownloadingPdf ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
                             >
                                 {isDownloadingPdf ? (
                                     <>
@@ -1435,14 +1682,6 @@ const PaperGenerator = () => {
                                         Download PDF
                                     </>
                                 )}
-                            </button>
-
-                            <button
-                                onClick={handlePrintPaper}
-                                style={{ padding: '0.45rem 1rem', background: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-                            >
-                                <Printer size={14} />
-                                Print Now
                             </button>
                         </div>
                     </div>
