@@ -44,8 +44,8 @@ const PaperGenerator = () => {
     const [classes, setClasses] = useState([]);
     const [selectedClassId, setSelectedClassId] = useState('');
     const [selectedClassName, setSelectedClassName] = useState('');
-    const [availableSubjects, setAvailableSubjects] = useState(COMPREHENSIVE_SUBJECTS);
-    const [selectedSubject, setSelectedSubject] = useState('Urdu');
+    const [availableSubjects, setAvailableSubjects] = useState([]);
+    const [selectedSubject, setSelectedSubject] = useState('');
 
     // Real Firestore Chapters (From Upload Syllabus)
     const [firestoreChapters, setFirestoreChapters] = useState([]);
@@ -180,7 +180,7 @@ const PaperGenerator = () => {
                     const list = classesSnap.docs.map(d => ({
                         id: d.id,
                         name: d.data().name || d.id,
-                        subjects: d.data().subjects || []
+                        subjects: Array.isArray(d.data().subjects) ? d.data().subjects : []
                     }));
                     list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
                     setClasses(list);
@@ -200,15 +200,22 @@ const PaperGenerator = () => {
 
     // 2. Update Subjects when Class changes & auto-recommend preset
     useEffect(() => {
-        if (!selectedClassId) return;
+        if (!selectedClassId) {
+            setAvailableSubjects([]);
+            setSelectedSubject('');
+            setSelectedClassName('');
+            return;
+        }
         const currentClass = classes.find(c => c.id === selectedClassId);
         if (currentClass) {
             setSelectedClassName(currentClass.name);
-            const classSubjects = currentClass.subjects || [];
-            const combined = Array.from(new Set([...classSubjects, ...COMPREHENSIVE_SUBJECTS]));
-            setAvailableSubjects(combined);
-            if (!combined.includes(selectedSubject)) {
-                setSelectedSubject(combined[0]);
+            const classSubjects = Array.isArray(currentClass.subjects) ? currentClass.subjects : [];
+            setAvailableSubjects(classSubjects);
+            
+            if (classSubjects.length > 0) {
+                setSelectedSubject(prev => classSubjects.includes(prev) ? prev : classSubjects[0]);
+            } else {
+                setSelectedSubject('');
             }
 
             // Smart preset recommendation for Primary (Class 1-5) vs Secondary (Class 6-10)
@@ -800,11 +807,21 @@ const PaperGenerator = () => {
                                         <select
                                             value={selectedSubject}
                                             onChange={(e) => setSelectedSubject(e.target.value)}
-                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.95rem', fontWeight: '700', color: '#1e293b', background: '#fff' }}
+                                            disabled={availableSubjects.length === 0}
+                                            style={{
+                                                width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.95rem', fontWeight: '700',
+                                                color: availableSubjects.length === 0 ? '#94a3b8' : '#1e293b',
+                                                background: availableSubjects.length === 0 ? '#f8fafc' : '#fff',
+                                                cursor: availableSubjects.length === 0 ? 'not-allowed' : 'pointer'
+                                            }}
                                         >
-                                            {availableSubjects.map(s => (
-                                                <option key={s} value={s}>{s}</option>
-                                            ))}
+                                            {availableSubjects.length === 0 ? (
+                                                <option value="">No subjects assigned to this class</option>
+                                            ) : (
+                                                availableSubjects.map(s => (
+                                                    <option key={s} value={s}>{s}</option>
+                                                ))
+                                            )}
                                         </select>
                                     </div>
                                 </div>
