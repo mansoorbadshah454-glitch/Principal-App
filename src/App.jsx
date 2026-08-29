@@ -25,6 +25,7 @@ const Inbox = lazy(() => import('./pages/Inbox'));
 const EditStudentProfile = lazy(() => import('./pages/EditStudentProfile'));
 const LiveSurveillance = lazy(() => import('./pages/LiveSurveillance'));
 const PaperGenerator = lazy(() => import('./pages/PaperGenerator'));
+const Exams = lazy(() => import('./pages/Exams'));
 const PageLoader = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100%' }}>
     <div className="animate-spin" style={{ width: '40px', height: '40px', border: '3px solid #6366f1', borderTopColor: 'transparent', borderRadius: '50%' }} />
@@ -170,6 +171,11 @@ function App() {
               <Route path="paper-generator" element={
                 <ProtectedRoute requiredPermission="canManagePaperGenerator" pageName="Paper Generator">
                   <PaperGenerator />
+                </ProtectedRoute>
+              } />
+              <Route path="exams" element={
+                <ProtectedRoute requiredPermission="canManageExams" pageName="Exams">
+                  <Exams />
                 </ProtectedRoute>
               } />
             </Route>

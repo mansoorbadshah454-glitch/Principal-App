@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
-    Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText, Tv, FileCheck, Mail
+    Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon, FileText, Tv, FileCheck, Mail, Award
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
@@ -21,6 +21,7 @@ const Sidebar = () => {
         { icon: UserCheck, label: 'Parents', path: '/parents', permission: 'canManageParents' },
         { icon: Wallet, label: 'Collections', path: '/collections', permission: 'canManageCollections' },
         { icon: FileCheck, label: 'Paper Generator', path: '/paper-generator', permission: 'canManagePaperGenerator' },
+        { icon: Award, label: 'Exams', path: '/exams', permission: 'canManageExams' },
         { icon: TrendingUp, label: 'Promotions', path: '/promotions', permission: 'canManagePromotions' },
         { icon: UserCog, label: 'User Admin', path: '/users', permission: 'canManageUsers' },
         { icon: Tv, label: 'Live Surveillance', path: '/surveillance', permission: 'canManageSurveillance' },

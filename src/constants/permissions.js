@@ -56,6 +56,13 @@ export const PERMISSIONS_LIST = [
         category: 'Academic'
     },
     {
+        id: 'canManageExams',
+        label: 'Exams & Results',
+        description: 'Manage exam terms, class tabulation sheets, and print student DMC result cards',
+        path: '/exams',
+        category: 'Academic'
+    },
+    {
         id: 'canManagePromotions',
         label: 'Promotions',
         description: 'Process batch student promotions to next academic session',
@@ -101,6 +108,7 @@ export const DEFAULT_ADMIN_PERMISSIONS = {
     canManageParents: true,
     canManageCollections: false,
     canManagePaperGenerator: true,
+    canManageExams: true,
     canManagePromotions: false,
     canManageSurveillance: false,
     canManageInbox: true,

@@ -772,26 +772,41 @@ const Teachers = () => {
 
             const enforcedRows = timeTableRows.map(row => ({
                 ...row,
-                cells: row.cells.map((cell, colIndex) => {
+                cells: (row.cells || []).map((cell, colIndex) => {
                     const isGlobalBreak = timeTableCols[colIndex] === globalBreakStartTime;
                     return {
-                        class: isGlobalBreak ? 'BREAK' : cell.class,
-                        subject: isGlobalBreak ? '' : cell.subject
+                        class: isGlobalBreak ? 'BREAK' : (cell.class || ''),
+                        subject: isGlobalBreak ? '' : (cell.subject || '')
                     };
                 })
             }));
 
-            const publishTimetable = httpsCallable(functions, 'publishTimetable');
-            const result = await publishTimetable({
-                schoolId: schoolId,
-                cols: timeTableCols,
-                rows: enforcedRows,
-                notificationType: publishType
-            });
-            showAlert(result.data?.message || 'Timetable published successfully!', 'success');
+            // 1. Direct Firestore write to guarantee instant and permanent save
+            const masterRef = doc(db, `schools/${schoolId}/timetables`, 'weeklyMaster');
+            await setDoc(masterRef, {
+                cols: timeTableCols || [],
+                rows: enforcedRows || [],
+                lastUpdated: serverTimestamp(),
+                updatedBy: auth.currentUser?.uid || 'principal'
+            }, { merge: true });
+
+            // 2. Call Cloud Function for notification broadcasting
+            try {
+                const publishTimetable = httpsCallable(functions, 'publishTimetable');
+                const result = await publishTimetable({
+                    schoolId: schoolId,
+                    cols: timeTableCols,
+                    rows: enforcedRows,
+                    notificationType: publishType
+                });
+                showAlert(result.data?.message || 'Timetable published successfully!', 'success');
+            } catch (fnErr) {
+                console.warn("Cloud function notification notice:", fnErr);
+                showAlert("Timetable saved and updated successfully!", "success");
+            }
         } catch (error) {
             console.error("Publish failed:", error);
-            showAlert("Failed to publish timetable: " + error.message, "error");
+            showAlert("Failed to save timetable: " + error.message, "error");
         } finally {
             setIsPublishingTimeTable(false);
         }
