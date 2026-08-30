@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, ChevronDown, AlertCircle,
-    Loader2, GraduationCap, X, UploadCloud, FileCheck, Eye, Upload
+    Loader2, GraduationCap, X, UploadCloud, FileCheck, Eye, Upload, Sparkles
 } from 'lucide-react';
 import { db, auth, storage } from '../firebase';
 import {
@@ -21,6 +21,7 @@ const Promotions = () => {
     const [selectedClass, setSelectedClass] = useState(null);
     const [students, setStudents] = useState([]);
     const [loadingStudents, setLoadingStudents] = useState(false);
+    const [isDemoMode, setIsDemoMode] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [studentSearchQuery, setStudentSearchQuery] = useState('');
     const [processing, setProcessing] = useState(false);
@@ -127,13 +128,17 @@ const Promotions = () => {
             setClasses(classesData);
             setLoading(false);
 
-            // Auto-restore previously selected class if returning from another page
+            // Auto-restore previously selected class if returning from another page, or default to first class
             const savedClassId = localStorage.getItem('promotions_selected_class_id');
             if (savedClassId) {
                 const matchedClass = classesData.find(c => c.id === savedClassId);
                 if (matchedClass) {
                     handleClassSelect(matchedClass, classesData);
+                } else if (classesData.length > 0) {
+                    handleClassSelect(classesData[0], classesData);
                 }
+            } else if (classesData.length > 0) {
+                handleClassSelect(classesData[0], classesData);
             }
         } catch (error) {
             console.error("Error fetching classes:", error);
@@ -190,92 +195,99 @@ const Promotions = () => {
                 console.warn("Could not fetch multi-term exams in promotions:", e);
             }
 
+            // Standard terms to track
+            const termsToTrack = [
+                { key: 'first', label: '1st Term', regex: /(1st|first|term[_\-\s]?1)/i },
+                { key: 'mid', label: '2nd Term', regex: /(2nd|second|mid|half|term[_\-\s]?2)/i },
+                { key: 'final', label: 'Final Exam', regex: /(final|annual|3rd|third|term[_\-\s]?3)/i }
+            ];
+
             const fetchedStudents = snapshot.docs.map(doc => {
                 const data = doc.data();
                 const studentId = doc.id;
 
-                // Multi-term breakdown calculation
-                const termsScores = [];
                 let totalObtainedAllTerms = 0;
                 let totalMaxAllTerms = 0;
                 let hasAnyTermFailed = false;
+                let termsWithRealDataCount = 0;
 
-                examsList.forEach(exam => {
-                    const examMarksDocs = marksDocs.filter(m => m.examId === exam.id || m.id.startsWith(exam.id));
-                    if (examMarksDocs.length > 0) {
-                        let termObtained = 0;
-                        let termMax = 0;
-                        let termFailed = false;
+                const termsScores = termsToTrack.map(termMeta => {
+                    const matchedExams = examsList.filter(e =>
+                        termMeta.regex.test(e.id || '') || termMeta.regex.test(e.title || '')
+                    );
 
-                        examMarksDocs.forEach(md => {
+                    let termObtained = 0;
+                    let termMax = 0;
+                    let hasMarks = false;
+                    let termFailed = false;
+
+                    const relevantExamIds = matchedExams.length > 0
+                        ? matchedExams.map(e => e.id)
+                        : [termMeta.key];
+
+                    marksDocs.forEach(md => {
+                        const mdExamId = (md.examId || md.id || '').toString();
+                        const isForThisTerm = relevantExamIds.some(eid =>
+                            mdExamId.toLowerCase().includes(eid.toLowerCase()) ||
+                            termMeta.regex.test(mdExamId) ||
+                            termMeta.regex.test(md.examTitle || '')
+                        );
+
+                        if (isForThisTerm) {
                             const entry = md.studentMarks?.[studentId] || md.students?.[studentId] || md.studentEntry?.[studentId];
-                            const sMax = md.totalMarks || 100;
-                            const sPass = md.passingMarks || 33;
+                            const sMax = parseFloat(md.totalMarks) || 100;
+                            const sPass = parseFloat(md.passingMarks) || 33;
 
                             if (entry) {
                                 if (entry.isAbsent) {
+                                    hasMarks = true;
                                     termFailed = true;
                                     termMax += sMax;
-                                } else if (entry.marks !== undefined && entry.marks !== null) {
+                                } else if (entry.marks !== undefined && entry.marks !== null && entry.marks !== '') {
+                                    hasMarks = true;
                                     const mVal = parseFloat(entry.marks) || 0;
                                     termObtained += mVal;
                                     termMax += sMax;
                                     if (mVal < sPass) termFailed = true;
                                 }
                             }
-                        });
-
-                        if (termMax > 0) {
-                            const termPct = Math.round((termObtained / termMax) * 100);
-                            const isTermPassed = !termFailed && termPct >= 33;
-                            if (!isTermPassed) hasAnyTermFailed = true;
-                            termsScores.push({
-                                examId: exam.id,
-                                examTitle: exam.title || 'Term Exam',
-                                obtained: termObtained,
-                                max: termMax,
-                                percentage: termPct,
-                                isPassed: isTermPassed
-                            });
-                            totalObtainedAllTerms += termObtained;
-                            totalMaxAllTerms += termMax;
                         }
+                    });
+
+                    if (hasMarks && termMax > 0) {
+                        const isPassed = !termFailed && (termObtained / termMax >= 0.33);
+                        if (!isPassed) hasAnyTermFailed = true;
+                        totalObtainedAllTerms += termObtained;
+                        totalMaxAllTerms += termMax;
+                        termsWithRealDataCount++;
+                        return {
+                            termKey: termMeta.key,
+                            examTitle: termMeta.label,
+                            obtained: termObtained,
+                            max: termMax,
+                            scoreText: `${termObtained} / ${termMax}`,
+                            hasMarks: true,
+                            isPassed: isPassed
+                        };
+                    } else {
+                        return {
+                            termKey: termMeta.key,
+                            examTitle: termMeta.label,
+                            obtained: 0,
+                            max: 0,
+                            scoreText: '-- / --',
+                            hasMarks: false,
+                            isPassed: null
+                        };
                     }
                 });
 
-                // Default standard terms if marks not entered yet
-                if (termsScores.length === 0) {
-                    const baseScore = Math.floor(Math.random() * 35) + 55; // 55-90%
-                    termsScores.push({
-                        examId: 'first_term',
-                        examTitle: '1st Term',
-                        obtained: Math.round(baseScore * 0.95),
-                        max: 100,
-                        percentage: Math.round(baseScore * 0.95),
-                        isPassed: Math.round(baseScore * 0.95) >= 33
-                    });
-                    termsScores.push({
-                        examId: 'mid_term',
-                        examTitle: 'Mid Term',
-                        obtained: baseScore,
-                        max: 100,
-                        percentage: baseScore,
-                        isPassed: baseScore >= 33
-                    });
-                    termsScores.push({
-                        examId: 'final_term',
-                        examTitle: 'Final Exam',
-                        obtained: Math.min(100, Math.round(baseScore * 1.05)),
-                        max: 100,
-                        percentage: Math.min(100, Math.round(baseScore * 1.05)),
-                        isPassed: Math.min(100, Math.round(baseScore * 1.05)) >= 33
-                    });
-                    totalObtainedAllTerms = termsScores.reduce((acc, t) => acc + t.obtained, 0);
-                    totalMaxAllTerms = termsScores.length * 100;
-                }
+                // Cumulative calculations based on all terms combined
+                const cumulativePct = totalMaxAllTerms > 0
+                    ? parseFloat(((totalObtainedAllTerms / totalMaxAllTerms) * 100).toFixed(1))
+                    : 0;
 
-                const cumulativePct = totalMaxAllTerms > 0 ? Math.round((totalObtainedAllTerms / totalMaxAllTerms) * 100) : 0;
-                const isCumulativePassed = cumulativePct >= 33;
+                const isCumulativePassed = totalMaxAllTerms > 0 ? (cumulativePct >= 33 && !hasAnyTermFailed) : true;
                 let grade = 'F';
                 if (cumulativePct >= 80) grade = 'A+';
                 else if (cumulativePct >= 70) grade = 'A';
@@ -293,9 +305,12 @@ const Promotions = () => {
                     fatherName: data.fatherName || data.guardianName || '',
                     avatar: data.photoUrl || data.photo || data.profileImage || data.avatar || data.profilePic || '',
                     termsScores,
+                    totalObtainedAllTerms,
+                    totalMaxAllTerms,
                     cumulativePercentage: cumulativePct,
-                    cumulativeGrade: grade,
+                    cumulativeGrade: totalMaxAllTerms > 0 ? grade : '-',
                     cumulativeIsPassed: isCumulativePassed,
+                    hasRealTermData: termsWithRealDataCount > 0,
                     promotionStatus: defaultPromotionStatus,
                     examScore: cumulativePct.toString(),
                     result: isCumulativePassed ? 'pass' : 'fail',
@@ -310,6 +325,189 @@ const Promotions = () => {
             console.error("Error fetching students:", error);
         } finally {
             setLoadingStudents(false);
+        }
+    };
+
+    const handleToggleDemoMode = () => {
+        const nextDemo = !isDemoMode;
+        setIsDemoMode(nextDemo);
+
+        if (nextDemo) {
+            const currentIndex = classes.findIndex(c => c.id === selectedClass?.id);
+            const nextClass = classes[currentIndex + 1] || null;
+            const previousClass = classes[currentIndex - 1] || null;
+
+            const nextClassName = nextClass ? nextClass.name : 'Class 2';
+            const prevClassName = previousClass ? previousClass.name : 'Nursery';
+
+            const demoList = [
+                {
+                    id: 'demo_1',
+                    name: 'Muhammad Huzaifa',
+                    rollNo: '01',
+                    fatherName: 'Tariq Mehmood',
+                    termsScores: [
+                        { termKey: 'first', examTitle: '1st Term', obtained: 385, max: 400, scoreText: '385 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'mid', examTitle: '2nd Term', obtained: 390, max: 400, scoreText: '390 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'final', examTitle: 'Final Exam', obtained: 395, max: 400, scoreText: '395 / 400', hasMarks: true, isPassed: true }
+                    ],
+                    totalObtainedAllTerms: 1170,
+                    totalMaxAllTerms: 1200,
+                    cumulativePercentage: 97.5,
+                    cumulativeGrade: 'A+',
+                    cumulativeIsPassed: true,
+                    promotionStatus: 'promote',
+                    examScore: '97.5',
+                    result: 'pass',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || null,
+                    previousClassName: prevClassName
+                },
+                {
+                    id: 'demo_2',
+                    name: 'Ayesha Fatima',
+                    rollNo: '02',
+                    fatherName: 'Abdul Rehman',
+                    termsScores: [
+                        { termKey: 'first', examTitle: '1st Term', obtained: 310, max: 400, scoreText: '310 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'mid', examTitle: '2nd Term', obtained: 325, max: 400, scoreText: '325 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'final', examTitle: 'Final Exam', obtained: 340, max: 400, scoreText: '340 / 400', hasMarks: true, isPassed: true }
+                    ],
+                    totalObtainedAllTerms: 975,
+                    totalMaxAllTerms: 1200,
+                    cumulativePercentage: 81.3,
+                    cumulativeGrade: 'A+',
+                    cumulativeIsPassed: true,
+                    promotionStatus: 'promote',
+                    examScore: '81.3',
+                    result: 'pass',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || null,
+                    previousClassName: prevClassName
+                },
+                {
+                    id: 'demo_3',
+                    name: 'Usman Farooq',
+                    rollNo: '03',
+                    fatherName: 'Farooq Ahmed',
+                    termsScores: [
+                        { termKey: 'first', examTitle: '1st Term', obtained: 110, max: 400, scoreText: '110 / 400', hasMarks: true, isPassed: false },
+                        { termKey: 'mid', examTitle: '2nd Term', obtained: 280, max: 400, scoreText: '280 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'final', examTitle: 'Final Exam', obtained: 310, max: 400, scoreText: '310 / 400', hasMarks: true, isPassed: true }
+                    ],
+                    totalObtainedAllTerms: 700,
+                    totalMaxAllTerms: 1200,
+                    cumulativePercentage: 58.3,
+                    cumulativeGrade: 'C',
+                    cumulativeIsPassed: true,
+                    promotionStatus: 'promote',
+                    examScore: '58.3',
+                    result: 'pass',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || null,
+                    previousClassName: prevClassName
+                },
+                {
+                    id: 'demo_4',
+                    name: 'Zubair Shah',
+                    rollNo: '04',
+                    fatherName: 'Syed Shah',
+                    termsScores: [
+                        { termKey: 'first', examTitle: '1st Term', obtained: 290, max: 400, scoreText: '290 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'mid', examTitle: '2nd Term', obtained: 115, max: 400, scoreText: '115 / 400', hasMarks: true, isPassed: false },
+                        { termKey: 'final', examTitle: 'Final Exam', obtained: 300, max: 400, scoreText: '300 / 400', hasMarks: true, isPassed: true }
+                    ],
+                    totalObtainedAllTerms: 705,
+                    totalMaxAllTerms: 1200,
+                    cumulativePercentage: 58.8,
+                    cumulativeGrade: 'C',
+                    cumulativeIsPassed: true,
+                    promotionStatus: 'promote',
+                    examScore: '58.8',
+                    result: 'pass',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || null,
+                    previousClassName: prevClassName
+                },
+                {
+                    id: 'demo_5',
+                    name: 'Zayan Ghani',
+                    rollNo: '05',
+                    fatherName: 'Faizan Ghani',
+                    termsScores: [
+                        { termKey: 'first', examTitle: '1st Term', obtained: 100, max: 400, scoreText: '100 / 400', hasMarks: true, isPassed: false },
+                        { termKey: 'mid', examTitle: '2nd Term', obtained: 110, max: 400, scoreText: '110 / 400', hasMarks: true, isPassed: false },
+                        { termKey: 'final', examTitle: 'Final Exam', obtained: 95, max: 400, scoreText: '95 / 400', hasMarks: true, isPassed: false }
+                    ],
+                    totalObtainedAllTerms: 305,
+                    totalMaxAllTerms: 1200,
+                    cumulativePercentage: 25.4,
+                    cumulativeGrade: 'F',
+                    cumulativeIsPassed: false,
+                    promotionStatus: 'retain',
+                    examScore: '25.4',
+                    result: 'fail',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || null,
+                    previousClassName: prevClassName
+                },
+                {
+                    id: 'demo_6',
+                    name: 'Hamza Ali',
+                    rollNo: '06',
+                    fatherName: 'Ali Asghar',
+                    termsScores: [
+                        { termKey: 'first', examTitle: '1st Term', obtained: 85, max: 400, scoreText: '85 / 400', hasMarks: true, isPassed: false },
+                        { termKey: 'mid', examTitle: '2nd Term', obtained: 80, max: 400, scoreText: '80 / 400', hasMarks: true, isPassed: false },
+                        { termKey: 'final', examTitle: 'Final Exam', obtained: 90, max: 400, scoreText: '90 / 400', hasMarks: true, isPassed: false }
+                    ],
+                    totalObtainedAllTerms: 255,
+                    totalMaxAllTerms: 1200,
+                    cumulativePercentage: 21.3,
+                    cumulativeGrade: 'F',
+                    cumulativeIsPassed: false,
+                    promotionStatus: 'demote',
+                    examScore: '21.3',
+                    result: 'fail',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || 'prev',
+                    previousClassName: prevClassName
+                },
+                {
+                    id: 'demo_7',
+                    name: 'Khadija Bibi',
+                    rollNo: '07',
+                    fatherName: 'Muhammad Yousaf',
+                    termsScores: [
+                        { termKey: 'first', examTitle: '1st Term', obtained: 340, max: 400, scoreText: '340 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'mid', examTitle: '2nd Term', obtained: 350, max: 400, scoreText: '350 / 400', hasMarks: true, isPassed: true },
+                        { termKey: 'final', examTitle: 'Final Exam', obtained: 0, max: 0, scoreText: '-- / --', hasMarks: false, isPassed: null }
+                    ],
+                    totalObtainedAllTerms: 690,
+                    totalMaxAllTerms: 800,
+                    cumulativePercentage: 86.3,
+                    cumulativeGrade: 'A+',
+                    cumulativeIsPassed: true,
+                    promotionStatus: 'promote',
+                    examScore: '86.3',
+                    result: 'pass',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || null,
+                    previousClassName: prevClassName
+                }
+            ];
+            setStudents(demoList);
+        } else {
+            if (selectedClass) {
+                handleClassSelect(selectedClass);
+            }
         }
     };
 
@@ -768,115 +966,43 @@ const Promotions = () => {
                 </div>
             )}
 
-            {/* Class Selection - Two Rows */}
-            <div style={{ marginBottom: '40px' }}>
-                {/* Primary Department Header */}
-                <div
-                    onClick={() => setShowPrimaryDept(prev => !prev)}
-                    style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        marginBottom: showPrimaryDept ? '20px' : '30px',
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                        padding: '6px 10px',
-                        borderRadius: '10px',
-                        transition: 'background-color 0.2s'
-                    }}
-                    className="hover:bg-slate-100"
-                >
-                    {showPrimaryDept ? (
-                        <ChevronDown size={22} color="var(--primary)" />
-                    ) : (
-                        <ChevronRight size={22} color="var(--primary)" />
-                    )}
-                    <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', margin: 0 }}>
-                        Select Primary Department (Nursery - 5)
-                    </h3>
-                </div>
-
-                {showPrimaryDept && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px', marginBottom: '30px' }} className="animate-fade-in-up">
-                        {row1Classes.map(cls => (
-                            <div
-                                key={cls.id}
-                                onClick={() => handleClassSelect(cls)}
-                                style={{
-                                    padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
-                                    background: getClassColor(cls.name), color: 'white',
-                                    border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
-                                    boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
-                                    transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
-                                    position: 'relative'
+            {/* Standard Clean Class Dropdown (Exams style, Left-aligned) */}
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    {/* Class Selector (Exams Style, Left-Aligned) */}
+                    <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1">Select Class</label>
+                        <div className="relative min-w-[240px] sm:min-w-[280px]">
+                            <select
+                                value={selectedClass?.id || ''}
+                                onChange={(e) => {
+                                    const found = classes.find(c => c.id === e.target.value);
+                                    if (found) handleClassSelect(found);
                                 }}
+                                className="w-full bg-slate-50 hover:bg-slate-100/80 border border-slate-200 text-slate-800 text-xs sm:text-sm font-bold rounded-xl px-3.5 py-2.5 pr-9 focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-colors cursor-pointer appearance-none"
                             >
-                                <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
-                                <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
-                                <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
-                                {selectedClass?.id === cls.id && (
-                                    <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
-                                        <CheckCircle size={18} />
-                                    </div>
-                                )}
+                                <option value="" disabled>Choose Class...</option>
+                                {classes.map(cls => (
+                                    <option key={cls.id} value={cls.id}>
+                                        {cls.name} • ({cls.students || 0} Students)
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
+                                <ChevronDown size={16} />
                             </div>
-                        ))}
+                        </div>
                     </div>
-                )}
 
-                {/* Secondary Department Header */}
-                <div
-                    onClick={() => setShowSecondaryDept(prev => !prev)}
-                    style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        marginBottom: showSecondaryDept ? '20px' : '0px',
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                        padding: '6px 10px',
-                        borderRadius: '10px',
-                        transition: 'background-color 0.2s'
-                    }}
-                    className="hover:bg-slate-100"
-                >
-                    {showSecondaryDept ? (
-                        <ChevronDown size={22} color="var(--primary)" />
-                    ) : (
-                        <ChevronRight size={22} color="var(--primary)" />
+                    {selectedClass && (
+                        <div className="sm:mt-5 flex items-center gap-2">
+                            <span className="text-xs font-extrabold px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-100 flex items-center gap-1.5">
+                                <Users size={14} />
+                                {selectedClass.students || students.length || 0} Enrolled Students
+                            </span>
+                        </div>
                     )}
-                    <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1E293B', margin: 0 }}>
-                        Secondary & High School (6 - 10)
-                    </h3>
                 </div>
-
-                {showSecondaryDept && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px' }} className="animate-fade-in-up">
-                        {row2Classes.map(cls => (
-                            <div
-                                key={cls.id}
-                                onClick={() => handleClassSelect(cls)}
-                                style={{
-                                    padding: '20px', borderRadius: '16px', cursor: 'pointer', transition: 'all 0.3s',
-                                    background: getClassColor(cls.name), color: 'white',
-                                    border: selectedClass?.id === cls.id ? '4px solid white' : 'none',
-                                    boxShadow: selectedClass?.id === cls.id ? '0 0 0 2px var(--primary), 0 10px 15px rgba(0,0,0,0.1)' : '0 4px 6px rgba(0,0,0,0.05)',
-                                    transform: selectedClass?.id === cls.id ? 'translateY(-5px)' : 'none',
-                                    position: 'relative'
-                                }}
-                            >
-                                <div style={{ fontSize: '14px', fontWeight: '500', opacity: 0.9, marginBottom: '4px' }}>Class</div>
-                                <div style={{ fontSize: '22px', fontWeight: '800' }}>{cls.name}</div>
-                                <div style={{ fontSize: '12px', marginTop: '10px', opacity: 0.8 }}>{cls.students || 0} Students</div>
-                                {selectedClass?.id === cls.id && (
-                                    <div style={{ position: 'absolute', top: '10px', right: '10px' }}>
-                                        <CheckCircle size={18} />
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                )}
             </div>
 
             {/* Student Management Section */}
@@ -888,7 +1014,25 @@ const Promotions = () => {
                                 Students: {selectedClass.name}
                             </h2>
                             <p style={{ color: '#64748B' }}>Set results and promotion status for each student.</p>
-                        </div>                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            {/* Demo Data Feed Toggle (Visible ONLY for Demo School 6257) */}
+                            {String(schoolId) === '6257' && (
+                                <button
+                                    type="button"
+                                    onClick={handleToggleDemoMode}
+                                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs ${
+                                        isDemoMode
+                                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40'
+                                            : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
+                                    }`}
+                                    title="Toggle realistic sample students (Pass / Fail / Demote / Pending)"
+                                >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    <span>{isDemoMode ? 'Exit Demo Data' : '✨ Try Demo Data'}</span>
+                                </button>
+                            )}
+
                             {/* Auto-Set Decisions by Result */}
                             <button
                                 onClick={() => {
@@ -935,61 +1079,66 @@ const Promotions = () => {
                                 />
                             </div>
 
-                            <div style={{ display: 'flex', background: '#F1F5F9', padding: '4px', borderRadius: '12px', gap: '4px' }}>
+                            {/* Filter Status Pills (Sharp, High Contrast, No Glow) */}
+                            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
                                 <button
+                                    type="button"
                                     onClick={() => setStatusFilter('all')}
-                                    style={{
-                                        padding: '5px 10px', borderRadius: '8px', border: 'none',
-                                        background: statusFilter === 'all' ? '#3B82F6' : 'transparent',
-                                        fontWeight: '700', color: statusFilter === 'all' ? 'white' : '#64748B',
-                                        cursor: 'pointer', fontSize: '11px', transition: 'all 0.2s'
-                                    }}
+                                    className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all ${
+                                        statusFilter === 'all'
+                                            ? 'bg-slate-900 text-white shadow-xs'
+                                            : 'text-slate-700 hover:text-slate-900 hover:bg-white'
+                                    }`}
                                 >
                                     All ({students.length})
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => setStatusFilter('promote')}
-                                    style={{
-                                        padding: '5px 10px', borderRadius: '8px', border: 'none',
-                                        background: statusFilter === 'promote' ? '#10B981' : 'transparent',
-                                        fontWeight: '700', color: statusFilter === 'promote' ? 'white' : '#10B981',
-                                        cursor: 'pointer', fontSize: '11px', transition: 'all 0.2s'
-                                    }}
+                                    className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 ${
+                                        statusFilter === 'promote'
+                                            ? 'bg-emerald-600 text-white shadow-xs'
+                                            : 'text-emerald-950 hover:bg-emerald-50'
+                                    }`}
                                 >
-                                    🟢 Promote ({students.filter(s => (s.promotionStatus || 'promote') === 'promote').length})
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                                    <span>Promote ({students.filter(s => (s.promotionStatus || 'promote') === 'promote').length})</span>
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => setStatusFilter('retain')}
-                                    style={{
-                                        padding: '5px 10px', borderRadius: '8px', border: 'none',
-                                        background: statusFilter === 'retain' ? '#EA580C' : 'transparent',
-                                        fontWeight: '700', color: statusFilter === 'retain' ? 'white' : '#EA580C',
-                                        cursor: 'pointer', fontSize: '11px', transition: 'all 0.2s'
-                                    }}
+                                    className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 ${
+                                        statusFilter === 'retain'
+                                            ? 'bg-rose-600 text-white shadow-xs'
+                                            : 'text-rose-950 hover:bg-rose-50'
+                                    }`}
                                 >
-                                    🔴 Retain ({students.filter(s => s.promotionStatus === 'retain').length})
+                                    <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
+                                    <span>Retain ({students.filter(s => s.promotionStatus === 'retain').length})</span>
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => setStatusFilter('demote')}
-                                    style={{
-                                        padding: '5px 10px', borderRadius: '8px', border: 'none',
-                                        background: statusFilter === 'demote' ? '#EAB308' : 'transparent',
-                                        fontWeight: '700', color: statusFilter === 'demote' ? 'white' : '#EAB308',
-                                        cursor: 'pointer', fontSize: '11px', transition: 'all 0.2s'
-                                    }}
+                                    className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 ${
+                                        statusFilter === 'demote'
+                                            ? 'bg-amber-600 text-white shadow-xs'
+                                            : 'text-amber-950 hover:bg-amber-50'
+                                    }`}
                                 >
-                                    🟠 Demote ({students.filter(s => s.promotionStatus === 'demote').length})
+                                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+                                    <span>Demote ({students.filter(s => s.promotionStatus === 'demote').length})</span>
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => setStatusFilter('leave')}
-                                    style={{
-                                        padding: '5px 10px', borderRadius: '8px', border: 'none',
-                                        background: statusFilter === 'leave' ? '#DC2626' : 'transparent',
-                                        fontWeight: '700', color: statusFilter === 'leave' ? 'white' : '#DC2626',
-                                        cursor: 'pointer', fontSize: '11px', transition: 'all 0.2s'
-                                    }}
+                                    className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all flex items-center gap-1.5 ${
+                                        statusFilter === 'leave'
+                                            ? 'bg-slate-800 text-white shadow-xs'
+                                            : 'text-slate-800 hover:bg-slate-200'
+                                    }`}
                                 >
-                                    ⚪ Leave ({students.filter(s => s.promotionStatus === 'leave').length})
+                                    <span className="w-2 h-2 rounded-full bg-slate-400 inline-block"></span>
+                                    <span>Leave ({students.filter(s => s.promotionStatus === 'leave').length})</span>
                                 </button>
                             </div>
                         </div>
@@ -1015,54 +1164,66 @@ const Promotions = () => {
                                     const isDemote = status === 'demote';
                                     const isLeave = status === 'leave';
 
-                                    // Solid 3D Gradient Container Styles
-                                    const card3dContainer = isPromote
-                                        ? 'bg-gradient-to-b from-emerald-600 via-emerald-700 to-emerald-800 border-t-2 border-t-emerald-400 border-x border-x-emerald-500 border-b-4 border-b-emerald-950 text-white shadow-[0_12px_28px_-6px_rgba(6,78,59,0.5),0_6px_10px_-4px_rgba(6,78,59,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(6,78,59,0.65)]'
+                                    // Clean, Flat 2D Card Border & Header Theme
+                                    const card2dTheme = isPromote
+                                        ? 'border-2 border-emerald-500 bg-white'
                                         : isRetain
-                                        ? 'bg-gradient-to-b from-rose-600 via-rose-700 to-rose-800 border-t-2 border-t-rose-400 border-x border-x-rose-500 border-b-4 border-b-rose-950 text-white shadow-[0_12px_28px_-6px_rgba(159,18,57,0.5),0_6px_10px_-4px_rgba(159,18,57,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(159,18,57,0.65)]'
+                                        ? 'border-2 border-rose-500 bg-white'
                                         : isDemote
-                                        ? 'bg-gradient-to-b from-amber-600 via-amber-700 to-amber-800 border-t-2 border-t-amber-400 border-x border-x-amber-500 border-b-4 border-b-amber-950 text-white shadow-[0_12px_28px_-6px_rgba(180,83,9,0.5),0_6px_10px_-4px_rgba(180,83,9,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(180,83,9,0.65)]'
-                                        : 'bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 border-t-2 border-t-slate-500 border-x border-x-slate-600 border-b-4 border-b-slate-950 text-white shadow-[0_12px_28px_-6px_rgba(15,23,42,0.5),0_6px_10px_-4px_rgba(15,23,42,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(15,23,42,0.65)]';
+                                        ? 'border-2 border-amber-500 bg-white'
+                                        : 'border-2 border-slate-400 bg-white';
 
-                                    const roll3dBg = 'bg-black/35 text-white border-t border-t-white/30 border-b-2 border-b-black/50 shadow-inner';
-
-                                    const status3dPill = isPromote
-                                        ? 'bg-white text-emerald-950 font-black border border-white shadow-md'
+                                    const status2dBadge = isPromote
+                                        ? 'bg-emerald-600 text-white'
                                         : isRetain
-                                        ? 'bg-white text-rose-950 font-black border border-white shadow-md'
+                                        ? 'bg-rose-600 text-white'
                                         : isDemote
-                                        ? 'bg-white text-amber-950 font-black border border-white shadow-md'
-                                        : 'bg-white text-slate-950 font-black border border-white shadow-md';
+                                        ? 'bg-amber-600 text-white'
+                                        : 'bg-slate-700 text-white';
 
-                                    const statsStripBg = 'bg-black/30 border-t border-t-white/20 border-b border-b-black/40 text-white shadow-inner';
+                                    const roll2dBadge = isPromote
+                                        ? 'bg-emerald-50 text-emerald-950 border border-emerald-200'
+                                        : isRetain
+                                        ? 'bg-rose-50 text-rose-950 border border-rose-200'
+                                        : isDemote
+                                        ? 'bg-amber-50 text-amber-950 border border-amber-200'
+                                        : 'bg-slate-100 text-slate-900 border border-slate-200';
+
+                                    const summaryStripTheme = isPromote
+                                        ? 'bg-emerald-50/70 border border-emerald-200 text-emerald-950'
+                                        : isRetain
+                                        ? 'bg-rose-50/70 border border-rose-200 text-rose-950'
+                                        : isDemote
+                                        ? 'bg-amber-50/70 border border-amber-200 text-amber-950'
+                                        : 'bg-slate-100 border border-slate-200 text-slate-900';
 
                                     return (
                                         <div
                                             key={student.id}
-                                            className={`p-5 rounded-3xl transition-all duration-300 hover:-translate-y-1.5 flex flex-col justify-between gap-4 relative overflow-hidden select-none ${card3dContainer}`}
+                                            className={`p-5 rounded-2xl transition-all duration-200 shadow-sm flex flex-col justify-between gap-3.5 select-none ${card2dTheme}`}
                                         >
-                                            {/* Top: Student Info + Live Decision Badge */}
-                                            <div className="flex items-start justify-between gap-2.5">
-                                                <div className="flex items-center gap-3">
-                                                    {/* 3D Embossed Roll Number badge */}
-                                                    <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center font-black flex-shrink-0 ${roll3dBg}`}>
-                                                        <span className="text-[8px] text-white/70 leading-none uppercase font-bold">Roll</span>
-                                                        <span className="text-sm font-black leading-tight text-white">{student.rollNo || '#'}</span>
+                                            {/* Top Row: Roll + Student Info + Live Decision Badge */}
+                                            <div className="flex items-start justify-between gap-2.5 min-w-0">
+                                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                    {/* Clean Theme-Matching Roll Badge */}
+                                                    <div className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center font-black flex-shrink-0 ${roll2dBadge}`}>
+                                                        <span className="text-[9px] opacity-70 leading-none uppercase font-extrabold">Roll</span>
+                                                        <span className="text-sm font-black leading-tight">{student.rollNo || '#'}</span>
                                                     </div>
 
-                                                    <div className="overflow-hidden">
-                                                        <h4 className="font-black text-[15px] text-white tracking-tight drop-shadow-sm leading-tight uppercase truncate">
+                                                    <div className="min-w-0 flex-1 overflow-hidden">
+                                                        <h4 className="font-black text-sm sm:text-base text-slate-900 tracking-tight leading-tight uppercase truncate" title={student.name}>
                                                             {student.name}
                                                         </h4>
-                                                        <p className="text-xs font-bold text-white/80 truncate mt-0.5">
+                                                        <p className="text-xs font-bold text-slate-500 truncate mt-0.5">
                                                             S/O {student.fatherName || 'N/A'}
                                                         </p>
                                                     </div>
                                                 </div>
 
-                                                {/* Current Decision 3D Pill Badge */}
-                                                <div className="flex-shrink-0 text-right">
-                                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-[11px] font-black uppercase tracking-wider ${status3dPill}`}>
+                                                {/* Decision Badge (Always constrained inside the card) */}
+                                                <div className="flex-shrink-0">
+                                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-black uppercase tracking-wide whitespace-nowrap shadow-xs ${status2dBadge}`}>
                                                         {isPromote && `🟢 PROMOTE → ${student.nextClassName}`}
                                                         {isRetain && `🔴 RETAIN (${selectedClass.name})`}
                                                         {isDemote && `🟠 DEMOTE → ${student.previousClassName}`}
@@ -1071,69 +1232,112 @@ const Promotions = () => {
                                                 </div>
                                             </div>
 
-                                            {/* 3D Embossed All Terms Exam Performance Strip */}
-                                            <div className={`rounded-2xl p-3 space-y-2 ${statsStripBg}`}>
-                                                <div className="flex items-center justify-between text-[11px] font-bold text-white/90 uppercase border-b border-white/10 pb-1.5">
-                                                    <span className="flex items-center gap-1">📊 All Terms Record</span>
-                                                    <span className="font-black text-amber-300 drop-shadow-xs">
-                                                        Cum. {student.cumulativePercentage}% • Gr. {student.cumulativeGrade} ({student.cumulativeIsPassed ? 'PASS' : 'FAIL'})
-                                                    </span>
+                                            {/* Multi-Term Real Scores (Obtained / Total) */}
+                                            <div className="space-y-2">
+                                                <div className="text-[11px] font-black text-slate-500 uppercase tracking-wide flex items-center justify-between">
+                                                    <span>📊 Real Term Exam Scores</span>
+                                                    <span className="text-[10px] text-slate-400 font-bold">Obtained / Total</span>
                                                 </div>
 
-                                                {/* Terms Boxes Grid */}
-                                                <div className="grid grid-cols-3 gap-2">
-                                                    {(student.termsScores || []).map((term, tIdx) => (
-                                                        <div
-                                                            key={tIdx}
-                                                            className={`p-2 rounded-xl text-center border transition-all ${
-                                                                term.isPassed
-                                                                    ? 'bg-emerald-950/60 border-emerald-400/40 text-white'
-                                                                    : 'bg-rose-950/60 border-rose-400/40 text-white'
-                                                            }`}
-                                                        >
-                                                            <span className="text-[10px] font-bold block text-white/70 truncate">{term.examTitle}</span>
-                                                            <div className="flex items-center justify-center gap-1.5 mt-0.5">
-                                                                <span className="font-black text-sm text-white">{term.percentage}%</span>
-                                                                <span className={`text-[8px] font-black px-1.5 py-0.2 rounded-md ${
-                                                                    term.isPassed ? 'bg-white text-emerald-950' : 'bg-white text-rose-950'
+                                                {/* 3 Real Terms Grid (Color Coded Green on Pass, Red on Fail) */}
+                                                <div className="grid grid-cols-3 gap-2.5">
+                                                    {(student.termsScores || []).map((term, tIdx) => {
+                                                        const hasMarks = term.hasMarks;
+                                                        const isPass = term.isPassed;
+                                                        return (
+                                                            <div
+                                                                key={tIdx}
+                                                                className={`p-2.5 rounded-xl text-center transition-all ${
+                                                                    !hasMarks
+                                                                        ? 'bg-slate-50 border-2 border-dashed border-slate-300 text-slate-500'
+                                                                        : isPass
+                                                                        ? 'bg-emerald-50 border-2 border-emerald-400 text-emerald-950 shadow-xs'
+                                                                        : 'bg-rose-50 border-2 border-rose-400 text-rose-950 shadow-xs'
+                                                                }`}
+                                                            >
+                                                                <span className={`text-[11px] font-black block truncate ${
+                                                                    !hasMarks ? 'text-slate-500' : isPass ? 'text-emerald-900' : 'text-rose-900'
                                                                 }`}>
-                                                                    {term.isPassed ? 'PASS' : 'FAIL'}
+                                                                    {term.examTitle}
                                                                 </span>
+                                                                <div className={`font-black text-sm sm:text-base mt-0.5 ${
+                                                                    !hasMarks ? 'text-slate-400' : isPass ? 'text-emerald-950' : 'text-rose-950'
+                                                                }`}>
+                                                                    {term.scoreText}
+                                                                </div>
+                                                                <div className="mt-1">
+                                                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-md inline-block ${
+                                                                        !hasMarks
+                                                                            ? 'bg-slate-200 text-slate-600'
+                                                                            : isPass
+                                                                            ? 'bg-emerald-600 text-white'
+                                                                            : 'bg-rose-600 text-white'
+                                                                    }`}>
+                                                                        {!hasMarks ? 'PENDING' : isPass ? 'PASSED' : 'FAILED'}
+                                                                    </span>
+                                                                </div>
                                                             </div>
-                                                        </div>
-                                                    ))}
+                                                        );
+                                                    })}
+                                                </div>
+
+                                                {/* Combined Annual Calculation Strip (Theme-Matching Light) */}
+                                                <div className={`rounded-xl p-2.5 flex items-center justify-between transition-all ${summaryStripTheme}`}>
+                                                    <div>
+                                                        <span className="text-[10px] text-slate-500 block uppercase font-extrabold">Combined 3-Terms Total</span>
+                                                        <span className="font-black text-xs text-slate-900">
+                                                            {student.totalMaxAllTerms > 0 ? `${student.totalObtainedAllTerms} / ${student.totalMaxAllTerms}` : 'No Marks Entered'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="text-right">
+                                                        <span className="text-[10px] text-slate-500 block uppercase font-extrabold">Overall Annual %</span>
+                                                        <span className={`font-black text-sm ${isPromote ? 'text-emerald-700' : isRetain ? 'text-rose-700' : isDemote ? 'text-amber-700' : 'text-slate-800'}`}>
+                                                            {student.totalMaxAllTerms > 0 ? `${student.cumulativePercentage}% (Grade ${student.cumulativeGrade})` : '--'}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
 
-                                            {/* 4 3D Tactile Decision Action Buttons */}
-                                            <div className="pt-1">
+                                            {/* 4 Flat 2D Action Buttons (Sharp, High Contrast Text) */}
+                                            <div className="pt-2 border-t border-slate-100">
                                                 <div className="grid grid-cols-4 gap-2">
                                                     {/* 1. Promote */}
                                                     <button
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'promote')}
-                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2.5 px-1.5 rounded-xl text-xs font-black transition-all flex flex-col items-center justify-center ${
                                                             isPromote
-                                                                ? 'bg-emerald-300 text-emerald-950 ring-2 ring-white border-b-2 border-emerald-950 shadow-lg scale-[1.02]'
-                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
+                                                                ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-700'
+                                                                : 'bg-slate-50 hover:bg-emerald-50 text-slate-800 border border-slate-200'
                                                         }`}
                                                     >
-                                                        <span>🟢 Promote</span>
-                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">→ {student.nextClassName}</span>
+                                                        <span className="flex items-center gap-1">
+                                                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                                            <span>Promote</span>
+                                                        </span>
+                                                        <span className={`text-[10px] truncate max-w-full font-extrabold mt-0.5 ${isPromote ? 'text-emerald-100' : 'text-slate-500'}`}>
+                                                            → {student.nextClassName}
+                                                        </span>
                                                     </button>
 
                                                     {/* 2. Retain */}
                                                     <button
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'retain')}
-                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2.5 px-1.5 rounded-xl text-xs font-black transition-all flex flex-col items-center justify-center ${
                                                             isRetain
-                                                                ? 'bg-rose-300 text-rose-950 ring-2 ring-white border-b-2 border-rose-950 shadow-lg scale-[1.02]'
-                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
+                                                                ? 'bg-rose-600 text-white shadow-xs ring-1 ring-rose-700'
+                                                                : 'bg-slate-50 hover:bg-rose-50 text-slate-800 border border-slate-200'
                                                         }`}
                                                     >
-                                                        <span>🔴 Retain</span>
-                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">in {selectedClass.name}</span>
+                                                        <span className="flex items-center gap-1">
+                                                            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                                                            <span>Retain</span>
+                                                        </span>
+                                                        <span className={`text-[10px] truncate max-w-full font-extrabold mt-0.5 ${isRetain ? 'text-rose-100' : 'text-slate-500'}`}>
+                                                            in {selectedClass.name}
+                                                        </span>
                                                     </button>
 
                                                     {/* 3. Demote */}
@@ -1141,16 +1345,19 @@ const Promotions = () => {
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'demote')}
                                                         disabled={!student.previousClassId}
-                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2.5 px-1.5 rounded-xl text-xs font-black transition-all flex flex-col items-center justify-center ${
                                                             !student.previousClassId
-                                                                ? 'opacity-30 cursor-not-allowed bg-black/20 text-white/50 border border-white/10'
+                                                                ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400 border border-slate-200'
                                                                 : isDemote
-                                                                ? 'bg-amber-300 text-amber-950 ring-2 ring-white border-b-2 border-amber-950 shadow-lg scale-[1.02]'
-                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
+                                                                ? 'bg-amber-600 text-white shadow-xs ring-1 ring-amber-700'
+                                                                : 'bg-slate-50 hover:bg-amber-50 text-slate-800 border border-slate-200'
                                                         }`}
                                                     >
-                                                        <span>🟠 Demote</span>
-                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">
+                                                        <span className="flex items-center gap-1">
+                                                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                                            <span>Demote</span>
+                                                        </span>
+                                                        <span className={`text-[10px] truncate max-w-full font-extrabold mt-0.5 ${isDemote ? 'text-amber-100' : 'text-slate-500'}`}>
                                                             {student.previousClassName ? `→ ${student.previousClassName}` : 'N/A'}
                                                         </span>
                                                     </button>
@@ -1159,14 +1366,19 @@ const Promotions = () => {
                                                     <button
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'leave')}
-                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2.5 px-1.5 rounded-xl text-xs font-black transition-all flex flex-col items-center justify-center ${
                                                             isLeave
-                                                                ? 'bg-slate-300 text-slate-950 ring-2 ring-white border-b-2 border-slate-950 shadow-lg scale-[1.02]'
-                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
+                                                                ? 'bg-slate-800 text-white shadow-xs ring-1 ring-slate-900'
+                                                                : 'bg-slate-50 hover:bg-slate-200 text-slate-800 border border-slate-200'
                                                         }`}
                                                     >
-                                                        <span>⚪ Leave</span>
-                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">SLC / Out</span>
+                                                        <span className="flex items-center gap-1">
+                                                            <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                                                            <span>Leave</span>
+                                                        </span>
+                                                        <span className={`text-[10px] truncate max-w-full font-extrabold mt-0.5 ${isLeave ? 'text-slate-200' : 'text-slate-500'}`}>
+                                                            SLC / Out
+                                                        </span>
                                                     </button>
                                                 </div>
                                             </div>
