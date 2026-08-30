@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { db, auth, messaging } from '../firebase';
 import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -11,6 +11,107 @@ const MainLayout = () => {
     const [loading, setLoading] = useState(true);
     const [announcement, setAnnouncement] = useState(null);
     const [schoolId, setSchoolId] = useState('');
+    const location = useLocation();
+    const mainContentRef = useRef(null);
+    const isUserInteractingRef = useRef(false);
+    const prevLocationRef = useRef(location.pathname);
+    const restorationTimerRef = useRef(null);
+
+    // Track real user interactions to distinguish deliberate scrolling from programmatic resets
+    useEffect(() => {
+        const markUserInteraction = () => {
+            isUserInteractingRef.current = true;
+        };
+
+        window.addEventListener('wheel', markUserInteraction, { passive: true });
+        window.addEventListener('touchmove', markUserInteraction, { passive: true });
+        window.addEventListener('keydown', markUserInteraction, { passive: true });
+        window.addEventListener('pointerdown', markUserInteraction, { passive: true });
+
+        return () => {
+            window.removeEventListener('wheel', markUserInteraction);
+            window.removeEventListener('touchmove', markUserInteraction);
+            window.removeEventListener('keydown', markUserInteraction);
+            window.removeEventListener('pointerdown', markUserInteraction);
+        };
+    }, []);
+
+    // Global Scroll Memory & Seamless Restoration Engine
+    useEffect(() => {
+        // 1. Save scroll position of the previous page before switching
+        if (prevLocationRef.current && prevLocationRef.current !== location.pathname) {
+            const currentY = window.scrollY || document.documentElement.scrollTop || (mainContentRef.current ? mainContentRef.current.scrollTop : 0);
+            if (currentY > 0) {
+                sessionStorage.setItem(`page_scroll_${prevLocationRef.current}`, currentY.toString());
+            }
+        }
+        prevLocationRef.current = location.pathname;
+
+        // 2. Read saved scroll for the current page
+        const savedScroll = sessionStorage.getItem(`page_scroll_${location.pathname}`);
+        const targetY = savedScroll ? parseInt(savedScroll, 10) : 0;
+        
+        let isRestoring = targetY > 0;
+        isUserInteractingRef.current = false;
+
+        // 3. Continuous Multi-Frame Restoration (waits for async Firestore data to expand the DOM)
+        if (isRestoring) {
+            let attempts = 0;
+            const maxAttempts = 35; // 35 * 80ms = 2.8 seconds maximum polling
+
+            if (restorationTimerRef.current) {
+                clearInterval(restorationTimerRef.current);
+            }
+
+            restorationTimerRef.current = setInterval(() => {
+                attempts++;
+                if (isUserInteractingRef.current || attempts > maxAttempts) {
+                    clearInterval(restorationTimerRef.current);
+                    isRestoring = false;
+                    return;
+                }
+
+                const docHeight = Math.max(
+                    document.body.scrollHeight,
+                    document.documentElement.scrollHeight,
+                    mainContentRef.current ? mainContentRef.current.scrollHeight : 0
+                );
+
+                // If page has rendered enough height to scroll to target
+                if (docHeight > targetY + 100 || attempts > 10) {
+                    window.scrollTo({ top: targetY, behavior: 'instant' });
+                    if (mainContentRef.current) mainContentRef.current.scrollTop = targetY;
+
+                    const actualY = window.scrollY || document.documentElement.scrollTop;
+                    if (Math.abs(actualY - targetY) < 15 && attempts > 5) {
+                        clearInterval(restorationTimerRef.current);
+                        isRestoring = false;
+                    }
+                }
+            }, 80);
+        }
+
+        // 4. Save scroll changes made by user
+        const handleScroll = () => {
+            if (isRestoring && !isUserInteractingRef.current) return;
+            const currentScroll = window.scrollY || document.documentElement.scrollTop || (mainContentRef.current ? mainContentRef.current.scrollTop : 0);
+            sessionStorage.setItem(`page_scroll_${location.pathname}`, currentScroll.toString());
+        };
+
+        window.addEventListener('scroll', handleScroll, { passive: true });
+        const contentEl = mainContentRef.current;
+        if (contentEl) {
+            contentEl.addEventListener('scroll', handleScroll, { passive: true });
+        }
+
+        return () => {
+            if (restorationTimerRef.current) {
+                clearInterval(restorationTimerRef.current);
+            }
+            window.removeEventListener('scroll', handleScroll);
+            if (contentEl) contentEl.removeEventListener('scroll', handleScroll);
+        };
+    }, [location.pathname]);
 
     useEffect(() => {
         const session = localStorage.getItem('manual_session');
@@ -189,7 +290,7 @@ const MainLayout = () => {
                 </div>
             )}
             <Sidebar />
-            <main className="main-content" style={{ paddingTop: announcement ? '50px' : '0' }}>
+            <main ref={mainContentRef} className="main-content" style={{ paddingTop: announcement ? '50px' : '0' }}>
                 <Outlet />
             </main>
         </div>

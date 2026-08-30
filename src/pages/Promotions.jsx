@@ -126,6 +126,15 @@ const Promotions = () => {
             classesData.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
             setClasses(classesData);
             setLoading(false);
+
+            // Auto-restore previously selected class if returning from another page
+            const savedClassId = localStorage.getItem('promotions_selected_class_id');
+            if (savedClassId) {
+                const matchedClass = classesData.find(c => c.id === savedClassId);
+                if (matchedClass) {
+                    handleClassSelect(matchedClass, classesData);
+                }
+            }
         } catch (error) {
             console.error("Error fetching classes:", error);
             setLoading(false);
@@ -148,21 +157,24 @@ const Promotions = () => {
     }, [schoolId]);
 
     // 3. Handle Class Selection
-    const handleClassSelect = async (cls) => {
-        if (selectedClass?.id === cls.id) return;
+    const handleClassSelect = async (cls, customClasses = null) => {
+        if (selectedClass?.id === cls.id && !customClasses) return;
+        localStorage.setItem('promotions_selected_class_id', cls.id);
         setSelectedClass(cls);
         setStudents([]);
         setSearchQuery('');
         setLoadingStudents(true);
         setPromotionStatus(null);
 
+        const activeClasses = customClasses || classes;
+
         try {
             const studentsRef = collection(db, `schools/${schoolId}/classes/${cls.id}/students`);
             const snapshot = await getDocsFast(studentsRef);
 
-            const currentIndex = classes.findIndex(c => c.id === cls.id);
-            const nextClass = classes[currentIndex + 1] || null;
-            const previousClass = classes[currentIndex - 1] || null;
+            const currentIndex = activeClasses.findIndex(c => c.id === cls.id);
+            const nextClass = activeClasses[currentIndex + 1] || null;
+            const previousClass = activeClasses[currentIndex - 1] || null;
 
             const fetchedStudents = snapshot.docs.map(doc => ({
                 id: doc.id,
