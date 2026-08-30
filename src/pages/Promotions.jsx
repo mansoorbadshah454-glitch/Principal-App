@@ -1015,83 +1015,89 @@ const Promotions = () => {
                                     const isDemote = status === 'demote';
                                     const isLeave = status === 'leave';
 
-                                    // Dynamic styling border and soft background
-                                    const cardBorderClass = isPromote
-                                        ? 'border-2 border-emerald-500 bg-gradient-to-br from-emerald-50/50 via-white to-emerald-50/20 shadow-emerald-500/10'
+                                    // Solid 3D Gradient Container Styles
+                                    const card3dContainer = isPromote
+                                        ? 'bg-gradient-to-b from-emerald-600 via-emerald-700 to-emerald-800 border-t-2 border-t-emerald-400 border-x border-x-emerald-500 border-b-4 border-b-emerald-950 text-white shadow-[0_12px_28px_-6px_rgba(6,78,59,0.5),0_6px_10px_-4px_rgba(6,78,59,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(6,78,59,0.65)]'
                                         : isRetain
-                                        ? 'border-2 border-rose-500 bg-gradient-to-br from-rose-50/50 via-white to-rose-50/20 shadow-rose-500/10'
+                                        ? 'bg-gradient-to-b from-rose-600 via-rose-700 to-rose-800 border-t-2 border-t-rose-400 border-x border-x-rose-500 border-b-4 border-b-rose-950 text-white shadow-[0_12px_28px_-6px_rgba(159,18,57,0.5),0_6px_10px_-4px_rgba(159,18,57,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(159,18,57,0.65)]'
                                         : isDemote
-                                        ? 'border-2 border-amber-500 bg-gradient-to-br from-amber-50/50 via-white to-amber-50/20 shadow-amber-500/10'
-                                        : 'border-2 border-slate-400 bg-gradient-to-br from-slate-50 via-white to-slate-100/40 shadow-slate-500/10';
+                                        ? 'bg-gradient-to-b from-amber-600 via-amber-700 to-amber-800 border-t-2 border-t-amber-400 border-x border-x-amber-500 border-b-4 border-b-amber-950 text-white shadow-[0_12px_28px_-6px_rgba(180,83,9,0.5),0_6px_10px_-4px_rgba(180,83,9,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(180,83,9,0.65)]'
+                                        : 'bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 border-t-2 border-t-slate-500 border-x border-x-slate-600 border-b-4 border-b-slate-950 text-white shadow-[0_12px_28px_-6px_rgba(15,23,42,0.5),0_6px_10px_-4px_rgba(15,23,42,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(15,23,42,0.65)]';
+
+                                    const roll3dBg = 'bg-black/35 text-white border-t border-t-white/30 border-b-2 border-b-black/50 shadow-inner';
+
+                                    const status3dPill = isPromote
+                                        ? 'bg-white text-emerald-950 font-black border border-white shadow-md'
+                                        : isRetain
+                                        ? 'bg-white text-rose-950 font-black border border-white shadow-md'
+                                        : isDemote
+                                        ? 'bg-white text-amber-950 font-black border border-white shadow-md'
+                                        : 'bg-white text-slate-950 font-black border border-white shadow-md';
+
+                                    const statsStripBg = 'bg-black/30 border-t border-t-white/20 border-b border-b-black/40 text-white shadow-inner';
 
                                     return (
                                         <div
                                             key={student.id}
-                                            className={`p-5 rounded-2xl transition-all duration-300 shadow-md ${cardBorderClass} flex flex-col justify-between gap-3.5 relative overflow-hidden`}
+                                            className={`p-5 rounded-3xl transition-all duration-300 hover:-translate-y-1.5 flex flex-col justify-between gap-4 relative overflow-hidden select-none ${card3dContainer}`}
                                         >
                                             {/* Top: Student Info + Live Decision Badge */}
                                             <div className="flex items-start justify-between gap-2.5">
                                                 <div className="flex items-center gap-3">
-                                                    {/* 3D Roll Number badge */}
-                                                    <div className="w-11 h-11 rounded-xl bg-slate-900 text-white flex flex-col items-center justify-center font-black shadow border border-slate-700 flex-shrink-0">
-                                                        <span className="text-[8px] text-slate-400 leading-none uppercase">Roll</span>
-                                                        <span className="text-xs font-black leading-tight text-indigo-300">{student.rollNo || '#'}</span>
+                                                    {/* 3D Embossed Roll Number badge */}
+                                                    <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center font-black flex-shrink-0 ${roll3dBg}`}>
+                                                        <span className="text-[8px] text-white/70 leading-none uppercase font-bold">Roll</span>
+                                                        <span className="text-sm font-black leading-tight text-white">{student.rollNo || '#'}</span>
                                                     </div>
 
                                                     <div className="overflow-hidden">
-                                                        <h4 className="font-black text-sm text-slate-900 leading-tight uppercase truncate">
+                                                        <h4 className="font-black text-[15px] text-white tracking-tight drop-shadow-sm leading-tight uppercase truncate">
                                                             {student.name}
                                                         </h4>
-                                                        <p className="text-[11px] font-bold text-slate-500 truncate mt-0.5">
+                                                        <p className="text-xs font-bold text-white/80 truncate mt-0.5">
                                                             S/O {student.fatherName || 'N/A'}
                                                         </p>
                                                     </div>
                                                 </div>
 
-                                                {/* Current Decision Pill Badge */}
+                                                {/* Current Decision 3D Pill Badge */}
                                                 <div className="flex-shrink-0 text-right">
-                                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase shadow-xs tracking-wider ${
-                                                        isPromote
-                                                            ? 'bg-emerald-600 text-white shadow-emerald-200'
-                                                            : isRetain
-                                                            ? 'bg-rose-600 text-white shadow-rose-200'
-                                                            : isDemote
-                                                            ? 'bg-amber-600 text-white shadow-amber-200'
-                                                            : 'bg-slate-700 text-white'
-                                                    }`}>
+                                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-[11px] font-black uppercase tracking-wider ${status3dPill}`}>
                                                         {isPromote && `🟢 PROMOTE → ${student.nextClassName}`}
-                                                        {isRetain && `🔴 RETAIN IN ${selectedClass.name}`}
+                                                        {isRetain && `🔴 RETAIN (${selectedClass.name})`}
                                                         {isDemote && `🟠 DEMOTE → ${student.previousClassName}`}
                                                         {isLeave && `⚪ LEFT SCHOOL`}
                                                     </span>
                                                 </div>
                                             </div>
 
-                                            {/* All Terms Performance Breakdown Strip */}
-                                            <div className="bg-white/90 rounded-xl p-2.5 border border-slate-200 shadow-xs space-y-1.5">
-                                                <div className="flex items-center justify-between text-[10px] font-bold text-slate-600 uppercase border-b border-slate-100 pb-1">
-                                                    <span>📊 All Terms Record</span>
-                                                    <span className={`font-black ${student.cumulativeIsPassed ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            {/* 3D Embossed All Terms Exam Performance Strip */}
+                                            <div className={`rounded-2xl p-3 space-y-2 ${statsStripBg}`}>
+                                                <div className="flex items-center justify-between text-[11px] font-bold text-white/90 uppercase border-b border-white/10 pb-1.5">
+                                                    <span className="flex items-center gap-1">📊 All Terms Record</span>
+                                                    <span className="font-black text-amber-300 drop-shadow-xs">
                                                         Cum. {student.cumulativePercentage}% • Gr. {student.cumulativeGrade} ({student.cumulativeIsPassed ? 'PASS' : 'FAIL'})
                                                     </span>
                                                 </div>
 
                                                 {/* Terms Boxes Grid */}
-                                                <div className="grid grid-cols-3 gap-1.5">
+                                                <div className="grid grid-cols-3 gap-2">
                                                     {(student.termsScores || []).map((term, tIdx) => (
                                                         <div
                                                             key={tIdx}
-                                                            className={`p-1.5 rounded-lg text-center border transition-all ${
+                                                            className={`p-2 rounded-xl text-center border transition-all ${
                                                                 term.isPassed
-                                                                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
-                                                                    : 'bg-rose-50/70 border-rose-200 text-rose-950'
+                                                                    ? 'bg-emerald-950/60 border-emerald-400/40 text-white'
+                                                                    : 'bg-rose-950/60 border-rose-400/40 text-white'
                                                             }`}
                                                         >
-                                                            <span className="text-[9px] font-bold block text-slate-500 truncate">{term.examTitle}</span>
-                                                            <div className="flex items-center justify-center gap-1 mt-0.5">
-                                                                <span className="font-black text-xs">{term.percentage}%</span>
-                                                                <span className={`text-[8px] font-black px-1 rounded ${term.isPassed ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
-                                                                    {term.isPassed ? 'P' : 'F'}
+                                                            <span className="text-[10px] font-bold block text-white/70 truncate">{term.examTitle}</span>
+                                                            <div className="flex items-center justify-center gap-1.5 mt-0.5">
+                                                                <span className="font-black text-sm text-white">{term.percentage}%</span>
+                                                                <span className={`text-[8px] font-black px-1.5 py-0.2 rounded-md ${
+                                                                    term.isPassed ? 'bg-white text-emerald-950' : 'bg-white text-rose-950'
+                                                                }`}>
+                                                                    {term.isPassed ? 'PASS' : 'FAIL'}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -1099,35 +1105,35 @@ const Promotions = () => {
                                                 </div>
                                             </div>
 
-                                            {/* 4 Interactive Decision Action Buttons */}
-                                            <div className="pt-2 border-t border-slate-200/80">
-                                                <div className="grid grid-cols-4 gap-1.5">
+                                            {/* 4 3D Tactile Decision Action Buttons */}
+                                            <div className="pt-1">
+                                                <div className="grid grid-cols-4 gap-2">
                                                     {/* 1. Promote */}
                                                     <button
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'promote')}
-                                                        className={`py-2 px-1 rounded-xl text-[10px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
                                                             isPromote
-                                                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200 scale-102 ring-2 ring-emerald-600 ring-offset-1'
-                                                                : 'bg-white hover:bg-emerald-50 text-slate-700 border border-slate-200 hover:border-emerald-300'
+                                                                ? 'bg-emerald-300 text-emerald-950 ring-2 ring-white border-b-2 border-emerald-950 shadow-lg scale-[1.02]'
+                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
                                                         }`}
                                                     >
                                                         <span>🟢 Promote</span>
-                                                        <span className="text-[8px] opacity-80 truncate max-w-full font-normal">→ {student.nextClassName}</span>
+                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">→ {student.nextClassName}</span>
                                                     </button>
 
                                                     {/* 2. Retain */}
                                                     <button
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'retain')}
-                                                        className={`py-2 px-1 rounded-xl text-[10px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
                                                             isRetain
-                                                                ? 'bg-rose-600 text-white shadow-md shadow-rose-200 scale-102 ring-2 ring-rose-600 ring-offset-1'
-                                                                : 'bg-white hover:bg-rose-50 text-slate-700 border border-slate-200 hover:border-rose-300'
+                                                                ? 'bg-rose-300 text-rose-950 ring-2 ring-white border-b-2 border-rose-950 shadow-lg scale-[1.02]'
+                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
                                                         }`}
                                                     >
                                                         <span>🔴 Retain</span>
-                                                        <span className="text-[8px] opacity-80 truncate max-w-full font-normal">in {selectedClass.name}</span>
+                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">in {selectedClass.name}</span>
                                                     </button>
 
                                                     {/* 3. Demote */}
@@ -1135,16 +1141,16 @@ const Promotions = () => {
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'demote')}
                                                         disabled={!student.previousClassId}
-                                                        className={`py-2 px-1 rounded-xl text-[10px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
                                                             !student.previousClassId
-                                                                ? 'opacity-40 cursor-not-allowed bg-slate-100 text-slate-400 border border-slate-200'
+                                                                ? 'opacity-30 cursor-not-allowed bg-black/20 text-white/50 border border-white/10'
                                                                 : isDemote
-                                                                ? 'bg-amber-600 text-white shadow-md shadow-amber-200 scale-102 ring-2 ring-amber-600 ring-offset-1'
-                                                                : 'bg-white hover:bg-amber-50 text-slate-700 border border-slate-200 hover:border-amber-300'
+                                                                ? 'bg-amber-300 text-amber-950 ring-2 ring-white border-b-2 border-amber-950 shadow-lg scale-[1.02]'
+                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
                                                         }`}
                                                     >
                                                         <span>🟠 Demote</span>
-                                                        <span className="text-[8px] opacity-80 truncate max-w-full font-normal">
+                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">
                                                             {student.previousClassName ? `→ ${student.previousClassName}` : 'N/A'}
                                                         </span>
                                                     </button>
@@ -1153,14 +1159,14 @@ const Promotions = () => {
                                                     <button
                                                         type="button"
                                                         onClick={() => handleIndividualAction(student.id, 'leave')}
-                                                        className={`py-2 px-1 rounded-xl text-[10px] font-black transition-all flex flex-col items-center justify-center ${
+                                                        className={`py-2 px-1 rounded-2xl text-[11px] font-black transition-all flex flex-col items-center justify-center ${
                                                             isLeave
-                                                                ? 'bg-slate-800 text-white shadow-md shadow-slate-400 scale-102 ring-2 ring-slate-800 ring-offset-1'
-                                                                : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-400'
+                                                                ? 'bg-slate-300 text-slate-950 ring-2 ring-white border-b-2 border-slate-950 shadow-lg scale-[1.02]'
+                                                                : 'bg-white/95 hover:bg-white text-slate-800 border-b-3 border-slate-900/30 hover:border-slate-900/50 shadow-sm'
                                                         }`}
                                                     >
                                                         <span>⚪ Leave</span>
-                                                        <span className="text-[8px] opacity-80 truncate max-w-full font-normal">SLC / Out</span>
+                                                        <span className="text-[8px] opacity-75 truncate max-w-full font-bold">SLC / Out</span>
                                                     </button>
                                                 </div>
                                             </div>
