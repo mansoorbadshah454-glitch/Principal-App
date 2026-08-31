@@ -35,6 +35,13 @@ export const PERMISSIONS_LIST = [
         category: 'Staff'
     },
     {
+        id: 'canManageHRDocs',
+        label: 'Official HR Documents',
+        description: 'Generate appointment letters, experience certificates, and official HR contracts',
+        path: '/hr-documents',
+        category: 'Staff'
+    },
+    {
         id: 'canManageParents',
         label: 'Parents Directory',
         description: 'View parent directory and communication details',
@@ -67,13 +74,6 @@ export const PERMISSIONS_LIST = [
         label: 'Paper Generator',
         description: 'Generate question papers and test sheets',
         path: '/paper-generator',
-        category: 'Academic'
-    },
-    {
-        id: 'canManagePreSchool',
-        label: 'Pre-School Studio',
-        description: 'Generate early years activity sheets, tracing workbooks, and clipart assets',
-        path: '/preschool-studio',
         category: 'Academic'
     },
     {
@@ -126,12 +126,12 @@ export const DEFAULT_ADMIN_PERMISSIONS = {
     canManageAdmissions: true,
     canManageClasses: true,
     canManageTeachers: false,
+    canManageHRDocs: true,
     canManageParents: true,
     canManageCollections: false,
     canManageStore: false,
     canManageTransport: false,
     canManagePaperGenerator: true,
-    canManagePreSchool: true,
     canManageExams: true,
     canManagePromotions: false,
     canManageSurveillance: false,
