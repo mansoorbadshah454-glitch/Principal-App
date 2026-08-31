@@ -49,6 +49,13 @@ export const PERMISSIONS_LIST = [
         category: 'Finance'
     },
     {
+        id: 'canManageStore',
+        label: 'Store & Inventory',
+        description: 'Manage school store, books, uniform inventory, and POS billing',
+        path: '/store',
+        category: 'Finance'
+    },
+    {
         id: 'canManagePaperGenerator',
         label: 'Paper Generator',
         description: 'Generate question papers and test sheets',
@@ -107,6 +114,7 @@ export const DEFAULT_ADMIN_PERMISSIONS = {
     canManageTeachers: false,
     canManageParents: true,
     canManageCollections: false,
+    canManageStore: false,
     canManagePaperGenerator: true,
     canManageExams: true,
     canManagePromotions: false,

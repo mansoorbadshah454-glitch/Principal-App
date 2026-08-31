@@ -26,6 +26,7 @@ const EditStudentProfile = lazy(() => import('./pages/EditStudentProfile'));
 const LiveSurveillance = lazy(() => import('./pages/LiveSurveillance'));
 const PaperGenerator = lazy(() => import('./pages/PaperGenerator'));
 const Exams = lazy(() => import('./pages/Exams'));
+const Store = lazy(() => import('./pages/Store'));
 const PageLoader = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100%' }}>
     <div className="animate-spin" style={{ width: '40px', height: '40px', border: '3px solid #6366f1', borderTopColor: 'transparent', borderRadius: '50%' }} />
@@ -136,6 +137,11 @@ function App() {
               <Route path="collections/:classId" element={
                 <ProtectedRoute requiredPermission="canManageCollections" pageName="Class Collection">
                   <ClassCollection />
+                </ProtectedRoute>
+              } />
+              <Route path="store" element={
+                <ProtectedRoute requiredPermission="canManageStore" pageName="Store & Inventory">
+                  <Store />
                 </ProtectedRoute>
               } />
               <Route path="promotions" element={

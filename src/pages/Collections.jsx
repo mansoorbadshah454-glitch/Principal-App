@@ -4545,14 +4545,29 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
     };
 
-    // Calculate Fees Breakdown for Selected Student
+    // Calculate Fees Breakdown for Selected Student (with Multi-Month Arrears Engine)
     const feeCalculation = useMemo(() => {
         if (!selectedStudent) return null;
 
         const items = [];
         let baseFee = 0;
 
-        // 1. Recurring / Structured Fee
+        // 0. Previous Unpaid Months Arrears Check
+        const tuition = Number(selectedStudent.tuitionFee) || 0;
+        let previousMonthsCount = Number(selectedStudent.previousMonthsUnpaidCount) || Number(selectedStudent.unpaidMonthsCount) || 0;
+        if (previousMonthsCount === 0 && selectedStudent.unpaidMonths && selectedStudent.unpaidMonths > 1) {
+            previousMonthsCount = selectedStudent.unpaidMonths - 1;
+        }
+        const previousMonthsArrears = Number(selectedStudent.previousMonthsArrears) || (previousMonthsCount * tuition);
+        if (previousMonthsArrears > 0) {
+            items.push({
+                name: `Previous Months Overdue Tuition (${previousMonthsCount} Mos)`,
+                amount: previousMonthsArrears,
+                isArrears: true
+            });
+        }
+
+        // 1. Recurring / Structured Fee (Current Month)
         if (selectedStudent.feeStructure && selectedStudent.feeStructure.length > 0) {
             selectedStudent.feeStructure.forEach(item => {
                 const amt = Number(item.amount) || 0;
@@ -4562,23 +4577,22 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 }
             });
         } else {
-            const tuition = Number(selectedStudent.tuitionFee) || 0;
             const transport = Number(selectedStudent.transportFee) || 0;
             const other = Number(selectedStudent.otherFees) || 0;
 
-            if (tuition > 0) items.push({ name: 'Tuition Fee', amount: tuition });
+            if (tuition > 0) items.push({ name: 'Monthly Tuition Fee (Current)', amount: tuition });
             if (transport > 0) items.push({ name: 'Transport Fee', amount: transport });
             if (other > 0) items.push({ name: 'Other Fees', amount: other });
             baseFee = tuition + transport + other;
         }
 
-        // 2. Individual Pending Actions
+        // 2. Individual Pending Actions / Fines
         let actionsFee = 0;
         const pendingIndividualActions = (selectedStudent.individualActions || []).filter(a => a.status === 'unpaid');
         pendingIndividualActions.forEach(action => {
             const amt = Number(action.amount) || 0;
             if (amt > 0) {
-                items.push({ name: `Action: ${action.name}`, amount: amt });
+                items.push({ name: `Action: ${action.name || action.title}`, amount: amt });
                 actionsFee += amt;
             }
         });
@@ -4598,7 +4612,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             }
         }
 
-        const calculatedTotal = baseFee + actionsFee;
+        const calculatedTotal = baseFee + actionsFee + previousMonthsArrears;
         const totalDueWithFine = calculatedTotal + Number(fineAmount || 0);
         const isPaid = selectedStudent.monthlyFeeStatus === 'paid';
 
@@ -4606,6 +4620,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             items,
             baseFee,
             actionsFee,
+            previousMonthsCount,
+            previousMonthsArrears,
             calculatedTotal,
             totalDue: totalDueWithFine,
             isPaid
@@ -6175,6 +6191,84 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         </span>
                     </div>
                 </div>
+
+                {/* Previous Months Pending Arrears Banner */}
+                {feeCalculation?.previousMonthsCount > 0 && (
+                    <div style={{
+                        marginBottom: '1.25rem',
+                        padding: '1rem',
+                        background: '#fef2f2',
+                        border: '1.5px solid #fca5a5',
+                        borderRadius: '10px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.6rem'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '1.1rem' }}>⚠️</span>
+                                <strong style={{ color: '#b91c1c', fontSize: '0.92rem' }}>
+                                    Previous Pending Fee: {feeCalculation.previousMonthsCount} Months (Rs {Number(feeCalculation.previousMonthsArrears).toLocaleString()} Arrears)
+                                </strong>
+                            </div>
+                            <span style={{ fontSize: '0.75rem', fontWeight: '800', background: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fecaca' }}>
+                                Unpaid Arrears Recorded
+                            </span>
+                        </div>
+                        {/* 1-Click Flexible Quick Pay Selectors */}
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '2px' }}>
+                            <button
+                                type="button"
+                                onClick={() => setReceivedAmount(String(feeCalculation.totalDue))}
+                                style={{
+                                    padding: '0.45rem 0.85rem',
+                                    borderRadius: '6px',
+                                    background: '#b91c1c',
+                                    color: '#ffffff',
+                                    fontWeight: '700',
+                                    fontSize: '0.75rem',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 2px 4px rgba(185,28,28,0.2)'
+                                }}
+                            >
+                                💰 Full Pay (Current + Arrears: Rs {Number(feeCalculation.totalDue).toLocaleString()})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setReceivedAmount(String(feeCalculation.baseFee))}
+                                style={{
+                                    padding: '0.45rem 0.85rem',
+                                    borderRadius: '6px',
+                                    background: '#ffffff',
+                                    color: '#334155',
+                                    fontWeight: '700',
+                                    fontSize: '0.75rem',
+                                    border: '1px solid #cbd5e1',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                💵 Current Month Only (Rs {Number(feeCalculation.baseFee).toLocaleString()})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setReceivedAmount(String(Math.round(feeCalculation.totalDue / 2)))}
+                                style={{
+                                    padding: '0.45rem 0.85rem',
+                                    borderRadius: '6px',
+                                    background: '#ffffff',
+                                    color: '#334155',
+                                    fontWeight: '700',
+                                    fontSize: '0.75rem',
+                                    border: '1px solid #cbd5e1',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                🌗 Half / Partial (Rs {Number(Math.round(feeCalculation.totalDue / 2)).toLocaleString()})
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* Fee Breakdown Table */}
                 <div style={{ marginBottom: '1.5rem' }}>

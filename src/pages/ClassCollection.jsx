@@ -1021,9 +1021,37 @@ const ClassCollection = () => {
                                 {/* 1. Monthly Fee Status (Uneditable Official Badge) */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div>
-                                        <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1e293b' }}>Monthly Fee</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1e293b' }}>Monthly Fee</span>
+                                            {/* Previous Month / Arrears Status Indicator */}
+                                            {student.previousMonthsUnpaidCount && student.previousMonthsUnpaidCount > 0 ? (
+                                                <span style={{
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: '800',
+                                                    color: '#b91c1c',
+                                                    background: '#fee2e2',
+                                                    padding: '1px 6px',
+                                                    borderRadius: '4px',
+                                                    border: '1px solid #fecaca'
+                                                }} title="Previous months unpaid arrears">
+                                                    ⚠️ Prev Pending: {student.previousMonthsUnpaidCount} Mos
+                                                </span>
+                                            ) : (
+                                                <span style={{
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: '700',
+                                                    color: '#15803d',
+                                                    background: '#f0fdf4',
+                                                    padding: '1px 6px',
+                                                    borderRadius: '4px',
+                                                    border: '1px solid #bbf7d0'
+                                                }} title="Previous month fee fully cleared">
+                                                    ✓ Prev Month: PAID
+                                                </span>
+                                            )}
+                                        </div>
                                         {monthlyStatus === 'paid' && student.monthlyFeeDate && (
-                                            <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                            <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px' }}>
                                                 Paid: {new Date(student.monthlyFeeDate).toLocaleDateString()} {student.lastPaymentMode ? `(${student.lastPaymentMode})` : ''}
                                             </div>
                                         )}
