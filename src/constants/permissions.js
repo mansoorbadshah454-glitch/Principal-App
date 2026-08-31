@@ -56,6 +56,13 @@ export const PERMISSIONS_LIST = [
         category: 'Finance'
     },
     {
+        id: 'canManageTransport',
+        label: 'Transport & Van Fleet',
+        description: 'Manage school vehicles, drivers, routes, student transport allocation, and fuel logs',
+        path: '/transport',
+        category: 'Operations'
+    },
+    {
         id: 'canManagePaperGenerator',
         label: 'Paper Generator',
         description: 'Generate question papers and test sheets',
@@ -115,6 +122,7 @@ export const DEFAULT_ADMIN_PERMISSIONS = {
     canManageParents: true,
     canManageCollections: false,
     canManageStore: false,
+    canManageTransport: false,
     canManagePaperGenerator: true,
     canManageExams: true,
     canManagePromotions: false,

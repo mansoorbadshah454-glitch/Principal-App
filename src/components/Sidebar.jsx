@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon,
-    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown
+    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
@@ -30,10 +30,11 @@ const NAV_GROUPS = [
     },
     {
         id: 'finance_store',
-        label: 'Finance & Store',
+        label: 'Finance & Logistics',
         items: [
             { icon: Wallet, label: 'Fee Collections', path: '/collections', permission: 'canManageCollections' },
-            { icon: ShoppingBag, label: 'Store & Inventory', path: '/store', permission: 'canManageStore', isNew: true }
+            { icon: ShoppingBag, label: 'Store & Inventory', path: '/store', permission: 'canManageStore' },
+            { icon: Bus, label: 'Transport & Fleet', path: '/transport', permission: 'canManageTransport', isNew: true }
         ]
     },
     {
