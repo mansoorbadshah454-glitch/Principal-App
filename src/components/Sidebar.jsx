@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
+import GalaxyBackground from './GalaxyBackground';
 
 const NAV_GROUPS = [
     {
@@ -113,15 +114,24 @@ const Sidebar = () => {
             flexDirection: 'column',
             zIndex: 100,
             boxShadow: '4px 0 20px rgba(0, 0, 0, 0.25)',
-            borderRight: '1px solid rgba(255, 255, 255, 0.05)'
+            borderRight: '1px solid rgba(255, 255, 255, 0.05)',
+            overflow: 'hidden'
         }}>
+            {/* Infinite Cosmic Galaxy Animation Layer */}
+            <GalaxyBackground />
+
             {/* Header / Brand */}
             <div style={{
                 padding: '1.25rem 1.5rem',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.85rem',
-                borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
+                borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+                background: 'rgba(15, 23, 42, 0.75)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                position: 'relative',
+                zIndex: 1
             }}>
                 <div style={{
                     width: '42px',
@@ -153,7 +163,9 @@ const Sidebar = () => {
                 padding: '0.85rem 0.75rem',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '0.65rem'
+                gap: '0.65rem',
+                position: 'relative',
+                zIndex: 1
             }}>
                 <style>{`
                     nav::-webkit-scrollbar {
@@ -234,25 +246,36 @@ const Sidebar = () => {
                                                     gap: '0.75rem',
                                                     padding: '0.65rem 0.85rem',
                                                     color: isActive ? '#ffffff' : '#94a3b8',
-                                                    background: isActive ? 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)' : 'transparent',
+                                                    background: isActive
+                                                        ? 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)'
+                                                        : 'rgba(15, 23, 42, 0.72)',
+                                                    backdropFilter: 'blur(16px)',
+                                                    WebkitBackdropFilter: 'blur(16px)',
+                                                    border: isActive
+                                                        ? '1px solid rgba(99, 102, 241, 0.5)'
+                                                        : '1px solid rgba(255, 255, 255, 0.05)',
                                                     textDecoration: 'none',
                                                     borderRadius: '10px',
                                                     fontWeight: isActive ? '600' : '500',
                                                     fontSize: '0.88rem',
-                                                    boxShadow: isActive ? '0 4px 12px rgba(79, 70, 229, 0.35)' : 'none',
+                                                    boxShadow: isActive
+                                                        ? '0 4px 12px rgba(79, 70, 229, 0.35)'
+                                                        : '0 2px 6px rgba(0, 0, 0, 0.15)',
                                                     transition: 'all 0.2s ease'
                                                 }}
                                                 onMouseEnter={(e) => {
                                                     if (!isActive) {
-                                                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                                                        e.currentTarget.style.background = 'rgba(30, 41, 59, 0.88)';
                                                         e.currentTarget.style.color = '#ffffff';
+                                                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';
                                                         e.currentTarget.style.transform = 'translateX(3px)';
                                                     }
                                                 }}
                                                 onMouseLeave={(e) => {
                                                     if (!isActive) {
-                                                        e.currentTarget.style.background = 'transparent';
+                                                        e.currentTarget.style.background = 'rgba(15, 23, 42, 0.72)';
                                                         e.currentTarget.style.color = '#94a3b8';
+                                                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.05)';
                                                         e.currentTarget.style.transform = 'translateX(0)';
                                                     }
                                                 }}
@@ -287,7 +310,11 @@ const Sidebar = () => {
             <div style={{
                 padding: '0.85rem 1rem',
                 borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-                background: 'rgba(15, 23, 42, 0.6)'
+                background: 'rgba(15, 23, 42, 0.75)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                position: 'relative',
+                zIndex: 1
             }}>
                 <button
                     onClick={handleLogout}
