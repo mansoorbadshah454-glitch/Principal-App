@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon,
-    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus
+    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Palette
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
@@ -25,6 +25,7 @@ const NAV_GROUPS = [
             { icon: GraduationCap, label: 'Classes & Students', path: '/classes', permission: 'canManageClasses' },
             { icon: Award, label: 'Exams & Results', path: '/exams', permission: 'canManageExams' },
             { icon: FileCheck, label: 'Paper Generator', path: '/paper-generator', permission: 'canManagePaperGenerator' },
+            { icon: Palette, label: 'Pre-School Studio', path: '/preschool-studio', permission: 'canManagePreSchool', isNew: true },
             { icon: TrendingUp, label: 'Promotions', path: '/promotions', permission: 'canManagePromotions' }
         ]
     },

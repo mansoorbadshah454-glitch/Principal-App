@@ -70,6 +70,13 @@ export const PERMISSIONS_LIST = [
         category: 'Academic'
     },
     {
+        id: 'canManagePreSchool',
+        label: 'Pre-School Studio',
+        description: 'Generate early years activity sheets, tracing workbooks, and clipart assets',
+        path: '/preschool-studio',
+        category: 'Academic'
+    },
+    {
         id: 'canManageExams',
         label: 'Exams & Results',
         description: 'Manage exam terms, class tabulation sheets, and print student DMC result cards',
@@ -124,6 +131,7 @@ export const DEFAULT_ADMIN_PERMISSIONS = {
     canManageStore: false,
     canManageTransport: false,
     canManagePaperGenerator: true,
+    canManagePreSchool: true,
     canManageExams: true,
     canManagePromotions: false,
     canManageSurveillance: false,
