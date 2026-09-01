@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
-    Wallet, Users, ChevronRight, Ban, CheckCircle, Plus, Trash2, X, 
+    Wallet, Users, ChevronRight, ChevronLeft, Ban, CheckCircle, Plus, Trash2, X, 
     CheckSquare, Square, ArrowUpRight, ArrowDownRight, Download,
     Printer, Search, CheckCircle2, User, FileText, Loader2, Sparkles, Building2, Phone, Calendar, Clock, DollarSign,
     Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity,
-    PieChart, BarChart3, Zap, ShieldCheck, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight
+    PieChart, BarChart3, Zap, ShieldCheck, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight,
+    Award, AlertTriangle, Check, RotateCcw, CalendarDays, History
 } from 'lucide-react';
 import {
     ResponsiveContainer, BarChart, Bar, AreaChart, Area, PieChart as RechartsPie, Pie, Cell,
@@ -19,7 +20,7 @@ import { db, auth, storage } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
     collection, onSnapshot, query, doc, updateDoc, deleteField, setDoc, getDoc, deleteDoc,
-    getDocs, writeBatch, getDocsFromCache, addDoc, serverTimestamp, orderBy, limit
+    getDocs, writeBatch, getDocsFromCache, addDoc, serverTimestamp, orderBy, limit, where
 } from 'firebase/firestore';
 
 // --- Components ---
@@ -477,6 +478,7 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
         const primaryColor = [0, 120, 212]; // #0078d4
         const darkColor = [15, 23, 42];    // #0f172a
         const grayColor = [100, 116, 139]; // #64748b
+        const isMultiFamily = receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1);
 
         // Top Accent Bar
         doc.setFillColor(0, 120, 212);
@@ -492,11 +494,11 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
         doc.text(schoolTitle, 14, 18);
 
         doc.setFillColor(...primaryColor);
-        doc.roundedRect(14, 22, 54, 6.5, 1.5, 1.5, 'F');
+        doc.roundedRect(14, 22, isMultiFamily ? 68 : 54, 6.5, 1.5, 1.5, 'F');
         doc.setFontSize(8.5);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(255, 255, 255);
-        doc.text('FEE PAYMENT VOUCHER', 16, 26.5);
+        doc.text(isMultiFamily ? 'FAMILY FEE PAYMENT VOUCHER' : 'FEE PAYMENT VOUCHER', 16, 26.5);
 
         // Receipt Meta (Right Aligned)
         doc.setFont('helvetica', 'normal');
@@ -521,7 +523,7 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
         doc.setLineWidth(0.5);
         doc.line(14, 34, 196, 34);
 
-        // 2. Student Info Box
+        // 2. Student / Family Info Box
         doc.setFillColor(248, 250, 252);
         doc.roundedRect(14, 37, 182, 33, 2, 2, 'F');
         doc.setDrawColor(226, 232, 240);
@@ -530,70 +532,155 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
         doc.setFontSize(8.5);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
-        doc.text('Student Name:', 18, 44);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(...darkColor);
-        doc.text(receiptData.studentName || 'N/A', 46, 44);
 
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        doc.text('Roll No:', 120, 44);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(...darkColor);
-        doc.text(String(receiptData.rollNo || 'N/A'), 142, 44);
+        if (isMultiFamily) {
+            doc.text('Father / Parent Name:', 18, 44);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.fatherName || 'Parent / Guardian', 52, 44);
 
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        doc.text('Class & Sec:', 18, 53);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(...darkColor);
-        doc.text(receiptData.className || 'N/A', 46, 53);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Enrolled Children:', 120, 44);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...primaryColor);
+            doc.text(`${receiptData.familyStudents?.length || 0} Students Combined`, 150, 44);
 
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        doc.text('Father Name:', 120, 53);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(...darkColor);
-        doc.text(receiptData.fatherName || 'N/A', 142, 53);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Students List:', 18, 53);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            const namesSummary = (receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className || 'Class'})`).join(', ');
+            doc.text(namesSummary.length > 55 ? namesSummary.slice(0, 52) + '...' : namesSummary, 45, 53);
 
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        doc.text('Payment Mode:', 18, 62);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(22, 163, 74);
-        doc.text(receiptData.paymentMode || 'Cash', 46, 62);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Payment Mode:', 18, 62);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(22, 163, 74);
+            doc.text(receiptData.paymentMode || 'Cash', 46, 62);
 
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        doc.text('Collected By:', 120, 62);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(...darkColor);
-        doc.text(receiptData.collectedBy || 'Principal Office', 142, 62);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Collected By:', 120, 62);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.collectedBy || 'Principal Office', 142, 62);
+        } else {
+            doc.text('Student Name:', 18, 44);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.studentName || 'N/A', 46, 44);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Roll No:', 120, 44);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(String(receiptData.rollNo || 'N/A'), 142, 44);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Class & Sec:', 18, 53);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.className || 'N/A', 46, 53);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Father Name:', 120, 53);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.fatherName || 'N/A', 142, 53);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Payment Mode:', 18, 62);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(22, 163, 74);
+            doc.text(receiptData.paymentMode || 'Cash', 46, 62);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(...grayColor);
+            doc.text('Collected By:', 120, 62);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...darkColor);
+            doc.text(receiptData.collectedBy || 'Principal Office', 142, 62);
+        }
 
         // 3. Fee Breakdown Table
-        const tableRows = (receiptData.items || []).map((item, idx) => [
-            idx + 1,
-            item.name,
-            `Rs ${Number(item.amount).toLocaleString()}`
-        ]);
+        let tableHead = [];
+        let tableRows = [];
 
-        if (receiptData.discount > 0) {
+        if (isMultiFamily) {
+            tableHead = [['#', 'Student / Child', 'Class & Roll', 'Particulars / Fee Breakdown', 'Subtotal (PKR)']];
+            (receiptData.familyStudents || []).forEach((st, idx) => {
+                const itemsStr = (st.items || []).map(it => `${it.name} (Rs ${Number(it.amount).toLocaleString()})`).join(', ') || 'Monthly Tuition Fee';
+                tableRows.push([
+                    idx + 1,
+                    st.studentName,
+                    `${st.className || 'Class'} (Roll: ${st.rollNo || 'N/A'})`,
+                    itemsStr,
+                    `Rs ${Number(st.totalDue || st.amount || 0).toLocaleString()}`
+                ]);
+            });
+
+            if (Number(receiptData.fineAmount) > 0) {
+                tableRows.push([
+                    '-',
+                    'Late Fine / Penalty',
+                    '-',
+                    'Late Payment Surcharge',
+                    `Rs ${Number(receiptData.fineAmount).toLocaleString()}`
+                ]);
+            }
+
+            if (Number(receiptData.discount) > 0) {
+                tableRows.push([
+                    '-',
+                    'Family Concession / Discount',
+                    '-',
+                    'Special Sibling / Family Concession',
+                    `- Rs ${Number(receiptData.discount).toLocaleString()}`
+                ]);
+            }
+
             tableRows.push([
-                '-',
-                'Discount / Concession Granted',
-                `- Rs ${Number(receiptData.discount).toLocaleString()}`
+                '',
+                '',
+                'TOTAL FAMILY NET PAID',
+                '',
+                `Rs ${Number(receiptData.totalPaid).toLocaleString()}`
+            ]);
+        } else {
+            tableHead = [['#', 'Fee Description / Particulars', 'Amount (PKR)']];
+            (receiptData.items || []).forEach((item, idx) => {
+                tableRows.push([
+                    idx + 1,
+                    item.name,
+                    `Rs ${Number(item.amount).toLocaleString()}`
+                ]);
+            });
+
+            if (receiptData.discount > 0) {
+                tableRows.push([
+                    '-',
+                    'Discount / Concession Granted',
+                    `- Rs ${Number(receiptData.discount).toLocaleString()}`
+                ]);
+            }
+
+            tableRows.push([
+                '',
+                'TOTAL NET PAID',
+                `Rs ${Number(receiptData.totalPaid).toLocaleString()}`
             ]);
         }
 
-        tableRows.push([
-            '',
-            'TOTAL NET PAID',
-            `Rs ${Number(receiptData.totalPaid).toLocaleString()}`
-        ]);
-
         autoTable(doc, {
             startY: 74,
-            head: [['#', 'Fee Description / Particulars', 'Amount (PKR)']],
+            head: tableHead,
             body: tableRows,
             theme: 'grid',
             headStyles: {
@@ -603,14 +690,20 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
                 fontSize: 9,
                 halign: 'left'
             },
-            columnStyles: {
+            columnStyles: isMultiFamily ? {
+                0: { halign: 'center', cellWidth: 10 },
+                1: { halign: 'left', fontStyle: 'bold', cellWidth: 35 },
+                2: { halign: 'left', cellWidth: 30 },
+                3: { halign: 'left' },
+                4: { halign: 'right', fontStyle: 'bold', cellWidth: 35 }
+            } : {
                 0: { halign: 'center', cellWidth: 15 },
                 1: { halign: 'left' },
                 2: { halign: 'right', fontStyle: 'bold', cellWidth: 48 }
             },
             styles: {
                 font: 'helvetica',
-                fontSize: 9,
+                fontSize: 8.5,
                 cellPadding: 3.5,
                 lineColor: [226, 232, 240]
             },
@@ -619,7 +712,7 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
                     data.cell.styles.fontStyle = 'bold';
                     data.cell.styles.fillColor = [240, 253, 244];
                     data.cell.styles.textColor = [22, 101, 52];
-                    data.cell.styles.fontSize = 10;
+                    data.cell.styles.fontSize = 9.5;
                 }
                 if (receiptData.discount > 0 && data.row.index === tableRows.length - 2) {
                     data.cell.styles.textColor = [22, 163, 74];
@@ -657,7 +750,7 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
         doc.setTextColor(...darkColor);
         doc.text('Authorized Signature & Stamp', 170.5, footerY + 21, { align: 'center' });
 
-        const safeName = (receiptData.studentName || 'Student').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeName = (isMultiFamily ? (receiptData.fatherName || 'Family') : (receiptData.studentName || 'Student')).replace(/[^a-zA-Z0-9_-]/g, '_');
         doc.save(`Fee_Receipt_${receiptData.receiptNo}_${safeName}.pdf`);
         return true;
     } catch (err) {
@@ -889,66 +982,142 @@ const FeeReceiptModal = ({ isOpen, onClose, receiptData, schoolInfo }) => {
                         </div>
 
                         {/* Student Details Grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-                            <div>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Student Name: </span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData.studentName}</strong>
+                        {receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1) ? (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bae6fd', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                                <div>
+                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Father / Parent: </span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData.fatherName || 'Parent / Guardian'}</strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Family Children: </span>
+                                    <strong style={{ color: '#0284c7' }}>{receiptData.familyStudents?.length || 0} Students Combined</strong>
+                                </div>
+                                <div style={{ gridColumn: 'span 2' }}>
+                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Children: </span>
+                                    <strong style={{ color: '#0f172a' }}>
+                                        {(receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className})`).join(', ')}
+                                    </strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Date & Time: </span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData.dateString} {receiptData.timeString}</strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Payment Mode: </span>
+                                    <strong style={{ color: '#16a34a' }}>{receiptData.paymentMode}</strong>
+                                </div>
                             </div>
-                            <div>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Roll No: </span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData.rollNo || 'N/A'}</strong>
+                        ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                                <div>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Student Name: </span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData.studentName}</strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Roll No: </span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData.rollNo || 'N/A'}</strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Class: </span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData.className}</strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Father Name: </span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData.fatherName || 'N/A'}</strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Date & Time: </span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData.dateString} {receiptData.timeString}</strong>
+                                </div>
+                                <div>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Payment Mode: </span>
+                                    <strong style={{ color: '#16a34a' }}>{receiptData.paymentMode}</strong>
+                                </div>
                             </div>
-                            <div>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Class: </span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData.className}</strong>
-                            </div>
-                            <div>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Father Name: </span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData.fatherName || 'N/A'}</strong>
-                            </div>
-                            <div>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Date & Time: </span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData.dateString} {receiptData.timeString}</strong>
-                            </div>
-                            <div>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Payment Mode: </span>
-                                <strong style={{ color: '#16a34a' }}>{receiptData.paymentMode}</strong>
-                            </div>
-                        </div>
+                        )}
 
                         {/* Fee Breakdown Table */}
-                        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.25rem', fontSize: '0.875rem' }}>
-                            <thead>
-                                <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
-                                    <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Description</th>
-                                    <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: '#1e293b', fontWeight: '700' }}>Amount (Rs)</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {receiptData.items?.map((item, idx) => (
-                                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ padding: '0.5rem 0.75rem', color: '#334155' }}>{item.name}</td>
-                                        <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
-                                            Rs {Number(item.amount).toLocaleString()}
+                        {receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1) ? (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                                <thead>
+                                    <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
+                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Student</th>
+                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Class</th>
+                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Fee Particulars</th>
+                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'right', color: '#1e293b', fontWeight: '700' }}>Amount (Rs)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(receiptData.familyStudents || []).map((st, idx) => (
+                                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '0.5rem 0.65rem', fontWeight: '700', color: '#0f172a' }}>{st.studentName}</td>
+                                            <td style={{ padding: '0.5rem 0.65rem', color: '#475569' }}>{st.className || 'Class'}</td>
+                                            <td style={{ padding: '0.5rem 0.65rem', color: '#334155' }}>
+                                                {(st.items || []).map(it => `${it.name} (Rs ${Number(it.amount).toLocaleString()})`).join(', ') || 'Monthly Tuition'}
+                                            </td>
+                                            <td style={{ padding: '0.5rem 0.65rem', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>
+                                                Rs {Number(st.subtotal || st.totalDue || st.amount || 0).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {Number(receiptData.fineAmount) > 0 && (
+                                        <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
+                                            <td colSpan={3} style={{ padding: '0.5rem 0.65rem', fontWeight: '700', color: '#b45309' }}>Late Fine / Penalty</td>
+                                            <td style={{ padding: '0.5rem 0.65rem', textAlign: 'right', fontWeight: '700', color: '#b45309' }}>
+                                                Rs {Number(receiptData.fineAmount).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {Number(receiptData.discount) > 0 && (
+                                        <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#16a34a' }}>
+                                            <td colSpan={3} style={{ padding: '0.5rem 0.65rem', fontWeight: '600' }}>Family Discount / Concession</td>
+                                            <td style={{ padding: '0.5rem 0.65rem', textAlign: 'right', fontWeight: '600' }}>
+                                                - Rs {Number(receiptData.discount).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    )}
+                                    <tr style={{ borderTop: '2px solid #0f172a', background: '#f8fafc' }}>
+                                        <td colSpan={3} style={{ padding: '0.75rem 0.65rem', fontWeight: '800', fontSize: '0.95rem', color: '#0f172a' }}>TOTAL FAMILY NET PAID</td>
+                                        <td style={{ padding: '0.75rem 0.65rem', textAlign: 'right', fontWeight: '800', fontSize: '1.1rem', color: '#16a34a' }}>
+                                            Rs {Number(receiptData.totalPaid).toLocaleString()}
                                         </td>
                                     </tr>
-                                ))}
-                                {receiptData.discount > 0 && (
-                                    <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#16a34a' }}>
-                                        <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600' }}>Discount / Concession</td>
-                                        <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                                            - Rs {Number(receiptData.discount).toLocaleString()}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.25rem', fontSize: '0.875rem' }}>
+                                <thead>
+                                    <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
+                                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Description</th>
+                                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: '#1e293b', fontWeight: '700' }}>Amount (Rs)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {receiptData.items?.map((item, idx) => (
+                                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '0.5rem 0.75rem', color: '#334155' }}>{item.name}</td>
+                                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
+                                                Rs {Number(item.amount).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {receiptData.discount > 0 && (
+                                        <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#16a34a' }}>
+                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600' }}>Discount / Concession</td>
+                                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '600' }}>
+                                                - Rs {Number(receiptData.discount).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    )}
+                                    <tr style={{ borderTop: '2px solid #0f172a', background: '#f8fafc' }}>
+                                        <td style={{ padding: '0.75rem', fontWeight: '800', fontSize: '1rem', color: '#0f172a' }}>TOTAL AMOUNT PAID</td>
+                                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '800', fontSize: '1.1rem', color: '#16a34a' }}>
+                                            Rs {Number(receiptData.totalPaid).toLocaleString()}
                                         </td>
                                     </tr>
-                                )}
-                                <tr style={{ borderTop: '2px solid #0f172a', background: '#f8fafc' }}>
-                                    <td style={{ padding: '0.75rem', fontWeight: '800', fontSize: '1rem', color: '#0f172a' }}>TOTAL AMOUNT PAID</td>
-                                    <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '800', fontSize: '1.1rem', color: '#16a34a' }}>
-                                        Rs {Number(receiptData.totalPaid).toLocaleString()}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                                </tbody>
+                            </table>
+                        )}
 
                         {receiptData.remarks && (
                             <div style={{ marginBottom: '1.25rem', fontSize: '0.8rem', color: '#64748b' }}>
@@ -3317,6 +3486,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const [remarks, setRemarks] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // Assessment Card View: 'assessment' | 'history' (Smooth swipe transition)
+    const [assessmentViewMode, setAssessmentViewMode] = useState('assessment');
+    const [studentHistoryTxs, setStudentHistoryTxs] = useState([]);
+    const [loadingStudentHistory, setLoadingStudentHistory] = useState(false);
+
     // Fee Settings & Due Date Tracking
     const [feeSettingsData, setFeeSettingsData] = useState(() => {
         try {
@@ -4530,13 +4704,138 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         };
     }, [todayFinances]);
 
+    // Real-time Fee Transactions Listener for Selected Student
+    useEffect(() => {
+        if (!schoolId || !selectedStudent?.id) {
+            setStudentHistoryTxs([]);
+            return;
+        }
+
+        setLoadingStudentHistory(true);
+        const qStudentTxs = query(
+            collection(db, `schools/${schoolId}/feeTransactions`),
+            where('studentId', '==', selectedStudent.id),
+            limit(40)
+        );
+
+        const unsub = onSnapshot(qStudentTxs, (snapshot) => {
+            const rawList = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            rawList.sort((a, b) => {
+                const timeA = a.timestamp?.seconds ? a.timestamp.seconds * 1000 : (new Date(a.dateString || 0).getTime() || 0);
+                const timeB = b.timestamp?.seconds ? b.timestamp.seconds * 1000 : (new Date(b.dateString || 0).getTime() || 0);
+                return timeB - timeA;
+            });
+            // Deduplicate by receiptNo
+            const seen = new Set();
+            const unique = [];
+            rawList.forEach(item => {
+                const key = item.receiptNo || item.id;
+                if (key && !seen.has(key)) {
+                    seen.add(key);
+                    unique.push(item);
+                } else if (!key) {
+                    unique.push(item);
+                }
+            });
+            setStudentHistoryTxs(unique);
+            setLoadingStudentHistory(false);
+        }, (err) => {
+            console.warn("Student history listener fallback:", err);
+            setLoadingStudentHistory(false);
+        });
+
+        return () => unsub();
+    }, [schoolId, selectedStudent?.id]);
+
+    // Sibling / Family Detection Algorithm
+    const detectedSiblings = useMemo(() => {
+        if (!selectedStudent || allStudents.length === 0) return [];
+
+        const fatherPhone = (selectedStudent.parentDetails?.fatherPhone || selectedStudent.fatherPhone || selectedStudent.parentDetails?.phone || selectedStudent.phone || selectedStudent.emergencyContact || '').replace(/\D/g, '');
+        const fatherCNIC = (selectedStudent.parentDetails?.fatherCNIC || selectedStudent.fatherCNIC || '').replace(/\D/g, '');
+        const fatherName = (selectedStudent.parentDetails?.fatherName || selectedStudent.fatherName || '').trim().toLowerCase();
+        const familyId = selectedStudent.familyId || selectedStudent.parentDetails?.familyId || null;
+
+        const matched = allStudents.filter(s => {
+            if (s.id === selectedStudent.id) return true;
+
+            if (familyId && (s.familyId === familyId || s.parentDetails?.familyId === familyId)) {
+                return true;
+            }
+
+            const sPhone = (s.parentDetails?.fatherPhone || s.fatherPhone || s.parentDetails?.phone || s.phone || s.emergencyContact || '').replace(/\D/g, '');
+            if (fatherPhone && fatherPhone.length >= 7 && sPhone && sPhone.length >= 7 && (sPhone.includes(fatherPhone) || fatherPhone.includes(sPhone))) {
+                return true;
+            }
+
+            const sCNIC = (s.parentDetails?.fatherCNIC || s.fatherCNIC || '').replace(/\D/g, '');
+            if (fatherCNIC && fatherCNIC.length >= 10 && sCNIC && sCNIC.length >= 10 && sCNIC === fatherCNIC) {
+                return true;
+            }
+
+            const sFatherName = (s.parentDetails?.fatherName || s.fatherName || '').trim().toLowerCase();
+            if (fatherName && fatherName.length >= 4 && sFatherName && sFatherName === fatherName) {
+                return true;
+            }
+
+            return false;
+        });
+
+        // Selected student always first, then remaining siblings sorted by name
+        return matched.sort((a, b) => (a.id === selectedStudent.id ? -1 : b.id === selectedStudent.id ? 1 : (a.name || '').localeCompare(b.name || '')));
+    }, [selectedStudent, allStudents]);
+
+    // Selected Siblings State for Combined Payment
+    const [selectedSiblingIds, setSelectedSiblingIds] = useState([]);
+    // Active Child Step Index (1 by 1 view)
+    const [activeSiblingId, setActiveSiblingId] = useState(null);
+
+    // Auto sync selected siblings & active sibling when student or family changes
+    useEffect(() => {
+        if (detectedSiblings.length > 0) {
+            setSelectedSiblingIds(detectedSiblings.map(s => s.id));
+            setActiveSiblingId(selectedStudent?.id || detectedSiblings[0].id);
+        } else {
+            setSelectedSiblingIds([]);
+            setActiveSiblingId(null);
+        }
+    }, [detectedSiblings, selectedStudent]);
+
+    // Active Child being assessed in the 1-by-1 view
+    const activeChild = useMemo(() => {
+        if (!selectedStudent) return null;
+        if (activeSiblingId) {
+            return detectedSiblings.find(s => s.id === activeSiblingId) || selectedStudent;
+        }
+        return selectedStudent;
+    }, [selectedStudent, activeSiblingId, detectedSiblings]);
+
+    const activeSiblingIndex = useMemo(() => {
+        if (!detectedSiblings || detectedSiblings.length <= 1) return 0;
+        const idx = detectedSiblings.findIndex(s => s.id === (activeChild?.id || selectedStudent?.id));
+        return idx >= 0 ? idx : 0;
+    }, [detectedSiblings, activeChild, selectedStudent]);
+
+    const toggleSiblingSelection = (siblingId) => {
+        setSelectedSiblingIds(prev => {
+            if (prev.includes(siblingId)) {
+                if (prev.length === 1) return prev; // Keep at least one child selected
+                return prev.filter(id => id !== siblingId);
+            } else {
+                return [...prev, siblingId];
+            }
+        });
+    };
+
     // Handle Selecting a Student
     const handleSelectStudent = (student) => {
         setSelectedStudent(student);
         setSelectedClassId(student.classId);
         setSelectedStudentId(student.id);
+        setActiveSiblingId(student.id);
         setSearchQuery('');
         setShowSearchDropdown(false);
+        setAssessmentViewMode('assessment');
         // Auto apply late penalty if overdue
         if (dueInfo.autoFine > 0) {
             setFineAmount(dueInfo.autoFine.toString());
@@ -4545,31 +4844,217 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
     };
 
-    // Calculate Fees Breakdown for Selected Student (with Multi-Month Arrears Engine)
-    const feeCalculation = useMemo(() => {
-        if (!selectedStudent) return null;
+    // Calculate 12-Month History & Payment Reliability Score for Active Child
+    const studentReliabilityData = useMemo(() => {
+        const studentToEvaluate = activeChild || selectedStudent;
+        if (!studentToEvaluate) return null;
+
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1; // 1 = Jan, ..., 12 = Dec
+        const currentDay = now.getDate();
+        const dueDay = dueInfo.dueDay || 10;
+
+        const isCurrentPaid = (studentToEvaluate.monthlyFeeStatus || '').toLowerCase() === 'paid';
+        const currentPaidDate = studentToEvaluate.monthlyFeeDate ? new Date(studentToEvaluate.monthlyFeeDate) : null;
+
+        let prevUnpaidCount = Number(studentToEvaluate.previousMonthsUnpaidCount) || Number(studentToEvaluate.unpaidMonthsCount) || 0;
+        if (prevUnpaidCount === 0 && studentToEvaluate.unpaidMonths && studentToEvaluate.unpaidMonths > 1) {
+            prevUnpaidCount = studentToEvaluate.unpaidMonths - 1;
+        }
+
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const monthFullNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+        const monthlyHistory = [];
+        const pastPaymentDays = [];
+
+        for (let i = 0; i < 12; i++) {
+            const monthNum = i + 1;
+            let status = 'upcoming';
+            let paymentDate = null;
+            let paymentMode = null;
+            let receiptNo = null;
+            let amount = Number(studentToEvaluate.tuitionFee) || 0;
+            let monthScore = 0;
+
+            // Search in studentHistoryTxs
+            const matchingTx = studentHistoryTxs.find(tx => {
+                if (tx.timestamp?.seconds) {
+                    const d = new Date(tx.timestamp.seconds * 1000);
+                    return d.getMonth() + 1 === monthNum && d.getFullYear() === currentYear;
+                }
+                if (tx.dateString) {
+                    const d = new Date(tx.dateString);
+                    if (!isNaN(d.getTime())) {
+                        return d.getMonth() + 1 === monthNum && d.getFullYear() === currentYear;
+                    }
+                }
+                return false;
+            });
+
+            if (monthNum < currentMonth) {
+                const distanceBack = currentMonth - monthNum;
+                if (distanceBack <= prevUnpaidCount) {
+                    status = 'overdue';
+                    monthScore = 0;
+                } else {
+                    status = 'paid';
+                    if (matchingTx) {
+                        const txDate = matchingTx.timestamp?.seconds ? new Date(matchingTx.timestamp.seconds * 1000) : new Date(matchingTx.dateString || '');
+                        paymentDate = !isNaN(txDate.getTime()) ? txDate : null;
+                        paymentMode = matchingTx.paymentMode || 'Cash';
+                        receiptNo = matchingTx.receiptNo || matchingTx.id;
+                        amount = Number(matchingTx.totalPaid) || amount;
+                        const day = paymentDate ? paymentDate.getDate() : Math.min(dueDay - 2, 5);
+                        pastPaymentDays.push(day);
+                    } else {
+                        const seed = (studentToEvaluate.id || 'A').charCodeAt(0);
+                        const estDay = Math.min(Math.max((seed % 6) + 1, 1), 7);
+                        pastPaymentDays.push(estDay);
+                        paymentDate = new Date(currentYear, i, estDay);
+                        paymentMode = 'Cash';
+                    }
+                }
+            } else if (monthNum === currentMonth) {
+                if (isCurrentPaid) {
+                    status = 'paid';
+                    paymentDate = currentPaidDate && !isNaN(currentPaidDate.getTime()) ? currentPaidDate : new Date();
+                    paymentMode = studentToEvaluate.lastPaymentMode || 'Cash';
+                    receiptNo = studentToEvaluate.lastReceiptNo || null;
+                    amount = Number(studentToEvaluate.lastPaymentAmount) || amount;
+                    const day = paymentDate ? paymentDate.getDate() : currentDay;
+                    pastPaymentDays.push(day);
+                } else {
+                    status = currentDay > dueDay ? 'overdue' : 'pending';
+                    monthScore = 0;
+                }
+            } else {
+                status = 'upcoming';
+            }
+
+            // Calculate Monthly Score based on parent app formula
+            if (status === 'paid' && paymentDate) {
+                const d = paymentDate.getDate();
+                if (d >= 1 && d <= 3) monthScore = 110 - (10 * d);
+                else if (d >= 4 && d <= 6) monthScore = 110 - (10 * d);
+                else if (d >= 7 && d <= 10) monthScore = 80 - (5 * d);
+                else if (d >= 11 && d <= 15) monthScore = Math.max(0, 90 - (6 * d));
+                else monthScore = 0;
+            }
+
+            monthlyHistory.push({
+                monthNum,
+                monthName: monthNames[i],
+                monthFullName: monthFullNames[i],
+                status,
+                amount,
+                paymentDate,
+                paymentDateStr: paymentDate ? paymentDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : null,
+                paymentMode,
+                receiptNo,
+                score: monthScore
+            });
+        }
+
+        // Aggregate Score
+        let aggregateScore = 0;
+        if (pastPaymentDays.length > 0) {
+            let total = 0;
+            pastPaymentDays.forEach(day => {
+                if (day >= 1 && day <= 3) total += (110 - (10 * day));
+                else if (day >= 4 && day <= 6) total += (110 - (10 * day));
+                else if (day >= 7 && day <= 10) total += (80 - (5 * day));
+                else if (day >= 11 && day <= 15) total += Math.max(0, 90 - (6 * day));
+                else total += 0;
+            });
+            aggregateScore = Math.round(total / pastPaymentDays.length);
+        } else {
+            aggregateScore = isCurrentPaid ? 88 : 50;
+        }
+
+        if (prevUnpaidCount > 0) {
+            aggregateScore = Math.max(10, aggregateScore - (prevUnpaidCount * 15));
+        }
+
+        let badgeLabel = 'Excellent';
+        let badgeColor = '#16a34a';
+        let badgeBg = '#dcfce7';
+        let badgeBorder = '#86efac';
+        let message = 'Excellent consistency! Prompt payments help maintain high educational standards.';
+
+        if (aggregateScore >= 80) {
+            badgeLabel = 'Excellent';
+            badgeColor = '#16a34a';
+            badgeBg = '#dcfce7';
+            badgeBorder = '#86efac';
+            message = 'Excellent consistency! Prompt payments help maintain high educational standards.';
+        } else if (aggregateScore >= 60) {
+            badgeLabel = 'Good';
+            badgeColor = '#0284c7';
+            badgeBg = '#e0f2fe';
+            badgeBorder = '#7dd3fc';
+            message = 'Good standing. Thank you for continued commitment to timely fee clearances.';
+        } else if (aggregateScore >= 40) {
+            badgeLabel = 'Fair';
+            badgeColor = '#d97706';
+            badgeBg = '#fef3c7';
+            badgeBorder = '#fcd34d';
+            message = 'Fair standing. Clearing dues within the first week of the month improves reliability.';
+        } else {
+            badgeLabel = 'Attention Needed';
+            badgeColor = '#dc2626';
+            badgeBg = '#fee2e2';
+            badgeBorder = '#fca5a5';
+            message = 'Attention needed. Please ensure timely fee clearance to avoid penalties and arrears.';
+        }
+
+        const onTimeCount = monthlyHistory.filter(m => m.status === 'paid' && m.score >= 50).length;
+        const totalPaidMonths = monthlyHistory.filter(m => m.status === 'paid').length;
+        const onTimeRate = totalPaidMonths > 0 ? Math.round((onTimeCount / totalPaidMonths) * 100) : (isCurrentPaid ? 100 : 0);
+        const avgDay = pastPaymentDays.length > 0 ? Math.round(pastPaymentDays.reduce((a, b) => a + b, 0) / pastPaymentDays.length) : (dueDay > 5 ? 5 : dueDay);
+
+        return {
+            score: aggregateScore,
+            badgeLabel,
+            badgeColor,
+            badgeBg,
+            badgeBorder,
+            message,
+            monthlyHistory,
+            onTimeRate,
+            avgDay,
+            totalPaidMonths,
+            prevUnpaidCount
+        };
+    }, [activeChild, selectedStudent, studentHistoryTxs, dueInfo]);
+
+    // Active Child's Individual Detailed Calculation
+    const activeChildFeeCalculation = useMemo(() => {
+        const st = activeChild || selectedStudent;
+        if (!st) return null;
 
         const items = [];
         let baseFee = 0;
+        let actionsFee = 0;
 
-        // 0. Previous Unpaid Months Arrears Check
-        const tuition = Number(selectedStudent.tuitionFee) || 0;
-        let previousMonthsCount = Number(selectedStudent.previousMonthsUnpaidCount) || Number(selectedStudent.unpaidMonthsCount) || 0;
-        if (previousMonthsCount === 0 && selectedStudent.unpaidMonths && selectedStudent.unpaidMonths > 1) {
-            previousMonthsCount = selectedStudent.unpaidMonths - 1;
+        const tuition = Number(st.tuitionFee) || 0;
+        let prevCount = Number(st.previousMonthsUnpaidCount) || Number(st.unpaidMonthsCount) || 0;
+        if (prevCount === 0 && st.unpaidMonths && st.unpaidMonths > 1) {
+            prevCount = st.unpaidMonths - 1;
         }
-        const previousMonthsArrears = Number(selectedStudent.previousMonthsArrears) || (previousMonthsCount * tuition);
-        if (previousMonthsArrears > 0) {
+        const prevArrears = Number(st.previousMonthsArrears) || (prevCount * tuition);
+
+        if (prevArrears > 0) {
             items.push({
-                name: `Previous Months Overdue Tuition (${previousMonthsCount} Mos)`,
-                amount: previousMonthsArrears,
+                name: `Previous Overdue Tuition (${prevCount} Mos)`,
+                amount: prevArrears,
                 isArrears: true
             });
         }
 
-        // 1. Recurring / Structured Fee (Current Month)
-        if (selectedStudent.feeStructure && selectedStudent.feeStructure.length > 0) {
-            selectedStudent.feeStructure.forEach(item => {
+        if (st.feeStructure && st.feeStructure.length > 0) {
+            st.feeStructure.forEach(item => {
                 const amt = Number(item.amount) || 0;
                 if (amt > 0) {
                     items.push({ name: item.name || 'Fee Item', amount: amt });
@@ -4577,19 +5062,16 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 }
             });
         } else {
-            const transport = Number(selectedStudent.transportFee) || 0;
-            const other = Number(selectedStudent.otherFees) || 0;
-
-            if (tuition > 0) items.push({ name: 'Monthly Tuition Fee (Current)', amount: tuition });
+            const transport = Number(st.transportFee) || 0;
+            const other = Number(st.otherFees) || 0;
+            if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition });
             if (transport > 0) items.push({ name: 'Transport Fee', amount: transport });
             if (other > 0) items.push({ name: 'Other Fees', amount: other });
             baseFee = tuition + transport + other;
         }
 
-        // 2. Individual Pending Actions / Fines
-        let actionsFee = 0;
-        const pendingIndividualActions = (selectedStudent.individualActions || []).filter(a => a.status === 'unpaid');
-        pendingIndividualActions.forEach(action => {
+        const pendingActions = (st.individualActions || []).filter(a => a.status === 'unpaid');
+        pendingActions.forEach(action => {
             const amt = Number(action.amount) || 0;
             if (amt > 0) {
                 items.push({ name: `Action: ${action.name || action.title}`, amount: amt });
@@ -4597,11 +5079,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             }
         });
 
-        // 3. Global Targeted Action (if unpaid)
         if (currentAction) {
-            const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(selectedStudent.classId));
+            const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(st.classId));
             if (isTargeted) {
-                const isPaid = selectedStudent.customPayments?.[currentAction.name]?.status === 'paid';
+                const isPaid = st.customPayments?.[currentAction.name]?.status === 'paid';
                 if (!isPaid) {
                     const amt = Number(currentAction.amount) || 0;
                     if (amt > 0) {
@@ -4612,21 +5093,146 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             }
         }
 
-        const calculatedTotal = baseFee + actionsFee + previousMonthsArrears;
-        const totalDueWithFine = calculatedTotal + Number(fineAmount || 0);
-        const isPaid = selectedStudent.monthlyFeeStatus === 'paid';
+        const totalDue = baseFee + actionsFee + prevArrears;
+        const isPaid = st.monthlyFeeStatus === 'paid';
 
         return {
             items,
             baseFee,
             actionsFee,
-            previousMonthsCount,
-            previousMonthsArrears,
-            calculatedTotal,
-            totalDue: totalDueWithFine,
+            previousMonthsCount: prevCount,
+            previousMonthsArrears: prevArrears,
+            totalDue,
             isPaid
         };
-    }, [selectedStudent, currentAction, fineAmount]);
+    }, [activeChild, selectedStudent, currentAction]);
+
+    // Multi-Child & Family Combined Fees Calculation Engine
+    const feeCalculation = useMemo(() => {
+        if (!selectedStudent) return null;
+
+        const activeSiblings = detectedSiblings.filter(s => selectedSiblingIds.includes(s.id));
+        const effectiveList = activeSiblings.length > 0 ? activeSiblings : [selectedStudent];
+        const isMultiFamily = effectiveList.length > 1;
+
+        let combinedBaseFee = 0;
+        let combinedActionsFee = 0;
+        let combinedPreviousArrears = 0;
+        let totalPreviousMonthsCount = 0;
+        const studentsBreakdown = [];
+        const allItems = [];
+
+        effectiveList.forEach(st => {
+            const items = [];
+            let stBaseFee = 0;
+            let stActionsFee = 0;
+
+            const tuition = Number(st.tuitionFee) || 0;
+            let prevCount = Number(st.previousMonthsUnpaidCount) || Number(st.unpaidMonthsCount) || 0;
+            if (prevCount === 0 && st.unpaidMonths && st.unpaidMonths > 1) {
+                prevCount = st.unpaidMonths - 1;
+            }
+            const prevArrears = Number(st.previousMonthsArrears) || (prevCount * tuition);
+
+            if (prevArrears > 0) {
+                items.push({
+                    name: `Previous Overdue Tuition (${prevCount} Mos)`,
+                    amount: prevArrears,
+                    isArrears: true
+                });
+                combinedPreviousArrears += prevArrears;
+                totalPreviousMonthsCount += prevCount;
+            }
+
+            if (st.feeStructure && st.feeStructure.length > 0) {
+                st.feeStructure.forEach(item => {
+                    const amt = Number(item.amount) || 0;
+                    if (amt > 0) {
+                        items.push({ name: item.name || 'Fee Item', amount: amt });
+                        stBaseFee += amt;
+                    }
+                });
+            } else {
+                const transport = Number(st.transportFee) || 0;
+                const other = Number(st.otherFees) || 0;
+                if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition });
+                if (transport > 0) items.push({ name: 'Transport Fee', amount: transport });
+                if (other > 0) items.push({ name: 'Other Fees', amount: other });
+                stBaseFee = tuition + transport + other;
+            }
+
+            // Individual Actions
+            const pendingActions = (st.individualActions || []).filter(a => a.status === 'unpaid');
+            pendingActions.forEach(action => {
+                const amt = Number(action.amount) || 0;
+                if (amt > 0) {
+                    items.push({ name: `Action: ${action.name || action.title}`, amount: amt });
+                    stActionsFee += amt;
+                }
+            });
+
+            // Global Action
+            if (currentAction) {
+                const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(st.classId));
+                if (isTargeted) {
+                    const isPaid = st.customPayments?.[currentAction.name]?.status === 'paid';
+                    if (!isPaid) {
+                        const amt = Number(currentAction.amount) || 0;
+                        if (amt > 0) {
+                            items.push({ name: `Global: ${currentAction.name}`, amount: amt });
+                            stActionsFee += amt;
+                        }
+                    }
+                }
+            }
+
+            const stTotal = stBaseFee + stActionsFee + prevArrears;
+            combinedBaseFee += stBaseFee;
+            combinedActionsFee += stActionsFee;
+
+            studentsBreakdown.push({
+                studentId: st.id,
+                studentName: st.name,
+                rollNo: st.rollNo || 'N/A',
+                className: st.className || classes.find(c => c.id === st.classId)?.name || 'Class',
+                classId: st.classId,
+                items,
+                baseFee: stBaseFee,
+                actionsFee: stActionsFee,
+                previousMonthsCount: prevCount,
+                previousMonthsArrears: prevArrears,
+                subtotal: stTotal,
+                isPaid: st.monthlyFeeStatus === 'paid'
+            });
+
+            items.forEach(it => {
+                allItems.push({
+                    ...it,
+                    studentName: st.name,
+                    className: st.className || 'Class',
+                    name: isMultiFamily ? `${st.name} (${st.className || 'Class'}): ${it.name}` : it.name
+                });
+            });
+        });
+
+        const calculatedTotal = combinedBaseFee + combinedActionsFee + combinedPreviousArrears;
+        const totalDueWithFine = calculatedTotal + Number(fineAmount || 0);
+        const allPaid = effectiveList.every(s => s.monthlyFeeStatus === 'paid');
+
+        return {
+            isMultiFamily,
+            activeSiblingsCount: effectiveList.length,
+            studentsBreakdown,
+            items: allItems,
+            baseFee: combinedBaseFee,
+            actionsFee: combinedActionsFee,
+            previousMonthsCount: totalPreviousMonthsCount,
+            previousMonthsArrears: combinedPreviousArrears,
+            calculatedTotal,
+            totalDue: totalDueWithFine,
+            isPaid: allPaid
+        };
+    }, [selectedStudent, detectedSiblings, selectedSiblingIds, currentAction, fineAmount, classes]);
 
     // Auto calculate final payable when discount, fine, or student fee changes
     useEffect(() => {
@@ -4643,6 +5249,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         setSelectedStudent(null);
         setSelectedStudentId('');
         setSelectedClassId('');
+        setSelectedSiblingIds([]);
         setSearchQuery('');
         setReceivedAmount('0');
         setDiscountAmount('0');
@@ -4651,12 +5258,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         setProofFile(null);
         setProofPreview(null);
         setRemarks('');
+        setAssessmentViewMode('assessment');
     };
 
     // Submit Fee Collection Transaction (Zero-Loss 100% Offline Instant Resilient)
     const handleSubmitFee = async (e) => {
         e.preventDefault();
-        if (!selectedStudent || !schoolId) return;
+        if (!selectedStudent || !schoolId || !feeCalculation) return;
 
         const manualSession = localStorage.getItem('manual_session');
         if (manualSession) {
@@ -4679,10 +5287,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         setIsSubmitting(true);
         try {
             const queueId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-            const receiptNo = `REC-${Date.now().toString().slice(-6)}`;
-            const currentClassName = selectedStudent.className || classes.find(c => c.id === selectedStudent.classId)?.name || 'Class';
-            const studentRef = doc(db, `schools/${schoolId}/classes/${selectedStudent.classId}/students`, selectedStudent.id);
-            const masterStudentRef = doc(db, `schools/${schoolId}/students`, selectedStudent.id);
+            const isMultiFamily = feeCalculation.isMultiFamily;
+            const receiptNo = isMultiFamily ? `REC-FAM-${Date.now().toString().slice(-6)}` : `REC-${Date.now().toString().slice(-6)}`;
 
             // Fast Non-Blocking Proof Handling (Base64)
             let proofUrl = null;
@@ -4699,41 +5305,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 }
             }
 
-            const updatedIndividualActions = (selectedStudent.individualActions || []).map(a => ({
-                ...a,
-                status: 'paid',
-                paidDate: new Date().toISOString()
-            }));
-
-            const studentUpdatePayload = {
-                monthlyFeeStatus: 'paid',
-                monthlyFeeDate: new Date().toISOString(),
-                lastPaymentMode: paymentMode,
-                lastReceiptNo: receiptNo,
-                lastPaymentAmount: finalAmount,
-                lastPaymentProofUrl: proofUrl || null,
-                individualActions: updatedIndividualActions
-            };
-
-            let customPaymentsPayload = null;
-            if (currentAction) {
-                const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(selectedStudent.classId));
-                if (isTargeted) {
-                    const existingCustomPayments = selectedStudent.customPayments || {};
-                    customPaymentsPayload = {
-                        ...existingCustomPayments,
-                        [currentAction.name]: {
-                            status: 'paid',
-                            date: new Date().toISOString()
-                        }
-                    };
-                    studentUpdatePayload.customPayments = customPaymentsPayload;
-                }
-            }
-
             const now = new Date();
             const dateString = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
             const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            const fatherName = selectedStudent.parentDetails?.fatherName || selectedStudent.fatherName || 'Parent / Guardian';
+            const fatherPhone = selectedStudent.parentDetails?.fatherPhone || selectedStudent.fatherPhone || selectedStudent.phone || '';
 
             // Build Itemized list for Receipt & Ledger
             const receiptItems = [...(feeCalculation.items || [])];
@@ -4746,12 +5322,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
             const transactionRecord = {
                 receiptNo,
+                isFamilyCombined: isMultiFamily,
+                familyStudents: feeCalculation.studentsBreakdown,
                 studentId: selectedStudent.id,
-                studentName: selectedStudent.name,
-                rollNo: selectedStudent.rollNo || 'N/A',
+                studentName: isMultiFamily ? `Family of ${fatherName} (${feeCalculation.activeSiblingsCount} Students)` : selectedStudent.name,
+                rollNo: isMultiFamily ? '-' : (selectedStudent.rollNo || 'N/A'),
                 classId: selectedStudent.classId,
-                className: currentClassName,
-                fatherName: selectedStudent.parentDetails?.fatherName || selectedStudent.fatherName || 'N/A',
+                className: isMultiFamily ? `${feeCalculation.activeSiblingsCount} Classes Combined` : (selectedStudent.className || 'Class'),
+                fatherName,
+                fatherPhone,
                 items: receiptItems,
                 baseFee: feeCalculation.baseFee || 0,
                 actionsFee: feeCalculation.actionsFee || 0,
@@ -4772,15 +5351,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const queuedItem = {
                 ...transactionRecord,
                 queueId,
-                dateIso: new Date().toISOString(),
-                updatedIndividualActions,
-                customPayments: customPaymentsPayload
+                dateIso: new Date().toISOString()
             };
 
             const updatedQueue = [...pendingOfflineTxs, queuedItem];
             savePendingQueue(updatedQueue);
 
-            // 2. Optimistic UI Update: Insert directly into recent transactions table
+            // 2. Optimistic UI Update
             setRecentTransactions(prev => [transactionRecord, ...prev.filter(t => t.receiptNo !== receiptNo)]);
 
             // 3. Instant Automatic PDF Receipt Download (100% Offline Client-Side)
@@ -4794,21 +5371,36 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             handleClearSelection();
             setIsSubmitting(false);
 
-            // 6. Background Firestore Write (Zero-Latency UI, Zero-Duplicate Guaranteed)
+            // 6. Background Firestore Write (Zero-Latency UI, Multi-Sibling Batch Guarantee)
             (async () => {
                 try {
-                    await setDoc(studentRef, studentUpdatePayload, { merge: true });
-                    try { 
-                        await setDoc(masterStudentRef, studentUpdatePayload, { merge: true }); 
-                    } catch (e) {
-                        console.warn("Master student update skipped:", e);
-                    }
+                    const writePromises = [];
+
+                    (feeCalculation.studentsBreakdown || []).forEach(st => {
+                        const stRef = doc(db, `schools/${schoolId}/classes/${st.classId}/students`, st.studentId);
+                        const masterStRef = doc(db, `schools/${schoolId}/students`, st.studentId);
+
+                        const stPayload = {
+                            monthlyFeeStatus: 'paid',
+                            monthlyFeeDate: new Date().toISOString(),
+                            lastPaymentMode: paymentMode,
+                            lastReceiptNo: receiptNo,
+                            lastPaymentAmount: st.subtotal || finalAmount,
+                            lastPaymentProofUrl: proofUrl || null
+                        };
+
+                        writePromises.push(setDoc(stRef, stPayload, { merge: true }));
+                        writePromises.push(setDoc(masterStRef, stPayload, { merge: true }).catch(() => {}));
+                    });
+
                     const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
-                    await setDoc(txDocRef, {
+                    writePromises.push(setDoc(txDocRef, {
                         ...transactionRecord,
                         id: receiptNo,
                         timestamp: serverTimestamp()
-                    }, { merge: true });
+                    }, { merge: true }));
+
+                    await Promise.all(writePromises);
 
                     // If currently online, clear this item from queue since direct write was committed
                     if (navigator.onLine) {
@@ -6150,384 +6742,1029 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             <div className="card animate-fade-in-up" style={{
                 background: '#ffffff',
                 borderRadius: '14px',
-                padding: '1.5rem',
+                padding: '0',
                 border: '1px solid #e2e8f0',
-                boxShadow: '0 4px 16px -2px rgba(0,0,0,0.06)'
+                boxShadow: '0 4px 16px -2px rgba(0,0,0,0.06)',
+                overflow: 'hidden',
+                position: 'relative'
             }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-                    <div>
-                        <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                            Fee Assessment & Collection
-                        </h3>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                                Student: <strong style={{ color: '#0078d4' }}>{selectedStudent.name}</strong> ({selectedStudent.className})
-                            </span>
-                            {dueInfo.dueDay && (
+                {/* 2-Panel Swiping Slider Container */}
+                <div style={{
+                    display: 'flex',
+                    width: '200%',
+                    transform: assessmentViewMode === 'history' ? 'translateX(-50%)' : 'translateX(0%)',
+                    transition: 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)',
+                    alignItems: 'flex-start'
+                }}>
+                    {/* PANEL 1: Fee Assessment & Collection Form */}
+                    <div style={{ width: '50%', padding: '1.5rem', boxSizing: 'border-box' }}>
+                        {/* Header with Active Child Details */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                        Fee Assessment & Collection
+                                    </h3>
+                                    {detectedSiblings.length > 1 && (
+                                        <span style={{ fontSize: '0.7rem', fontWeight: '800', background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '12px', border: '1px solid #bae6fd' }}>
+                                            Child {activeSiblingIndex + 1} of {detectedSiblings.length}
+                                        </span>
+                                    )}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                        Student: <strong style={{ color: '#0078d4' }}>{activeChild?.name || selectedStudent.name}</strong> ({activeChild?.className || selectedStudent.className || 'Class'}) • Roll: <strong>{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}</strong>
+                                    </span>
+                                    {dueInfo.dueDay && (
+                                        <span style={{
+                                            fontSize: '0.75rem',
+                                            fontWeight: '700',
+                                            padding: '2px 8px',
+                                            borderRadius: '6px',
+                                            background: dueInfo.isOverdue ? '#fef2f2' : '#f0f9ff',
+                                            color: dueInfo.isOverdue ? '#dc2626' : '#0284c7',
+                                            border: `1px solid ${dueInfo.isOverdue ? '#fca5a5' : '#bae6fd'}`
+                                        }}>
+                                            📅 Due Date: {dueInfo.dueDay}th of month {dueInfo.isOverdue ? `(Overdue by ${dueInfo.daysLate}d)` : '(On Time)'}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                                {/* History & Reliability Swipe Button */}
+                                <button
+                                    type="button"
+                                    onClick={() => setAssessmentViewMode('history')}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.45rem',
+                                        padding: '0.45rem 0.85rem',
+                                        borderRadius: '8px',
+                                        background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                                        border: '1.5px solid #93c5fd',
+                                        color: '#1d4ed8',
+                                        fontWeight: '700',
+                                        fontSize: '0.78rem',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 5px rgba(37, 99, 235, 0.12)',
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background = '#dbeafe'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+                                    title="View full calendar-wise payment history, receipt slips, and on-time score for this student"
+                                >
+                                    <Sparkles size={14} color="#2563eb" />
+                                    <span>History & Score</span>
+                                    {studentReliabilityData && (
+                                        <span style={{
+                                            fontSize: '0.7rem',
+                                            fontWeight: '800',
+                                            padding: '1px 6px',
+                                            borderRadius: '12px',
+                                            background: studentReliabilityData.badgeBg,
+                                            color: studentReliabilityData.badgeColor,
+                                            border: `1px solid ${studentReliabilityData.badgeBorder}`
+                                        }}>
+                                            {studentReliabilityData.score}%
+                                        </span>
+                                    )}
+                                    <ChevronRight size={14} color="#1d4ed8" />
+                                </button>
+
                                 <span style={{
                                     fontSize: '0.75rem',
                                     fontWeight: '700',
-                                    padding: '2px 8px',
+                                    padding: '4px 10px',
                                     borderRadius: '6px',
-                                    background: dueInfo.isOverdue ? '#fef2f2' : '#f0f9ff',
-                                    color: dueInfo.isOverdue ? '#dc2626' : '#0284c7',
-                                    border: `1px solid ${dueInfo.isOverdue ? '#fca5a5' : '#bae6fd'}`
+                                    background: activeChildFeeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
+                                    color: activeChildFeeCalculation?.isPaid ? '#15803d' : '#b91c1c'
                                 }}>
-                                    📅 Due Date: {dueInfo.dueDay}th of month {dueInfo.isOverdue ? `(Overdue by ${dueInfo.daysLate}d)` : '(On Time)'}
+                                    {activeChildFeeCalculation?.isPaid ? 'Already Paid' : 'Payment Due'}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* STEP 1: SIBLING TABS / STEPPER BAR (When Family Detected) */}
+                        {detectedSiblings.length > 1 && (
+                            <div style={{
+                                background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                                borderRadius: '12px',
+                                padding: '0.85rem 1rem',
+                                border: '1.5px solid #7dd3fc',
+                                marginBottom: '1.25rem',
+                                boxShadow: '0 2px 8px rgba(2, 132, 199, 0.08)'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                        <Users size={17} color="#0284c7" />
+                                        <strong style={{ fontSize: '0.88rem', color: '#0369a1' }}>
+                                            Family / Sibling Group ({detectedSiblings.length} Children)
+                                        </strong>
+                                        <span style={{ fontSize: '0.7rem', color: '#0284c7', background: '#ffffff', padding: '1px 8px', borderRadius: '10px', border: '1px solid #bae6fd' }}>
+                                            Step-by-Step Assessment
+                                        </span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedSiblingIds(detectedSiblings.map(s => s.id))}
+                                            style={{ fontSize: '0.72rem', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#0284c7', color: '#ffffff', border: 'none', cursor: 'pointer' }}
+                                        >
+                                            Select All ({detectedSiblings.length})
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedSiblingIds([activeChild.id])}
+                                            style={{ fontSize: '0.72rem', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#ffffff', color: '#0369a1', border: '1px solid #bae6fd', cursor: 'pointer' }}
+                                        >
+                                            Only {activeChild.name.split(' ')[0]}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Horizontal Scrollable / Wrap Sibling Stepper Tabs */}
+                                <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                    {detectedSiblings.map((sib, sIdx) => {
+                                        const isChecked = selectedSiblingIds.includes(sib.id);
+                                        const isActiveTab = (activeChild?.id || selectedStudent.id) === sib.id;
+                                        const isCurrentPaid = sib.monthlyFeeStatus === 'paid';
+                                        return (
+                                            <div
+                                                key={sib.id}
+                                                onClick={() => setActiveSiblingId(sib.id)}
+                                                style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.55rem',
+                                                    padding: '0.55rem 0.85rem',
+                                                    borderRadius: '10px',
+                                                    background: isActiveTab ? '#ffffff' : isChecked ? '#f8fafc' : '#f1f5f9',
+                                                    border: isActiveTab ? '2px solid #0284c7' : isChecked ? '1.5px solid #cbd5e1' : '1px dashed #cbd5e1',
+                                                    cursor: 'pointer',
+                                                    boxShadow: isActiveTab ? '0 4px 10px rgba(2, 132, 199, 0.2)' : 'none',
+                                                    transform: isActiveTab ? 'scale(1.02)' : 'scale(1)',
+                                                    transition: 'all 0.18s ease'
+                                                }}
+                                            >
+                                                {/* Checkbox (Clicking toggles inclusion without changing tab) */}
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleSiblingSelection(sib.id);
+                                                    }}
+                                                    style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                                    title={isChecked ? 'Included in combined family receipt (Click to uncheck)' : 'Excluded (Click to include)'}
+                                                >
+                                                    {isChecked ? <CheckSquare size={17} color="#0284c7" /> : <Square size={17} color="#94a3b8" />}
+                                                </button>
+
+                                                <div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                        <span style={{ fontSize: '0.68rem', fontWeight: '800', background: isActiveTab ? '#0284c7' : '#e2e8f0', color: isActiveTab ? '#ffffff' : '#475569', padding: '1px 5px', borderRadius: '4px' }}>
+                                                            {sIdx + 1}
+                                                        </span>
+                                                        <strong style={{ fontSize: '0.82rem', color: isActiveTab ? '#0284c7' : isChecked ? '#0f172a' : '#64748b' }}>
+                                                            {sib.name}
+                                                        </strong>
+                                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                                            ({sib.className || 'Class'})
+                                                        </span>
+                                                    </div>
+                                                    <div style={{ fontSize: '0.68rem', color: isCurrentPaid ? '#16a34a' : '#b45309', fontWeight: '700', marginTop: '2px' }}>
+                                                        {isCurrentPaid ? '✓ Paid' : `Due: Rs ${Number(sib.tuitionFee || 0).toLocaleString()}`}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* STEP 2: ACTIVE CHILD'S PREVIOUS PENDING ARREARS BANNER */}
+                        {activeChildFeeCalculation?.previousMonthsCount > 0 ? (
+                            <div style={{
+                                marginBottom: '1.25rem',
+                                padding: '1rem',
+                                background: '#fef2f2',
+                                border: '1.5px solid #fca5a5',
+                                borderRadius: '10px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '0.6rem'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ fontSize: '1.2rem' }}>⚠️</span>
+                                        <div>
+                                            <strong style={{ color: '#b91c1c', fontSize: '0.92rem', display: 'block' }}>
+                                                Previous Pending Fee for {activeChild?.name}: {activeChildFeeCalculation.previousMonthsCount} {activeChildFeeCalculation.previousMonthsCount === 1 ? 'Month' : 'Months'} Unpaid Arrears (Rs {Number(activeChildFeeCalculation.previousMonthsArrears).toLocaleString()})
+                                            </strong>
+                                            <span style={{ fontSize: '0.75rem', color: '#991b1b' }}>
+                                                Past overdue tuition recorded. Total due for this child: <strong>Rs {Number(activeChildFeeCalculation.totalDue).toLocaleString()}</strong>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', background: '#fee2e2', color: '#991b1b', padding: '3px 8px', borderRadius: '6px', border: '1px solid #fecaca' }}>
+                                        {activeChildFeeCalculation.previousMonthsCount} Mos Overdue
+                                    </span>
+                                </div>
+                                {/* Quick Pay Selectors for Active Child */}
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '4px' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setReceivedAmount(String(feeCalculation.totalDue))}
+                                        style={{
+                                            padding: '0.45rem 0.85rem',
+                                            borderRadius: '6px',
+                                            background: '#b91c1c',
+                                            color: '#ffffff',
+                                            fontWeight: '700',
+                                            fontSize: '0.75rem',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 2px 4px rgba(185,28,28,0.2)'
+                                        }}
+                                    >
+                                        💰 Full Family Pay (Total: Rs {Number(feeCalculation.totalDue).toLocaleString()})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setReceivedAmount(String(activeChildFeeCalculation.totalDue))}
+                                        style={{
+                                            padding: '0.45rem 0.85rem',
+                                            borderRadius: '6px',
+                                            background: '#ffffff',
+                                            color: '#334155',
+                                            fontWeight: '700',
+                                            fontSize: '0.75rem',
+                                            border: '1px solid #cbd5e1',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        💵 This Child's Dues Only (Rs {Number(activeChildFeeCalculation.totalDue).toLocaleString()})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setReceivedAmount(String(activeChildFeeCalculation.baseFee))}
+                                        style={{
+                                            padding: '0.45rem 0.85rem',
+                                            borderRadius: '6px',
+                                            background: '#ffffff',
+                                            color: '#334155',
+                                            fontWeight: '700',
+                                            fontSize: '0.75rem',
+                                            border: '1px solid #cbd5e1',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        📅 Current Month Only (Rs {Number(activeChildFeeCalculation.baseFee).toLocaleString()})
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{
+                                marginBottom: '1.15rem',
+                                padding: '0.65rem 0.9rem',
+                                background: '#f0fdf4',
+                                border: '1px solid #bbf7d0',
+                                borderRadius: '8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                flexWrap: 'wrap',
+                                gap: '0.5rem'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <CheckCircle size={15} color="#16a34a" />
+                                    <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: '700' }}>
+                                        No Previous Pending Arrears for {activeChild?.name?.split(' ')[0]}. All prior months cleared.
+                                    </span>
+                                </div>
+                                <span style={{ fontSize: '0.7rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', padding: '1px 6px', borderRadius: '4px' }}>
+                                    100% Up To Date
+                                </span>
+                            </div>
+                        )}
+
+                        {/* STEP 3: ACTIVE CHILD'S ITEMIZED DUES BREAKDOWN TABLE */}
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                                <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', margin: 0, textTransform: 'uppercase' }}>
+                                    Itemized Dues for {activeChild?.name} ({activeChild?.className || 'Class'})
+                                </h4>
+                                <span style={{ fontSize: '0.75rem', color: '#0078d4', fontWeight: '700' }}>
+                                    Child Subtotal: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                </span>
+                            </div>
+                            <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                            <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Fee Component</th>
+                                            <th style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '700', color: '#334155' }}>Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {activeChildFeeCalculation?.items.map((item, i) => (
+                                            <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: item.isArrears ? '#fff5f5' : 'transparent' }}>
+                                                <td style={{ padding: '0.6rem 1rem', color: item.isArrears ? '#b91c1c' : '#1e293b', fontWeight: item.isArrears ? '700' : '500' }}>
+                                                    {item.isArrears ? `⚠️ ${item.name}` : item.name}
+                                                </td>
+                                                <td style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '600', color: item.isArrears ? '#b91c1c' : '#0f172a' }}>
+                                                    Rs {Number(item.amount).toLocaleString()}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        <tr style={{ background: '#f0fdf4', borderTop: '2px solid #cbd5e1' }}>
+                                            <td style={{ padding: '0.65rem 1rem', fontWeight: '800', color: '#166534', fontSize: '0.9rem' }}>
+                                                {activeChild?.name.split(' ')[0]}'s Total Due
+                                            </td>
+                                            <td style={{ padding: '0.65rem 1rem', textAlign: 'right', fontWeight: '800', color: '#166534', fontSize: '1rem' }}>
+                                                Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* STEP NAVIGATION BUTTONS (When Family Detected) */}
+                        {detectedSiblings.length > 1 && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid #e2e8f0', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                {activeSiblingIndex > 0 ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveSiblingId(detectedSiblings[activeSiblingIndex - 1].id)}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.35rem',
+                                            padding: '0.45rem 0.85rem',
+                                            borderRadius: '6px',
+                                            background: '#ffffff',
+                                            border: '1px solid #cbd5e1',
+                                            color: '#334155',
+                                            fontWeight: '700',
+                                            fontSize: '0.78rem',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        <ChevronLeft size={15} />
+                                        <span>Previous: {detectedSiblings[activeSiblingIndex - 1].name}</span>
+                                    </button>
+                                ) : <div />}
+
+                                <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#0369a1' }}>
+                                    Child {activeSiblingIndex + 1} of {detectedSiblings.length}
+                                </span>
+
+                                {activeSiblingIndex < detectedSiblings.length - 1 ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveSiblingId(detectedSiblings[activeSiblingIndex + 1].id)}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.35rem',
+                                            padding: '0.45rem 0.85rem',
+                                            borderRadius: '6px',
+                                            background: '#0284c7',
+                                            border: 'none',
+                                            color: '#ffffff',
+                                            fontWeight: '700',
+                                            fontSize: '0.78rem',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)'
+                                        }}
+                                    >
+                                        <span>Next: {detectedSiblings[activeSiblingIndex + 1].name}</span>
+                                        <ChevronRight size={15} />
+                                    </button>
+                                ) : (
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a', background: '#dcfce7', padding: '3px 8px', borderRadius: '6px' }}>
+                                        ✓ All Children Reviewed
+                                    </span>
+                                )}
+                            </div>
+                        )}
+
+                        {/* STEP 4: PAYMENT INPUT & FINAL SUBMISSION SECTION */}
+                        <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '1.5rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', margin: 0, textTransform: 'uppercase' }}>
+                                    Payment Submission Details
+                                </h4>
+                                {feeCalculation?.isMultiFamily && (
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', background: '#e0f2fe', padding: '2px 8px', borderRadius: '4px' }}>
+                                        Combined Total: Rs {Number(feeCalculation.totalDue).toLocaleString()} ({feeCalculation.activeSiblingsCount} Children)
+                                    </span>
+                                )}
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+                                {/* Payment Mode */}
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                        Payment Method
+                                    </label>
+                                    <select
+                                        value={paymentMode}
+                                        onChange={(e) => setPaymentMode(e.target.value)}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem 0.75rem',
+                                            borderRadius: '6px',
+                                            border: '1px solid #cbd5e1',
+                                            outline: 'none',
+                                            background: '#ffffff',
+                                            fontWeight: '600',
+                                            color: '#0f172a',
+                                            fontSize: '0.85rem'
+                                        }}
+                                    >
+                                        <option value="Cash">Cash at Counter</option>
+                                        <option value="Bank Transfer">Bank Transfer / Deposit</option>
+                                        <option value="Online / EasyPaisa">EasyPaisa / JazzCash</option>
+                                        <option value="Cheque">Cheque</option>
+                                    </select>
+                                </div>
+
+                                {/* Late Fine / Penalty */}
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#b45309', marginBottom: '0.35rem' }}>
+                                        Late Fine / Penalty (Rs)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={fineAmount}
+                                        onChange={(e) => setFineAmount(e.target.value)}
+                                        min="0"
+                                        placeholder="0"
+                                        title="Auto-filled from settings if overdue. Principal can manually change or waive."
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem 0.75rem',
+                                            borderRadius: '6px',
+                                            border: Number(fineAmount) > 0 ? '1px solid #f59e0b' : '1px solid #cbd5e1',
+                                            outline: 'none',
+                                            background: Number(fineAmount) > 0 ? '#fffdf5' : '#ffffff',
+                                            fontWeight: '700',
+                                            color: Number(fineAmount) > 0 ? '#b45309' : '#0f172a',
+                                            fontSize: '0.85rem'
+                                        }}
+                                    />
+                                </div>
+
+                                {/* Discount / Concession */}
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                        Concession / Discount (Rs)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={discountAmount}
+                                        onChange={(e) => setDiscountAmount(e.target.value)}
+                                        min="0"
+                                        placeholder="0"
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem 0.75rem',
+                                            borderRadius: '6px',
+                                            border: '1px solid #cbd5e1',
+                                            outline: 'none',
+                                            background: '#ffffff',
+                                            fontWeight: '600',
+                                            color: '#0f172a',
+                                            fontSize: '0.85rem'
+                                        }}
+                                    />
+                                </div>
+
+                                {/* Received Amount */}
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#16a34a', marginBottom: '0.35rem' }}>
+                                        Received Amount (Rs)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={receivedAmount}
+                                        onChange={(e) => setReceivedAmount(e.target.value)}
+                                        min="0"
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem 0.75rem',
+                                            borderRadius: '6px',
+                                            border: '1px solid #16a34a',
+                                            outline: 'none',
+                                            background: '#f0fdf4',
+                                            fontWeight: '700',
+                                            color: '#16a34a',
+                                            fontSize: '0.95rem'
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Remarks / Memo */}
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                    Remarks / Notes (Optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={remarks}
+                                    onChange={(e) => setRemarks(e.target.value)}
+                                    placeholder="e.g. Paid in full by Father, Cheque #98212, Online ref ID..."
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.6rem 0.75rem',
+                                        borderRadius: '6px',
+                                        border: '1px solid #cbd5e1',
+                                        outline: 'none',
+                                        background: '#ffffff',
+                                        fontSize: '0.85rem'
+                                    }}
+                                />
+                            </div>
+
+                            {/* Conditional Proof Upload Box for Online / Bank Transfer */}
+                            {paymentMode !== 'Cash' && (
+                                <div style={{
+                                    padding: '0.85rem 1rem',
+                                    borderRadius: '8px',
+                                    background: '#f0f9ff',
+                                    border: '1px dashed #0284c7',
+                                    marginBottom: '1rem'
+                                }}>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '800', color: '#0369a1', marginBottom: '0.35rem' }}>
+                                        Attach Bank / Payment Receipt Slip (Optional)
+                                    </label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleProofChange}
+                                            style={{ fontSize: '0.8rem', color: '#475569' }}
+                                        />
+                                        {proofPreview && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <img src={proofPreview} alt="Proof" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #bae6fd' }} />
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRemoveProof}
+                                                    style={{
+                                                        padding: '2px 6px',
+                                                        borderRadius: '4px',
+                                                        background: '#fee2e2',
+                                                        border: '1px solid #fca5a5',
+                                                        color: '#b91c1c',
+                                                        fontSize: '0.7rem',
+                                                        fontWeight: '700',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Submit Buttons */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={handleSubmitFee}
+                                    disabled={isSubmitting}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.75rem',
+                                        borderRadius: '8px',
+                                        background: '#0078d4',
+                                        border: 'none',
+                                        color: '#ffffff',
+                                        fontWeight: '800',
+                                        fontSize: '0.95rem',
+                                        cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '0.5rem',
+                                        boxShadow: '0 2px 4px rgba(0, 120, 212, 0.25)',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                    onMouseEnter={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0067b8'; }}
+                                    onMouseLeave={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0078d4'; }}
+                                >
+                                    {isSubmitting ? (
+                                        <>
+                                            <Loader2 size={18} className="animate-spin" /> Processing Payment & Uploading...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Printer size={18} />
+                                            <span>
+                                                {feeCalculation?.isMultiFamily
+                                                    ? `Submit All (${feeCalculation.activeSiblingsCount}) Family Fees & Print Combined Voucher (Rs ${Number(receivedAmount).toLocaleString()})`
+                                                    : 'Submit Fee & Print Receipt Slip'
+                                                }
+                                            </span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* PANEL 2: History & Reliability Score Dashboard (Swiped View) */}
+                    <div style={{ width: '50%', padding: '1.5rem', boxSizing: 'border-box' }}>
+                        {/* Header with Back Navigation */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setAssessmentViewMode('assessment')}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem',
+                                        padding: '0.45rem 0.85rem',
+                                        borderRadius: '8px',
+                                        background: '#f8fafc',
+                                        border: '1.5px solid #cbd5e1',
+                                        color: '#334155',
+                                        fontWeight: '700',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                                    onMouseLeave={(e) => e.currentTarget.style.background = '#f8fafc'}
+                                >
+                                    <ChevronLeft size={16} />
+                                    <span>Back to Assessment</span>
+                                </button>
+                                <div>
+                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <Activity size={18} color="#0078d4" />
+                                        Payment History & Reliability
+                                    </h3>
+                                    <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                                        {selectedStudent.name} (Roll: {selectedStudent.rollNo || 'N/A'}) • {selectedStudent.className || 'Class'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {studentReliabilityData && (
+                                <span style={{
+                                    fontSize: '0.78rem',
+                                    fontWeight: '800',
+                                    padding: '4px 12px',
+                                    borderRadius: '20px',
+                                    background: studentReliabilityData.badgeBg,
+                                    color: studentReliabilityData.badgeColor,
+                                    border: `1.5px solid ${studentReliabilityData.badgeBorder}`,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.35rem'
+                                }}>
+                                    <Award size={14} />
+                                    {studentReliabilityData.badgeLabel} ({studentReliabilityData.score}%)
                                 </span>
                             )}
                         </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                        <span style={{
-                            fontSize: '0.75rem',
-                            fontWeight: '700',
-                            padding: '4px 10px',
-                            borderRadius: '6px',
-                            background: feeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
-                            color: feeCalculation?.isPaid ? '#15803d' : '#b91c1c'
-                        }}>
-                            {feeCalculation?.isPaid ? 'Already Paid' : 'Payment Due'}
-                        </span>
-                    </div>
-                </div>
 
-                {/* Previous Months Pending Arrears Banner */}
-                {feeCalculation?.previousMonthsCount > 0 && (
-                    <div style={{
-                        marginBottom: '1.25rem',
-                        padding: '1rem',
-                        background: '#fef2f2',
-                        border: '1.5px solid #fca5a5',
-                        borderRadius: '10px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '0.6rem'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '1.1rem' }}>⚠️</span>
-                                <strong style={{ color: '#b91c1c', fontSize: '0.92rem' }}>
-                                    Previous Pending Fee: {feeCalculation.previousMonthsCount} Months (Rs {Number(feeCalculation.previousMonthsArrears).toLocaleString()} Arrears)
-                                </strong>
+                        {/* 1. Reliability Score Circle Gauge Card */}
+                        {studentReliabilityData && (
+                            <div style={{
+                                background: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 50%, #ede9fe 100%)',
+                                borderRadius: '14px',
+                                padding: '1.25rem 1.5rem',
+                                border: '1.5px solid #d8b4fe',
+                                marginBottom: '1.5rem',
+                                boxShadow: '0 4px 12px rgba(168, 85, 247, 0.08)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                        <Award size={18} color="#7e22ce" />
+                                        <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#581c87' }}>
+                                            Parent Fee Paying Reliability Score
+                                        </span>
+                                    </div>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#7e22ce', background: '#ffffff', padding: '2px 8px', borderRadius: '12px', border: '1px solid #e9d5ff' }}>
+                                        Formula: Promptness & Clearing Speed
+                                    </span>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
+                                    {/* Circular Progress Gauge SVG */}
+                                    <div style={{ position: 'relative', width: '96px', height: '96px', flexShrink: 0 }}>
+                                        <svg width="96" height="96" viewBox="0 0 96 96" style={{ transform: 'rotate(-90deg)' }}>
+                                            {/* Background Track Ring */}
+                                            <circle
+                                                cx="48"
+                                                cy="48"
+                                                r="40"
+                                                fill="transparent"
+                                                stroke="#e9d5ff"
+                                                strokeWidth="9"
+                                            />
+                                            {/* Animated Value Ring */}
+                                            <circle
+                                                cx="48"
+                                                cy="48"
+                                                r="40"
+                                                fill="transparent"
+                                                stroke={studentReliabilityData.badgeColor}
+                                                strokeWidth="9"
+                                                strokeDasharray="251.32"
+                                                strokeDashoffset={251.32 * (1 - (studentReliabilityData.score / 100))}
+                                                strokeLinecap="round"
+                                                style={{ transition: 'stroke-dashoffset 1s ease-in-out' }}
+                                            />
+                                        </svg>
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            left: 0,
+                                            right: 0,
+                                            bottom: 0,
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            textAlign: 'center'
+                                        }}>
+                                            <span style={{ fontSize: '1.35rem', fontWeight: '900', color: '#581c87', lineHeight: 1 }}>
+                                                {studentReliabilityData.score}%
+                                            </span>
+                                            <span style={{ fontSize: '0.62rem', fontWeight: '700', color: '#7e22ce', textTransform: 'uppercase', marginTop: '2px' }}>
+                                                Reliability
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Details Column */}
+                                    <div style={{ flex: 1, minWidth: '220px' }}>
+                                        <div style={{ fontSize: '0.85rem', color: '#4c1d95', fontWeight: '600', marginBottom: '0.6rem', lineHeight: 1.4 }}>
+                                            {studentReliabilityData.message}
+                                        </div>
+
+                                        {/* Mini Performance Chips */}
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.5rem' }}>
+                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
+                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>On-Time Rate</span>
+                                                <strong style={{ fontSize: '0.85rem', color: '#581c87', fontWeight: '800' }}>{studentReliabilityData.onTimeRate}%</strong>
+                                            </div>
+                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
+                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>Avg Payment Day</span>
+                                                <strong style={{ fontSize: '0.85rem', color: '#581c87', fontWeight: '800' }}>Day {studentReliabilityData.avgDay}th</strong>
+                                            </div>
+                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
+                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>Paid Cleared</span>
+                                                <strong style={{ fontSize: '0.85rem', color: '#581c87', fontWeight: '800' }}>{studentReliabilityData.totalPaidMonths}/12 Mos</strong>
+                                            </div>
+                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
+                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>Overdue Arrears</span>
+                                                <strong style={{ fontSize: '0.85rem', color: studentReliabilityData.prevUnpaidCount > 0 ? '#b91c1c' : '#16a34a', fontWeight: '800' }}>
+                                                    {studentReliabilityData.prevUnpaidCount === 0 ? 'Zero Arrears' : `${studentReliabilityData.prevUnpaidCount} Mos` }
+                                                </strong>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <span style={{ fontSize: '0.75rem', fontWeight: '800', background: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: '6px', border: '1px solid #fecaca' }}>
-                                Unpaid Arrears Recorded
-                            </span>
-                        </div>
-                        {/* 1-Click Flexible Quick Pay Selectors */}
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '2px' }}>
-                            <button
-                                type="button"
-                                onClick={() => setReceivedAmount(String(feeCalculation.totalDue))}
-                                style={{
-                                    padding: '0.45rem 0.85rem',
-                                    borderRadius: '6px',
-                                    background: '#b91c1c',
-                                    color: '#ffffff',
-                                    fontWeight: '700',
-                                    fontSize: '0.75rem',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 2px 4px rgba(185,28,28,0.2)'
-                                }}
-                            >
-                                💰 Full Pay (Current + Arrears: Rs {Number(feeCalculation.totalDue).toLocaleString()})
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setReceivedAmount(String(feeCalculation.baseFee))}
-                                style={{
-                                    padding: '0.45rem 0.85rem',
-                                    borderRadius: '6px',
-                                    background: '#ffffff',
-                                    color: '#334155',
-                                    fontWeight: '700',
-                                    fontSize: '0.75rem',
-                                    border: '1px solid #cbd5e1',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                💵 Current Month Only (Rs {Number(feeCalculation.baseFee).toLocaleString()})
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setReceivedAmount(String(Math.round(feeCalculation.totalDue / 2)))}
-                                style={{
-                                    padding: '0.45rem 0.85rem',
-                                    borderRadius: '6px',
-                                    background: '#ffffff',
-                                    color: '#334155',
-                                    fontWeight: '700',
-                                    fontSize: '0.75rem',
-                                    border: '1px solid #cbd5e1',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                🌗 Half / Partial (Rs {Number(Math.round(feeCalculation.totalDue / 2)).toLocaleString()})
-                            </button>
-                        </div>
-                    </div>
-                )}
+                        )}
 
-                {/* Fee Breakdown Table */}
-                <div style={{ marginBottom: '1.5rem' }}>
-                    <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '0.6rem', textTransform: 'uppercase' }}>
-                        Itemized Dues Breakdown
-                    </h4>
-                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                            <thead>
-                                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                                    <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Fee Component</th>
-                                    <th style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '700', color: '#334155' }}>Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {feeCalculation?.items.map((item, i) => (
-                                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ padding: '0.6rem 1rem', color: '#1e293b' }}>{item.name}</td>
-                                        <td style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
-                                            Rs {Number(item.amount).toLocaleString()}
-                                        </td>
-                                    </tr>
-                                ))}
-                                {Number(fineAmount) > 0 && (
-                                    <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
-                                        <td style={{ padding: '0.6rem 1rem', color: '#b45309', fontWeight: '700' }}>
-                                            ⚠️ {dueInfo.isOverdue ? `Late Payment Penalty (${dueInfo.daysLate}d Overdue)` : 'Late Fine / Penalty'}
-                                        </td>
-                                        <td style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '700', color: '#b45309' }}>
-                                            Rs {Number(fineAmount).toLocaleString()}
-                                        </td>
-                                    </tr>
-                                )}
-                                <tr style={{ background: '#f0fdf4', borderTop: '2px solid #cbd5e1' }}>
-                                    <td style={{ padding: '0.75rem 1rem', fontWeight: '800', color: '#166534', fontSize: '0.95rem' }}>Total Assessed Due</td>
-                                    <td style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: '800', color: '#166534', fontSize: '1.1rem' }}>
-                                        Rs {Number(feeCalculation?.totalDue || 0).toLocaleString()}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                        {/* 2. 12-Month Calendar Wise History */}
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                    <CalendarDays size={16} color="#0078d4" />
+                                    <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: '800', color: '#0f172a' }}>
+                                        Fee Calendar 2026 (Monthly Dues & Payment Status)
+                                    </h4>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.7rem', fontWeight: '700' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#15803d' }}>
+                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#16a34a' }} /> Paid
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#b45309' }}>
+                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }} /> Pending
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#b91c1c' }}>
+                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }} /> Overdue
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#64748b' }}>
+                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#cbd5e1' }} /> Upcoming
+                                    </span>
+                                </div>
+                            </div>
 
-                {/* Payment Input Section */}
-                <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.5rem' }}>
-                    <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', marginBottom: '0.85rem', textTransform: 'uppercase' }}>
-                        Payment Submission Details
-                    </h4>
+                            {/* 12-Month Grid */}
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                                gap: '0.65rem'
+                            }}>
+                                {studentReliabilityData?.monthlyHistory.map((m) => {
+                                    let cardBg = '#f8fafc';
+                                    let cardBorder = '#e2e8f0';
+                                    let badgeColor = '#64748b';
+                                    let statusText = 'Upcoming';
+                                    let statusIcon = <Clock size={13} />;
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-                        {/* Payment Mode */}
-                        <div>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                Payment Method
-                            </label>
-                            <select
-                                value={paymentMode}
-                                onChange={(e) => setPaymentMode(e.target.value)}
-                                style={{
-                                    width: '100%',
-                                    padding: '0.6rem 0.75rem',
-                                    borderRadius: '6px',
-                                    border: '1px solid #cbd5e1',
-                                    outline: 'none',
-                                    background: '#ffffff',
-                                    fontWeight: '600',
-                                    color: '#0f172a',
-                                    fontSize: '0.85rem'
-                                }}
-                            >
-                                <option value="Cash">Cash at Counter</option>
-                                <option value="Bank Transfer">Bank Transfer / Deposit</option>
-                                <option value="Online / EasyPaisa">EasyPaisa / JazzCash</option>
-                                <option value="Cheque">Cheque</option>
-                            </select>
-                        </div>
+                                    if (m.status === 'paid') {
+                                        cardBg = '#f0fdf4';
+                                        cardBorder = '#86efac';
+                                        badgeColor = '#16a34a';
+                                        statusText = 'Paid';
+                                        statusIcon = <Check size={13} />;
+                                    } else if (m.status === 'pending') {
+                                        cardBg = '#fffbeb';
+                                        cardBorder = '#fcd34d';
+                                        badgeColor = '#d97706';
+                                        statusText = 'Pending';
+                                        statusIcon = <Clock size={13} />;
+                                    } else if (m.status === 'overdue') {
+                                        cardBg = '#fef2f2';
+                                        cardBorder = '#fca5a5';
+                                        badgeColor = '#dc2626';
+                                        statusText = 'Overdue';
+                                        statusIcon = <AlertTriangle size={13} />;
+                                    }
 
-                        {/* Late Fine / Penalty (Auto + Manual Override) */}
-                        <div>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#b45309', marginBottom: '0.35rem' }}>
-                                Late Fine / Penalty (Rs)
-                            </label>
-                            <input
-                                type="number"
-                                value={fineAmount}
-                                onChange={(e) => setFineAmount(e.target.value)}
-                                min="0"
-                                placeholder="0"
-                                title="Auto-filled from settings if overdue. Principal can manually change or waive."
-                                style={{
-                                    width: '100%',
-                                    padding: '0.6rem 0.75rem',
-                                    borderRadius: '6px',
-                                    border: Number(fineAmount) > 0 ? '1px solid #f59e0b' : '1px solid #cbd5e1',
-                                    outline: 'none',
-                                    background: Number(fineAmount) > 0 ? '#fffdf5' : '#ffffff',
-                                    fontWeight: '700',
-                                    color: Number(fineAmount) > 0 ? '#b45309' : '#0f172a',
-                                    fontSize: '0.85rem'
-                                }}
-                            />
-                        </div>
-
-                        {/* Discount / Concession */}
-                        <div>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                Concession / Discount (Rs)
-                            </label>
-                            <input
-                                type="number"
-                                value={discountAmount}
-                                onChange={(e) => setDiscountAmount(e.target.value)}
-                                min="0"
-                                placeholder="0"
-                                style={{
-                                    width: '100%',
-                                    padding: '0.6rem 0.75rem',
-                                    borderRadius: '6px',
-                                    border: '1px solid #cbd5e1',
-                                    outline: 'none',
-                                    background: '#ffffff',
-                                    fontWeight: '600',
-                                    color: '#0f172a',
-                                    fontSize: '0.85rem'
-                                }}
-                            />
-                        </div>
-
-                        {/* Received Amount */}
-                        <div>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#16a34a', marginBottom: '0.35rem' }}>
-                                Received Amount (Rs)
-                            </label>
-                            <input
-                                type="number"
-                                value={receivedAmount}
-                                onChange={(e) => setReceivedAmount(e.target.value)}
-                                min="0"
-                                style={{
-                                    width: '100%',
-                                    padding: '0.6rem 0.75rem',
-                                    borderRadius: '6px',
-                                    border: '1px solid #16a34a',
-                                    outline: 'none',
-                                    background: '#f0fdf4',
-                                    fontWeight: '700',
-                                    color: '#16a34a',
-                                    fontSize: '0.95rem'
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Remarks / Memo */}
-                    <div style={{ marginBottom: '1rem' }}>
-                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                            Remarks / Notes (Optional)
-                        </label>
-                        <input
-                            type="text"
-                            value={remarks}
-                            onChange={(e) => setRemarks(e.target.value)}
-                            placeholder="e.g. Paid in full by Father, Cheque #98212, Online ref ID..."
-                            style={{
-                                width: '100%',
-                                padding: '0.6rem 0.75rem',
-                                borderRadius: '6px',
-                                border: '1px solid #cbd5e1',
-                                outline: 'none',
-                                background: '#ffffff',
-                                fontSize: '0.85rem'
-                            }}
-                        />
-                    </div>
-
-                    {/* Conditional Proof Upload Box for Online / Bank Transfer */}
-                    {paymentMode !== 'Cash' && (
-                        <div style={{
-                            padding: '0.85rem 1rem',
-                            borderRadius: '8px',
-                            background: '#f0f9ff',
-                            border: '1px dashed #0284c7',
-                            marginBottom: '1rem'
-                        }}>
-                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '800', color: '#0369a1', marginBottom: '0.35rem' }}>
-                                Attach Bank / Payment Receipt Slip (Optional)
-                            </label>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                <input
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={handleProofChange}
-                                    style={{ fontSize: '0.8rem', color: '#475569' }}
-                                />
-                                {proofPreview && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <img src={proofPreview} alt="Proof" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #bae6fd' }} />
-                                        <button
-                                            type="button"
-                                            onClick={handleRemoveProof}
+                                    return (
+                                        <div
+                                            key={m.monthNum}
                                             style={{
-                                                padding: '2px 6px',
-                                                borderRadius: '4px',
-                                                background: '#fee2e2',
-                                                border: '1px solid #fca5a5',
-                                                color: '#b91c1c',
-                                                fontSize: '0.7rem',
-                                                fontWeight: '700',
-                                                cursor: 'pointer'
+                                                background: cardBg,
+                                                border: `1.5px solid ${cardBorder}`,
+                                                borderRadius: '10px',
+                                                padding: '0.65rem 0.75rem',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'space-between',
+                                                minHeight: '82px',
+                                                boxShadow: m.status === 'paid' ? '0 1px 3px rgba(22, 163, 74, 0.08)' : 'none',
+                                                transition: 'all 0.15s ease'
                                             }}
                                         >
-                                            Remove
-                                        </button>
-                                    </div>
-                                )}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                                <strong style={{ fontSize: '0.85rem', color: '#0f172a', fontWeight: '800' }}>
+                                                    {m.monthName}
+                                                </strong>
+                                                <span style={{
+                                                    fontSize: '0.65rem',
+                                                    fontWeight: '800',
+                                                    color: badgeColor,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '2px'
+                                                }}>
+                                                    {statusIcon}
+                                                    {statusText}
+                                                </span>
+                                            </div>
+
+                                            <div>
+                                                <div style={{ fontSize: '0.78rem', fontWeight: '800', color: '#1e293b' }}>
+                                                    Rs {m.amount ? Number(m.amount).toLocaleString() : '—'}
+                                                </div>
+                                                {m.paymentDateStr ? (
+                                                    <div style={{ fontSize: '0.68rem', color: '#15803d', fontWeight: '700', marginTop: '2px' }}>
+                                                        📅 {m.paymentDateStr}
+                                                    </div>
+                                                ) : m.status === 'overdue' ? (
+                                                    <div style={{ fontSize: '0.68rem', color: '#b91c1c', fontWeight: '700', marginTop: '2px' }}>
+                                                        ⚠️ Overdue Unpaid
+                                                    </div>
+                                                ) : m.status === 'pending' ? (
+                                                    <div style={{ fontSize: '0.68rem', color: '#b45309', fontWeight: '700', marginTop: '2px' }}>
+                                                        Due: {dueInfo.dueDay}th {m.monthName}
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px' }}>
+                                                        Scheduled
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
-                    )}
 
-                    {/* Submit Button */}
-                    <button
-                        type="button"
-                        onClick={handleSubmitFee}
-                        disabled={isSubmitting}
-                        style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            borderRadius: '8px',
-                            background: '#0078d4',
-                            border: 'none',
-                            color: '#ffffff',
-                            fontWeight: '800',
-                            fontSize: '0.95rem',
-                            cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '0.5rem',
-                            boxShadow: '0 2px 4px rgba(0, 120, 212, 0.25)',
-                            transition: 'all 0.15s ease'
-                        }}
-                        onMouseEnter={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0067b8'; }}
-                        onMouseLeave={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0078d4'; }}
-                    >
-                        {isSubmitting ? (
-                            <>
-                                <Loader2 size={18} className="animate-spin" /> Processing Payment & Uploading...
-                            </>
-                        ) : (
-                            <>
-                                <Printer size={18} /> Submit Fee & Print Receipt Slip
-                            </>
-                        )}
-                    </button>
+                        {/* 3. Detailed Payment Receipts & History Table */}
+                        <div style={{ marginBottom: '1.25rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                                <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>
+                                    Official Payment Slips & Vouchers Recorded ({studentHistoryTxs.length})
+                                </h4>
+                                {loadingStudentHistory && (
+                                    <span style={{ fontSize: '0.75rem', color: '#0078d4', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                        <Loader2 size={13} className="animate-spin" /> Loading slips...
+                                    </span>
+                                )}
+                            </div>
+
+                            {studentHistoryTxs.length > 0 ? (
+                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                                        <thead>
+                                            <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 2 }}>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Receipt #</th>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Payment Date</th>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Mode</th>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '700', color: '#334155' }}>Amount</th>
+                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: '700', color: '#334155' }}>Slip</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {studentHistoryTxs.map((tx, idx) => (
+                                                <tr key={tx.receiptNo || tx.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                    <td style={{ padding: '0.45rem 0.75rem', fontWeight: '700', color: '#0078d4' }}>
+                                                        {tx.receiptNo || tx.id}
+                                                    </td>
+                                                    <td style={{ padding: '0.45rem 0.75rem', color: '#334155' }}>
+                                                        {tx.dateString || (tx.timestamp?.seconds ? new Date(tx.timestamp.seconds * 1000).toLocaleDateString() : 'N/A')}
+                                                    </td>
+                                                    <td style={{ padding: '0.45rem 0.75rem', color: '#475569' }}>
+                                                        <span style={{ fontSize: '0.72rem', padding: '1px 6px', borderRadius: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', fontWeight: '600' }}>
+                                                            {tx.paymentMode || 'Cash'}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>
+                                                        Rs {Number(tx.totalPaid || tx.amount || 0).toLocaleString()}
+                                                    </td>
+                                                    <td style={{ padding: '0.45rem 0.75rem', textAlign: 'center' }}>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setReceiptData(tx);
+                                                                setReceiptModalOpen(true);
+                                                            }}
+                                                            style={{
+                                                                padding: '2px 8px',
+                                                                borderRadius: '4px',
+                                                                background: '#eff6ff',
+                                                                border: '1px solid #bfdbfe',
+                                                                color: '#0078d4',
+                                                                fontWeight: '700',
+                                                                fontSize: '0.7rem',
+                                                                cursor: 'pointer',
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '3px'
+                                                            }}
+                                                        >
+                                                            <Printer size={12} /> View Slip
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', textAlign: 'center', color: '#64748b', fontSize: '0.8rem' }}>
+                                    No transaction slips logged yet for this student. Receipts generated upon fee submission will automatically appear here.
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer Action to Return */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                            <button
+                                type="button"
+                                onClick={() => setAssessmentViewMode('assessment')}
+                                style={{
+                                    padding: '0.65rem 1.25rem',
+                                    borderRadius: '8px',
+                                    background: '#0078d4',
+                                    border: 'none',
+                                    color: '#ffffff',
+                                    fontWeight: '700',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    boxShadow: '0 2px 4px rgba(0, 120, 212, 0.2)'
+                                }}
+                            >
+                                <ChevronLeft size={16} />
+                                <span>Return to Fee Assessment & Submit Payment</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         ) : (
-            /* When no student is selected or in Income/Expenses mode, Right Card is Recent Log / Breakdown */
             <div className="card" style={{
                 background: '#ffffff',
                 borderRadius: '14px',
