@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Image as ImageIcon, Send, MoreHorizontal, Trash2,
-    Shield, Clock, Loader2, Calendar, ThumbsUp, MessageCircle, Users
+    Shield, Clock, Loader2, Calendar, ThumbsUp, MessageCircle, Users, X, Sparkles, ChevronUp, Minimize2
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import CommentsSection from '../components/CommentsSection';
 import LikersModal from '../components/LikersModal';
+import TeachersFeedSidebar from '../components/TeachersFeedSidebar';
+import PrincipalFeedHub from '../components/PrincipalFeedHub';
 import {
     collection, addDoc, query, orderBy, onSnapshot,
     deleteDoc, doc, serverTimestamp, getDoc, updateDoc, arrayUnion, arrayRemove, increment, deleteField, limit
@@ -166,6 +168,7 @@ const NewsFeed = () => {
     const [selectedBackgroundIndex, setSelectedBackgroundIndex] = useState(0);
     const [likersModalData, setLikersModalData] = useState(null);
     const [postLimit, setPostLimit] = useState(20); // Scalable limit
+    const [isCreatePostExpanded, setIsCreatePostExpanded] = useState(false);
 
     // Audience State
     const [audience, setAudience] = useState('all'); // 'all' or 'class'
@@ -173,6 +176,43 @@ const NewsFeed = () => {
     const [classes, setClasses] = useState([]);
     const [currentUserId, setCurrentUserId] = useState(null); // To track likes
     const [schoolId, setSchoolId] = useState(null);
+    const [selectedTeacherFilter, setSelectedTeacherFilter] = useState(null);
+
+    // Filter posts if a teacher is selected from the sidebar
+    const displayedPosts = useMemo(() => {
+        if (!selectedTeacherFilter) return posts;
+        return posts.filter(post => {
+            const teacherId = selectedTeacherFilter.id;
+            const teacherName = (selectedTeacherFilter.name || '').toLowerCase().trim();
+            const postAuthorName = (post.authorName || '').toLowerCase().trim();
+
+            const matchId = (post.authorId && post.authorId === teacherId) || 
+                            (post.teacherId && post.teacherId === teacherId);
+            const matchName = postAuthorName && teacherName && postAuthorName === teacherName;
+
+            return matchId || matchName;
+        });
+    }, [posts, selectedTeacherFilter]);
+
+    // Jump / Scroll smoothly to a specific post when clicked from Principal Hub
+    const handleNavigateToPost = (postId) => {
+        if (selectedTeacherFilter) {
+            setSelectedTeacherFilter(null);
+        }
+        setTimeout(() => {
+            const el = document.getElementById(`post-${postId}`);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el.style.transition = 'box-shadow 0.4s ease, transform 0.4s ease';
+                el.style.boxShadow = '0 0 0 3px #6366f1, 0 12px 28px rgba(99, 102, 241, 0.3)';
+                el.style.transform = 'scale(1.01)';
+                setTimeout(() => {
+                    el.style.boxShadow = '';
+                    el.style.transform = '';
+                }, 2500);
+            }
+        }, 120);
+    };
 
     // 1. Resolve School ID & User ID
     useEffect(() => {
@@ -418,7 +458,17 @@ const NewsFeed = () => {
     };
 
     return (
-        <div style={{ margin: '-2.5rem', padding: '2.5rem', minHeight: 'calc(100vh - 2.5rem)', position: 'relative', animation: 'fadeIn 0.5s ease-out' }}>
+        <div style={{
+            margin: '0 -2.5rem 0 -2.5rem',
+            padding: '0 1.5rem 0.5rem 1.5rem',
+            height: 'calc(100vh - 5rem)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            position: 'relative',
+            animation: 'fadeIn 0.5s ease-out',
+            boxSizing: 'border-box'
+        }}>
             
             {/* Blurred Background Image */}
             <div style={{
@@ -440,7 +490,7 @@ const NewsFeed = () => {
             }} />
 
             {/* Content Wrapper */}
-            <div style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ position: 'relative', zIndex: 1, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
             {likersModalData && (
                 <LikersModal 
@@ -450,237 +500,418 @@ const NewsFeed = () => {
                 />
             )}
 
+            {/* Top Header - Fully Visible & Crisp */}
             <div className="card" style={{
                 background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
                 color: 'white',
                 border: 'none',
-                borderRadius: '0', 
-                margin: '-2.5rem -2.5rem 2rem -2.5rem',
-                padding: '2rem',
-                position: 'sticky',
-                top: 0,
-                zIndex: 50
+                borderRadius: '16px', 
+                margin: '0 0 0.75rem 0',
+                padding: '0.85rem 1.75rem',
+                flexShrink: 0,
+                zIndex: 50,
+                boxShadow: '0 4px 15px rgba(79, 70, 229, 0.2)'
             }}>
-                <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     <div style={{
-                        width: '60px', height: '60px', borderRadius: '50%', background: 'white',
-                        padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                        width: '48px', height: '48px', borderRadius: '50%', background: 'white',
+                        padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                     }}>
                         {schoolProfile.image ? (
                             <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
                         ) : (
-                            <Shield size={32} color="var(--primary)" />
+                            <Shield size={26} color="var(--primary)" />
                         )}
                     </div>
                     <div>
                         <h1 style={{ margin: 0, display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                             <span style={{ 
                                 fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif', 
-                                fontSize: '1.8rem',
+                                fontSize: '1.6rem',
                                 fontWeight: '800', 
-                                letterSpacing: '-1px',
+                                letterSpacing: '-0.5px',
                                 color: '#ffffff'
-                            }}>Schoolbook</span>
+                            }}>School Media</span>
                             <span style={{ 
-                                fontSize: '1.4rem', 
+                                fontSize: '1.25rem', 
                                 fontWeight: '500', 
                                 opacity: 0.9 
                             }}>Newsfeed</span>
                         </h1>
-                        <p style={{ opacity: 0.9, fontSize: '0.9rem', marginTop: '2px' }}>Updates from the Principal's Desk</p>
+                        <p style={{ opacity: 0.9, fontSize: '0.82rem', marginTop: '1px', marginBottom: 0 }}>Updates from the Principal's Desk</p>
                     </div>
                 </div>
             </div>
 
-            {/* Main Content - Centered */}
-            <div style={{ maxWidth: '800px', margin: '0 auto', padding: '0 1rem' }}>
+            {/* Main 3-Column Layout Container - Reaching Screen Bottom */}
+            <div className="newsfeed-grid-container" style={{
+                width: '100%',
+                flex: 1,
+                minHeight: 0,
+                padding: '0 0.5rem',
+                paddingBottom: '0.25rem',
+                display: 'grid',
+                gridTemplateColumns: '300px minmax(0, 1fr) 360px',
+                gap: '1.5rem',
+                alignItems: 'stretch',
+                boxSizing: 'border-box',
+                overflow: 'hidden'
+            }}>
 
-                {/* Create Post */}
-                <div className="card" style={{ marginBottom: '2rem', padding: '1rem' }}>
-                    <div style={{
-                        display: 'flex', gap: '1rem', marginBottom: '1rem',
-                        background: selectedBackgroundIndex > 0 ? `linear-gradient(135deg, ${BACKGROUND_GRADIENTS[selectedBackgroundIndex].colors.join(', ')})` : 'none',
-                        minHeight: selectedBackgroundIndex > 0 ? '300px' : 'auto',
-                        padding: selectedBackgroundIndex > 0 ? '1rem' : '0',
-                        borderRadius: selectedBackgroundIndex > 0 ? '12px' : '0',
-                        alignItems: selectedBackgroundIndex > 0 ? 'center' : 'flex-start',
-                        position: 'relative'
-                    }}>
-                        {selectedBackgroundIndex === 0 && (
-                            <div style={{
-                                width: '40px', height: '40px', borderRadius: '50%', background: '#f1f5f9',
-                                overflow: 'hidden', flexShrink: 0
-                            }}>
-                                {schoolProfile.image ? (
-                                    <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                ) : (
-                                    <Shield size={24} color="#64748b" style={{ margin: '8px' }} />
-                                )}
-                            </div>
-                        )}
-                        <textarea
-                            value={postText}
-                            onChange={(e) => {
-                                const newText = e.target.value;
-                                setPostText(newText);
-                                if (newText.length > 130 && selectedBackgroundIndex > 0) {
-                                    setSelectedBackgroundIndex(0);
-                                }
-                            }}
-                            placeholder={`What's on your mind, ${schoolProfile.name}?`}
-                            style={{
-                                width: '100%', border: 'none', outline: 'none',
-                                fontSize: selectedBackgroundIndex > 0 ? (postText.length < 85 ? '28px' : '22px') : '1rem',
-                                color: selectedBackgroundIndex > 0 ? '#ffffff' : 'inherit',
-                                textAlign: selectedBackgroundIndex > 0 ? 'center' : 'left',
-                                fontWeight: selectedBackgroundIndex > 0 ? 'bold' : 'normal',
-                                background: 'transparent',
-                                resize: 'none', minHeight: selectedBackgroundIndex > 0 ? 'auto' : '80px',
-                                fontFamily: 'inherit'
-                            }}
-                        />
-                    </div>
-
-                    {/* Background Selection Row */}
-                    {mediaPreviews.length === 0 && (
-                        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '10px' }}>
-                            {BACKGROUND_GRADIENTS.map((bg) => (
-                                <div
-                                    key={bg.id}
-                                    onClick={() => {
-                                        if (bg.id > 0 && postText.length > 130) {
-                                            alert("Backgrounds can only be used for posts under 130 characters.");
-                                            return;
-                                        }
-                                        setSelectedBackgroundIndex(bg.id);
-                                    }}
-                                    style={{
-                                        width: '36px', height: '36px', borderRadius: '50%',
-                                        background: bg.id === 0 ? '#f1f5f9' : `linear-gradient(135deg, ${bg.colors.join(', ')})`,
-                                        border: selectedBackgroundIndex === bg.id ? '2px solid var(--primary)' : '2px solid transparent',
-                                        cursor: 'pointer', flexShrink: 0,
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                    }}
-                                >
-                                    {bg.id === 0 && <div style={{width: 16, height: 2, background: '#cbd5e1', transform: 'rotate(-45deg)'}}></div>}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {mediaPreviews.length > 0 && (
-                        <div style={{ marginBottom: '1rem', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                            {mediaPreviews.map((preview, idx) => (
-                                <div key={idx} style={{ position: 'relative', width: '100px', height: '100px' }}>
-                                    {preview.type === 'video' ? (
-                                        <div style={{ width: '100%', height: '100%', background: '#000', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                                        </div>
-                                    ) : (
-                                        <img src={preview.url} alt="Preview" style={{ width: '100%', height: '100%', borderRadius: '8px', objectFit: 'cover' }} />
-                                    )}
-                                    <button
-                                        onClick={() => {
-                                            setPostMedia(prev => prev.filter((_, i) => i !== idx));
-                                            setMediaPreviews(prev => prev.filter((_, i) => i !== idx));
-                                        }}
-                                        style={{
-                                            position: 'absolute', top: '-5px', right: '-5px',
-                                            background: 'rgba(0,0,0,0.6)', color: 'white',
-                                            border: 'none', borderRadius: '50%', width: '20px', height: '20px',
-                                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px'
-                                        }}
-                                    >
-                                        ×
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Audience Selection */}
-                    <div style={{ padding: '0.5rem 0', marginBottom: '1rem', borderTop: '1px solid #f1f5f9' }}>
-                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <Users size={16} /> Audience:
-                            </span>
-
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
-                                <input
-                                    type="radio"
-                                    name="audience"
-                                    value="all"
-                                    checked={audience === 'all'}
-                                    onChange={() => setAudience('all')}
-                                />
-                                All Classes
-                            </label>
-
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
-                                <input
-                                    type="radio"
-                                    name="audience"
-                                    value="class"
-                                    checked={audience === 'class'}
-                                    onChange={() => setAudience('class')}
-                                />
-                                Specific Class
-                            </label>
-
-                            {audience === 'class' && (
-                                <select
-                                    value={selectedClass}
-                                    onChange={(e) => setSelectedClass(e.target.value)}
-                                    style={{
-                                        padding: '0.4rem', borderRadius: '6px', border: '1px solid #e2e8f0',
-                                        fontSize: '0.9rem', outline: 'none', marginLeft: '0.5rem'
-                                    }}
-                                >
-                                    <option value="">Select Class...</option>
-                                    {classes.map(cls => (
-                                        <option key={cls.id} value={cls.id}>{cls.name}</option>
-                                    ))}
-                                </select>
-                            )}
-                        </div>
-                    </div>
-
-                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <label style={{
-                            display: 'flex', alignItems: 'center', gap: '0.5rem',
-                            cursor: 'pointer', color: '#64748b', fontWeight: '600', fontSize: '0.9rem',
-                            padding: '0.5rem 1rem', borderRadius: '8px', transition: 'background 0.2s'
-                        }} className="hover:bg-slate-50">
-                            <ImageIcon size={20} color="#10b981" />
-                            <span>Photo/Video</span>
-                            <input type="file" accept="image/*,video/*" multiple onChange={handleImageChange} style={{ display: 'none' }} />
-                        </label>
-
-                        <button
-                            onClick={handlePost}
-                            disabled={loading || (!postText.trim() && postMedia.length === 0)}
-                            className="btn-primary"
-                            style={{
-                                padding: '0.5rem 1.5rem', borderRadius: '8px',
-                                opacity: (loading || (!postText.trim() && postMedia.length === 0)) ? 0.6 : 1,
-                                display: 'flex', alignItems: 'center', gap: '0.5rem'
-                            }}
-                        >
-                            {loading ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
-                            Post
-                        </button>
-                    </div>
+                {/* Left Column: Teachers Activity Sidebar */}
+                <div className="newsfeed-left-sidebar" style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
+                    <TeachersFeedSidebar
+                        schoolId={schoolId}
+                        posts={posts}
+                        selectedTeacherFilter={selectedTeacherFilter}
+                        onSelectTeacherFilter={setSelectedTeacherFilter}
+                    />
                 </div>
 
-                {/* Posts List */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                    {posts.map(post => {
+                {/* Center Column: Create Post & Feed */}
+                <div className="newsfeed-center-feed" style={{
+                    height: '100%',
+                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden'
+                }}>
+
+                    {/* Fixed Top Section (Create Post & Filter) */}
+                    <div style={{
+                        flexShrink: 0,
+                        marginBottom: '0.75rem',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.5rem'
+                    }}>
+
+                        {/* Active Filter Notification Banner */}
+                        {selectedTeacherFilter && (
+                            <div style={{
+                                padding: '0.65rem 1rem',
+                                borderRadius: '12px',
+                                background: '#eff6ff',
+                                border: '1px solid #bfdbfe',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                boxShadow: '0 2px 8px rgba(59, 130, 246, 0.08)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: '#1e40af', fontWeight: '600' }}>
+                                    <span>Filtering posts by: <strong>{selectedTeacherFilter.name}</strong></span>
+                                    <span style={{ fontSize: '0.72rem', background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '10px', fontWeight: '700' }}>
+                                        {displayedPosts.length} {displayedPosts.length === 1 ? 'post' : 'posts'}
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={() => setSelectedTeacherFilter(null)}
+                                    style={{
+                                        background: '#ffffff',
+                                        border: '1px solid #93c5fd',
+                                        color: '#1d4ed8',
+                                        padding: '3px 8px',
+                                        borderRadius: '6px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 'bold',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '4px'
+                                    }}
+                                >
+                                    <X size={12} /> Show All
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Create Post Card - Animated Compact & Expanded States */}
+                        <div className="card" style={{
+                            margin: 0,
+                            padding: (isCreatePostExpanded || postText || postMedia.length > 0 || selectedBackgroundIndex > 0) ? '1rem' : '0.65rem 1rem',
+                            background: 'var(--bg-surface, #ffffff)',
+                            boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
+                            borderRadius: '16px',
+                            border: '1px solid var(--border-color, #e2e8f0)',
+                            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+                        }}>
+                            {/* 1. COMPACT STATE */}
+                            {(!isCreatePostExpanded && !postText && postMedia.length === 0 && selectedBackgroundIndex === 0) ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%' }}>
+                                    <div style={{
+                                        width: '36px', height: '36px', borderRadius: '50%', background: '#f1f5f9',
+                                        overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                    }}>
+                                        {schoolProfile.image ? (
+                                            <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ) : (
+                                            <Shield size={20} color="#64748b" />
+                                        )}
+                                    </div>
+                                    <div
+                                        onClick={() => setIsCreatePostExpanded(true)}
+                                        style={{
+                                            flex: 1,
+                                            background: '#f8fafc',
+                                            border: '1.5px solid #e2e8f0',
+                                            borderRadius: '24px',
+                                            padding: '0.5rem 1.1rem',
+                                            fontSize: '0.88rem',
+                                            color: '#64748b',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            transition: 'all 0.2s ease'
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                                    >
+                                        <span>What's on your mind, {schoolProfile.name}?</span>
+                                        <Sparkles size={15} color="#6366f1" />
+                                    </div>
+                                    <label
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{
+                                            display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                            cursor: 'pointer', color: '#059669', background: '#ecfdf5',
+                                            fontWeight: '600', fontSize: '0.82rem', padding: '0.5rem 0.85rem',
+                                            borderRadius: '10px', transition: 'all 0.2s ease', flexShrink: 0,
+                                            border: '1px solid #a7f3d0'
+                                        }}
+                                    >
+                                        <ImageIcon size={17} />
+                                        <span>Media</span>
+                                        <input type="file" accept="image/*,video/*" multiple onChange={(e) => { handleImageChange(e); setIsCreatePostExpanded(true); }} style={{ display: 'none' }} />
+                                    </label>
+                                </div>
+                            ) : (
+                                /* 2. EXPANDED STATE */
+                                <div style={{ animation: 'fadeIn 0.25s ease-out' }}>
+                                    {/* Expand Header with Minimize button */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', paddingBottom: '0.4rem', borderBottom: '1px solid #f1f5f9' }}>
+                                        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#334155' }}>
+                                            Create School Post
+                                        </span>
+                                        <button
+                                            onClick={() => setIsCreatePostExpanded(false)}
+                                            style={{
+                                                background: 'transparent',
+                                                border: 'none',
+                                                color: '#64748b',
+                                                fontSize: '0.75rem',
+                                                fontWeight: '600',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '3px',
+                                                padding: '2px 6px',
+                                                borderRadius: '4px'
+                                            }}
+                                        >
+                                            <ChevronUp size={14} /> Minimize
+                                        </button>
+                                    </div>
+
+                                    <div style={{
+                                        display: 'flex', gap: '0.75rem', marginBottom: '0.75rem',
+                                        background: selectedBackgroundIndex > 0 ? `linear-gradient(135deg, ${BACKGROUND_GRADIENTS[selectedBackgroundIndex].colors.join(', ')})` : 'none',
+                                        minHeight: selectedBackgroundIndex > 0 ? '220px' : 'auto',
+                                        padding: selectedBackgroundIndex > 0 ? '1rem' : '0',
+                                        borderRadius: selectedBackgroundIndex > 0 ? '12px' : '0',
+                                        alignItems: selectedBackgroundIndex > 0 ? 'center' : 'flex-start',
+                                        position: 'relative'
+                                    }}>
+                                        {selectedBackgroundIndex === 0 && (
+                                            <div style={{
+                                                width: '36px', height: '36px', borderRadius: '50%', background: '#f1f5f9',
+                                                overflow: 'hidden', flexShrink: 0
+                                            }}>
+                                                {schoolProfile.image ? (
+                                                    <CachedImage src={schoolProfile.image} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                ) : (
+                                                    <Shield size={20} color="#64748b" style={{ margin: '8px' }} />
+                                                )}
+                                            </div>
+                                        )}
+                                        <textarea
+                                            value={postText}
+                                            autoFocus={isCreatePostExpanded}
+                                            onChange={(e) => {
+                                                const newText = e.target.value;
+                                                setPostText(newText);
+                                                if (newText.length > 130 && selectedBackgroundIndex > 0) {
+                                                    setSelectedBackgroundIndex(0);
+                                                }
+                                            }}
+                                            placeholder={`What's on your mind, ${schoolProfile.name}?`}
+                                            style={{
+                                                width: '100%', border: 'none', outline: 'none',
+                                                fontSize: selectedBackgroundIndex > 0 ? (postText.length < 85 ? '24px' : '20px') : '0.92rem',
+                                                color: selectedBackgroundIndex > 0 ? '#ffffff' : 'inherit',
+                                                textAlign: selectedBackgroundIndex > 0 ? 'center' : 'left',
+                                                fontWeight: selectedBackgroundIndex > 0 ? 'bold' : 'normal',
+                                                background: 'transparent',
+                                                resize: 'none', minHeight: selectedBackgroundIndex > 0 ? 'auto' : '65px',
+                                                fontFamily: 'inherit'
+                                            }}
+                                        />
+                                    </div>
+
+                                    {/* Background Selection Row */}
+                                    {mediaPreviews.length === 0 && (
+                                        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '8px', marginBottom: '8px' }}>
+                                            {BACKGROUND_GRADIENTS.map((bg) => (
+                                                <div
+                                                    key={bg.id}
+                                                    onClick={() => {
+                                                        if (bg.id > 0 && postText.length > 130) {
+                                                            alert("Backgrounds can only be used for posts under 130 characters.");
+                                                            return;
+                                                        }
+                                                        setSelectedBackgroundIndex(bg.id);
+                                                    }}
+                                                    style={{
+                                                        width: '30px', height: '30px', borderRadius: '50%',
+                                                        background: bg.id === 0 ? '#f1f5f9' : `linear-gradient(135deg, ${bg.colors.join(', ')})`,
+                                                        border: selectedBackgroundIndex === bg.id ? '2px solid var(--primary)' : '2px solid transparent',
+                                                        cursor: 'pointer', flexShrink: 0,
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                                    }}
+                                                >
+                                                    {bg.id === 0 && <div style={{width: 14, height: 2, background: '#cbd5e1', transform: 'rotate(-45deg)'}}></div>}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {mediaPreviews.length > 0 && (
+                                        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                            {mediaPreviews.map((preview, idx) => (
+                                                <div key={idx} style={{ position: 'relative', width: '80px', height: '80px' }}>
+                                                    {preview.type === 'video' ? (
+                                                        <div style={{ width: '100%', height: '100%', background: '#000', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                                        </div>
+                                                    ) : (
+                                                        <img src={preview.url} alt="Preview" style={{ width: '100%', height: '100%', borderRadius: '8px', objectFit: 'cover' }} />
+                                                    )}
+                                                    <button
+                                                        onClick={() => {
+                                                            setPostMedia(prev => prev.filter((_, i) => i !== idx));
+                                                            setMediaPreviews(prev => prev.filter((_, i) => i !== idx));
+                                                        }}
+                                                        style={{
+                                                            position: 'absolute', top: '-4px', right: '-4px',
+                                                            background: 'rgba(0,0,0,0.6)', color: 'white',
+                                                            border: 'none', borderRadius: '50%', width: '18px', height: '18px',
+                                                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px'
+                                                        }}
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Audience Selection */}
+                                    <div style={{ padding: '0.4rem 0', marginBottom: '0.75rem', borderTop: '1px solid #f1f5f9' }}>
+                                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                            <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                <Users size={15} /> Audience:
+                                            </span>
+
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.82rem' }}>
+                                                <input
+                                                    type="radio"
+                                                    name="audience"
+                                                    value="all"
+                                                    checked={audience === 'all'}
+                                                    onChange={() => setAudience('all')}
+                                                />
+                                                All Classes
+                                            </label>
+
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.82rem' }}>
+                                                <input
+                                                    type="radio"
+                                                    name="audience"
+                                                    value="class"
+                                                    checked={audience === 'class'}
+                                                    onChange={() => setAudience('class')}
+                                                />
+                                                Specific Class
+                                            </label>
+
+                                            {audience === 'class' && (
+                                                <select
+                                                    value={selectedClass}
+                                                    onChange={(e) => setSelectedClass(e.target.value)}
+                                                    style={{
+                                                        padding: '0.3rem 0.5rem', borderRadius: '6px', border: '1px solid #e2e8f0',
+                                                        fontSize: '0.82rem', outline: 'none', marginLeft: '0.25rem'
+                                                    }}
+                                                >
+                                                    <option value="">Select Class...</option>
+                                                    {classes.map(cls => (
+                                                        <option key={cls.id} value={cls.id}>{cls.name}</option>
+                                                    ))}
+                                                </select>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Action Bar */}
+                                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <label style={{
+                                            display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                            cursor: 'pointer', color: '#64748b', fontWeight: '600', fontSize: '0.82rem',
+                                            padding: '0.4rem 0.75rem', borderRadius: '8px', transition: 'background 0.2s'
+                                        }} className="hover:bg-slate-50">
+                                            <ImageIcon size={18} color="#10b981" />
+                                            <span>Photo/Video</span>
+                                            <input type="file" accept="image/*,video/*" multiple onChange={handleImageChange} style={{ display: 'none' }} />
+                                        </label>
+
+                                        <button
+                                            onClick={handlePost}
+                                            disabled={loading || (!postText.trim() && postMedia.length === 0)}
+                                            className="btn-primary"
+                                            style={{
+                                                padding: '0.45rem 1.35rem', borderRadius: '8px',
+                                                opacity: (loading || (!postText.trim() && postMedia.length === 0)) ? 0.6 : 1,
+                                                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                                fontSize: '0.85rem'
+                                            }}
+                                        >
+                                            {loading ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
+                                            Post
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div> {/* End Sticky Create Post Header */}
+
+                {/* Posts List - Internal Smooth Scroll Stream */}
+                <div style={{
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                    paddingRight: '0.4rem',
+                    paddingBottom: '2rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1.5rem'
+                }}>
+                    {displayedPosts.map(post => {
                         const allLikers = [...new Set([
                             ...(post.likes || []),
                             ...Object.keys(post.reactions || {}).filter(k => post.reactions[k] === 'like')
                         ])];
                         return (
-                        <div key={post.id} className="card" style={{ padding: '0', overflow: 'hidden' }}>
+                        <div key={post.id} id={`post-${post.id}`} className="card" style={{ padding: '0', overflow: 'hidden', flexShrink: 0, width: '100%' }}>
                             <div style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                 <div style={{ display: 'flex', gap: '0.75rem' }}>
                                     <div style={{
@@ -846,14 +1077,34 @@ const NewsFeed = () => {
                         </div>
                     )})}
 
-                    {posts.length === 0 && (
-                        <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
-                            <p>No posts yet. Share something with the school!</p>
+                    {displayedPosts.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '3rem 1.5rem', background: '#ffffff', borderRadius: '16px', border: '1px dashed #cbd5e1', flexShrink: 0, width: '100%', boxSizing: 'border-box' }}>
+                            <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.95rem', fontWeight: '500' }}>
+                                {selectedTeacherFilter ? `No posts found for ${selectedTeacherFilter.name}.` : 'No posts yet. Share something with the school!'}
+                            </p>
+                            {selectedTeacherFilter && (
+                                <button
+                                    onClick={() => setSelectedTeacherFilter(null)}
+                                    style={{
+                                        marginTop: '0.75rem',
+                                        background: '#3b82f6',
+                                        color: '#ffffff',
+                                        border: 'none',
+                                        padding: '0.4rem 1rem',
+                                        borderRadius: '8px',
+                                        fontWeight: '600',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Show All Posts
+                                </button>
+                            )}
                         </div>
                     )}
 
-                    {posts.length >= postLimit && (
-                        <div style={{ textAlign: 'center', padding: '1rem', marginTop: '1rem' }}>
+                    {!selectedTeacherFilter && posts.length >= postLimit && (
+                        <div style={{ textAlign: 'center', padding: '1rem', marginTop: '1rem', flexShrink: 0 }}>
                             <button
                                 onClick={() => setPostLimit(prev => prev + 20)}
                                 style={{
@@ -869,7 +1120,20 @@ const NewsFeed = () => {
                     )}
                 </div>
 
-            </div>
+                </div> {/* End Center Feed Column */}
+
+                {/* Right Column: Principal Hub */}
+                <div className="newsfeed-right-hub" style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
+                    <PrincipalFeedHub
+                        schoolId={schoolId}
+                        currentUserId={currentUserId}
+                        schoolProfile={schoolProfile}
+                        posts={posts}
+                        onNavigateToPost={handleNavigateToPost}
+                    />
+                </div>
+
+            </div> {/* End Main 3-Column Layout Container */}
             </div> {/* End Content Wrapper */}
 
 
@@ -877,6 +1141,24 @@ const NewsFeed = () => {
                 @keyframes fadeIn {
                     from { opacity: 0; transform: translateY(10px); }
                     to { opacity: 1; transform: translateY(0); }
+                }
+
+                @media (max-width: 1250px) {
+                    .newsfeed-grid-container {
+                        grid-template-columns: 260px minmax(0, 1fr) !important;
+                    }
+                    .newsfeed-right-hub {
+                        display: none;
+                    }
+                }
+
+                @media (max-width: 900px) {
+                    .newsfeed-grid-container {
+                        grid-template-columns: 1fr !important;
+                    }
+                    .newsfeed-left-sidebar {
+                        display: none;
+                    }
                 }
             `}</style>
         </div >
