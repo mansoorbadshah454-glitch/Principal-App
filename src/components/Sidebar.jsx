@@ -24,8 +24,8 @@ const NAV_GROUPS = [
         label: 'Academics',
         items: [
             { icon: GraduationCap, label: 'Classes & Students', path: '/classes', permission: 'canManageClasses' },
-            { icon: Award, label: 'Exams & Results', path: '/exams', permission: 'canManageExams' },
             { icon: FileCheck, label: 'Paper Generator', path: '/paper-generator', permission: 'canManagePaperGenerator' },
+            { icon: Award, label: 'Exams & Results', path: '/exams', permission: 'canManageExams' },
             { icon: TrendingUp, label: 'Promotions', path: '/promotions', permission: 'canManagePromotions' }
         ]
     },
