@@ -3473,6 +3473,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     // Global Search State
     const [searchQuery, setSearchQuery] = useState('');
     const [allStudents, setAllStudents] = useState([]);
+    const [allParents, setAllParents] = useState([]);
     const [loadingAllStudents, setLoadingAllStudents] = useState(false);
     const [searchResults, setSearchResults] = useState([]);
     const [showSearchDropdown, setShowSearchDropdown] = useState(false);
@@ -4503,6 +4504,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         setIsGeneratingFinancesPDF(false);
     };
 
+    // Fetch all parent accounts to link multiple children from parent account
+    useEffect(() => {
+        if (!schoolId) return;
+        const unsub = onSnapshot(collection(db, `schools/${schoolId}/parents`), (snapshot) => {
+            const pList = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            setAllParents(pList);
+        }, (err) => {
+            console.warn("Parents listener error:", err);
+        });
+        return () => unsub();
+    }, [schoolId]);
+
     // Fetch all students across classes for instant real-time search
     useEffect(() => {
         if (!schoolId || classes.length === 0) return;
@@ -4747,7 +4760,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         return () => unsub();
     }, [schoolId, selectedStudent?.id]);
 
-    // Sibling / Family Detection Algorithm
+    // Sibling / Family Detection Algorithm (Multi-Method: Parent Account Links + Phone + CNIC + Family ID + Name)
     const detectedSiblings = useMemo(() => {
         if (!selectedStudent || allStudents.length === 0) return [];
 
@@ -4755,9 +4768,47 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const fatherCNIC = (selectedStudent.parentDetails?.fatherCNIC || selectedStudent.fatherCNIC || '').replace(/\D/g, '');
         const fatherName = (selectedStudent.parentDetails?.fatherName || selectedStudent.fatherName || '').trim().toLowerCase();
         const familyId = selectedStudent.familyId || selectedStudent.parentDetails?.familyId || null;
+        const studentParentId = selectedStudent.parentId || selectedStudent.parentDetails?.parentId || null;
+
+        // 1. Direct Parent Account Match (from schools/${schoolId}/parents)
+        const parentLinkedStudentIds = new Set();
+        const matchingParent = allParents.find(p => {
+            if (studentParentId && p.id === studentParentId) return true;
+            if (p.linkedStudents && Array.isArray(p.linkedStudents) && p.linkedStudents.some(ls => ls.studentId === selectedStudent.id)) {
+                return true;
+            }
+            const pPhone = (p.phone || p.fatherPhone || '').replace(/\D/g, '');
+            if (fatherPhone && fatherPhone.length >= 7 && pPhone && pPhone.length >= 7 && (pPhone.includes(fatherPhone) || fatherPhone.includes(pPhone))) {
+                return true;
+            }
+            const pCNIC = (p.cnic || p.fatherCNIC || '').replace(/\D/g, '');
+            if (fatherCNIC && fatherCNIC.length >= 10 && pCNIC && pCNIC.length >= 10 && pCNIC === fatherCNIC) {
+                return true;
+            }
+            const pName = (p.name || p.fatherName || '').trim().toLowerCase();
+            if (fatherName && fatherName.length >= 4 && pName && (pName === fatherName || pName.includes(fatherName) || fatherName.includes(pName))) {
+                return true;
+            }
+            return false;
+        });
+
+        if (matchingParent && matchingParent.linkedStudents && Array.isArray(matchingParent.linkedStudents)) {
+            matchingParent.linkedStudents.forEach(ls => {
+                if (ls.studentId) parentLinkedStudentIds.add(ls.studentId);
+            });
+        }
 
         const matched = allStudents.filter(s => {
             if (s.id === selectedStudent.id) return true;
+
+            // Direct link inside parent account document
+            if (parentLinkedStudentIds.has(s.id)) {
+                return true;
+            }
+
+            if (studentParentId && (s.parentId === studentParentId || s.parentDetails?.parentId === studentParentId)) {
+                return true;
+            }
 
             if (familyId && (s.familyId === familyId || s.parentDetails?.familyId === familyId)) {
                 return true;
@@ -4781,9 +4832,19 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             return false;
         });
 
+        // Defensive deduplication by student id
+        const seen = new Set();
+        const unique = [];
+        matched.forEach(s => {
+            if (!seen.has(s.id)) {
+                seen.add(s.id);
+                unique.push(s);
+            }
+        });
+
         // Selected student always first, then remaining siblings sorted by name
-        return matched.sort((a, b) => (a.id === selectedStudent.id ? -1 : b.id === selectedStudent.id ? 1 : (a.name || '').localeCompare(b.name || '')));
-    }, [selectedStudent, allStudents]);
+        return unique.sort((a, b) => (a.id === selectedStudent.id ? -1 : b.id === selectedStudent.id ? 1 : (a.name || '').localeCompare(b.name || '')));
+    }, [selectedStudent, allStudents, allParents]);
 
     // Selected Siblings State for Combined Payment
     const [selectedSiblingIds, setSelectedSiblingIds] = useState([]);
