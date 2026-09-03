@@ -2338,7 +2338,9 @@ const Transport = () => {
                     return false;
                 });
 
-                const todayStr = new Date().toISOString().slice(0, 10);
+                const dNow = new Date();
+                const todayStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+                const todayUtc = dNow.toISOString().slice(0, 10);
                 const attKey = `${todayStr}_${overviewRoute?.id || 'all'}_${overviewTripType}`;
                 const altKeyWithVeh = `${todayStr}_${currentOverviewVeh?.id}_${overviewTripType}`;
                 const altKeyWithTripRoute = `${todayStr}_${currentTracking.routeId}_${overviewTripType}`;
@@ -2355,7 +2357,7 @@ const Transport = () => {
                 const allTodayAttendanceLogs = {};
                 Object.entries(attendanceLogs || {}).forEach(([k, subMap]) => {
                     if (typeof subMap === 'object' && subMap !== null) {
-                        if (k.startsWith(todayStr) || k.includes(todayStr)) {
+                        if (k.startsWith(todayStr) || k.startsWith(todayUtc) || k.includes(todayStr) || k.includes(todayUtc)) {
                             Object.assign(allTodayAttendanceLogs, subMap);
                         }
                     }
@@ -2377,10 +2379,12 @@ const Transport = () => {
                     const id2 = st.id;
                     const id3 = st._id;
                     const roll = st.rollNo;
+                    const name = st.studentName || st.name;
                     if (id1 && currentAttMap[id1]) return currentAttMap[id1];
                     if (id2 && currentAttMap[id2]) return currentAttMap[id2];
                     if (id3 && currentAttMap[id3]) return currentAttMap[id3];
                     if (roll && currentAttMap[roll]) return currentAttMap[roll];
+                    if (name && currentAttMap[name]) return currentAttMap[name];
                     return 'pending';
                 };
 
