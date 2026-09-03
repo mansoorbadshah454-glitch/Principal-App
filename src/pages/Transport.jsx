@@ -5,7 +5,8 @@ import {
     FileText, ShieldCheck, X, ChevronRight, Eye, Sparkles, Navigation,
     Fuel, Wrench, Check, Send, Download, Printer, ArrowUpRight, CheckSquare,
     MessageSquare, AlertCircle, RefreshCw, Camera, Image as ImageIcon, Upload, ExternalLink,
-    Key, Shield, Smartphone, Copy, Lock, EyeOff, UserCheck, UserX, Radio, Navigation2
+    Key, Shield, Smartphone, Copy, Lock, EyeOff, UserCheck, UserX, Radio, Navigation2,
+    GraduationCap
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -213,6 +214,15 @@ const Transport = () => {
         notes: ''
     });
 
+    // Slide 3: Vehicle Direct Student Allocation States
+    const [slideAllocClassId, setSlideAllocClassId] = useState('');
+    const [slideAllocStudentId, setSlideAllocStudentId] = useState('');
+    const [slideAllocStopName, setSlideAllocStopName] = useState('');
+    const [slideAllocMonthlyFare, setSlideAllocMonthlyFare] = useState(2500);
+    const [slideAllocTripType, setSlideAllocTripType] = useState('both');
+    const [slideAllocStudentsList, setSlideAllocStudentsList] = useState([]);
+    const [isLoadingSlideStudents, setIsLoadingSlideStudents] = useState(false);
+
     // 2. Route Modal
     const [routeModalOpen, setRouteModalOpen] = useState(false);
     const [editingRoute, setEditingRoute] = useState(null);
@@ -419,6 +429,22 @@ const Transport = () => {
             })
             .catch(console.error);
     }, [schoolId, allocSelectedClassId]);
+
+    // Load students for Slide 3 in Vehicle Modal
+    useEffect(() => {
+        if (!schoolId || !slideAllocClassId) {
+            setSlideAllocStudentsList([]);
+            return;
+        }
+        setIsLoadingSlideStudents(true);
+        getDocs(collection(db, `schools/${schoolId}/classes/${slideAllocClassId}/students`))
+            .then(snap => {
+                const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                setSlideAllocStudentsList(list);
+            })
+            .catch(console.error)
+            .finally(() => setIsLoadingSlideStudents(false));
+    }, [schoolId, slideAllocClassId]);
 
     // -------------------------------------------------------------
     // Leaflet Real-Time Interactive Map Synchronization (Overview Tab)
@@ -1348,6 +1374,71 @@ const Transport = () => {
             setRoutes(updatedRoutes);
             showAlert(editingRoute ? 'Route updated successfully!' : 'New transport route created!', 'success');
             setRouteModalOpen(false);
+        }
+    };
+
+    // Handlers for Slide 3 Direct Student Allocation
+    const handleAddSlideAllocation = async (e) => {
+        if (e) e.preventDefault();
+        if (!slideAllocStudentId) {
+            showAlert('Please select a student to allocate!', 'warning');
+            return;
+        }
+        const student = slideAllocStudentsList.find(s => s.id === slideAllocStudentId);
+        if (!student) {
+            showAlert('Selected student not found in this class!', 'error');
+            return;
+        }
+
+        const targetVehicleId = editingVehicle ? editingVehicle.id : (vehicleFormData.id || `veh_${Date.now()}`);
+        const targetVehicleReg = (vehicleFormData.regNo || 'Van').trim().toUpperCase();
+        const targetRouteId = editingRoute ? editingRoute.id : (routes.find(r => r.vehicleId === targetVehicleId)?.id || (routes[0]?.id || 'route_default'));
+        const targetRouteTitle = editingRoute ? editingRoute.title : (routes.find(r => r.id === targetRouteId)?.title || `Route - ${targetVehicleReg}`);
+
+        const stopChosen = slideAllocStopName || (editingRoute?.stops?.[0]?.stopName || (routeFormData.stops?.[0]?.stopName || 'Default Stop'));
+        const fareChosen = Number(slideAllocMonthlyFare) || (Number(routeFormData.monthlyBaseFare) || 2500);
+
+        const cls = classesList.find(c => c.id === slideAllocClassId);
+        const className = cls ? (cls.name || cls.className) : (student.className || 'Class');
+
+        const newAllocation = {
+            id: `alloc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            studentId: student.id,
+            studentName: student.name || student.studentName || 'Student',
+            fatherName: student.fatherName || student.guardianName || '',
+            parentPhone: student.phone || student.fatherPhone || student.guardianPhone || student.parentPhone || student.emergencyContact || '',
+            classId: slideAllocClassId,
+            className: className,
+            section: student.section || '',
+            rollNo: student.rollNo || student.rollNumber || '',
+            vehicleId: targetVehicleId,
+            vehicleRegNo: targetVehicleReg,
+            routeId: targetRouteId,
+            routeName: targetRouteTitle,
+            pickupStop: stopChosen,
+            stopName: stopChosen,
+            monthlyFare: fareChosen,
+            tripType: slideAllocTripType || 'both',
+            status: 'Active',
+            allocatedAt: new Date().toISOString()
+        };
+
+        const updatedAllocations = [...allocations.filter(a => a.studentId !== student.id), newAllocation];
+        const ok = await saveTransportState({ allocations: updatedAllocations });
+        if (ok) {
+            setAllocations(updatedAllocations);
+            setSlideAllocStudentId('');
+            showAlert(`🎓 ${newAllocation.studentName} (${newAllocation.className}) allocated to ${targetVehicleReg}!`, 'success');
+        }
+    };
+
+    const handleDeleteSlideAllocation = async (allocId, studentName) => {
+        if (!window.confirm(`Remove ${studentName} from this vehicle seat allocation?`)) return;
+        const updatedAllocations = allocations.filter(a => a.id !== allocId);
+        const ok = await saveTransportState({ allocations: updatedAllocations });
+        if (ok) {
+            setAllocations(updatedAllocations);
+            showAlert(`${studentName} removed from vehicle seat allocation.`, 'success');
         }
     };
 
@@ -4086,595 +4177,911 @@ const Transport = () => {
             )}
 
             {/* ========================================================================= */}
-            {/* 1. ADD / EDIT VEHICLE MODAL */}
+            {/* 1. ADD / EDIT VEHICLE MODAL (3 SWIPEABLE SLIDES: PROFILE, ROUTE, ALLOCATION) */}
             {/* ========================================================================= */}
-            {vehicleModalOpen && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.75)',
-                    backdropFilter: 'blur(6px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 10000,
-                    padding: '1rem'
-                }}>
-                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '850px', padding: '1.5rem', maxHeight: '92vh', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
-                        {/* Header with Animated Tab Switcher */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                        {editingVehicle ? `Vehicle ${vehicleFormData.regNo || ''}` : 'Register New Vehicle'}
-                                    </h3>
-                                    {editingVehicle && (
-                                        <span style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '6px', background: vehicleFormData.status === 'Active' ? '#dcfce7' : '#fee2e2', color: vehicleFormData.status === 'Active' ? '#15803d' : '#b91c1c', fontWeight: '700' }}>
-                                            {vehicleFormData.status}
-                                        </span>
-                                    )}
-                                </div>
-                                <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                                    {vehicleModalTab === 'vehicle' ? 'Manage fleet specs, driver account & fitness documents' : 'Manage route stops sequence, timings & fares'}
-                                </span>
-                            </div>
+            {vehicleModalOpen && (() => {
+                const targetVehId = editingVehicle ? editingVehicle.id : vehicleFormData.id;
+                const targetVehAllocations = allocations.filter(a => (targetVehId && a.vehicleId === targetVehId) || (vehicleFormData.regNo && a.vehicleRegNo === vehicleFormData.regNo) || (editingRoute && a.routeId === editingRoute.id));
+                const targetVehCapacity = Number(vehicleFormData.capacity) || 15;
+                const targetVehVacant = Math.max(0, targetVehCapacity - targetVehAllocations.length);
 
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                {/* Swipe Tab Segmented Switcher */}
-                                <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px' }}>
-                                    <button
-                                        type="button"
-                                        onClick={() => setVehicleModalTab('vehicle')}
-                                        style={{
-                                            padding: '0.35rem 0.75rem',
-                                            borderRadius: '6px',
-                                            border: 'none',
-                                            background: vehicleModalTab === 'vehicle' ? 'white' : 'transparent',
-                                            color: vehicleModalTab === 'vehicle' ? '#0f172a' : '#64748b',
-                                            fontWeight: '700',
-                                            fontSize: '0.76rem',
-                                            cursor: 'pointer',
-                                            boxShadow: vehicleModalTab === 'vehicle' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                                            transition: 'all 0.2s ease',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '0.3rem'
-                                        }}
-                                    >
-                                        <Truck size={14} color={vehicleModalTab === 'vehicle' ? '#0284c7' : '#64748b'} /> Vehicle Profile
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setVehicleModalTab('route')}
-                                        style={{
-                                            padding: '0.35rem 0.75rem',
-                                            borderRadius: '6px',
-                                            border: 'none',
-                                            background: vehicleModalTab === 'route' ? '#0284c7' : 'transparent',
-                                            color: vehicleModalTab === 'route' ? 'white' : '#64748b',
-                                            fontWeight: '700',
-                                            fontSize: '0.76rem',
-                                            cursor: 'pointer',
-                                            boxShadow: vehicleModalTab === 'route' ? '0 2px 6px rgba(2,132,199,0.3)' : 'none',
-                                            transition: 'all 0.2s ease',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '0.3rem'
-                                        }}
-                                    >
-                                        <MapPin size={14} color={vehicleModalTab === 'route' ? 'white' : '#64748b'} /> 🗺️ Route
-                                        {editingRoute && (
-                                            <span style={{ background: vehicleModalTab === 'route' ? 'rgba(255,255,255,0.3)' : '#dbeafe', color: vehicleModalTab === 'route' ? 'white' : '#1e40af', padding: '0.1rem 0.35rem', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800' }}>
-                                                {(editingRoute.stops || []).length} stops
+                return (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(6px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 10000,
+                        padding: '1rem'
+                    }}>
+                        <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '900px', padding: '1.5rem', maxHeight: '92vh', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
+                            {/* Header with Animated Tab Switcher */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                            {editingVehicle ? `Vehicle ${vehicleFormData.regNo || ''}` : 'Register New Vehicle'}
+                                        </h3>
+                                        {editingVehicle && (
+                                            <span style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '6px', background: vehicleFormData.status === 'Active' ? '#dcfce7' : '#fee2e2', color: vehicleFormData.status === 'Active' ? '#15803d' : '#b91c1c', fontWeight: '700' }}>
+                                                {vehicleFormData.status}
                                             </span>
                                         )}
-                                    </button>
+                                    </div>
+                                    <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                                        {vehicleModalTab === 'vehicle' ? 'Manage fleet specs, driver account & fitness documents' : vehicleModalTab === 'route' ? 'Manage route stops sequence, timings & fares' : 'Direct student van enrolment & seat allocations'}
+                                    </span>
                                 </div>
 
-                                <button onClick={() => setVehicleModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <X size={16} />
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Swipe Animated Container */}
-                        <div style={{ overflow: 'hidden', width: '100%', position: 'relative' }}>
-                            <div style={{
-                                display: 'flex',
-                                width: '200%',
-                                transform: vehicleModalTab === 'vehicle' ? 'translateX(0%)' : 'translateX(-50%)',
-                                transition: 'transform 0.38s cubic-bezier(0.16, 1, 0.3, 1)'
-                            }}>
-                                {/* ========================================================================= */}
-                                {/* SLIDE 1: VEHICLE PROFILE FORM */}
-                                {/* ========================================================================= */}
-                                <div style={{ width: '50%', paddingRight: '0.6rem', boxSizing: 'border-box' }}>
-                                    {/* Prominent Route Banner with One-Click Swipe Action */}
-                                    <div
-                                        onClick={() => setVehicleModalTab('route')}
-                                        style={{
-                                            background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-                                            border: '1px solid #bfdbfe',
-                                            borderRadius: '10px',
-                                            padding: '0.65rem 0.9rem',
-                                            marginBottom: '1rem',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            boxShadow: '0 2px 5px rgba(2, 132, 199, 0.08)',
-                                            transition: 'all 0.2s ease'
-                                        }}
-                                    >
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#0284c7', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                                <MapPin size={18} />
-                                            </div>
-                                            <div>
-                                                <strong style={{ fontSize: '0.82rem', color: '#1e3a8a', display: 'block' }}>
-                                                    {editingRoute ? `Assigned Route: ${editingRoute.title}` : `🗺️ Route & Stops for ${vehicleFormData.regNo || 'this Van'}`}
-                                                </strong>
-                                                <span style={{ fontSize: '0.72rem', color: '#2563eb' }}>
-                                                    {(editingRoute?.stops || []).length} Stops configured · Click to swipe and manage route ➔
-                                                </span>
-                                            </div>
-                                        </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    {/* Swipe Tab Segmented Switcher (3 Tabs) */}
+                                    <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px' }}>
                                         <button
                                             type="button"
+                                            onClick={() => setVehicleModalTab('vehicle')}
                                             style={{
-                                                background: '#0284c7',
-                                                color: 'white',
-                                                border: 'none',
-                                                padding: '0.35rem 0.75rem',
+                                                padding: '0.35rem 0.65rem',
                                                 borderRadius: '6px',
-                                                fontSize: '0.75rem',
+                                                border: 'none',
+                                                background: vehicleModalTab === 'vehicle' ? 'white' : 'transparent',
+                                                color: vehicleModalTab === 'vehicle' ? '#0f172a' : '#64748b',
                                                 fontWeight: '700',
+                                                fontSize: '0.76rem',
                                                 cursor: 'pointer',
+                                                boxShadow: vehicleModalTab === 'vehicle' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                transition: 'all 0.2s ease',
                                                 display: 'flex',
                                                 alignItems: 'center',
                                                 gap: '0.3rem'
                                             }}
                                         >
-                                            Route ➔
+                                            <Truck size={14} color={vehicleModalTab === 'vehicle' ? '#0284c7' : '#64748b'} /> Vehicle Profile
                                         </button>
-                                    </div>
-
-                                    <form onSubmit={handleSaveVehicle}>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Registration Number *:</label>
-                                                <input
-                                                    type="text"
-                                                    placeholder="e.g. LEA-2024 or KHI-8891"
-                                                    value={vehicleFormData.regNo}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, regNo: e.target.value })}
-                                                    required
-                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Seating Capacity *:</label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    value={vehicleFormData.capacity}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, capacity: Number(e.target.value) })}
-                                                    required
-                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Vehicle Type:</label>
-                                                <select
-                                                    value={vehicleFormData.type}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, type: e.target.value })}
-                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                                >
-                                                    {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Status:</label>
-                                                <select
-                                                    value={vehicleFormData.status}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, status: e.target.value })}
-                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                                >
-                                                    <option value="Active">Active</option>
-                                                    <option value="Maintenance">Maintenance</option>
-                                                    <option value="Off Duty">Off Duty</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        {/* Driver Profile */}
-                                        <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#0f172a' }}>
-                                                    👨‍✈️ Driver Information & App Account
-                                                </span>
-                                                {drivers.length > 0 && (
-                                                    <span style={{ fontSize: '0.7rem', color: '#0284c7', fontWeight: '600' }}>
-                                                        Select from registered accounts below
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {drivers.length > 0 && (
-                                                <div style={{ marginBottom: '0.6rem' }}>
-                                                    <select
-                                                        onChange={(e) => {
-                                                            const selDrv = drivers.find(d => d.id === e.target.value);
-                                                            if (selDrv) {
-                                                                setVehicleFormData({
-                                                                    ...vehicleFormData,
-                                                                    driverName: selDrv.name || '',
-                                                                    driverPhone: selDrv.phone || '',
-                                                                    driverLicense: selDrv.licenseNo || '',
-                                                                    driverCnic: selDrv.cnic || '',
-                                                                    driverEmail: selDrv.email || '',
-                                                                    driverId: selDrv.id
-                                                                });
-                                                            }
-                                                        }}
-                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #93c5fd', background: '#eff6ff', fontSize: '0.82rem', fontWeight: '600', color: '#1e40af' }}
-                                                    >
-                                                        <option value="">-- Quick Select from Registered Drivers --</option>
-                                                        {drivers.map(d => (
-                                                            <option key={d.id} value={d.id}>
-                                                                {d.name} ({d.email}) - {d.phone || 'No Phone'}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            )}
-
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.5rem' }}>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Driver Full Name"
-                                                    value={vehicleFormData.driverName}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverName: e.target.value })}
-                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                                />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Mobile / WhatsApp (0300...)"
-                                                    value={vehicleFormData.driverPhone}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverPhone: e.target.value })}
-                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                                />
-                                            </div>
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Driving License No"
-                                                    value={vehicleFormData.driverLicense}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverLicense: e.target.value })}
-                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                                />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Driver CNIC (35201-...)"
-                                                    value={vehicleFormData.driverCnic}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverCnic: e.target.value })}
-                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {/* Helper / Conductor */}
-                                        <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
-                                            <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.5rem' }}>🤝 Conductor / Helper (Optional)</span>
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Helper Name"
-                                                    value={vehicleFormData.helperName}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperName: e.target.value })}
-                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                                />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Helper Phone No"
-                                                    value={vehicleFormData.helperPhone}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperPhone: e.target.value })}
-                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {/* Document Expiries */}
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem', marginBottom: '1.25rem' }}>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Fitness Expiry:</label>
-                                                <input
-                                                    type="date"
-                                                    value={vehicleFormData.fitnessExpiry}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, fitnessExpiry: e.target.value })}
-                                                    style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Token Tax Expiry:</label>
-                                                <input
-                                                    type="date"
-                                                    value={vehicleFormData.tokenTaxExpiry}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, tokenTaxExpiry: e.target.value })}
-                                                    style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Insurance Expiry:</label>
-                                                <input
-                                                    type="date"
-                                                    value={vehicleFormData.insuranceExpiry}
-                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, insuranceExpiry: e.target.value })}
-                                                    style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        <div style={{ display: 'flex', gap: '0.75rem' }}>
-                                            <button
-                                                type="button"
-                                                onClick={() => setVehicleModalOpen(false)}
-                                                style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
-                                            >
-                                                Cancel
-                                            </button>
-                                            <button
-                                                type="submit"
-                                                className="btn"
-                                                style={{ flex: 2, background: '#0284c7', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
-                                            >
-                                                {editingVehicle ? 'Update Vehicle' : 'Save to Fleet'}
-                                            </button>
-                                        </div>
-                                    </form>
-                                </div>
-
-                                {/* ========================================================================= */}
-                                {/* SLIDE 2: ROUTE & STOPS MANAGEMENT FORM */}
-                                {/* ========================================================================= */}
-                                <div style={{ width: '50%', paddingLeft: '0.6rem', boxSizing: 'border-box' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '0.5rem 0.85rem', borderRadius: '8px' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#1e40af' }}>
-                                                🗺️ Route Configuration for {vehicleFormData.regNo || 'Selected Van'}
-                                            </span>
-                                        </div>
                                         <button
                                             type="button"
-                                            onClick={() => setVehicleModalTab('vehicle')}
-                                            style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '700', color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                                            onClick={() => setVehicleModalTab('route')}
+                                            style={{
+                                                padding: '0.35rem 0.65rem',
+                                                borderRadius: '6px',
+                                                border: 'none',
+                                                background: vehicleModalTab === 'route' ? '#0284c7' : 'transparent',
+                                                color: vehicleModalTab === 'route' ? 'white' : '#64748b',
+                                                fontWeight: '700',
+                                                fontSize: '0.76rem',
+                                                cursor: 'pointer',
+                                                boxShadow: vehicleModalTab === 'route' ? '0 2px 6px rgba(2,132,199,0.3)' : 'none',
+                                                transition: 'all 0.2s ease',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.3rem'
+                                            }}
                                         >
-                                            ← Back to Vehicle
+                                            <MapPin size={14} color={vehicleModalTab === 'route' ? 'white' : '#64748b'} /> 🗺️ Route
+                                            {editingRoute && (
+                                                <span style={{ background: vehicleModalTab === 'route' ? 'rgba(255,255,255,0.3)' : '#dbeafe', color: vehicleModalTab === 'route' ? 'white' : '#1e40af', padding: '0.1rem 0.35rem', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800' }}>
+                                                    {(editingRoute.stops || []).length} stops
+                                                </span>
+                                            )}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setVehicleModalTab('allocations')}
+                                            style={{
+                                                padding: '0.35rem 0.65rem',
+                                                borderRadius: '6px',
+                                                border: 'none',
+                                                background: vehicleModalTab === 'allocations' ? '#16a34a' : 'transparent',
+                                                color: vehicleModalTab === 'allocations' ? 'white' : '#64748b',
+                                                fontWeight: '700',
+                                                fontSize: '0.76rem',
+                                                cursor: 'pointer',
+                                                boxShadow: vehicleModalTab === 'allocations' ? '0 2px 6px rgba(22,163,74,0.3)' : 'none',
+                                                transition: 'all 0.2s ease',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.3rem'
+                                            }}
+                                        >
+                                            <GraduationCap size={14} color={vehicleModalTab === 'allocations' ? 'white' : '#64748b'} /> 🎓 Allocate Students
+                                            <span style={{ background: vehicleModalTab === 'allocations' ? 'rgba(255,255,255,0.3)' : '#dcfce7', color: vehicleModalTab === 'allocations' ? 'white' : '#15803d', padding: '0.1rem 0.35rem', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800' }}>
+                                                {targetVehAllocations.length}/{targetVehCapacity}
+                                            </span>
                                         </button>
                                     </div>
 
-                                    <form onSubmit={handleSaveRouteForVehicle}>
-                                        {/* Compact Top Route Info: Title & Base Fare */}
-                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.6rem', marginBottom: '0.6rem' }}>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Route Title *:</label>
-                                                <input
-                                                    type="text"
-                                                    placeholder="e.g. Route 1 - Gulberg & Model Town"
-                                                    value={routeFormData.title}
-                                                    onChange={(e) => setRouteFormData({ ...routeFormData, title: e.target.value })}
-                                                    required
-                                                    style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700' }}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Monthly Base Fare (PKR):</label>
-                                                <input
-                                                    type="number"
-                                                    value={routeFormData.monthlyBaseFare}
-                                                    onChange={(e) => setRouteFormData({ ...routeFormData, monthlyBaseFare: Number(e.target.value) })}
-                                                    required
-                                                    style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981' }}
-                                                />
-                                            </div>
-                                        </div>
+                                    <button onClick={() => setVehicleModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                            </div>
 
-                                        {/* Dropdown / Accordion for Schedule & Landmarks */}
-                                        <div style={{ marginBottom: '0.75rem', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#fafbfc' }}>
-                                            <div 
-                                                onClick={() => setShowRouteTimingDropdown(!showRouteTimingDropdown)}
+                            {/* Swipe Animated Container (3 Slides: 300% Width) */}
+                            <div style={{ overflow: 'hidden', width: '100%', position: 'relative' }}>
+                                <div style={{
+                                    display: 'flex',
+                                    width: '300%',
+                                    transform: vehicleModalTab === 'vehicle'
+                                        ? 'translateX(0%)'
+                                        : vehicleModalTab === 'route'
+                                            ? 'translateX(-33.333333%)'
+                                            : 'translateX(-66.666666%)',
+                                    transition: 'transform 0.38s cubic-bezier(0.16, 1, 0.3, 1)'
+                                }}>
+                                    {/* ========================================================================= */}
+                                    {/* SLIDE 1: VEHICLE PROFILE FORM */}
+                                    {/* ========================================================================= */}
+                                    <div style={{ width: '33.333333%', paddingRight: '0.6rem', boxSizing: 'border-box' }}>
+                                        {/* Quick Jump Action Banners */}
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.6rem', marginBottom: '1rem' }}>
+                                            <div
+                                                onClick={() => setVehicleModalTab('route')}
                                                 style={{
-                                                    padding: '0.45rem 0.75rem',
-                                                    background: showRouteTimingDropdown ? '#eff6ff' : '#f8fafc',
+                                                    background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                                                    border: '1px solid #bfdbfe',
+                                                    borderRadius: '10px',
+                                                    padding: '0.6rem 0.8rem',
                                                     cursor: 'pointer',
                                                     display: 'flex',
                                                     justifyContent: 'space-between',
                                                     alignItems: 'center',
-                                                    userSelect: 'none',
-                                                    borderBottom: showRouteTimingDropdown ? '1px solid #bfdbfe' : 'none'
+                                                    boxShadow: '0 2px 5px rgba(2, 132, 199, 0.08)',
+                                                    transition: 'all 0.2s ease'
                                                 }}
                                             >
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.75rem' }}>
-                                                    <Clock size={13} color="#0284c7" />
-                                                    <span style={{ fontWeight: '700', color: '#1e293b' }}>
-                                                        ⚙️ Route Landmarks & Schedule Timings
-                                                    </span>
-                                                    {!showRouteTimingDropdown && (
-                                                        <span style={{ color: '#64748b', fontSize: '0.7rem', marginLeft: '0.25rem' }}>
-                                                            ({routeFormData.startPoint || 'Start'} ➔ {routeFormData.endPoint || 'Campus'} | ⏰ {routeFormData.morningDepartureTime || '06:45 AM'} / {routeFormData.afternoonDepartureTime || '01:45 PM'})
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <div style={{ width: '28px', height: '28px', borderRadius: '7px', background: '#0284c7', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                        <MapPin size={16} />
+                                                    </div>
+                                                    <div>
+                                                        <strong style={{ fontSize: '0.78rem', color: '#1e3a8a', display: 'block' }}>
+                                                            {editingRoute ? editingRoute.title : `Route & Stops`}
+                                                        </strong>
+                                                        <span style={{ fontSize: '0.7rem', color: '#2563eb' }}>
+                                                            {(editingRoute?.stops || []).length} Stops · Click to Edit ➔
                                                         </span>
-                                                    )}
+                                                    </div>
                                                 </div>
-                                                <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#0284c7', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                                                    {showRouteTimingDropdown ? '▲ Hide Details' : '▼ Expand / Edit'}
-                                                </span>
                                             </div>
 
-                                            {showRouteTimingDropdown && (
-                                                <div style={{ padding: '0.65rem 0.75rem', background: 'white', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
-                                                    <div>
-                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Start Landmark:</label>
-                                                        <input
-                                                            type="text"
-                                                            placeholder="e.g. Main Station / Liberty Market"
-                                                            value={routeFormData.startPoint}
-                                                            onChange={(e) => setRouteFormData({ ...routeFormData, startPoint: e.target.value })}
-                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                        />
+                                            <div
+                                                onClick={() => setVehicleModalTab('allocations')}
+                                                style={{
+                                                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                                    border: '1px solid #bbf7d0',
+                                                    borderRadius: '10px',
+                                                    padding: '0.6rem 0.8rem',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center',
+                                                    boxShadow: '0 2px 5px rgba(22, 163, 74, 0.08)',
+                                                    transition: 'all 0.2s ease'
+                                                }}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <div style={{ width: '28px', height: '28px', borderRadius: '7px', background: '#16a34a', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                        <GraduationCap size={16} />
                                                     </div>
                                                     <div>
-                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Destination Campus:</label>
-                                                        <input
-                                                            type="text"
-                                                            value={routeFormData.endPoint}
-                                                            onChange={(e) => setRouteFormData({ ...routeFormData, endPoint: e.target.value })}
-                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                        />
-                                                    </div>
-                                                    <div>
-                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Morning Start Time:</label>
-                                                        <input
-                                                            type="text"
-                                                            placeholder="06:45 AM"
-                                                            value={routeFormData.morningDepartureTime}
-                                                            onChange={(e) => setRouteFormData({ ...routeFormData, morningDepartureTime: e.target.value })}
-                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                        />
-                                                    </div>
-                                                    <div>
-                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Afternoon Return Time:</label>
-                                                        <input
-                                                            type="text"
-                                                            placeholder="01:45 PM"
-                                                            value={routeFormData.afternoonDepartureTime}
-                                                            onChange={(e) => setRouteFormData({ ...routeFormData, afternoonDepartureTime: e.target.value })}
-                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                        />
+                                                        <strong style={{ fontSize: '0.78rem', color: '#14532d', display: 'block' }}>
+                                                            Allocate Students
+                                                        </strong>
+                                                        <span style={{ fontSize: '0.7rem', color: '#15803d' }}>
+                                                            {targetVehAllocations.length}/{targetVehCapacity} Seats Assigned ➔
+                                                        </span>
                                                     </div>
                                                 </div>
-                                            )}
+                                            </div>
                                         </div>
 
-                                        {/* Enlarged & Spacious Stops Sequence Card */}
-                                        <div style={{ background: '#ffffff', padding: '0.85rem', borderRadius: '12px', border: '1.5px solid #cbd5e1', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', marginBottom: '1rem' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                    <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a' }}>
-                                                        📍 Route Stops Sequence
+                                        <form onSubmit={handleSaveVehicle}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Registration Number *:</label>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="e.g. LEA-2024 or KHI-8891"
+                                                        value={vehicleFormData.regNo}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, regNo: e.target.value })}
+                                                        required
+                                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Seating Capacity *:</label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        value={vehicleFormData.capacity}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, capacity: Number(e.target.value) })}
+                                                        required
+                                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Vehicle Type:</label>
+                                                    <select
+                                                        value={vehicleFormData.type}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, type: e.target.value })}
+                                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                                    >
+                                                        {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Model Year:</label>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="2022"
+                                                        value={vehicleFormData.modelYear}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, modelYear: e.target.value })}
+                                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Driver Assignment */}
+                                            <div style={{ marginBottom: '1rem', background: '#f8fafc', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                                    <label style={{ fontSize: '0.78rem', fontWeight: '800', color: '#1e293b' }}>
+                                                        👨‍✈️ Driver & App Account Assignment:
+                                                    </label>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setVehicleModalOpen(false);
+                                                            handleOpenDriverModal();
+                                                        }}
+                                                        style={{ background: 'transparent', border: 'none', color: '#0284c7', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer', padding: 0 }}
+                                                    >
+                                                        + Create New Driver
+                                                    </button>
+                                                </div>
+
+                                                <select
+                                                    value={vehicleFormData.driverId || ''}
+                                                    onChange={(e) => {
+                                                        const selectedDrvId = e.target.value;
+                                                        const selectedDrv = drivers.find(d => d.id === selectedDrvId);
+                                                        if (selectedDrv) {
+                                                            setVehicleFormData({
+                                                                ...vehicleFormData,
+                                                                driverId: selectedDrv.id,
+                                                                driverName: selectedDrv.name,
+                                                                driverPhone: selectedDrv.phone,
+                                                                driverLicense: selectedDrv.licenseNo || '',
+                                                                driverCnic: selectedDrv.cnic || '',
+                                                                driverEmail: selectedDrv.email || ''
+                                                            });
+                                                        } else {
+                                                            setVehicleFormData({
+                                                                ...vehicleFormData,
+                                                                driverId: '',
+                                                                driverName: '',
+                                                                driverPhone: '',
+                                                                driverLicense: '',
+                                                                driverCnic: '',
+                                                                driverEmail: ''
+                                                            });
+                                                        }
+                                                    }}
+                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', background: 'white', marginBottom: '0.5rem' }}
+                                                >
+                                                    <option value="">-- Select Registered Driver (Or Enter Below) --</option>
+                                                    {drivers.map(d => (
+                                                        <option key={d.id} value={d.id}>
+                                                            {d.name} ({d.phone}) {d.email ? `· ${d.email}` : ''}
+                                                        </option>
+                                                    ))}
+                                                </select>
+
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Driver Full Name"
+                                                        value={vehicleFormData.driverName}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverName: e.target.value })}
+                                                        style={{ padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', background: 'white' }}
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Driver Phone / Mobile"
+                                                        value={vehicleFormData.driverPhone}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverPhone: e.target.value })}
+                                                        style={{ padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', background: 'white' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Helper Details */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Helper / Conductor Name:</label>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Rashid Ali"
+                                                        value={vehicleFormData.helperName}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperName: e.target.value })}
+                                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Helper Phone:</label>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="0300-1234567"
+                                                        value={vehicleFormData.helperPhone}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperPhone: e.target.value })}
+                                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Document Expiries */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Fitness Certificate:</label>
+                                                    <input
+                                                        type="date"
+                                                        value={vehicleFormData.fitnessExpiry}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, fitnessExpiry: e.target.value })}
+                                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Token Tax Expiry:</label>
+                                                    <input
+                                                        type="date"
+                                                        value={vehicleFormData.tokenTaxExpiry}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, tokenTaxExpiry: e.target.value })}
+                                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Insurance Expiry:</label>
+                                                    <input
+                                                        type="date"
+                                                        value={vehicleFormData.insuranceExpiry}
+                                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, insuranceExpiry: e.target.value })}
+                                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVehicleModalOpen(false)}
+                                                    style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button
+                                                    type="submit"
+                                                    className="btn"
+                                                    style={{ flex: 2, background: '#0284c7', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
+                                                >
+                                                    {editingVehicle ? 'Update Vehicle' : 'Save to Fleet'}
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+
+                                    {/* ========================================================================= */}
+                                    {/* SLIDE 2: ROUTE & STOPS MANAGEMENT FORM */}
+                                    {/* ========================================================================= */}
+                                    <div style={{ width: '33.333333%', paddingLeft: '0.3rem', paddingRight: '0.3rem', boxSizing: 'border-box' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '0.5rem 0.85rem', borderRadius: '8px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#1e40af' }}>
+                                                    🗺️ Route Configuration for {vehicleFormData.regNo || 'Selected Van'}
+                                                </span>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVehicleModalTab('vehicle')}
+                                                    style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '700', color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                                                >
+                                                    ← Vehicle
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVehicleModalTab('allocations')}
+                                                    style={{ background: '#16a34a', border: 'none', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '700', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                                                >
+                                                    🎓 Allocations ➔
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <form onSubmit={handleSaveRouteForVehicle}>
+                                            {/* Compact Top Route Info: Title & Base Fare */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.6rem', marginBottom: '0.6rem' }}>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Route Title *:</label>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="e.g. Route 1 - Gulberg & Model Town"
+                                                        value={routeFormData.title}
+                                                        onChange={(e) => setRouteFormData({ ...routeFormData, title: e.target.value })}
+                                                        required
+                                                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Monthly Base Fare (PKR):</label>
+                                                    <input
+                                                        type="number"
+                                                        value={routeFormData.monthlyBaseFare}
+                                                        onChange={(e) => setRouteFormData({ ...routeFormData, monthlyBaseFare: Number(e.target.value) })}
+                                                        required
+                                                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Dropdown / Accordion for Schedule & Landmarks */}
+                                            <div style={{ marginBottom: '0.75rem', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#fafbfc' }}>
+                                                <div
+                                                    onClick={() => setShowRouteTimingDropdown(!showRouteTimingDropdown)}
+                                                    style={{
+                                                        padding: '0.45rem 0.75rem',
+                                                        background: showRouteTimingDropdown ? '#eff6ff' : '#f8fafc',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        alignItems: 'center',
+                                                        userSelect: 'none',
+                                                        borderBottom: showRouteTimingDropdown ? '1px solid #bfdbfe' : 'none'
+                                                    }}
+                                                >
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.75rem' }}>
+                                                        <Clock size={13} color="#0284c7" />
+                                                        <span style={{ fontWeight: '700', color: '#1e293b' }}>
+                                                            ⚙️ Route Landmarks & Schedule Timings
+                                                        </span>
+                                                        {!showRouteTimingDropdown && (
+                                                            <span style={{ color: '#64748b', fontSize: '0.7rem', marginLeft: '0.25rem' }}>
+                                                                ({routeFormData.startPoint || 'Start'} ➔ {routeFormData.endPoint || 'Campus'} | ⏰ {routeFormData.morningDepartureTime || '06:45 AM'} / {routeFormData.afternoonDepartureTime || '01:45 PM'})
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#0284c7', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                                        {showRouteTimingDropdown ? '▲ Hide Details' : '▼ Expand / Edit'}
                                                     </span>
-                                                    <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.72rem', fontWeight: '800' }}>
-                                                        {(routeFormData.stops || []).length} stops configured
+                                                </div>
+
+                                                {showRouteTimingDropdown && (
+                                                    <div style={{ padding: '0.65rem 0.75rem', background: 'white', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                                                        <div>
+                                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Start Landmark:</label>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="e.g. Main Station / Liberty Market"
+                                                                value={routeFormData.startPoint}
+                                                                onChange={(e) => setRouteFormData({ ...routeFormData, startPoint: e.target.value })}
+                                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Destination Campus:</label>
+                                                            <input
+                                                                type="text"
+                                                                value={routeFormData.endPoint}
+                                                                onChange={(e) => setRouteFormData({ ...routeFormData, endPoint: e.target.value })}
+                                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Morning Start Time:</label>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="06:45 AM"
+                                                                value={routeFormData.morningDepartureTime}
+                                                                onChange={(e) => setRouteFormData({ ...routeFormData, morningDepartureTime: e.target.value })}
+                                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Afternoon Return Time:</label>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="01:45 PM"
+                                                                value={routeFormData.afternoonDepartureTime}
+                                                                onChange={(e) => setRouteFormData({ ...routeFormData, afternoonDepartureTime: e.target.value })}
+                                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Route Stops Sequence Section */}
+                                            <div style={{ background: '#ffffff', padding: '0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', marginBottom: '0.85rem' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                        <MapPin size={16} color="#0284c7" />
+                                                        <label style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0f172a' }}>
+                                                            📍 Route Stops Sequence ({(routeFormData.stops || []).length} stops)
+                                                        </label>
+                                                        <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.72rem', fontWeight: '800' }}>
+                                                            {(routeFormData.stops || []).length} stops configured
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleAddStopToForm}
+                                                        className="btn hover-lift"
+                                                        style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                                                    >
+                                                        <Plus size={14} /> Add Next Stop
+                                                    </button>
+                                                </div>
+
+                                                {/* Column Headings */}
+                                                <div style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', padding: '0.35rem 0.5rem', background: '#f1f5f9', borderRadius: '6px', marginBottom: '0.45rem', fontSize: '0.68rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                                    <span># Seq</span>
+                                                    <span>Pickup Landmark Name</span>
+                                                    <span>🌅 Morning</span>
+                                                    <span>🌇 Return</span>
+                                                    <span>💵 Fare</span>
+                                                    <span style={{ textAlign: 'center' }}>Del</span>
+                                                </div>
+
+                                                {/* Spacious Scrollable Stops Sequence Area */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', maxHeight: '340px', minHeight: '200px', overflowY: 'auto', paddingRight: '0.2rem' }}>
+                                                    {(routeFormData.stops || []).length === 0 ? (
+                                                        <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
+                                                            <MapPin size={28} color="#94a3b8" style={{ marginBottom: '0.5rem' }} />
+                                                            <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.82rem', fontWeight: '600' }}>No stops added to this route yet.</p>
+                                                            <button
+                                                                type="button"
+                                                                onClick={handleAddStopToForm}
+                                                                style={{ background: '#0284c7', color: 'white', border: 'none', padding: '0.4rem 0.85rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', cursor: 'pointer' }}
+                                                            >
+                                                                + Add First Pickup Stop
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        (routeFormData.stops || []).map((stop, idx) => (
+                                                            <div key={idx} style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', alignItems: 'center', background: '#fafbfc', padding: '0.45rem 0.5rem', borderRadius: '6px', border: '1px solid #e2e8f0', transition: 'all 0.15s ease' }}>
+                                                                <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0284c7', padding: '0.25rem 0.4rem', background: '#e0f2fe', borderRadius: '5px', textAlign: 'center' }}>
+                                                                    #{idx + 1}
+                                                                </span>
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="e.g. Model Town Park Gate 2"
+                                                                    value={stop.stopName}
+                                                                    onChange={(e) => handleUpdateStopField(idx, 'stopName', e.target.value)}
+                                                                    required
+                                                                    style={{ padding: '0.45rem 0.6rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: 'white' }}
+                                                                />
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="07:15 AM"
+                                                                    value={stop.morningTime}
+                                                                    onChange={(e) => handleUpdateStopField(idx, 'morningTime', e.target.value)}
+                                                                    style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                                />
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="02:00 PM"
+                                                                    value={stop.afternoonTime}
+                                                                    onChange={(e) => handleUpdateStopField(idx, 'afternoonTime', e.target.value)}
+                                                                    style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                                />
+                                                                <input
+                                                                    type="number"
+                                                                    placeholder="Fare"
+                                                                    value={stop.fare}
+                                                                    onChange={(e) => handleUpdateStopField(idx, 'fare', Number(e.target.value))}
+                                                                    style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981', background: 'white' }}
+                                                                />
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemoveStopFromForm(idx)}
+                                                                    title="Delete Stop"
+                                                                    style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '0.45rem', borderRadius: '5px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                </button>
+                                                            </div>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVehicleModalTab('vehicle')}
+                                                    style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '700', fontSize: '0.78rem' }}
+                                                >
+                                                    ← Vehicle Profile
+                                                </button>
+                                                <button
+                                                    type="submit"
+                                                    className="btn hover-lift"
+                                                    style={{ flex: 1.5, background: '#0284c7', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', fontSize: '0.78rem', justifyContent: 'center' }}
+                                                >
+                                                    ✓ Save Route
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVehicleModalTab('allocations')}
+                                                    className="btn hover-lift"
+                                                    style={{ flex: 1.5, background: '#16a34a', color: 'white', border: 'none', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', fontSize: '0.78rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                                                >
+                                                    🎓 Allocate Students ➔
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+
+                                    {/* ========================================================================= */}
+                                    {/* SLIDE 3: 🎓 DIRECT STUDENT SEAT ALLOCATION */}
+                                    {/* ========================================================================= */}
+                                    <div style={{ width: '33.333333%', paddingLeft: '0.6rem', boxSizing: 'border-box' }}>
+                                        {/* Top Header with Capacity Gauge */}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #86efac', padding: '0.6rem 0.9rem', borderRadius: '10px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <GraduationCap size={20} color="#15803d" />
+                                                <div>
+                                                    <strong style={{ fontSize: '0.84rem', color: '#14532d', display: 'block' }}>
+                                                        Student Seat Allocation · {vehicleFormData.regNo || 'Van'}
+                                                    </strong>
+                                                    <span style={{ fontSize: '0.72rem', color: '#15803d' }}>
+                                                        {editingRoute ? `Route: ${editingRoute.title}` : 'Direct student van enrolment'}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#15803d' }}>
+                                                        {targetVehAllocations.length} / {targetVehCapacity} Seats
+                                                    </span>
+                                                    <span style={{ display: 'block', fontSize: '0.68rem', color: '#166534', fontWeight: '600' }}>
+                                                        {targetVehVacant} Available
                                                     </span>
                                                 </div>
                                                 <button
                                                     type="button"
-                                                    onClick={handleAddStopToForm}
-                                                    className="btn hover-lift"
-                                                    style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                                                    onClick={() => setVehicleModalTab('route')}
+                                                    style={{ background: 'white', border: '1px solid #86efac', padding: '0.3rem 0.65rem', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '700', color: '#15803d', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
                                                 >
-                                                    <Plus size={14} /> Add Next Stop
+                                                    ← Route Stops
                                                 </button>
                                             </div>
+                                        </div>
 
-                                            {/* Column Headings */}
-                                            <div style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', padding: '0.35rem 0.5rem', background: '#f1f5f9', borderRadius: '6px', marginBottom: '0.45rem', fontSize: '0.68rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                                                <span># Seq</span>
-                                                <span>Pickup Landmark Name</span>
-                                                <span>🌅 Morning</span>
-                                                <span>🌇 Return</span>
-                                                <span>💵 Fare</span>
-                                                <span style={{ textAlign: 'center' }}>Del</span>
+                                        {/* Capacity Progress Bar */}
+                                        <div style={{ width: '100%', background: '#e2e8f0', borderRadius: '9999px', height: '6px', marginBottom: '0.85rem', overflow: 'hidden' }}>
+                                            <div style={{ width: `${Math.min(100, (targetVehAllocations.length / targetVehCapacity) * 100)}%`, height: '100%', background: targetVehAllocations.length >= targetVehCapacity ? '#ef4444' : 'linear-gradient(90deg, #10b981 0%, #059669 100%)', transition: 'width 0.3s ease' }} />
+                                        </div>
+
+                                        {/* Quick Student Allocation Form Card */}
+                                        <form onSubmit={handleAddSlideAllocation} style={{ background: '#fafbfc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '0.75rem', marginBottom: '0.85rem' }}>
+                                            <div style={{ fontSize: '0.76rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                <span>➕</span> Allocate New Student Seat to {vehicleFormData.regNo || 'this Van'}:
                                             </div>
 
-                                            {/* Spacious Scrollable Stops Sequence Area */}
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', maxHeight: '380px', minHeight: '220px', overflowY: 'auto', paddingRight: '0.2rem' }}>
-                                                {(routeFormData.stops || []).length === 0 ? (
-                                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
-                                                        <MapPin size={28} color="#94a3b8" style={{ marginBottom: '0.5rem' }} />
-                                                        <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.82rem', fontWeight: '600' }}>No stops added to this route yet.</p>
-                                                        <button
-                                                            type="button"
-                                                            onClick={handleAddStopToForm}
-                                                            style={{ background: '#0284c7', color: 'white', border: 'none', padding: '0.4rem 0.85rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', cursor: 'pointer' }}
-                                                        >
-                                                            + Add First Pickup Stop
-                                                        </button>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.6fr 1.6fr 1fr auto', gap: '0.5rem', alignItems: 'end' }}>
+                                                {/* 1. Class */}
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>1. Select Class:</label>
+                                                    <select
+                                                        value={slideAllocClassId}
+                                                        onChange={(e) => {
+                                                            setSlideAllocClassId(e.target.value);
+                                                            setSlideAllocStudentId('');
+                                                        }}
+                                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                    >
+                                                        <option value="">-- Choose Class --</option>
+                                                        {classesList.map(c => (
+                                                            <option key={c.id} value={c.id}>
+                                                                {c.name || c.className}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+
+                                                {/* 2. Student */}
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>
+                                                        2. Select Student {isLoadingSlideStudents ? '(Loading...)' : `(${slideAllocStudentsList.length})`}:
+                                                    </label>
+                                                    <select
+                                                        value={slideAllocStudentId}
+                                                        onChange={(e) => setSlideAllocStudentId(e.target.value)}
+                                                        disabled={!slideAllocClassId || isLoadingSlideStudents}
+                                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                    >
+                                                        <option value="">-- Choose Student --</option>
+                                                        {slideAllocStudentsList.map(st => {
+                                                            const isAlloc = allocations.some(a => a.studentId === st.id);
+                                                            return (
+                                                                <option key={st.id} value={st.id}>
+                                                                    {st.name || st.studentName} (Roll: {st.rollNo || st.rollNumber || '—'}) {isAlloc ? '✓ [Allocated]' : ''}
+                                                                </option>
+                                                            );
+                                                        })}
+                                                    </select>
+                                                </div>
+
+                                                {/* 3. Pickup Stop */}
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>3. Pickup Stop:</label>
+                                                    <select
+                                                        value={slideAllocStopName}
+                                                        onChange={(e) => {
+                                                            const chosen = e.target.value;
+                                                            setSlideAllocStopName(chosen);
+                                                            const matchedStop = (routeFormData.stops || []).find(s => s.stopName === chosen) || (editingRoute?.stops || []).find(s => s.stopName === chosen);
+                                                            if (matchedStop && matchedStop.fare) {
+                                                                setSlideAllocMonthlyFare(Number(matchedStop.fare));
+                                                            }
+                                                        }}
+                                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                    >
+                                                        <option value="">-- Select Route Stop --</option>
+                                                        {(routeFormData.stops || []).filter(s => s.stopName).map((s, idx) => (
+                                                            <option key={idx} value={s.stopName}>
+                                                                📍 {s.stopName} ({s.morningTime || '07:00 AM'} · PKR {s.fare || routeFormData.monthlyBaseFare || 2500})
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+
+                                                {/* 4. Fare */}
+                                                <div>
+                                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>4. Fare (PKR):</label>
+                                                    <input
+                                                        type="number"
+                                                        value={slideAllocMonthlyFare}
+                                                        onChange={(e) => setSlideAllocMonthlyFare(Number(e.target.value))}
+                                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem', fontWeight: '700', color: '#10b981', background: 'white' }}
+                                                    />
+                                                </div>
+
+                                                {/* 5. Button */}
+                                                <div>
+                                                    <button
+                                                        type="submit"
+                                                        className="btn hover-lift"
+                                                        style={{ background: 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)', color: 'white', border: 'none', padding: '0.48rem 0.85rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '800', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                                                    >
+                                                        <Plus size={14} /> Assign Seat
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </form>
+
+                                        {/* Allocated Students Table Roster */}
+                                        <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', background: 'white', marginBottom: '0.75rem' }}>
+                                            <div style={{ padding: '0.5rem 0.75rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ fontSize: '0.76rem', fontWeight: '800', color: '#1e293b' }}>
+                                                    📋 Enrolled Students in {vehicleFormData.regNo || 'this Van'} ({targetVehAllocations.length})
+                                                </span>
+                                                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                                    Total Monthly Revenue: <strong style={{ color: '#10b981' }}>PKR {targetVehAllocations.reduce((sum, a) => sum + (Number(a.monthlyFare) || 0), 0).toLocaleString()}</strong>
+                                                </span>
+                                            </div>
+
+                                            <div style={{ maxHeight: '280px', minHeight: '160px', overflowY: 'auto' }}>
+                                                {targetVehAllocations.length === 0 ? (
+                                                    <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#94a3b8' }}>
+                                                        <GraduationCap size={32} color="#cbd5e1" style={{ marginBottom: '0.4rem' }} />
+                                                        <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: '600', color: '#64748b' }}>
+                                                            No students currently allocated to this vehicle.
+                                                        </p>
+                                                        <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                                                            Use the allocation form above to assign students to pickup stops.
+                                                        </span>
                                                     </div>
                                                 ) : (
-                                                    (routeFormData.stops || []).map((stop, idx) => (
-                                                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', alignItems: 'center', background: '#fafbfc', padding: '0.45rem 0.5rem', borderRadius: '6px', border: '1px solid #e2e8f0', transition: 'all 0.15s ease' }}>
-                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0284c7', padding: '0.25rem 0.4rem', background: '#e0f2fe', borderRadius: '5px', textAlign: 'center' }}>
-                                                                #{idx + 1}
-                                                            </span>
-                                                            <input
-                                                                type="text"
-                                                                placeholder="e.g. Model Town Park Gate 2"
-                                                                value={stop.stopName}
-                                                                onChange={(e) => handleUpdateStopField(idx, 'stopName', e.target.value)}
-                                                                required
-                                                                style={{ padding: '0.45rem 0.6rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: 'white' }}
-                                                            />
-                                                            <input
-                                                                type="text"
-                                                                placeholder="07:15 AM"
-                                                                value={stop.morningTime}
-                                                                onChange={(e) => handleUpdateStopField(idx, 'morningTime', e.target.value)}
-                                                                style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
-                                                            />
-                                                            <input
-                                                                type="text"
-                                                                placeholder="02:00 PM"
-                                                                value={stop.afternoonTime}
-                                                                onChange={(e) => handleUpdateStopField(idx, 'afternoonTime', e.target.value)}
-                                                                style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
-                                                            />
-                                                            <input
-                                                                type="number"
-                                                                placeholder="Fare"
-                                                                value={stop.fare}
-                                                                onChange={(e) => handleUpdateStopField(idx, 'fare', Number(e.target.value))}
-                                                                style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981', background: 'white' }}
-                                                            />
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleRemoveStopFromForm(idx)}
-                                                                title="Delete Stop"
-                                                                style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '0.45rem', borderRadius: '5px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                                            >
-                                                                <Trash2 size={14} />
-                                                            </button>
-                                                        </div>
-                                                    ))
+                                                    <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
+                                                        <thead>
+                                                            <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #e2e8f0', color: '#475569', textAlign: 'left' }}>
+                                                                <th style={{ padding: '0.45rem 0.6rem' }}>#</th>
+                                                                <th style={{ padding: '0.45rem 0.6rem' }}>Student Name</th>
+                                                                <th style={{ padding: '0.45rem 0.6rem' }}>Class</th>
+                                                                <th style={{ padding: '0.45rem 0.6rem' }}>Pickup Stop</th>
+                                                                <th style={{ padding: '0.45rem 0.6rem' }}>Monthly Fare</th>
+                                                                <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center' }}>Actions</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {targetVehAllocations.map((alloc, idx) => (
+                                                                <tr key={alloc.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                    <td style={{ padding: '0.45rem 0.6rem', fontWeight: '700', color: '#64748b' }}>
+                                                                        {idx + 1}
+                                                                    </td>
+                                                                    <td style={{ padding: '0.45rem 0.6rem', fontWeight: '700', color: '#0f172a' }}>
+                                                                        {alloc.studentName}
+                                                                        <span style={{ display: 'block', fontSize: '0.68rem', color: '#64748b' }}>
+                                                                            Father: {alloc.fatherName || '—'}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td style={{ padding: '0.45rem 0.6rem', color: '#475569' }}>
+                                                                        {alloc.className} {alloc.section ? `(${alloc.section})` : ''}
+                                                                    </td>
+                                                                    <td style={{ padding: '0.45rem 0.6rem', color: '#0284c7', fontWeight: '700' }}>
+                                                                        📍 {alloc.pickupStop || alloc.stopName}
+                                                                    </td>
+                                                                    <td style={{ padding: '0.45rem 0.6rem', fontWeight: '800', color: '#10b981' }}>
+                                                                        PKR {Number(alloc.monthlyFare || 2500).toLocaleString()}
+                                                                    </td>
+                                                                    <td style={{ padding: '0.45rem 0.6rem', textAlign: 'center' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
+                                                                            {alloc.parentPhone && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => sendBoardingAlertWhatsApp(alloc, 'boarded')}
+                                                                                    title="WhatsApp Parent"
+                                                                                    style={{ background: '#dcfce7', color: '#15803d', border: 'none', padding: '0.25rem 0.45rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                                                                                >
+                                                                                    <MessageSquare size={12} />
+                                                                                </button>
+                                                                            )}
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleDeleteSlideAllocation(alloc.id, alloc.studentName)}
+                                                                                title="Remove from Seat"
+                                                                                style={{ background: '#fee2e2', color: '#ef4444', border: 'none', padding: '0.25rem 0.45rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                                                                            >
+                                                                                <Trash2 size={12} />
+                                                                            </button>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
                                                 )}
                                             </div>
                                         </div>
 
-                                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                        {/* Footer Navigation Bar */}
+                                        <div style={{ display: 'flex', gap: '0.65rem' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setVehicleModalTab('route')}
+                                                style={{ flex: 1, padding: '0.6rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '700', fontSize: '0.78rem' }}
+                                            >
+                                                ← Back to Route Stops
+                                            </button>
                                             <button
                                                 type="button"
                                                 onClick={() => setVehicleModalTab('vehicle')}
-                                                style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '700' }}
+                                                style={{ flex: 1, padding: '0.6rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f8fafc', cursor: 'pointer', fontWeight: '700', fontSize: '0.78rem' }}
                                             >
-                                                ← Back to Vehicle Profile
+                                                🚐 Vehicle Profile
                                             </button>
                                             <button
-                                                type="submit"
+                                                type="button"
+                                                onClick={() => setVehicleModalOpen(false)}
                                                 className="btn"
-                                                style={{ flex: 2, background: '#10b981', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
+                                                style={{ flex: 1.5, background: '#10b981', color: 'white', padding: '0.6rem', borderRadius: '8px', fontWeight: '800', fontSize: '0.78rem', justifyContent: 'center' }}
                                             >
-                                                ✓ Save Route Configuration
+                                                ✓ Done & Close
                                             </button>
                                         </div>
-                                    </form>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* ========================================================================= */}
             {/* 2. ADD / EDIT ROUTE MODAL */}
