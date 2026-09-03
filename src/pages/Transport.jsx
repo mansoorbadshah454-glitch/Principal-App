@@ -2343,28 +2343,50 @@ const Transport = () => {
                 const altKeyWithVeh = `${todayStr}_${currentOverviewVeh?.id}_${overviewTripType}`;
                 const altKeyWithTripRoute = `${todayStr}_${currentTracking.routeId}_${overviewTripType}`;
 
-                // Real-time merge: 1. Live stream student status map from driver app GPS 2. Daily attendance logs in Firestore
-                const liveStudentStatusMap = currentTracking.studentStatusMap || {};
-                const docAttMap = {
+                // 1. Collect ALL live status maps from ALL active/live tracking documents streaming in Firestore
+                const allLiveStatusMaps = {};
+                Object.values(liveTrackingData || {}).forEach(trackDoc => {
+                    if (trackDoc && trackDoc.studentStatusMap && typeof trackDoc.studentStatusMap === 'object') {
+                        Object.assign(allLiveStatusMaps, trackDoc.studentStatusMap);
+                    }
+                });
+
+                // 2. Collect ALL today's attendance logs across ANY route / vehicle / trip key in attendanceLogs
+                const allTodayAttendanceLogs = {};
+                Object.entries(attendanceLogs || {}).forEach(([k, subMap]) => {
+                    if (typeof subMap === 'object' && subMap !== null) {
+                        if (k.startsWith(todayStr) || k.includes(todayStr)) {
+                            Object.assign(allTodayAttendanceLogs, subMap);
+                        }
+                    }
+                });
+
+                // 3. Robust unified map
+                const currentAttMap = {
+                    ...allTodayAttendanceLogs,
                     ...(attendanceLogs[altKeyWithVeh] || {}),
                     ...(attendanceLogs[altKeyWithTripRoute] || {}),
-                    ...(attendanceLogs[attKey] || {})
+                    ...(attendanceLogs[attKey] || {}),
+                    ...allLiveStatusMaps,
+                    ...(currentTracking.studentStatusMap || {})
                 };
 
-                const currentAttMap = {
-                    ...docAttMap,
-                    ...liveStudentStatusMap
+                const getStudentStatus = (st) => {
+                    if (!st) return 'pending';
+                    const id1 = st.studentId;
+                    const id2 = st.id;
+                    const id3 = st._id;
+                    const roll = st.rollNo;
+                    if (id1 && currentAttMap[id1]) return currentAttMap[id1];
+                    if (id2 && currentAttMap[id2]) return currentAttMap[id2];
+                    if (id3 && currentAttMap[id3]) return currentAttMap[id3];
+                    if (roll && currentAttMap[roll]) return currentAttMap[roll];
+                    return 'pending';
                 };
 
                 const totalAssigned = overviewAllocations.length;
-                const boardedCount = overviewAllocations.filter(a => {
-                    const stId = a.studentId || a.id;
-                    return currentAttMap[stId] === 'boarded' || currentAttMap[a.studentId] === 'boarded' || currentAttMap[a.id] === 'boarded';
-                }).length;
-                const absentCount = overviewAllocations.filter(a => {
-                    const stId = a.studentId || a.id;
-                    return currentAttMap[stId] === 'absent' || currentAttMap[a.studentId] === 'absent' || currentAttMap[a.id] === 'absent';
-                }).length;
+                const boardedCount = overviewAllocations.filter(a => getStudentStatus(a) === 'boarded').length;
+                const absentCount = overviewAllocations.filter(a => getStudentStatus(a) === 'absent').length;
                 const pendingCount = Math.max(0, totalAssigned - boardedCount - absentCount);
                 const boardedPercent = totalAssigned > 0 ? Math.round((boardedCount / totalAssigned) * 100) : 0;
 
@@ -2675,12 +2697,9 @@ const Transport = () => {
                                                 const stopStudents = overviewAllocations.filter(a => {
                                                     const stStop = (a.pickupStop || a.stopName || '').toLowerCase().trim();
                                                     const rStop = (stop.stopName || '').toLowerCase().trim();
-                                                    return stStop === rStop;
+                                                    return stStop === rStop || (overviewRoute.stops.length === 1 && !stStop);
                                                 });
-                                                const stopBoardedCount = stopStudents.filter(s => {
-                                                    const stId = s.studentId || s.id;
-                                                    return currentAttMap[stId] === 'boarded' || currentAttMap[s.studentId] === 'boarded' || currentAttMap[s.id] === 'boarded';
-                                                }).length;
+                                                const stopBoardedCount = stopStudents.filter(s => getStudentStatus(s) === 'boarded').length;
 
                                                 return (
                                                     <div
@@ -2727,7 +2746,7 @@ const Transport = () => {
                                                             ) : (
                                                                 stopStudents.map(student => {
                                                                     const stId = student.studentId || student.id;
-                                                                    const status = currentAttMap[stId] || currentAttMap[student.studentId] || currentAttMap[student.id] || 'pending';
+                                                                    const status = getStudentStatus(student);
 
                                                                     return (
                                                                         <div
