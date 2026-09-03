@@ -192,6 +192,8 @@ const Transport = () => {
     const [isSimulating, setIsSimulating] = useState(false);
     const simTimerRef = useRef(null);
     const simStepRef = useRef(0);
+    const activeRoadWaypointsRef = useRef([]); // Real Road-following Waypoints from OSRM
+    const [roadRouteInfo, setRoadRouteInfo] = useState({ distanceKm: 0, durationMin: 0 });
 
     // School Profile Info
     const [schoolInfo, setSchoolInfo] = useState({
@@ -650,15 +652,56 @@ const Transport = () => {
                 `);
                 markersGroup.addLayer(schoolMarker);
 
-                // Draw Route Polyline
-                const polyline = L.polyline(routeCoords, {
+                // Initial Direct Road Line
+                const initialPolyline = L.polyline(routeCoords, {
                     color: '#0284c7',
-                    weight: 4,
-                    opacity: 0.85,
-                    dashArray: '8, 8',
+                    weight: 3.5,
+                    opacity: 0.7,
+                    dashArray: '6, 6',
                     lineCap: 'round'
                 });
-                polylineGroup.addLayer(polyline);
+                polylineGroup.addLayer(initialPolyline);
+
+                // Asynchronous Dynamic Real-Road Routing Engine (OpenStreetMap OSRM)
+                if (routeCoords.length >= 2) {
+                    const coordsQuery = routeCoords.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+                    fetch(`https://router.project-osrm.org/route/v1/driving/${coordsQuery}?overview=full&geometries=geojson`)
+                        .then(res => res.json())
+                        .then(osrmData => {
+                            if (osrmData.code === 'Ok' && osrmData.routes && osrmData.routes[0]?.geometry?.coordinates && polylineLayerRef.current) {
+                                const roadLatLngs = osrmData.routes[0].geometry.coordinates.map(([lng, lat]) => L.latLng(lat, lng));
+                                const distKm = ((osrmData.routes[0].distance || 0) / 1000).toFixed(1);
+                                const durMin = Math.round((osrmData.routes[0].duration || 0) / 60);
+
+                                polylineLayerRef.current.clearLayers();
+
+                                // 1. Real Road Outer Glow
+                                const roadGlow = L.polyline(roadLatLngs, {
+                                    color: '#0369a1',
+                                    weight: 8,
+                                    opacity: 0.35,
+                                    lineCap: 'round',
+                                    lineJoin: 'round'
+                                });
+
+                                // 2. Real Road Core Driving Line
+                                const roadCore = L.polyline(roadLatLngs, {
+                                    color: '#0284c7',
+                                    weight: 4,
+                                    opacity: 0.95,
+                                    lineCap: 'round',
+                                    lineJoin: 'round'
+                                });
+
+                                polylineLayerRef.current.addLayer(roadGlow);
+                                polylineLayerRef.current.addLayer(roadCore);
+
+                                activeRoadWaypointsRef.current = roadLatLngs.map(ll => ({ lat: ll.lat, lng: ll.lng }));
+                                setRoadRouteInfo({ distanceKm: distKm, durationMin: durMin });
+                            }
+                        })
+                        .catch(() => {});
+                }
             }
 
             // Draw Vehicle Markers with real-time GPS telemetry
@@ -2116,47 +2159,59 @@ const Transport = () => {
         showAlert('🚀 Live GPS Simulation active! Van is moving on map.', 'success');
 
         const activeRoute = routes[0];
-        const stopsList = (activeRoute && Array.isArray(activeRoute.stops) && activeRoute.stops.length > 0)
-            ? activeRoute.stops
-            : [
-                { stopName: 'Stop 1: Township Market', latitude: 31.4700, longitude: 74.3050 },
-                { stopName: 'Stop 2: Model Town C-Block', latitude: 31.4950, longitude: 74.3300 },
-                { stopName: 'Stop 3: Kalma Chowk Underpass', latitude: 31.5150, longitude: 74.3520 },
-                { stopName: 'Stop 4: Main Boulevard Gulberg', latitude: 31.5300, longitude: 74.3680 },
-                { stopName: 'School Campus Terminal', latitude: 31.5350, longitude: 74.3750 }
-            ];
+        let waypoints = [];
 
-        // Generate smooth interpolated waypoints
-        const waypoints = [];
-        for (let i = 0; i < stopsList.length - 1; i++) {
-            const start = stopsList[i];
-            const end = stopsList[i + 1];
-            const stepsBetween = 6;
-            for (let s = 0; s < stepsBetween; s++) {
-                const ratio = s / stepsBetween;
-                const startLat = Number(start.latitude) || (31.50 + i * 0.01);
-                const startLng = Number(start.longitude) || (74.32 + i * 0.01);
-                const endLat = Number(end.latitude) || (31.51 + i * 0.01);
-                const endLng = Number(end.longitude) || (74.33 + i * 0.01);
+        // Priority 1: Use Real-Road OSRM Geometry Coordinates if available
+        if (activeRoadWaypointsRef.current && activeRoadWaypointsRef.current.length > 3) {
+            waypoints = activeRoadWaypointsRef.current.map((pt, pIdx) => ({
+                lat: pt.lat,
+                lng: pt.lng,
+                stopName: (pIdx === 0 || pIdx === activeRoadWaypointsRef.current.length - 1 || pIdx % 10 === 0) ? 'Road Transit Waypoint' : '',
+                isStop: pIdx === 0 || pIdx === activeRoadWaypointsRef.current.length - 1
+            }));
+        } else {
+            const anchorLat = deviceCoords?.lat || 33.6844;
+            const anchorLng = deviceCoords?.lng || 73.0479;
+            const stopsList = (activeRoute && Array.isArray(activeRoute.stops) && activeRoute.stops.length > 0)
+                ? activeRoute.stops
+                : [
+                    { stopName: 'Stop 1: Designated Point', latitude: anchorLat - 0.008, longitude: anchorLng - 0.006 },
+                    { stopName: 'Stop 2: Main Road Junction', latitude: anchorLat - 0.002, longitude: anchorLng + 0.002 },
+                    { stopName: 'Stop 3: Commercial Sector', latitude: anchorLat + 0.004, longitude: anchorLng + 0.006 },
+                    { stopName: 'School Campus Terminal', latitude: anchorLat + 0.012, longitude: anchorLng + 0.012 }
+                ];
 
-                const lat = startLat + (endLat - startLat) * ratio;
-                const lng = startLng + (endLng - startLng) * ratio;
+            // Generate smooth interpolated waypoints
+            for (let i = 0; i < stopsList.length - 1; i++) {
+                const start = stopsList[i];
+                const end = stopsList[i + 1];
+                const stepsBetween = 8;
+                for (let s = 0; s < stepsBetween; s++) {
+                    const ratio = s / stepsBetween;
+                    const startLat = Number(start.latitude) || (anchorLat + i * 0.005);
+                    const startLng = Number(start.longitude) || (anchorLng + i * 0.005);
+                    const endLat = Number(end.latitude) || (anchorLat + (i + 1) * 0.005);
+                    const endLng = Number(end.longitude) || (anchorLng + (i + 1) * 0.005);
 
-                waypoints.push({
-                    lat,
-                    lng,
-                    stopName: s === 0 ? start.stopName : `Transit -> ${end.stopName}`,
-                    isStop: s === 0
-                });
+                    const lat = startLat + (endLat - startLat) * ratio;
+                    const lng = startLng + (endLng - startLng) * ratio;
+
+                    waypoints.push({
+                        lat,
+                        lng,
+                        stopName: s === 0 ? start.stopName : `Transit -> ${end.stopName}`,
+                        isStop: s === 0
+                    });
+                }
             }
+            // Terminal waypoint
+            waypoints.push({
+                lat: anchorLat + 0.012,
+                lng: anchorLng + 0.012,
+                stopName: '🏫 School Campus Central Terminal',
+                isStop: true
+            });
         }
-        // Terminal waypoint
-        waypoints.push({
-            lat: 31.5350,
-            lng: 74.3750,
-            stopName: '🏫 School Campus Central Terminal',
-            isStop: true
-        });
 
         const targetVeh = vehicles[0];
         simStepRef.current = 0;
@@ -2171,7 +2226,7 @@ const Transport = () => {
             let heading = Math.round((Math.atan2(dLng, dLat) * 180) / Math.PI);
             if (heading < 0) heading += 360;
 
-            const speed = currentWp.isStop ? 0 : Math.round(35 + Math.sin(simStepRef.current * 0.6) * 14);
+            const speed = currentWp.isStop ? 0 : Math.round(35 + Math.sin(simStepRef.current * 0.6) * 12);
 
             setLiveTrackingData(prev => ({
                 ...prev,
@@ -2187,7 +2242,7 @@ const Transport = () => {
                     longitude: currentWp.lng,
                     speedKmH: speed,
                     heading: heading,
-                    accuracyMeters: 4,
+                    accuracyMeters: 3,
                     lastTimestamp: new Date().toISOString()
                 }
             }));
@@ -2207,7 +2262,7 @@ const Transport = () => {
                     });
                 }
             }
-        }, 1500);
+        }, 1100);
     };
 
     // Clean up simulation on unmount
@@ -2814,16 +2869,23 @@ const Transport = () => {
                         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.55fr) minmax(360px, 1fr)', gap: '1.25rem', alignItems: 'start' }}>
                             {/* LEFT PANEL: 100% Free OpenStreetMap Interactive Leaflet Map */}
                             <div style={{ background: 'white', borderRadius: '16px', border: '1.5px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
-                                <div style={{ padding: '0.75rem 1rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ padding: '0.75rem 1rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px #10b981' }}></div>
                                         <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0f172a' }}>
-                                            🗺️ Real-Time GPS Tracking Map (OpenStreetMap Powered)
+                                            🗺️ Real-Time GPS Tracking Map (Real Road Routing Engine)
                                         </span>
                                     </div>
-                                    <span style={{ fontSize: '0.7rem', color: '#64748b', background: 'white', border: '1px solid #cbd5e1', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '600' }}>
-                                        100% Free Cloud Radar
-                                    </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        {roadRouteInfo.distanceKm > 0 && (
+                                            <span style={{ fontSize: '0.72rem', color: '#0284c7', background: '#e0f2fe', border: '1px solid #bae6fd', padding: '0.18rem 0.55rem', borderRadius: '6px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                                🛣️ {roadRouteInfo.distanceKm} KM · ~{roadRouteInfo.durationMin} Mins Drive
+                                            </span>
+                                        )}
+                                        <span style={{ fontSize: '0.7rem', color: '#64748b', background: 'white', border: '1px solid #cbd5e1', padding: '0.18rem 0.5rem', borderRadius: '6px', fontWeight: '600' }}>
+                                            100% Free Cloud Radar
+                                        </span>
+                                    </div>
                                 </div>
 
                                 {/* Leaflet Map Div Container */}
