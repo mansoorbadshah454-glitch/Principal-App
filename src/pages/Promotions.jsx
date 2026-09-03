@@ -9,14 +9,13 @@ import {
 import { db, auth, storage } from '../firebase';
 import {
     collection, getDocs, doc, writeBatch, getDoc, updateDoc,
-    query, orderBy, addDoc, serverTimestamp, setDoc
+    query, orderBy, addDoc, serverTimestamp, setDoc, onSnapshot
 } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
-
 
 // Robust Multi-Strategy Base64 Image Loader (Bypasses Firebase Storage & Canvas CORS)
 async function fetchImageAsBase64(url) {
@@ -368,107 +367,296 @@ const Promotions = () => {
     }, [schoolId]);
 
     // 3. Handle Class Selection
-    const handleClassSelect = async (cls, customClasses = null) => {
+    const handleClassSelect = (cls, customClasses = null) => {
         if (selectedClass?.id === cls.id && !customClasses) return;
         localStorage.setItem('promotions_selected_class_id', cls.id);
         setSelectedClass(cls);
-        setStudents([]);
         setSearchQuery('');
-        setLoadingStudents(true);
         setPromotionStatus(null);
+    };
 
-        const activeClasses = customClasses || classes;
+    // Helper: Grade Calculator
+    function calculateGrade(obtained, total) {
+        if (obtained === null || total <= 0) return '-';
+        const pct = (obtained / total) * 100;
+        if (pct >= 80) return 'A+';
+        if (pct >= 70) return 'A';
+        if (pct >= 60) return 'B';
+        if (pct >= 50) return 'C';
+        if (pct >= 40) return 'D';
+        if (pct >= 33) return 'E';
+        return 'F';
+    }
 
-        try {
-            const studentsRef = collection(db, `schools/${schoolId}/classes/${cls.id}/students`);
-            const snapshot = await getDocsFast(studentsRef);
-
-            const currentIndex = activeClasses.findIndex(c => c.id === cls.id);
-            const nextClass = activeClasses[currentIndex + 1] || null;
-            const previousClass = activeClasses[currentIndex - 1] || null;
-
-            // Fetch exams and marks for real multi-term scores
-            let examsList = [];
-            let marksDocs = [];
+    // 3.5 Real-Time Firestore Listener for Class Students & Exam Marks (Ultra-Robust Mirror of DMC Tabulation)
+    useEffect(() => {
+        if (isDemoMode) {
+            let overrides = {};
             try {
-                const examsSnap = await getDocsFast(collection(db, `schools/${schoolId}/exams`));
-                examsList = examsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-                examsList.sort((a, b) => (a.status === 'active' ? -1 : 1));
-
-                const marksSnap = await getDocsFast(collection(db, `schools/${schoolId}/classes/${cls.id}/exam_marks`));
-                marksDocs = marksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                overrides = JSON.parse(localStorage.getItem('exams_demo_data_override') || '{}');
             } catch (e) {
-                console.warn("Could not fetch multi-term exams in promotions:", e);
+                overrides = {};
             }
 
-            // Standard terms to track
-            const termsToTrack = [
-                { key: 'first', label: '1st Term', regex: /(1st|first|term[_\-\s]?1)/i },
-                { key: 'mid', label: '2nd Term', regex: /(2nd|second|mid|half|term[_\-\s]?2)/i },
-                { key: 'final', label: 'Final Exam', regex: /(final|annual|3rd|third|term[_\-\s]?3)/i }
+            const currentIndex = classes.findIndex(c => c.id === selectedClass?.id);
+            const nextClass = classes[currentIndex + 1] || null;
+            const previousClass = classes[currentIndex - 1] || null;
+            const nextClassName = nextClass ? nextClass.name : 'Class 1';
+            const prevClassName = previousClass ? previousClass.name : 'Nursery';
+
+            const baseDemoList = [
+                { id: 'demo_1', name: 'Muhammad Ali Raza', rollNo: '01', fatherName: 'Tariq Mehmood', t1Obtained: 455, t1Max: 500, t2Obtained: 460, t2Max: 500, t3Obtained: 470, t3Max: 500 },
+                { id: 'demo_2', name: 'Fatima Zahra', rollNo: '02', fatherName: 'Kamran Ali', t1Obtained: 415, t1Max: 500, t2Obtained: 420, t2Max: 500, t3Obtained: 430, t3Max: 500 },
+                { id: 'demo_3', name: 'Muhammad Usman', rollNo: '03', fatherName: 'Abdul Sattar', t1Obtained: 310, t1Max: 500, t2Obtained: 315, t2Max: 500, t3Obtained: 325, t3Max: 500 },
+                { id: 'demo_4', name: 'Bilal Ahmed', rollNo: '04', fatherName: 'Farooq Ahmed', t1Obtained: 125, t1Max: 500, t2Obtained: 130, t2Max: 500, t3Obtained: 140, t3Max: 500 },
+                { id: 'demo_5', name: 'Ayesha Khan', rollNo: '05', fatherName: 'Sardar Khan', t1Obtained: 148, t1Max: 500, t2Obtained: 150, t2Max: 500, t3Obtained: 155, t3Max: 500 },
+                { id: 'demo_6', name: 'Zainab Bibi', rollNo: '06', fatherName: 'Muhammad Rashid', t1Obtained: 135, t1Max: 500, t2Obtained: 140, t2Max: 500, t3Obtained: 145, t3Max: 500 }
             ];
 
-            const fetchedStudents = snapshot.docs.map(doc => {
-                const data = doc.data();
-                const studentId = doc.id;
+            const computedDemo = baseDemoList.map(item => {
+                const ov = overrides[item.id] || {};
+                let t1Obt = item.t1Obtained;
+                let t1Max = item.t1Max;
+
+                if (ov.subjectMarks) {
+                    let sObt = 0;
+                    let sMax = 0;
+                    Object.values(ov.subjectMarks).forEach(sm => {
+                        const totalM = sm.totalMarks || 100;
+                        sMax += totalM;
+                        if (!sm.isAbsent && sm.obtained !== '' && sm.obtained !== null) {
+                            const base = parseFloat(sm.obtained) || 0;
+                            const grace = parseFloat(sm.graceMarks) || 0;
+                            sObt += (base + grace);
+                        }
+                    });
+                    if (sMax > 0) {
+                        t1Obt = sObt;
+                        t1Max = sMax;
+                    }
+                }
+
+                const modOverride = ov.moderationOverride || 'auto';
+                const isForcePass = modOverride === 'pass' || modOverride === 'conditional_pass';
+                const isForceFail = modOverride === 'fail';
+
+                const t1Pass = isForcePass || (!isForceFail && (t1Obt / t1Max >= 0.33));
+                const t2Pass = item.t2Obtained / item.t2Max >= 0.33;
+                const t3Pass = item.t3Obtained / item.t3Max >= 0.33;
+
+                const termsScores = [
+                    { termKey: 'first', examTitle: '1st Term', obtained: t1Obt, max: t1Max, scoreText: `${t1Obt} / ${t1Max}`, hasMarks: true, isPassed: t1Pass },
+                    { termKey: 'mid', examTitle: '2nd Term', obtained: item.t2Obtained, max: item.t2Max, scoreText: `${item.t2Obtained} / ${item.t2Max}`, hasMarks: true, isPassed: t2Pass },
+                    { termKey: 'final', examTitle: 'Final Exam', obtained: item.t3Obtained, max: item.t3Max, scoreText: `${item.t3Obtained} / ${item.t3Max}`, hasMarks: true, isPassed: t3Pass }
+                ];
+
+                const totalObtainedAllTerms = t1Obt + item.t2Obtained + item.t3Obtained;
+                const totalMaxAllTerms = t1Max + item.t2Max + item.t3Max;
+                const cumulativePercentage = parseFloat(((totalObtainedAllTerms / totalMaxAllTerms) * 100).toFixed(1));
+                const isCumulativePassed = isForcePass || (!isForceFail && t1Pass && t2Pass && t3Pass && cumulativePercentage >= 33);
+                const grade = calculateGrade(totalObtainedAllTerms, totalMaxAllTerms);
+
+                return {
+                    id: item.id,
+                    name: item.name,
+                    rollNo: item.rollNo,
+                    fatherName: item.fatherName,
+                    avatar: '',
+                    termsScores,
+                    totalObtainedAllTerms,
+                    totalMaxAllTerms,
+                    cumulativePercentage,
+                    cumulativeGrade: grade,
+                    cumulativeIsPassed: isCumulativePassed,
+                    hasRealTermData: true,
+                    promotionStatus: isCumulativePassed ? 'promote' : 'retain',
+                    examScore: cumulativePercentage.toString(),
+                    result: isCumulativePassed ? 'pass' : 'fail',
+                    nextClassId: nextClass?.id || 'next',
+                    nextClassName,
+                    previousClassId: previousClass?.id || null,
+                    previousClassName: prevClassName
+                };
+            });
+
+            setStudents(computedDemo);
+            setLoadingStudents(false);
+            return;
+        }
+
+        if (!schoolId || !selectedClass?.id) {
+            setStudents([]);
+            setLoadingStudents(false);
+            return;
+        }
+
+        setLoadingStudents(true);
+
+        const activeClasses = classes;
+        const currentIndex = activeClasses.findIndex(c => c.id === selectedClass.id);
+        const nextClass = activeClasses[currentIndex + 1] || null;
+        const previousClass = activeClasses[currentIndex - 1] || null;
+
+        let studentsList = [];
+        let examsList = [];
+        let marksDocsList = [];
+
+        // Core compilation logic: Exact mirror of Exams.jsx DMC Tabulation Matrix
+        const recomputeAndSetStudents = () => {
+            if (studentsList.length === 0) {
+                setStudents([]);
+                setLoadingStudents(false);
+                return;
+            }
+
+            // Discover all registered class subjects
+            const classSubjs = Array.isArray(selectedClass.subjects) ? selectedClass.subjects : [];
+            const defaultClassSubjects = [];
+            classSubjs.forEach(s => {
+                const clean = typeof s === 'string' ? s.trim() : (s?.name || '').trim();
+                if (clean && !defaultClassSubjects.includes(clean)) defaultClassSubjects.push(clean);
+            });
+
+            // Standard terms to track
+            const termSlots = [
+                { key: 'first', defaultTitle: '1st Term', regex: /(1st|first|term[_-\s]?1)/i, defaultIndex: 0 },
+                { key: 'mid', defaultTitle: '2nd Term', regex: /(2nd|second|mid|half|term[_-\s]?2)/i, defaultIndex: 1 },
+                { key: 'final', defaultTitle: 'Final Exam', regex: /(final|annual|3rd|third|term[_-\s]?3)/i, defaultIndex: 2 }
+            ];
+
+            const computedStudents = studentsList.map(student => {
+                const studentId = student.id;
+                const studentRoll = String(student.rollNumber || student.rollNo || '').trim();
 
                 let totalObtainedAllTerms = 0;
                 let totalMaxAllTerms = 0;
                 let hasAnyTermFailed = false;
                 let termsWithRealDataCount = 0;
 
-                const termsScores = termsToTrack.map(termMeta => {
-                    const matchedExams = examsList.filter(e =>
-                        termMeta.regex.test(e.id || '') || termMeta.regex.test(e.title || '')
+                const termsScores = termSlots.map((slot, sIdx) => {
+                    // Match exam for this slot
+                    let matchedExam = examsList.find(e =>
+                        slot.regex.test(e.id || '') || slot.regex.test(e.title || '')
                     );
+                    if (!matchedExam && examsList.length > sIdx) {
+                        matchedExam = examsList[sIdx];
+                    }
 
+                    const examId = (matchedExam?.id || slot.key).toLowerCase();
+                    const examTitle = (matchedExam?.title || slot.defaultTitle).toLowerCase().trim();
+                    const cleanExamId = examId.replace(/[^a-z0-9]/g, '');
+
+                    // 1. Filter marks documents for this term
+                    const relevantMarksDocs = marksDocsList.filter(d => {
+                        const docExamId = (d.examId || '').toString().toLowerCase();
+                        const docExamTitle = (d.examTitle || '').toString().toLowerCase().trim();
+                        const cleanDocId = d.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+                        // Explicit match by ID or title
+                        if (docExamId === examId || d.id.toLowerCase().startsWith(examId + '_')) return true;
+                        if (examTitle && docExamTitle && (examTitle === docExamTitle || examTitle.includes(docExamTitle) || docExamTitle.includes(examTitle))) return true;
+
+                        const cleanDocExamId = docExamId.replace(/[^a-z0-9]/g, '');
+                        if (cleanDocExamId && cleanExamId && (cleanDocExamId === cleanExamId || cleanExamId.includes(cleanDocExamId) || cleanDocExamId.includes(cleanExamId))) return true;
+                        if (cleanExamId && cleanDocId.startsWith(cleanExamId)) return true;
+
+                        // Slot 0 (1st Term): Also accept marks documents without explicit examId or single exam
+                        if (sIdx === 0) {
+                            if (!docExamId || docExamId === 'default' || docExamId === 'term1' || examsList.length <= 1) {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    });
+
+                    // 2. Discover all subjects for this term
+                    const subjectsSet = new Set(defaultClassSubjects);
+                    const subjectConfigs = {};
+
+                    defaultClassSubjects.forEach(subj => {
+                        subjectConfigs[subj] = { totalMarks: 100, passingMarks: 33 };
+                    });
+
+                    relevantMarksDocs.forEach(doc => {
+                        const subjName = (doc.subject || '').trim();
+                        if (subjName) {
+                            subjectsSet.add(subjName);
+                            const tTotal = typeof doc.totalMarks === 'number' && doc.totalMarks > 0 ? doc.totalMarks : 100;
+                            const tPass = typeof doc.passingMarks === 'number' && doc.passingMarks > 0 ? doc.passingMarks : 33;
+                            subjectConfigs[subjName] = { totalMarks: tTotal, passingMarks: tPass };
+                        }
+                    });
+
+                    const subjectList = Array.from(subjectsSet);
+
+                    // 3. Compute student score across all subjects in this term
                     let termObtained = 0;
                     let termMax = 0;
-                    let hasMarks = false;
-                    let termFailed = false;
+                    let subjectsEvaluatedCount = 0;
+                    let failedSubjectsCount = 0;
+                    let hasAnyAbsent = false;
+                    let studentModerationOverride = null;
 
-                    const relevantExamIds = matchedExams.length > 0
-                        ? matchedExams.map(e => e.id)
-                        : [termMeta.key];
+                    subjectList.forEach(subject => {
+                        const sConf = subjectConfigs[subject] || { totalMarks: 100, passingMarks: 33 };
+                        const marksDoc = relevantMarksDocs.find(d => (d.subject || '').trim().toLowerCase() === subject.toLowerCase());
 
-                    marksDocs.forEach(md => {
-                        const mdExamId = (md.examId || md.id || '').toString();
-                        const isForThisTerm = relevantExamIds.some(eid =>
-                            mdExamId.toLowerCase().includes(eid.toLowerCase()) ||
-                            termMeta.regex.test(mdExamId) ||
-                            termMeta.regex.test(md.examTitle || '')
-                        );
+                        let entryData = null;
+                        if (marksDoc) {
+                            // Support student lookup by ID, rollNumber, or rollNo
+                            entryData = marksDoc.marks?.[studentId] ||
+                                (studentRoll ? marksDoc.marks?.[studentRoll] : null) ||
+                                marksDoc.studentMarks?.[studentId] ||
+                                marksDoc.students?.[studentId] ||
+                                marksDoc.studentEntry?.[studentId] ||
+                                null;
+                        }
 
-                        if (isForThisTerm) {
-                            const entry = md.studentMarks?.[studentId] || md.students?.[studentId] || md.studentEntry?.[studentId];
-                            const sMax = parseFloat(md.totalMarks) || 100;
-                            const sPass = parseFloat(md.passingMarks) || 33;
+                        termMax += sConf.totalMarks;
 
-                            if (entry) {
-                                if (entry.isAbsent) {
-                                    hasMarks = true;
-                                    termFailed = true;
-                                    termMax += sMax;
-                                } else if (entry.marks !== undefined && entry.marks !== null && entry.marks !== '') {
-                                    hasMarks = true;
-                                    const mVal = parseFloat(entry.marks) || 0;
-                                    termObtained += mVal;
-                                    termMax += sMax;
-                                    if (mVal < sPass) termFailed = true;
+                        if (entryData) {
+                            if (entryData.moderationOverride) {
+                                studentModerationOverride = entryData.moderationOverride;
+                            }
+
+                            const isAbsent = entryData.isAbsent === true;
+                            let obtained = null;
+                            if (typeof entryData.obtainedMarks === 'number') obtained = entryData.obtainedMarks;
+                            else if (typeof entryData.obtained === 'number') obtained = entryData.obtained;
+                            else if (typeof entryData.marks === 'number') obtained = entryData.marks;
+                            else if (entryData.obtainedMarks !== undefined && entryData.obtainedMarks !== null && entryData.obtainedMarks !== '') obtained = parseFloat(entryData.obtainedMarks);
+                            else if (entryData.obtained !== undefined && entryData.obtained !== null && entryData.obtained !== '') obtained = parseFloat(entryData.obtained);
+                            else if (entryData.marks !== undefined && entryData.marks !== null && entryData.marks !== '') obtained = parseFloat(entryData.marks);
+
+                            if (isAbsent) {
+                                hasAnyAbsent = true;
+                                failedSubjectsCount++;
+                            } else if (obtained !== null && !isNaN(obtained)) {
+                                termObtained += obtained;
+                                subjectsEvaluatedCount++;
+                                if (obtained < sConf.passingMarks) {
+                                    failedSubjectsCount++;
                                 }
                             }
                         }
                     });
 
+                    const hasMarks = subjectsEvaluatedCount > 0 || hasAnyAbsent;
+                    const isForcePass = studentModerationOverride === 'pass' || studentModerationOverride === 'conditional_pass';
+                    const isForceFail = studentModerationOverride === 'fail';
+                    const isComplete = subjectList.length > 0 && subjectsEvaluatedCount === subjectList.length;
+                    const isPassed = isForcePass || (isComplete && failedSubjectsCount === 0 && (termObtained / (termMax || 1) >= 0.33) && !hasAnyAbsent && !isForceFail);
+
                     if (hasMarks && termMax > 0) {
-                        const isPassed = !termFailed && (termObtained / termMax >= 0.33);
                         if (!isPassed) hasAnyTermFailed = true;
                         totalObtainedAllTerms += termObtained;
                         totalMaxAllTerms += termMax;
                         termsWithRealDataCount++;
+
                         return {
-                            termKey: termMeta.key,
-                            examTitle: termMeta.label,
+                            termKey: slot.key,
+                            examTitle: matchedExam?.title || slot.defaultTitle,
                             obtained: termObtained,
                             max: termMax,
                             scoreText: `${termObtained} / ${termMax}`,
@@ -477,8 +665,8 @@ const Promotions = () => {
                         };
                     } else {
                         return {
-                            termKey: termMeta.key,
-                            examTitle: termMeta.label,
+                            termKey: slot.key,
+                            examTitle: matchedExam?.title || slot.defaultTitle,
                             obtained: 0,
                             max: 0,
                             scoreText: '-- / --',
@@ -488,28 +676,21 @@ const Promotions = () => {
                     }
                 });
 
-                // Cumulative calculations based on all terms combined
                 const cumulativePct = totalMaxAllTerms > 0
                     ? parseFloat(((totalObtainedAllTerms / totalMaxAllTerms) * 100).toFixed(1))
                     : 0;
 
                 const isCumulativePassed = totalMaxAllTerms > 0 ? (cumulativePct >= 33 && !hasAnyTermFailed) : true;
-                let grade = 'F';
-                if (cumulativePct >= 80) grade = 'A+';
-                else if (cumulativePct >= 70) grade = 'A';
-                else if (cumulativePct >= 60) grade = 'B';
-                else if (cumulativePct >= 50) grade = 'C';
-                else if (cumulativePct >= 33) grade = 'D';
-
+                const grade = calculateGrade(totalObtainedAllTerms, totalMaxAllTerms);
                 const defaultPromotionStatus = isCumulativePassed ? 'promote' : 'retain';
 
                 return {
                     id: studentId,
-                    ...data,
-                    name: data.fullName || data.name || ((data.firstName || '') + ' ' + (data.lastName || '')).trim() || 'Student',
-                    rollNo: data.rollNumber || data.rollNo || '',
-                    fatherName: data.fatherName || data.guardianName || '',
-                    avatar: data.photoUrl || data.photo || data.profileImage || data.avatar || data.profilePic || '',
+                    ...student,
+                    name: student.fullName || student.name || ((student.firstName || '') + ' ' + (student.lastName || '')).trim() || 'Student',
+                    rollNo: student.rollNumber || student.rollNo || '',
+                    fatherName: student.fatherName || student.guardianName || '',
+                    avatar: student.photoUrl || student.photo || student.profileImage || student.avatar || student.profilePic || '',
                     termsScores,
                     totalObtainedAllTerms,
                     totalMaxAllTerms,
@@ -526,195 +707,53 @@ const Promotions = () => {
                     previousClassName: previousClass ? previousClass.name : 'None'
                 };
             });
-            setStudents(fetchedStudents);
-        } catch (error) {
-            console.error("Error fetching students:", error);
-        } finally {
+
+            // Sort students numerically by roll number
+            computedStudents.sort((a, b) => {
+                const rollA = parseInt(a.rollNo) || 999999;
+                const rollB = parseInt(b.rollNo) || 999999;
+                if (rollA !== rollB) return rollA - rollB;
+                return (a.name || '').localeCompare(b.name || '');
+            });
+
+            setStudents(computedStudents);
             setLoadingStudents(false);
-        }
-    };
+        };
+
+        // Live Real-Time Firestore Stream Listeners
+        const studentsRef = collection(db, `schools/${schoolId}/classes/${selectedClass.id}/students`);
+        const unsubStudents = onSnapshot(studentsRef, snap => {
+            studentsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            recomputeAndSetStudents();
+        }, err => {
+            console.error("Students snapshot stream error:", err);
+            setLoadingStudents(false);
+        });
+
+        const examsRef = collection(db, `schools/${schoolId}/exams`);
+        const unsubExams = onSnapshot(examsRef, snap => {
+            examsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            examsList.sort((a, b) => (a.status === 'active' ? -1 : 1));
+            recomputeAndSetStudents();
+        }, err => console.warn("Exams snapshot stream notice:", err));
+
+        const marksRef = collection(db, `schools/${schoolId}/classes/${selectedClass.id}/exam_marks`);
+        const unsubMarks = onSnapshot(marksRef, snap => {
+            marksDocsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            recomputeAndSetStudents();
+        }, err => console.warn("Marks snapshot stream notice:", err));
+
+        return () => {
+            unsubStudents();
+            unsubExams();
+            unsubMarks();
+        };
+    }, [schoolId, selectedClass?.id, isDemoMode, classes]);
 
     const handleToggleDemoMode = () => {
         const nextDemo = !isDemoMode;
         setIsDemoMode(nextDemo);
-
-        if (nextDemo) {
-            const currentIndex = classes.findIndex(c => c.id === selectedClass?.id);
-            const nextClass = classes[currentIndex + 1] || null;
-            const previousClass = classes[currentIndex - 1] || null;
-
-            const nextClassName = nextClass ? nextClass.name : 'Class 2';
-            const prevClassName = previousClass ? previousClass.name : 'Nursery';
-
-            const demoList = [
-                {
-                    id: 'demo_1',
-                    name: 'Muhammad Huzaifa',
-                    rollNo: '01',
-                    fatherName: 'Tariq Mehmood',
-                    termsScores: [
-                        { termKey: 'first', examTitle: '1st Term', obtained: 385, max: 400, scoreText: '385 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'mid', examTitle: '2nd Term', obtained: 390, max: 400, scoreText: '390 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'final', examTitle: 'Final Exam', obtained: 395, max: 400, scoreText: '395 / 400', hasMarks: true, isPassed: true }
-                    ],
-                    totalObtainedAllTerms: 1170,
-                    totalMaxAllTerms: 1200,
-                    cumulativePercentage: 97.5,
-                    cumulativeGrade: 'A+',
-                    cumulativeIsPassed: true,
-                    promotionStatus: 'promote',
-                    examScore: '97.5',
-                    result: 'pass',
-                    nextClassId: nextClass?.id || 'next',
-                    nextClassName,
-                    previousClassId: previousClass?.id || null,
-                    previousClassName: prevClassName
-                },
-                {
-                    id: 'demo_2',
-                    name: 'Ayesha Fatima',
-                    rollNo: '02',
-                    fatherName: 'Abdul Rehman',
-                    termsScores: [
-                        { termKey: 'first', examTitle: '1st Term', obtained: 310, max: 400, scoreText: '310 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'mid', examTitle: '2nd Term', obtained: 325, max: 400, scoreText: '325 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'final', examTitle: 'Final Exam', obtained: 340, max: 400, scoreText: '340 / 400', hasMarks: true, isPassed: true }
-                    ],
-                    totalObtainedAllTerms: 975,
-                    totalMaxAllTerms: 1200,
-                    cumulativePercentage: 81.3,
-                    cumulativeGrade: 'A+',
-                    cumulativeIsPassed: true,
-                    promotionStatus: 'promote',
-                    examScore: '81.3',
-                    result: 'pass',
-                    nextClassId: nextClass?.id || 'next',
-                    nextClassName,
-                    previousClassId: previousClass?.id || null,
-                    previousClassName: prevClassName
-                },
-                {
-                    id: 'demo_3',
-                    name: 'Usman Farooq',
-                    rollNo: '03',
-                    fatherName: 'Farooq Ahmed',
-                    termsScores: [
-                        { termKey: 'first', examTitle: '1st Term', obtained: 110, max: 400, scoreText: '110 / 400', hasMarks: true, isPassed: false },
-                        { termKey: 'mid', examTitle: '2nd Term', obtained: 280, max: 400, scoreText: '280 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'final', examTitle: 'Final Exam', obtained: 310, max: 400, scoreText: '310 / 400', hasMarks: true, isPassed: true }
-                    ],
-                    totalObtainedAllTerms: 700,
-                    totalMaxAllTerms: 1200,
-                    cumulativePercentage: 58.3,
-                    cumulativeGrade: 'C',
-                    cumulativeIsPassed: true,
-                    promotionStatus: 'promote',
-                    examScore: '58.3',
-                    result: 'pass',
-                    nextClassId: nextClass?.id || 'next',
-                    nextClassName,
-                    previousClassId: previousClass?.id || null,
-                    previousClassName: prevClassName
-                },
-                {
-                    id: 'demo_4',
-                    name: 'Zubair Shah',
-                    rollNo: '04',
-                    fatherName: 'Syed Shah',
-                    termsScores: [
-                        { termKey: 'first', examTitle: '1st Term', obtained: 290, max: 400, scoreText: '290 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'mid', examTitle: '2nd Term', obtained: 115, max: 400, scoreText: '115 / 400', hasMarks: true, isPassed: false },
-                        { termKey: 'final', examTitle: 'Final Exam', obtained: 300, max: 400, scoreText: '300 / 400', hasMarks: true, isPassed: true }
-                    ],
-                    totalObtainedAllTerms: 705,
-                    totalMaxAllTerms: 1200,
-                    cumulativePercentage: 58.8,
-                    cumulativeGrade: 'C',
-                    cumulativeIsPassed: true,
-                    promotionStatus: 'promote',
-                    examScore: '58.8',
-                    result: 'pass',
-                    nextClassId: nextClass?.id || 'next',
-                    nextClassName,
-                    previousClassId: previousClass?.id || null,
-                    previousClassName: prevClassName
-                },
-                {
-                    id: 'demo_5',
-                    name: 'Zayan Ghani',
-                    rollNo: '05',
-                    fatherName: 'Faizan Ghani',
-                    termsScores: [
-                        { termKey: 'first', examTitle: '1st Term', obtained: 100, max: 400, scoreText: '100 / 400', hasMarks: true, isPassed: false },
-                        { termKey: 'mid', examTitle: '2nd Term', obtained: 110, max: 400, scoreText: '110 / 400', hasMarks: true, isPassed: false },
-                        { termKey: 'final', examTitle: 'Final Exam', obtained: 95, max: 400, scoreText: '95 / 400', hasMarks: true, isPassed: false }
-                    ],
-                    totalObtainedAllTerms: 305,
-                    totalMaxAllTerms: 1200,
-                    cumulativePercentage: 25.4,
-                    cumulativeGrade: 'F',
-                    cumulativeIsPassed: false,
-                    promotionStatus: 'retain',
-                    examScore: '25.4',
-                    result: 'fail',
-                    nextClassId: nextClass?.id || 'next',
-                    nextClassName,
-                    previousClassId: previousClass?.id || null,
-                    previousClassName: prevClassName
-                },
-                {
-                    id: 'demo_6',
-                    name: 'Hamza Ali',
-                    rollNo: '06',
-                    fatherName: 'Ali Asghar',
-                    termsScores: [
-                        { termKey: 'first', examTitle: '1st Term', obtained: 85, max: 400, scoreText: '85 / 400', hasMarks: true, isPassed: false },
-                        { termKey: 'mid', examTitle: '2nd Term', obtained: 80, max: 400, scoreText: '80 / 400', hasMarks: true, isPassed: false },
-                        { termKey: 'final', examTitle: 'Final Exam', obtained: 90, max: 400, scoreText: '90 / 400', hasMarks: true, isPassed: false }
-                    ],
-                    totalObtainedAllTerms: 255,
-                    totalMaxAllTerms: 1200,
-                    cumulativePercentage: 21.3,
-                    cumulativeGrade: 'F',
-                    cumulativeIsPassed: false,
-                    promotionStatus: 'demote',
-                    examScore: '21.3',
-                    result: 'fail',
-                    nextClassId: nextClass?.id || 'next',
-                    nextClassName,
-                    previousClassId: previousClass?.id || 'prev',
-                    previousClassName: prevClassName
-                },
-                {
-                    id: 'demo_7',
-                    name: 'Khadija Bibi',
-                    rollNo: '07',
-                    fatherName: 'Muhammad Yousaf',
-                    termsScores: [
-                        { termKey: 'first', examTitle: '1st Term', obtained: 340, max: 400, scoreText: '340 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'mid', examTitle: '2nd Term', obtained: 350, max: 400, scoreText: '350 / 400', hasMarks: true, isPassed: true },
-                        { termKey: 'final', examTitle: 'Final Exam', obtained: 0, max: 0, scoreText: '-- / --', hasMarks: false, isPassed: null }
-                    ],
-                    totalObtainedAllTerms: 690,
-                    totalMaxAllTerms: 800,
-                    cumulativePercentage: 86.3,
-                    cumulativeGrade: 'A+',
-                    cumulativeIsPassed: true,
-                    promotionStatus: 'promote',
-                    examScore: '86.3',
-                    result: 'pass',
-                    nextClassId: nextClass?.id || 'next',
-                    nextClassName,
-                    previousClassId: previousClass?.id || null,
-                    previousClassName: prevClassName
-                }
-            ];
-            setStudents(demoList);
-        } else {
-            if (selectedClass) {
-                handleClassSelect(selectedClass);
-            }
-        }
+        localStorage.setItem('exams_demo_mode_active', String(nextDemo));
     };
 
     const handleIndividualAction = (studentId, action) => {

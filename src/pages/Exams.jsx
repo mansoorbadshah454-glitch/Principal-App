@@ -194,13 +194,16 @@ export default function Exams() {
     const [showUploadToParentsModal, setShowUploadToParentsModal] = useState(false);
     const [isUploadingToParents, setIsUploadingToParents] = useState(false);
     const [uploadSuccessMessage, setUploadSuccessMessage] = useState(null);
-    const [isDemoMode, setIsDemoMode] = useState(false);
+    const [isDemoMode, setIsDemoMode] = useState(() => localStorage.getItem('exams_demo_mode_active') === 'true');
     const [selectedStudentForModerate, setSelectedStudentForModerate] = useState(null);
     const [moderateSubjectMarks, setModerateSubjectMarks] = useState({});
     const [moderateStatusOverride, setModerateStatusOverride] = useState('auto'); // 'auto' | 'pass' | 'conditional_pass' | 'fail'
     const [moderateRemarks, setModerateRemarks] = useState('');
     const [isSavingModeration, setIsSavingModeration] = useState(false);
-    const [demoDataOverride, setDemoDataOverride] = useState({});
+    const [demoDataOverride, setDemoDataOverride] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('exams_demo_data_override') || '{}'); }
+        catch (e) { return {}; }
+    });
     const [liveModerationOverrides, setLiveModerationOverrides] = useState({});
     const [classAttendanceDocs, setClassAttendanceDocs] = useState([]);
     const [dmcSearchQuery, setDmcSearchQuery] = useState('');
@@ -1637,15 +1640,18 @@ export default function Exams() {
             const studentId = selectedStudentForModerate.studentId;
 
             if (isDemoMode) {
-                // Update in-memory demo override
-                setDemoDataOverride(prev => ({
-                    ...prev,
+                // Update in-memory & shared demo override
+                const newOverride = {
+                    ...demoDataOverride,
                     [studentId]: {
                         subjectMarks: moderateSubjectMarks,
                         moderationOverride: moderateStatusOverride,
                         examinerRemarks: moderateRemarks
                     }
-                }));
+                };
+                setDemoDataOverride(newOverride);
+                localStorage.setItem('exams_demo_data_override', JSON.stringify(newOverride));
+                localStorage.setItem('exams_demo_mode_active', 'true');
                 setSelectedStudentForModerate(null);
                 setUploadSuccessMessage(`✅ Moderation and Grace Marks saved for ${selectedStudentForModerate.name}!`);
                 setTimeout(() => setUploadSuccessMessage(null), 4000);
@@ -2281,6 +2287,7 @@ export default function Exams() {
                                 onClick={() => {
                                     const next = !isDemoMode;
                                     setIsDemoMode(next);
+                                    localStorage.setItem('exams_demo_mode_active', String(next));
                                     // Keep deselected by default on toggle
                                     setSelectedStudentIdsForBatch(new Set());
                                 }}
