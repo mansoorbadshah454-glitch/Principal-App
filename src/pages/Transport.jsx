@@ -2982,9 +2982,9 @@ const Transport = () => {
                                                     background: mapStyle === 'osm2d' ? 'white' : 'transparent',
                                                     color: mapStyle === 'osm2d' ? '#0284c7' : '#64748b',
                                                     border: 'none',
-                                                    padding: '0.22rem 0.55rem',
+                                                    padding: '0.24rem 0.65rem',
                                                     borderRadius: '6px',
-                                                    fontSize: '0.68rem',
+                                                    fontSize: '0.72rem',
                                                     fontWeight: '800',
                                                     cursor: 'pointer',
                                                     boxShadow: mapStyle === 'osm2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
@@ -2995,32 +2995,14 @@ const Transport = () => {
                                             </button>
                                             <button
                                                 type="button"
-                                                onClick={() => setMapStyle('clean2d')}
-                                                style={{
-                                                    background: mapStyle === 'clean2d' ? 'white' : 'transparent',
-                                                    color: mapStyle === 'clean2d' ? '#0284c7' : '#64748b',
-                                                    border: 'none',
-                                                    padding: '0.22rem 0.55rem',
-                                                    borderRadius: '6px',
-                                                    fontSize: '0.68rem',
-                                                    fontWeight: '800',
-                                                    cursor: 'pointer',
-                                                    boxShadow: mapStyle === 'clean2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                                                    transition: 'all 0.15s ease'
-                                                }}
-                                            >
-                                                🎨 Clean 2D
-                                            </button>
-                                            <button
-                                                type="button"
                                                 onClick={() => setMapStyle('satellite2d')}
                                                 style={{
                                                     background: mapStyle === 'satellite2d' ? 'white' : 'transparent',
                                                     color: mapStyle === 'satellite2d' ? '#0284c7' : '#64748b',
                                                     border: 'none',
-                                                    padding: '0.22rem 0.55rem',
+                                                    padding: '0.24rem 0.65rem',
                                                     borderRadius: '6px',
-                                                    fontSize: '0.68rem',
+                                                    fontSize: '0.72rem',
                                                     fontWeight: '800',
                                                     cursor: 'pointer',
                                                     boxShadow: mapStyle === 'satellite2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
@@ -3028,24 +3010,6 @@ const Transport = () => {
                                                 }}
                                             >
                                                 🛰️ Satellite 2D
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setMapStyle('dark2d')}
-                                                style={{
-                                                    background: mapStyle === 'dark2d' ? '#0f172a' : 'transparent',
-                                                    color: mapStyle === 'dark2d' ? '#38bdf8' : '#64748b',
-                                                    border: 'none',
-                                                    padding: '0.22rem 0.55rem',
-                                                    borderRadius: '6px',
-                                                    fontSize: '0.68rem',
-                                                    fontWeight: '800',
-                                                    cursor: 'pointer',
-                                                    boxShadow: mapStyle === 'dark2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                                                    transition: 'all 0.15s ease'
-                                                }}
-                                            >
-                                                🌙 Dark 2D
                                             </button>
                                         </div>
 
