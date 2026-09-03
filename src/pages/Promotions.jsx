@@ -312,9 +312,18 @@ const Promotions = () => {
 
     // 2. Real-Time Classes Listener (Robust, Instant & Non-Blocking)
     useEffect(() => {
-        if (!schoolId) return;
+        if (!schoolId) {
+            try {
+                const session = localStorage.getItem('manual_session');
+                if (session) {
+                    const parsed = JSON.parse(session);
+                    const sid = parsed.schoolId || parsed.school_id || parsed.id;
+                    if (sid) setSchoolId(sid);
+                }
+            } catch (e) {}
+            return;
+        }
 
-        setLoading(true);
         const classesRef = collection(db, `schools/${schoolId}/classes`);
 
         const unsubClasses = onSnapshot(classesRef, async (snapshot) => {
@@ -328,19 +337,14 @@ const Promotions = () => {
             setClasses(list);
             setLoading(false);
 
-            // Auto-restore previously selected class or default to first class
+            // Auto-select class immediately
             const savedClassId = localStorage.getItem('promotions_selected_class_id');
-            setSelectedClass(prev => {
-                if (savedClassId) {
-                    const matched = list.find(c => c.id === savedClassId);
-                    if (matched) return matched;
-                }
-                if (prev) {
-                    const matched = list.find(c => c.id === prev.id);
-                    if (matched) return matched;
-                }
-                return list.length > 0 ? list[0] : null;
-            });
+            const matched = list.find(c => c.id === savedClassId);
+            if (matched) {
+                setSelectedClass(matched);
+            } else if (list.length > 0) {
+                setSelectedClass(list[0]);
+            }
 
             // Async background update of student counts (Non-blocking)
             try {
@@ -359,19 +363,12 @@ const Promotions = () => {
             setLoading(false);
         });
 
-        const timeout = setTimeout(() => {
-            setLoading(false);
-        }, 5000);
-
-        return () => {
-            unsubClasses();
-            clearTimeout(timeout);
-        };
+        return () => unsubClasses();
     }, [schoolId]);
 
     // 3. Handle Class Selection
     const handleClassSelect = (cls, customClasses = null) => {
-        if (selectedClass?.id === cls.id && !customClasses) return;
+        if (!cls) return;
         localStorage.setItem('promotions_selected_class_id', cls.id);
         setSelectedClass(cls);
         setSearchQuery('');
