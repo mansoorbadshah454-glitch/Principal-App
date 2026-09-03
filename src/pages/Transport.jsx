@@ -2353,22 +2353,20 @@ const Transport = () => {
                     }
                 });
 
-                // 2. Collect ALL today's attendance logs across ANY route / vehicle / trip key in attendanceLogs
+                // 2. Collect ALL attendance logs across ANY route / vehicle / trip key in attendanceLogs
                 const allTodayAttendanceLogs = {};
                 Object.entries(attendanceLogs || {}).forEach(([k, subMap]) => {
                     if (typeof subMap === 'object' && subMap !== null) {
-                        if (k.startsWith(todayStr) || k.startsWith(todayUtc) || k.includes(todayStr) || k.includes(todayUtc)) {
-                            Object.assign(allTodayAttendanceLogs, subMap);
-                        }
+                        Object.assign(allTodayAttendanceLogs, subMap);
                     }
                 });
 
-                // 3. Robust unified map
+                // 3. Robust unified map with live stream priority
                 const currentAttMap = {
                     ...allTodayAttendanceLogs,
-                    ...(attendanceLogs[altKeyWithVeh] || {}),
-                    ...(attendanceLogs[altKeyWithTripRoute] || {}),
                     ...(attendanceLogs[attKey] || {}),
+                    ...(attendanceLogs[altKeyWithTripRoute] || {}),
+                    ...(attendanceLogs[altKeyWithVeh] || {}),
                     ...allLiveStatusMaps,
                     ...(currentTracking.studentStatusMap || {})
                 };
@@ -2385,6 +2383,13 @@ const Transport = () => {
                     if (id3 && currentAttMap[id3]) return currentAttMap[id3];
                     if (roll && currentAttMap[roll]) return currentAttMap[roll];
                     if (name && currentAttMap[name]) return currentAttMap[name];
+                    const lowerName = name ? name.toLowerCase().trim() : '';
+                    for (const [k, val] of Object.entries(currentAttMap)) {
+                        if (!val) continue;
+                        if (id1 && (k.includes(id1) || id1.includes(k))) return val;
+                        if (id2 && (k.includes(id2) || id2.includes(k))) return val;
+                        if (lowerName && k.toLowerCase().trim() === lowerName) return val;
+                    }
                     return 'pending';
                 };
 
