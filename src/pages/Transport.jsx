@@ -2228,6 +2228,29 @@ const Transport = () => {
 
             const speed = currentWp.isStop ? 0 : Math.round(35 + Math.sin(simStepRef.current * 0.6) * 12);
 
+            // Progressive student status map
+            const currentSimStatusMap = { ...(liveTrackingData[targetVeh.id]?.studentStatusMap || {}) };
+            if (activeRoute && Array.isArray(activeRoute.stops)) {
+                // Progressive boarding based on route progress ratio
+                const progressRatio = (simStepRef.current + 1) / waypoints.length;
+                const totalStops = activeRoute.stops.length;
+                const completedStopsCount = Math.floor(progressRatio * totalStops);
+
+                for (let sIdx = 0; sIdx <= completedStopsCount && sIdx < totalStops; sIdx++) {
+                    const stop = activeRoute.stops[sIdx];
+                    if (stop) {
+                        const sName = (stop.stopName || '').toLowerCase().trim();
+                        allocations.forEach(a => {
+                            const aStop = (a.pickupStop || a.stopName || '').toLowerCase().trim();
+                            if (aStop && sName && (aStop.includes(sName) || sName.includes(aStop))) {
+                                const stId = a.studentId || a.id;
+                                if (stId) currentSimStatusMap[stId] = 'boarded';
+                            }
+                        });
+                    }
+                }
+            }
+
             setLiveTrackingData(prev => ({
                 ...prev,
                 [targetVeh.id]: {
@@ -2235,7 +2258,7 @@ const Transport = () => {
                     vehicleReg: targetVeh.regNo,
                     driverName: targetVeh.driverName || 'Muhammad Aslam',
                     driverPhone: targetVeh.driverPhone || '0300-1234567',
-                    tripType: 'morning',
+                    tripType: overviewTripType,
                     isLive: true,
                     tripStatus: 'in_progress',
                     latitude: currentWp.lat,
@@ -2243,26 +2266,22 @@ const Transport = () => {
                     speedKmH: speed,
                     heading: heading,
                     accuracyMeters: 3,
+                    studentStatusMap: currentSimStatusMap,
                     lastTimestamp: new Date().toISOString()
                 }
             }));
 
-            // If at a designated stop, auto-mark students at this stop as boarded
-            if (currentWp.isStop && currentWp.stopName) {
-                const todayStr = new Date().toISOString().slice(0, 10);
-                const attKey = `${todayStr}_${activeRoute?.id || 'all'}_morning`;
-                const stopAllocs = allocations.filter(a => a.pickupStop && a.pickupStop.toLowerCase().trim() === currentWp.stopName.toLowerCase().trim());
-                if (stopAllocs.length > 0) {
-                    setAttendanceLogs(prev => {
-                        const subMap = { ...(prev[attKey] || {}) };
-                        stopAllocs.forEach(st => {
-                            subMap[st.studentId] = 'boarded';
-                        });
-                        return { ...prev, [attKey]: subMap };
-                    });
+            // Sync today's attendance logs
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const attKey = `${todayStr}_${activeRoute?.id || 'all'}_${overviewTripType}`;
+            setAttendanceLogs(prev => ({
+                ...prev,
+                [attKey]: {
+                    ...(prev[attKey] || {}),
+                    ...currentSimStatusMap
                 }
-            }
-        }, 1100);
+            }));
+        }, 900);
     };
 
     // Clean up simulation on unmount
