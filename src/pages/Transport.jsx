@@ -2675,13 +2675,12 @@ const Transport = () => {
                                             {overviewRoute ? `${overviewRoute.title} (${(overviewRoute.stops || []).length} stops)` : 'Select a route to monitor'}
                                         </span>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={handleMarkAllBoarded}
-                                        style={{ background: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', padding: '0.3rem 0.65rem', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' }}
-                                    >
-                                        ✓ Mark All Boarded
-                                    </button>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '0.3rem 0.65rem', borderRadius: '6px' }}>
+                                        <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }}></div>
+                                        <span style={{ fontSize: '0.72rem', color: '#475569', fontWeight: '800' }}>
+                                            📡 Driver-Controlled Live Feed
+                                        </span>
+                                    </div>
                                 </div>
 
                                 {/* Scrollable Stops & Students Container */}
@@ -2756,7 +2755,7 @@ const Transport = () => {
                                                                                 justifyContent: 'space-between',
                                                                                 alignItems: 'center',
                                                                                 background: 'white',
-                                                                                padding: '0.4rem 0.6rem',
+                                                                                padding: '0.45rem 0.65rem',
                                                                                 borderRadius: '6px',
                                                                                 border: '1px solid #e2e8f0'
                                                                             }}
@@ -2770,24 +2769,27 @@ const Transport = () => {
                                                                                 </span>
                                                                             </div>
 
-                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                                {/* Status Toggle Button */}
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => handleToggleStudentBoarding(stId, status)}
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                                {/* Read-Only Live Boarding Status Badge (Driver App Controlled) */}
+                                                                                <div
+                                                                                    title="Live status streamed from Driver App"
                                                                                     style={{
-                                                                                        padding: '0.2rem 0.5rem',
-                                                                                        borderRadius: '4px',
-                                                                                        border: 'none',
-                                                                                        fontSize: '0.68rem',
+                                                                                        padding: '0.22rem 0.55rem',
+                                                                                        borderRadius: '5px',
+                                                                                        fontSize: '0.7rem',
                                                                                         fontWeight: '800',
-                                                                                        cursor: 'pointer',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '0.25rem',
+                                                                                        userSelect: 'none',
+                                                                                        cursor: 'default',
                                                                                         background: status === 'boarded' ? '#dcfce7' : status === 'absent' ? '#fee2e2' : '#fef3c7',
-                                                                                        color: status === 'boarded' ? '#15803d' : status === 'absent' ? '#b91c1c' : '#b45309'
+                                                                                        color: status === 'boarded' ? '#15803d' : status === 'absent' ? '#b91c1c' : '#b45309',
+                                                                                        border: `1px solid ${status === 'boarded' ? '#86efac' : status === 'absent' ? '#fca5a5' : '#fde68a'}`
                                                                                     }}
                                                                                 >
                                                                                     {status === 'boarded' ? '✓ Boarded' : status === 'absent' ? '✕ Absent' : '⏳ Waiting'}
-                                                                                </button>
+                                                                                </div>
 
                                                                                 {/* WhatsApp Parent Button */}
                                                                                 {student.parentPhone && (
