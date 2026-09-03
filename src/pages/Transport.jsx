@@ -125,6 +125,25 @@ const Transport = () => {
     const mapInstanceRef = useRef(null);
     const markersLayerRef = useRef(null);
     const polylineLayerRef = useRef(null);
+    const [deviceCoords, setDeviceCoords] = useState(null); // { lat, lng } from PC / Laptop / Device
+    const [isLocatingDevice, setIsLocatingDevice] = useState(false);
+
+    // Auto-detect PC / Laptop / Device Location for Accurate Local Map Focus
+    useEffect(() => {
+        if (typeof window !== 'undefined' && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    setDeviceCoords({ lat, lng });
+                },
+                (err) => {
+                    console.log("Device location info:", err?.message || err);
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
+            );
+        }
+    }, []);
 
     // Live GPS Simulation Demo State (Presentation Mode)
     const [isSimulating, setIsSimulating] = useState(false);
@@ -465,6 +484,9 @@ const Transport = () => {
         if (!mapContainerRef.current) return;
 
         // 1. Initialize Map Instance if not created
+        const defaultLat = deviceCoords?.lat || 33.6844;
+        const defaultLng = deviceCoords?.lng || 73.0479;
+
         if (!mapInstanceRef.current) {
             // Clean up any stale leaflet ID on DOM node
             if (mapContainerRef.current._leaflet_id) {
@@ -473,8 +495,8 @@ const Transport = () => {
 
             try {
                 const map = L.map(mapContainerRef.current, {
-                    center: [31.5204, 74.3587],
-                    zoom: 13,
+                    center: [defaultLat, defaultLng],
+                    zoom: 14,
                     zoomControl: true,
                     attributionControl: false
                 });
@@ -518,6 +540,20 @@ const Transport = () => {
                 activeRoute = routes[0];
             }
 
+            // Find any live vehicle with active GPS coordinates
+            const liveVehWithCoords = targetVehicles.find(v => {
+                const live = liveTrackingData[v.id];
+                return live && live.isLive && Number(live.latitude) && Number(live.longitude);
+            });
+            const liveCoords = liveVehWithCoords ? {
+                lat: Number(liveTrackingData[liveVehWithCoords.id].latitude),
+                lng: Number(liveTrackingData[liveVehWithCoords.id].longitude)
+            } : null;
+
+            // Intelligent Anchor Coordinate: Priority 1: Live Driver GPS -> Priority 2: PC/Device Geolocation -> Priority 3: Default
+            const anchorLat = liveCoords?.lat || deviceCoords?.lat || 33.6844;
+            const anchorLng = liveCoords?.lng || deviceCoords?.lng || 73.0479;
+
             // Draw Route Stops Sequence & Polyline if Route exists
             const routeCoords = [];
             if (activeRoute && Array.isArray(activeRoute.stops) && activeRoute.stops.length > 0) {
@@ -525,9 +561,9 @@ const Transport = () => {
                     let lat = Number(stop.latitude);
                     let lng = Number(stop.longitude);
                     if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-                        // Spread coordinates along route for visual realism
-                        lat = 31.5204 + (idx * 0.012) - 0.02;
-                        lng = 74.3587 + (idx * 0.014) - 0.015;
+                        // Spread coordinates realistically relative to anchor location
+                        lat = anchorLat + (idx * 0.006) - 0.008;
+                        lng = anchorLng + (idx * 0.008) - 0.006;
                     }
 
                     const stopLatLng = L.latLng(lat, lng);
@@ -553,7 +589,7 @@ const Transport = () => {
                 });
 
                 // School Campus Terminal Pin
-                const schoolLatLng = L.latLng(31.5350, 74.3750);
+                const schoolLatLng = L.latLng(anchorLat + 0.012, anchorLng + 0.012);
                 routeCoords.push(schoolLatLng);
                 bounds.extend(schoolLatLng);
 
@@ -592,9 +628,9 @@ const Transport = () => {
                 let lat = Number(live.latitude);
                 let lng = Number(live.longitude);
                 if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-                    // Fallback coordinates near start of route
-                    lat = 31.5204 + (vIdx * 0.008 - 0.004);
-                    lng = 74.3587 + (vIdx * 0.008 - 0.004);
+                    // Fallback coordinates relative to anchor location
+                    lat = anchorLat + (vIdx * 0.004 - 0.002);
+                    lng = anchorLng + (vIdx * 0.004 - 0.002);
                 }
 
                 const vehLatLng = L.latLng(lat, lng);
@@ -636,6 +672,8 @@ const Transport = () => {
 
             if (bounds.isValid()) {
                 map.fitBounds(bounds, { padding: [45, 45], maxZoom: 15 });
+            } else {
+                map.setView([anchorLat, anchorLng], 14);
             }
         } catch (syncErr) {
             console.warn('Map layer sync error:', syncErr);
@@ -2576,6 +2614,51 @@ const Transport = () => {
                                         <MessageSquare size={14} /> WhatsApp Driver
                                     </button>
                                 )}
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (navigator.geolocation) {
+                                            setIsLocatingDevice(true);
+                                            navigator.geolocation.getCurrentPosition(
+                                                (pos) => {
+                                                    setIsLocatingDevice(false);
+                                                    const lat = pos.coords.latitude;
+                                                    const lng = pos.coords.longitude;
+                                                    setDeviceCoords({ lat, lng });
+                                                    if (mapInstanceRef.current) {
+                                                        mapInstanceRef.current.setView([lat, lng], 15);
+                                                    }
+                                                    showAlert('📍 Map centered on your device location!', 'success');
+                                                },
+                                                (err) => {
+                                                    setIsLocatingDevice(false);
+                                                    showAlert('Location permission not granted by browser.', 'warning');
+                                                },
+                                                { enableHighAccuracy: true, timeout: 8000 }
+                                            );
+                                        } else {
+                                            showAlert('Geolocation is not supported by your browser.', 'warning');
+                                        }
+                                    }}
+                                    className="btn hover-lift"
+                                    style={{
+                                        background: '#f0fdf4',
+                                        border: '1.5px solid #86efac',
+                                        color: '#15803d',
+                                        padding: '0.5rem 0.85rem',
+                                        borderRadius: '8px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem'
+                                    }}
+                                >
+                                    <Navigation size={14} color="#15803d" />
+                                    {isLocatingDevice ? 'Detecting Area...' : '📍 Locate My Area'}
+                                </button>
 
                                 <button
                                     type="button"
