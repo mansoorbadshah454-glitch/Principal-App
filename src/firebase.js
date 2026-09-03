@@ -5,7 +5,7 @@ import { getStorage } from "firebase/storage";
 import { getFunctions } from "firebase/functions";
 import { getMessaging } from "firebase/messaging";
 
-const firebaseConfig = {
+export const firebaseConfig = {
     apiKey: "AIzaSyARAU5c_8nJd4KcVWsAVBDV529nObmW9Vs",
     authDomain: "mai-sms-a8dad.firebaseapp.com",
     projectId: "mai-sms-a8dad",

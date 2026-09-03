@@ -1,16 +1,22 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-    Bus, Search, Plus, Trash2, Edit, CheckCircle, AlertTriangle, Filter,
+    Bus, Truck, Search, Plus, Trash2, Edit, CheckCircle, AlertTriangle, Filter,
     ArrowRight, MapPin, Users, Phone, DollarSign, Calendar, Clock,
     FileText, ShieldCheck, X, ChevronRight, Eye, Sparkles, Navigation,
     Fuel, Wrench, Check, Send, Download, Printer, ArrowUpRight, CheckSquare,
-    MessageSquare, AlertCircle, RefreshCw, Camera, Image as ImageIcon, Upload, ExternalLink
+    MessageSquare, AlertCircle, RefreshCw, Camera, Image as ImageIcon, Upload, ExternalLink,
+    Key, Shield, Smartphone, Copy, Lock, EyeOff, UserCheck, UserX, Radio, Navigation2
 } from 'lucide-react';
-import { db } from '../firebase';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { db, auth, functions, firebaseConfig } from '../firebase';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut as authSignOut } from 'firebase/auth';
 import {
-    collection, doc, getDoc, getDocs, setDoc, deleteDoc,
+    collection, doc, getDoc, getDocs, setDoc, deleteDoc, updateDoc,
     onSnapshot, writeBatch, increment
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import { useAlert } from '../context/AlertContext';
 import jsPDF from 'jspdf';
@@ -41,6 +47,17 @@ const Transport = () => {
     const { schoolId: authSchoolId, userProfile } = useAuthPermissions();
     const { showAlert } = useAlert();
 
+    // Local cache helper to ensure data never vanishes on refresh or network glitches
+    const getCachedTransport = (sid) => {
+        if (!sid) return null;
+        try {
+            const raw = localStorage.getItem(`transport_cache_${sid}`);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    };
+
     // Fallback School ID resolution
     const [schoolId, setSchoolId] = useState(() => {
         if (authSchoolId) return authSchoolId;
@@ -55,17 +72,63 @@ const Transport = () => {
     });
 
     useEffect(() => {
+        let unsubAuth = null;
         if (authSchoolId) {
             setSchoolId(authSchoolId);
-        } else if (!schoolId) {
-            getDocs(collection(db, 'schools')).then(snap => {
-                if (!snap.empty) setSchoolId(snap.docs[0].id);
-            }).catch(console.error);
+        } else {
+            // Priority 1: Check manual session
+            try {
+                const sess = localStorage.getItem('manual_session');
+                if (sess) {
+                    const p = JSON.parse(sess);
+                    if (p.schoolId || p.uid) {
+                        setSchoolId(p.schoolId || p.uid);
+                        return;
+                    }
+                }
+            } catch (e) {}
+
+            // Priority 2: Firebase Auth token claim
+            unsubAuth = auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    try {
+                        const tokenResult = await user.getIdTokenResult();
+                        if (tokenResult.claims?.schoolId) {
+                            setSchoolId(tokenResult.claims.schoolId);
+                            return;
+                        }
+                    } catch (e) {}
+                }
+                // Priority 3: Fallback query
+                getDocs(collection(db, 'schools')).then(snap => {
+                    if (!snap.empty) setSchoolId(snap.docs[0].id);
+                }).catch(console.error);
+            });
         }
+        return () => {
+            if (unsubAuth) unsubAuth();
+        };
     }, [authSchoolId]);
 
-    // Navigation Tabs
-    const [activeTab, setActiveTab] = useState('fleet'); // 'fleet', 'routes', 'allocations', 'fuel_logs', 'attendance'
+    // Grand Top-Level Navigation Mode
+    const [grandTab, setGrandTab] = useState('radar'); // 'radar' or 'fleet_management'
+
+    // Management Sub-Tabs
+    const [activeTab, setActiveTab] = useState('fleet'); // 'fleet', 'drivers', 'routes', 'allocations', 'fuel_logs', 'attendance'
+
+    // Live GPS Tracking & Telematics States (Overview Tab)
+    const [liveTrackingData, setLiveTrackingData] = useState({}); // { [vehicleId]: trackingDoc }
+    const [selectedOverviewVehicleId, setSelectedOverviewVehicleId] = useState('all');
+    const [overviewTripType, setOverviewTripType] = useState('morning'); // 'morning', 'afternoon'
+    const mapContainerRef = useRef(null);
+    const mapInstanceRef = useRef(null);
+    const markersLayerRef = useRef(null);
+    const polylineLayerRef = useRef(null);
+
+    // Live GPS Simulation Demo State (Presentation Mode)
+    const [isSimulating, setIsSimulating] = useState(false);
+    const simTimerRef = useRef(null);
+    const simStepRef = useRef(0);
 
     // School Profile Info
     const [schoolInfo, setSchoolInfo] = useState({
@@ -74,12 +137,15 @@ const Transport = () => {
         address: ''
     });
 
-    // Core Transport State
-    const [vehicles, setVehicles] = useState([]);
-    const [routes, setRoutes] = useState([]);
-    const [allocations, setAllocations] = useState([]);
-    const [fuelLogs, setFuelLogs] = useState([]);
-    const [attendanceLogs, setAttendanceLogs] = useState({}); // { "YYYY-MM-DD_routeId_trip": { studentId: 'boarded' } }
+    const initialCache = getCachedTransport(schoolId);
+
+    // Core Transport State (Pre-filled from local cache for 0ms visual flash)
+    const [vehicles, setVehicles] = useState(() => (initialCache?.vehicles && initialCache.vehicles.length > 0 ? initialCache.vehicles : []));
+    const [routes, setRoutes] = useState(() => (initialCache?.routes && initialCache.routes.length > 0 ? initialCache.routes : []));
+    const [allocations, setAllocations] = useState(() => (initialCache?.allocations && initialCache.allocations.length > 0 ? initialCache.allocations : []));
+    const [fuelLogs, setFuelLogs] = useState(() => (initialCache?.fuelLogs || []));
+    const [attendanceLogs, setAttendanceLogs] = useState(() => (initialCache?.attendanceLogs || {})); // { "YYYY-MM-DD_routeId_trip": { studentId: 'boarded' } }
+    const [drivers, setDrivers] = useState(() => (initialCache?.drivers || []));
 
     // Classes & Students Cache
     const [classesList, setClassesList] = useState([]);
@@ -89,6 +155,7 @@ const Transport = () => {
 
     // Filter & Search States
     const [vehicleSearch, setVehicleSearch] = useState('');
+    const [driverSearch, setDriverSearch] = useState('');
     const [routeSearch, setRouteSearch] = useState('');
     const [allocationSearch, setAllocationSearch] = useState('');
     const [allocationClassFilter, setAllocationClassFilter] = useState('All');
@@ -98,6 +165,23 @@ const Transport = () => {
 
     // Receipt Lightbox State
     const [viewingReceipt, setViewingReceipt] = useState(null);
+
+    // 0. Driver Account Modal State
+    const [driverModalOpen, setDriverModalOpen] = useState(false);
+    const [editingDriver, setEditingDriver] = useState(null);
+    const [isSavingDriver, setIsSavingDriver] = useState(false);
+    const [driverPasswordVisible, setDriverPasswordVisible] = useState(false);
+    const [driverFormData, setDriverFormData] = useState({
+        name: '',
+        phone: '',
+        email: '',
+        password: '',
+        cnic: '',
+        licenseNo: '',
+        assignedVehicleId: '',
+        status: 'Active',
+        notes: ''
+    });
 
     // Daily Attendance Date & Route Selection
     const [attendanceDate, setAttendanceDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -110,6 +194,7 @@ const Transport = () => {
     // 1. Vehicle Modal
     const [vehicleModalOpen, setVehicleModalOpen] = useState(false);
     const [editingVehicle, setEditingVehicle] = useState(null);
+    const [vehicleModalTab, setVehicleModalTab] = useState('vehicle'); // 'vehicle' or 'route'
     const [vehicleFormData, setVehicleFormData] = useState({
         regNo: '',
         type: 'HiAce Van (14-16 Seater)',
@@ -144,16 +229,24 @@ const Transport = () => {
         ],
         notes: ''
     });
+    const [showRouteTimingDropdown, setShowRouteTimingDropdown] = useState(false);
 
     // 3. Student Allocation Modal
     const [allocationModalOpen, setAllocationModalOpen] = useState(false);
+    const [editingAllocation, setEditingAllocation] = useState(null);
     const [allocSelectedClassId, setAllocSelectedClassId] = useState('');
     const [allocSelectedStudent, setAllocSelectedStudent] = useState(null);
     const [allocRouteId, setAllocRouteId] = useState('');
     const [allocStopName, setAllocStopName] = useState('');
+    const [isCustomStop, setIsCustomStop] = useState(false);
+    const [customStopName, setCustomStopName] = useState('');
+    const [saveCustomStopToRoute, setSaveCustomStopToRoute] = useState(true);
+    const [isQuickAddingStop, setIsQuickAddingStop] = useState(false);
+    const [quickStopData, setQuickStopData] = useState({ stopName: '', morningTime: '07:15 AM', afternoonTime: '02:00 PM', fare: 2500 });
     const [allocMonthlyFare, setAllocMonthlyFare] = useState(2500);
     const [allocTripType, setAllocTripType] = useState('both'); // 'both', 'morning_only', 'afternoon_only'
     const [allocParentPhone, setAllocParentPhone] = useState('');
+    const [allocStudentSearch, setAllocStudentSearch] = useState('');
     const [isSavingAllocation, setIsSavingAllocation] = useState(false);
 
     // 4. Fuel & Maintenance Log Modal
@@ -201,22 +294,115 @@ const Transport = () => {
         const unsub = onSnapshot(doc(db, 'schools', schoolId, 'settings', 'transport_management'), (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
-                setVehicles(Array.isArray(data.vehicles) ? data.vehicles : []);
-                setRoutes(Array.isArray(data.routes) ? data.routes : []);
-                setAllocations(Array.isArray(data.allocations) ? data.allocations : []);
-                setFuelLogs(Array.isArray(data.fuelLogs) ? data.fuelLogs : []);
-                setAttendanceLogs(data.attendanceLogs || {});
+                const fetchedVehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+                const fetchedRoutes = Array.isArray(data.routes) ? data.routes : [];
+                const fetchedAllocations = Array.isArray(data.allocations) ? data.allocations : [];
+                const fetchedFuelLogs = Array.isArray(data.fuelLogs) ? data.fuelLogs : [];
+                const fetchedAttendanceLogs = data.attendanceLogs || {};
+
+                // If Firestore is completely empty, check if we have local cache or seed samples
+                if (fetchedVehicles.length === 0 && fetchedRoutes.length === 0) {
+                    const cache = getCachedTransport(schoolId);
+                    if (cache?.vehicles?.length > 0 || cache?.routes?.length > 0) {
+                        setVehicles(cache.vehicles || []);
+                        setRoutes(cache.routes || []);
+                        setAllocations(cache.allocations || []);
+                        setFuelLogs(cache.fuelLogs || []);
+                        setAttendanceLogs(cache.attendanceLogs || {});
+                        // Push cached data back to Firestore to restore
+                        setDoc(doc(db, 'schools', schoolId, 'settings', 'transport_management'), {
+                            vehicles: cache.vehicles || [],
+                            routes: cache.routes || [],
+                            allocations: cache.allocations || [],
+                            fuelLogs: cache.fuelLogs || [],
+                            attendanceLogs: cache.attendanceLogs || {}
+                        }, { merge: true }).catch(console.error);
+                    } else {
+                        initializeSampleTransport();
+                    }
+                } else {
+                    setVehicles(fetchedVehicles);
+                    setRoutes(fetchedRoutes);
+                    setAllocations(fetchedAllocations);
+                    setFuelLogs(fetchedFuelLogs);
+                    setAttendanceLogs(fetchedAttendanceLogs);
+                    try {
+                        localStorage.setItem(`transport_cache_${schoolId}`, JSON.stringify({
+                            vehicles: fetchedVehicles,
+                            routes: fetchedRoutes,
+                            allocations: fetchedAllocations,
+                            fuelLogs: fetchedFuelLogs,
+                            attendanceLogs: fetchedAttendanceLogs
+                        }));
+                    } catch (e) {}
+                }
+
+                if (Array.isArray(data.drivers) && data.drivers.length > 0) {
+                    setDrivers(prev => {
+                        const map = new Map();
+                        data.drivers.forEach(d => map.set(d.id, d));
+                        prev.forEach(d => map.set(d.id, { ...map.get(d.id), ...d }));
+                        return Array.from(map.values());
+                    });
+                }
             } else {
-                // Initialize default sample data if empty
-                initializeSampleTransport();
+                // Document not found: Check cache first, else init sample
+                const cache = getCachedTransport(schoolId);
+                if (cache?.vehicles?.length > 0) {
+                    setVehicles(cache.vehicles);
+                    setRoutes(cache.routes || []);
+                    setAllocations(cache.allocations || []);
+                    setFuelLogs(cache.fuelLogs || []);
+                    setAttendanceLogs(cache.attendanceLogs || {});
+                    setDoc(doc(db, 'schools', schoolId, 'settings', 'transport_management'), cache, { merge: true }).catch(console.error);
+                } else {
+                    initializeSampleTransport();
+                }
             }
             setLoadingData(false);
         }, (err) => {
             console.error('Transport listener error:', err);
+            const cache = getCachedTransport(schoolId);
+            if (cache?.vehicles?.length > 0) {
+                setVehicles(cache.vehicles);
+                setRoutes(cache.routes || []);
+                setAllocations(cache.allocations || []);
+                setFuelLogs(cache.fuelLogs || []);
+            }
             setLoadingData(false);
         });
 
-        return () => unsub();
+        // Real-time Drivers Collection Listener
+        const unsubDrivers = onSnapshot(collection(db, `schools/${schoolId}/drivers`), (snap) => {
+            if (!snap.empty) {
+                const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                setDrivers(prev => {
+                    const map = new Map();
+                    prev.forEach(d => map.set(d.id, d));
+                    list.forEach(d => map.set(d.id, { ...map.get(d.id), ...d }));
+                    return Array.from(map.values());
+                });
+            }
+        }, (err) => {
+            console.warn('Drivers subcollection listener notice:', err.message);
+        });
+
+        // 3. Real-time Live GPS Telematics Stream Listener
+        const unsubLiveTracking = onSnapshot(collection(db, 'schools', schoolId, 'live_tracking'), (snap) => {
+            const tracking = {};
+            snap.docs.forEach(d => {
+                tracking[d.id] = { id: d.id, ...d.data() };
+            });
+            setLiveTrackingData(tracking);
+        }, (err) => {
+            console.warn('Live tracking telemetry listener notice:', err.message);
+        });
+
+        return () => {
+            unsub();
+            unsubDrivers();
+            unsubLiveTracking();
+        };
     }, [schoolId]);
 
     // Load students for selected class in Allocation Modal
@@ -233,6 +419,210 @@ const Transport = () => {
             })
             .catch(console.error);
     }, [schoolId, allocSelectedClassId]);
+
+    // -------------------------------------------------------------
+    // Leaflet Real-Time Interactive Map Synchronization (Overview Tab)
+    // -------------------------------------------------------------
+    useEffect(() => {
+        if (grandTab !== 'radar') {
+            if (mapInstanceRef.current) {
+                try {
+                    mapInstanceRef.current.remove();
+                } catch (e) {}
+                mapInstanceRef.current = null;
+                markersLayerRef.current = null;
+                polylineLayerRef.current = null;
+            }
+            return;
+        }
+
+        if (!mapContainerRef.current) return;
+
+        // 1. Initialize Map Instance if not created
+        if (!mapInstanceRef.current) {
+            // Clean up any stale leaflet ID on DOM node
+            if (mapContainerRef.current._leaflet_id) {
+                mapContainerRef.current._leaflet_id = null;
+            }
+
+            try {
+                const map = L.map(mapContainerRef.current, {
+                    center: [31.5204, 74.3587],
+                    zoom: 13,
+                    zoomControl: true,
+                    attributionControl: false
+                });
+
+                // 100% Free OpenStreetMap Carto Tiles
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '© OpenStreetMap'
+                }).addTo(map);
+
+                markersLayerRef.current = L.layerGroup().addTo(map);
+                polylineLayerRef.current = L.layerGroup().addTo(map);
+                mapInstanceRef.current = map;
+            } catch (err) {
+                console.warn('Leaflet initialization warning:', err);
+            }
+        }
+
+        const map = mapInstanceRef.current;
+        const markersGroup = markersLayerRef.current;
+        const polylineGroup = polylineLayerRef.current;
+
+        if (!map || !markersGroup || !polylineGroup) return;
+
+        try {
+            markersGroup.clearLayers();
+            polylineGroup.clearLayers();
+
+            const bounds = L.latLngBounds([]);
+
+            // Determine which vehicles to display
+            const targetVehicles = selectedOverviewVehicleId === 'all'
+                ? vehicles
+                : vehicles.filter(v => v.id === selectedOverviewVehicleId);
+
+            // Find active route for selected vehicle
+            let activeRoute = null;
+            if (selectedOverviewVehicleId !== 'all') {
+                activeRoute = routes.find(r => r.vehicleId === selectedOverviewVehicleId) || routes[0];
+            } else if (routes.length > 0) {
+                activeRoute = routes[0];
+            }
+
+            // Draw Route Stops Sequence & Polyline if Route exists
+            const routeCoords = [];
+            if (activeRoute && Array.isArray(activeRoute.stops) && activeRoute.stops.length > 0) {
+                activeRoute.stops.forEach((stop, idx) => {
+                    let lat = Number(stop.latitude);
+                    let lng = Number(stop.longitude);
+                    if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+                        // Spread coordinates along route for visual realism
+                        lat = 31.5204 + (idx * 0.012) - 0.02;
+                        lng = 74.3587 + (idx * 0.014) - 0.015;
+                    }
+
+                    const stopLatLng = L.latLng(lat, lng);
+                    routeCoords.push(stopLatLng);
+                    bounds.extend(stopLatLng);
+
+                    // Custom High-Res Stop DivIcon
+                    const stopIcon = L.divIcon({
+                        className: 'custom-stop-marker',
+                        html: `<div style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color: white; border: 2.5px solid white; box-shadow: 0 4px 12px rgba(2,132,199,0.45); border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px;">#${idx + 1}</div>`,
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 16]
+                    });
+
+                    const stopMarker = L.marker(stopLatLng, { icon: stopIcon }).bindPopup(`
+                        <div style="font-family: inherit; padding: 4px; min-width: 170px;">
+                            <div style="font-weight: 800; color: #0284c7; font-size: 13px; margin-bottom: 3px;">📍 Stop #${idx + 1}: ${stop.stopName || 'Route Stop'}</div>
+                            <div style="font-size: 11px; color: #475569; margin-bottom: 2px;">🌅 <b>Pick:</b> ${stop.morningTime || '07:15 AM'} | 🌇 <b>Drop:</b> ${stop.afternoonTime || '02:00 PM'}</div>
+                            <div style="font-size: 11px; color: #10b981; font-weight: 700;">Fare: PKR ${stop.fare || 2500} / mo</div>
+                        </div>
+                    `);
+                    markersGroup.addLayer(stopMarker);
+                });
+
+                // School Campus Terminal Pin
+                const schoolLatLng = L.latLng(31.5350, 74.3750);
+                routeCoords.push(schoolLatLng);
+                bounds.extend(schoolLatLng);
+
+                const schoolIcon = L.divIcon({
+                    className: 'custom-school-marker',
+                    html: `<div style="background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%); color: white; border: 2px solid white; box-shadow: 0 4px 14px rgba(79,70,229,0.45); border-radius: 8px; padding: 4px 10px; display: flex; align-items: center; gap: 4px; font-weight: 800; font-size: 11px; white-space: nowrap;">🏫 School Campus</div>`,
+                    iconSize: [110, 32],
+                    iconAnchor: [55, 16]
+                });
+                const schoolMarker = L.marker(schoolLatLng, { icon: schoolIcon }).bindPopup(`
+                    <div style="font-family: inherit; padding: 4px;">
+                        <div style="font-weight: 800; color: #4f46e5; font-size: 13px;">🏫 ${schoolInfo.name || 'School Campus'}</div>
+                        <div style="font-size: 11px; color: #64748b;">Central Transport Terminal</div>
+                    </div>
+                `);
+                markersGroup.addLayer(schoolMarker);
+
+                // Draw Route Polyline
+                const polyline = L.polyline(routeCoords, {
+                    color: '#0284c7',
+                    weight: 4,
+                    opacity: 0.85,
+                    dashArray: '8, 8',
+                    lineCap: 'round'
+                });
+                polylineGroup.addLayer(polyline);
+            }
+
+            // Draw Vehicle Markers with real-time GPS telemetry
+            targetVehicles.forEach((veh, vIdx) => {
+                const live = liveTrackingData[veh.id] || {};
+                const isLive = live.isLive && (live.tripStatus === 'in_progress' || live.tripStatus === 'active');
+                const speed = live.speedKmH || 0;
+                const heading = live.heading || 0;
+
+                let lat = Number(live.latitude);
+                let lng = Number(live.longitude);
+                if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+                    // Fallback coordinates near start of route
+                    lat = 31.5204 + (vIdx * 0.008 - 0.004);
+                    lng = 74.3587 + (vIdx * 0.008 - 0.004);
+                }
+
+                const vehLatLng = L.latLng(lat, lng);
+                bounds.extend(vehLatLng);
+
+                const vanIcon = L.divIcon({
+                    className: 'custom-van-marker',
+                    html: `
+                        <div style="position: relative; width: 38px; height: 38px;">
+                            ${isLive ? '<div style="position: absolute; width: 54px; height: 54px; top: -8px; left: -8px; border-radius: 50%; background: rgba(16, 185, 129, 0.3); animation: pulse 1.5s infinite;"></div>' : ''}
+                            <div style="background: ${isLive ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #475569 0%, #334155 100%)'}; color: white; border: 2.5px solid white; box-shadow: 0 4px 14px rgba(0,0,0,0.35); border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 18px; transform: rotate(${heading}deg); transition: transform 0.3s ease;">
+                                🚐
+                            </div>
+                            <div style="position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); background: #0f172a; color: white; padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 800; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.2);">
+                                ${veh.regNo} ${isLive ? `(${speed} km/h)` : ''}
+                            </div>
+                        </div>
+                    `,
+                    iconSize: [38, 38],
+                    iconAnchor: [19, 19]
+                });
+
+                const vanMarker = L.marker(vehLatLng, { icon: vanIcon }).bindPopup(`
+                    <div style="font-family: inherit; padding: 6px; min-width: 190px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">
+                            <b style="font-size: 13px; color: #0f172a;">🚐 ${veh.regNo}</b>
+                            <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: ${isLive ? '#dcfce7' : '#f1f5f9'}; color: ${isLive ? '#15803d' : '#64748b'}; font-weight: 800;">
+                                ${isLive ? '🟢 IN TRANSIT' : '⚪ STANDBY'}
+                            </span>
+                        </div>
+                        <div style="font-size: 11px; color: #475569; margin-bottom: 3px;">👤 Driver: <b>${veh.driverName || 'Unassigned'}</b></div>
+                        <div style="font-size: 11px; color: #475569; margin-bottom: 3px;">📞 Contact: <b>${veh.driverPhone || 'N/A'}</b></div>
+                        <div style="font-size: 11px; color: #0284c7; margin-bottom: 4px; font-weight: 800;">🚀 Speed: ${speed} km/h</div>
+                        <div style="font-size: 10px; color: #94a3b8;">🕒 Last Synced: ${live.lastTimestamp ? new Date(live.lastTimestamp).toLocaleTimeString() : 'Awaiting Trip'}</div>
+                    </div>
+                `);
+                markersGroup.addLayer(vanMarker);
+            });
+
+            if (bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [45, 45], maxZoom: 15 });
+            }
+        } catch (syncErr) {
+            console.warn('Map layer sync error:', syncErr);
+        }
+
+        const resizeTimer = setTimeout(() => {
+            if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
+        }, 300);
+
+        return () => {
+            clearTimeout(resizeTimer);
+        };
+    }, [grandTab, selectedOverviewVehicleId, vehicles, routes, liveTrackingData, schoolInfo]);
 
     // Initialize Default Transport Setup if First Time
     const initializeSampleTransport = async () => {
@@ -304,6 +694,8 @@ const Transport = () => {
                 fuelLogs: [],
                 attendanceLogs: {}
             }, { merge: true });
+            setVehicles(initialVehicles);
+            setRoutes(initialRoutes);
         } catch (e) {
             console.error('Failed to init transport:', e);
         }
@@ -319,6 +711,14 @@ const Transport = () => {
         }
         try {
             await setDoc(doc(db, 'schools', schoolId, 'settings', 'transport_management'), updates, { merge: true });
+            // Update local cache
+            try {
+                const existingCache = getCachedTransport(schoolId) || {};
+                localStorage.setItem(`transport_cache_${schoolId}`, JSON.stringify({
+                    ...existingCache,
+                    ...updates
+                }));
+            } catch (ce) {}
             return true;
         } catch (error) {
             console.error('Transport save error:', error);
@@ -401,9 +801,285 @@ const Transport = () => {
     };
 
     // -------------------------------------------------------------
+    // 1.5. Driver Accounts CRUD & WhatsApp Handlers
+    // -------------------------------------------------------------
+    const handleOpenDriverModal = (drv = null) => {
+        if (drv) {
+            setEditingDriver(drv);
+            setDriverFormData({
+                name: drv.name || '',
+                phone: drv.phone || '',
+                email: drv.email || '',
+                password: '', // Kept empty unless changing password
+                cnic: drv.cnic || '',
+                licenseNo: drv.licenseNo || '',
+                assignedVehicleId: drv.assignedVehicleId || '',
+                status: drv.status || 'Active',
+                notes: drv.notes || ''
+            });
+        } else {
+            setEditingDriver(null);
+            setDriverFormData({
+                name: '',
+                phone: '',
+                email: '',
+                password: 'driver' + Math.floor(1000 + Math.random() * 9000), // Auto-suggest password
+                cnic: '',
+                licenseNo: '',
+                assignedVehicleId: '',
+                status: 'Active',
+                notes: ''
+            });
+        }
+        setDriverPasswordVisible(false);
+        setDriverModalOpen(true);
+    };
+
+    const handleSaveDriver = async (e) => {
+        e.preventDefault();
+        if (!schoolId) {
+            showAlert('Error: School ID is missing. Please reload the page.', 'error');
+            return;
+        }
+
+        if (!driverFormData.name.trim()) {
+            showAlert('Driver full name is required!', 'error');
+            return;
+        }
+        if (!driverFormData.email.trim()) {
+            showAlert('Driver login email is required!', 'error');
+            return;
+        }
+
+        setIsSavingDriver(true);
+
+        try {
+            if (editingDriver) {
+                // Update Existing Driver Record
+                const updateData = {
+                    ...editingDriver,
+                    name: driverFormData.name.trim(),
+                    phone: driverFormData.phone.trim(),
+                    email: driverFormData.email.trim(),
+                    cnic: driverFormData.cnic.trim(),
+                    licenseNo: driverFormData.licenseNo.trim(),
+                    assignedVehicleId: driverFormData.assignedVehicleId || '',
+                    status: driverFormData.status || 'Active',
+                    notes: driverFormData.notes || '',
+                    updatedAt: new Date().toISOString()
+                };
+
+                // Update in Local and Master Transport Document
+                const updatedDrivers = drivers.map(d => d.id === editingDriver.id ? updateData : d);
+                setDrivers(updatedDrivers);
+
+                // Update assigned vehicle if needed
+                let updatedVehicles = vehicles;
+                if (driverFormData.assignedVehicleId) {
+                    updatedVehicles = vehicles.map(v => {
+                        if (v.id === driverFormData.assignedVehicleId) {
+                            return {
+                                ...v,
+                                driverName: updateData.name,
+                                driverPhone: updateData.phone,
+                                driverLicense: updateData.licenseNo,
+                                driverCnic: updateData.cnic,
+                                driverEmail: updateData.email,
+                                driverId: editingDriver.id
+                            };
+                        }
+                        return v;
+                    });
+                    setVehicles(updatedVehicles);
+                }
+
+                await saveTransportState({ drivers: updatedDrivers, vehicles: updatedVehicles });
+
+                // Try subcollection update defensively
+                try {
+                    await setDoc(doc(db, `schools/${schoolId}/drivers`, editingDriver.id), updateData, { merge: true });
+                } catch (subErr) {
+                    console.warn("Subcollection driver write notice:", subErr);
+                }
+
+                showAlert('Driver profile updated successfully!', 'success');
+                setDriverModalOpen(false);
+            } else {
+                // Create New Driver
+                if (!driverFormData.password || driverFormData.password.trim().length < 6) {
+                    showAlert('Password must be at least 6 characters!', 'error');
+                    setIsSavingDriver(false);
+                    return;
+                }
+
+                let newDriverUid = null;
+
+                // 1. Create Firebase Auth user via isolated secondary App
+                try {
+                    const tempApp = initializeApp(firebaseConfig, `DriverAuth_${Date.now()}`);
+                    try {
+                        const tempAuth = getAuth(tempApp);
+                        const cred = await createUserWithEmailAndPassword(
+                            tempAuth,
+                            driverFormData.email.trim(),
+                            driverFormData.password.trim()
+                        );
+                        newDriverUid = cred.user.uid;
+                        await authSignOut(tempAuth);
+                    } finally {
+                        await deleteApp(tempApp);
+                    }
+                } catch (authErr) {
+                    if (authErr.code === 'auth/email-already-in-use') {
+                        throw new Error(`Email "${driverFormData.email.trim()}" is already registered in Firebase Auth with a previous password. Please use a fresh email (e.g. adnan.driver@school.com) so the new password is set correctly.`);
+                    } else {
+                        throw authErr;
+                    }
+                }
+
+                if (!newDriverUid) {
+                    newDriverUid = `driver_${Date.now()}`;
+                }
+
+                // 2. Build Driver Record
+                const driverRecord = {
+                    id: newDriverUid,
+                    uid: newDriverUid,
+                    name: driverFormData.name.trim(),
+                    phone: driverFormData.phone.trim(),
+                    email: driverFormData.email.trim(),
+                    password: driverFormData.password.trim(), // Stored for Principal's WhatsApp convenience
+                    cnic: driverFormData.cnic.trim(),
+                    licenseNo: driverFormData.licenseNo.trim(),
+                    assignedVehicleId: driverFormData.assignedVehicleId || '',
+                    status: driverFormData.status || 'Active',
+                    notes: driverFormData.notes || '',
+                    role: 'driver',
+                    schoolId: schoolId,
+                    createdAt: new Date().toISOString()
+                };
+
+                // 3. Save into Master Transport Document (Always authorized for Principal)
+                const updatedDrivers = [driverRecord, ...drivers.filter(d => d.id !== newDriverUid)];
+                setDrivers(updatedDrivers);
+
+                let updatedVehicles = vehicles;
+                if (driverFormData.assignedVehicleId) {
+                    updatedVehicles = vehicles.map(v => {
+                        if (v.id === driverFormData.assignedVehicleId) {
+                            return {
+                                ...v,
+                                driverName: driverFormData.name.trim(),
+                                driverPhone: driverFormData.phone.trim(),
+                                driverLicense: driverFormData.licenseNo.trim(),
+                                driverCnic: driverFormData.cnic.trim(),
+                                driverEmail: driverFormData.email.trim(),
+                                driverId: newDriverUid
+                            };
+                        }
+                        return v;
+                    });
+                    setVehicles(updatedVehicles);
+                }
+
+                await saveTransportState({ drivers: updatedDrivers, vehicles: updatedVehicles });
+
+                // 4. Also write to school drivers collection and global users defensively
+                try {
+                    await setDoc(doc(db, `schools/${schoolId}/drivers`, newDriverUid), driverRecord, { merge: true });
+                } catch (subErr) {
+                    console.warn("Drivers subcollection write notice:", subErr);
+                }
+
+                try {
+                    await setDoc(doc(db, 'global_users', newDriverUid), {
+                        uid: newDriverUid,
+                        email: driverFormData.email.trim(),
+                        name: driverFormData.name.trim(),
+                        role: 'driver',
+                        schoolId: schoolId,
+                        createdAt: new Date().toISOString()
+                    }, { merge: true });
+                } catch (globalErr) {
+                    console.warn("Global users write notice:", globalErr);
+                }
+
+                showAlert('Driver account created successfully! Driver can now log in to the mobile app.', 'success');
+                setDriverModalOpen(false);
+            }
+        } catch (error) {
+            console.error("Save Driver error:", error);
+            showAlert('Failed to save driver account: ' + (error.message || error), 'error');
+        } finally {
+            setIsSavingDriver(false);
+        }
+    };
+
+    const handleDeleteDriver = async (drv) => {
+        if (!window.confirm(`Are you sure you want to delete driver account "${drv.name}" (${drv.email})?`)) return;
+
+        try {
+            const updatedDrivers = drivers.filter(d => d.id !== drv.id);
+            setDrivers(updatedDrivers);
+
+            // Unlink driver from any vehicle
+            const updatedVehicles = vehicles.map(v => {
+                if (v.driverId === drv.id || (v.driverEmail && v.driverEmail.toLowerCase() === drv.email?.toLowerCase())) {
+                    return { ...v, driverName: '', driverPhone: '', driverEmail: '', driverId: '' };
+                }
+                return v;
+            });
+            setVehicles(updatedVehicles);
+
+            await saveTransportState({ drivers: updatedDrivers, vehicles: updatedVehicles });
+
+            try {
+                await deleteDoc(doc(db, `schools/${schoolId}/drivers`, drv.id));
+            } catch (delErr) {
+                console.warn("Delete subcollection driver notice:", delErr);
+            }
+
+            showAlert('Driver account deleted!', 'success');
+        } catch (error) {
+            console.error("Delete driver error:", error);
+            showAlert('Failed to delete driver: ' + error.message, 'error');
+        }
+    };
+
+    const sendDriverCredentialsWhatsApp = (drv) => {
+        const assignedVeh = vehicles.find(v => v.id === drv.assignedVehicleId);
+        const assignedRoute = routes.find(r => r.vehicleId === drv.assignedVehicleId);
+
+        let text = `🏫 *${schoolInfo.name.toUpperCase()} - DRIVER MOBILE APP LOGIN*\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `Assalam-o-Alaikum *${drv.name}*,\n`;
+        text += `Aapka School Driver Mobile App account create ho chuka hai. Daily route trips aur student boarding manage karne ke liye app login karein:\n\n`;
+        text += `📱 *APP LOGIN CREDENTIALS:*\n`;
+        text += `🔑 *School ID:* ${schoolId}\n`;
+        text += `📧 *Driver Email:* ${drv.email}\n`;
+        text += `🔒 *Password:* ${drv.password || 'Contact Admin'}\n\n`;
+        text += `🚐 *Assigned Vehicle:* ${assignedVeh ? `${assignedVeh.regNo} (${assignedVeh.type})` : 'To be assigned'}\n`;
+        text += `🗺️ *Route:* ${assignedRoute ? assignedRoute.title : 'General Fleet'}\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `📲 *Steps to Login:*\n`;
+        text += `1. Open *School Driver App* on your phone.\n`;
+        text += `2. Enter the School ID, Email & Password given above.\n`;
+        text += `3. Tap *Sign In* to start tracking and attendance!\n\n`;
+        text += `_For any help, contact School Administration._`;
+
+        const phone = formatWhatsAppPhone(drv.phone);
+        if (phone) {
+            window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, '_blank');
+        } else {
+            window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+        }
+    };
+
+    // -------------------------------------------------------------
     // 2. Vehicle CRUD Handlers
     // -------------------------------------------------------------
     const handleOpenVehicleModal = (veh = null) => {
+        setVehicleModalTab('vehicle');
         if (veh) {
             setEditingVehicle(veh);
             setVehicleFormData({
@@ -423,6 +1099,39 @@ const Transport = () => {
                 insuranceExpiry: veh.insuranceExpiry || '',
                 notes: veh.notes || ''
             });
+
+            // Pre-load or initialize assigned route for this vehicle
+            const existingRoute = routes.find(r => r.vehicleId === veh.id || (r.vehicleRegNo && r.vehicleRegNo === veh.regNo));
+            if (existingRoute) {
+                setEditingRoute(existingRoute);
+                setRouteFormData({
+                    title: existingRoute.title || `Route - ${veh.regNo}`,
+                    vehicleId: veh.id,
+                    startPoint: existingRoute.startPoint || 'Main Station',
+                    endPoint: existingRoute.endPoint || 'School Campus',
+                    morningDepartureTime: existingRoute.morningDepartureTime || '06:45 AM',
+                    afternoonDepartureTime: existingRoute.afternoonDepartureTime || '01:45 PM',
+                    monthlyBaseFare: existingRoute.monthlyBaseFare || 2500,
+                    stops: Array.isArray(existingRoute.stops) && existingRoute.stops.length > 0 ? existingRoute.stops : [{ stopName: '', morningTime: '07:00 AM', afternoonTime: '02:00 PM', fare: 2500 }],
+                    notes: existingRoute.notes || ''
+                });
+            } else {
+                setEditingRoute(null);
+                setRouteFormData({
+                    title: `Route - ${veh.regNo}`,
+                    vehicleId: veh.id,
+                    startPoint: 'Main Station',
+                    endPoint: 'School Campus',
+                    morningDepartureTime: '06:45 AM',
+                    afternoonDepartureTime: '01:45 PM',
+                    monthlyBaseFare: 2500,
+                    stops: [
+                        { stopName: 'Stop 1: Main Chowk', morningTime: '07:00 AM', afternoonTime: '02:00 PM', fare: 2500 },
+                        { stopName: 'Stop 2: Residential Sector', morningTime: '07:15 AM', afternoonTime: '02:15 PM', fare: 3000 }
+                    ],
+                    notes: ''
+                });
+            }
         } else {
             setEditingVehicle(null);
             setVehicleFormData({
@@ -442,8 +1151,64 @@ const Transport = () => {
                 insuranceExpiry: '',
                 notes: ''
             });
+            setEditingRoute(null);
+            setRouteFormData({
+                title: '',
+                vehicleId: '',
+                startPoint: '',
+                endPoint: 'School Campus',
+                morningDepartureTime: '06:45 AM',
+                afternoonDepartureTime: '01:45 PM',
+                monthlyBaseFare: 2500,
+                stops: [
+                    { stopName: 'Stop 1: Main Chowk', morningTime: '07:00 AM', afternoonTime: '02:00 PM', fare: 2500 }
+                ],
+                notes: ''
+            });
         }
         setVehicleModalOpen(true);
+    };
+
+    const handleSaveRouteForVehicle = async (e) => {
+        if (e) e.preventDefault();
+        if (!routeFormData.title.trim()) {
+            showAlert('Route title is required!', 'error');
+            return;
+        }
+
+        const validStops = (routeFormData.stops || []).filter(s => s.stopName && s.stopName.trim());
+        if (validStops.length === 0) {
+            showAlert('Please specify at least one valid stop name!', 'error');
+            return;
+        }
+
+        const targetVehicleId = editingVehicle ? editingVehicle.id : routeFormData.vehicleId;
+        const targetVehicleReg = editingVehicle ? editingVehicle.regNo : (vehicles.find(v => v.id === targetVehicleId)?.regNo || '');
+
+        const newId = editingRoute ? editingRoute.id : `route_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+        const routeObj = {
+            ...routeFormData,
+            id: newId,
+            vehicleId: targetVehicleId,
+            vehicleRegNo: targetVehicleReg,
+            stops: validStops.map(s => ({
+                ...s,
+                fare: Number(s.fare) || Number(routeFormData.monthlyBaseFare) || 2500
+            })),
+            monthlyBaseFare: Number(routeFormData.monthlyBaseFare) || 2500,
+            updatedAt: new Date().toISOString()
+        };
+
+        const updatedRoutes = editingRoute
+            ? routes.map(r => r.id === editingRoute.id ? routeObj : r)
+            : [routeObj, ...routes.filter(r => r.vehicleId !== targetVehicleId)];
+
+        const ok = await saveTransportState({ routes: updatedRoutes });
+        if (ok) {
+            setRoutes(updatedRoutes);
+            setEditingRoute(routeObj);
+            showAlert(`✓ Route "${routeObj.title}" successfully saved for vehicle ${targetVehicleReg || ''}!`, 'success');
+        }
     };
 
     const handleSaveVehicle = async (e) => {
@@ -600,13 +1365,53 @@ const Transport = () => {
     // 4. Student Transport Allocation Handlers
     // -------------------------------------------------------------
     const handleOpenAllocationModal = () => {
-        setAllocSelectedClassId(classesList[0]?.id || '');
+        setEditingAllocation(null);
+        setAllocStudentSearch('');
+        const initialClassId = allocSelectedClassId || classesList[0]?.id || '';
+        setAllocSelectedClassId(initialClassId);
         setAllocSelectedStudent(null);
-        setAllocRouteId(routes[0]?.id || '');
-        setAllocStopName(routes[0]?.stops[0]?.stopName || '');
-        setAllocMonthlyFare(routes[0]?.stops[0]?.fare || 2500);
+        const defaultRoute = routes[0];
+        setAllocRouteId(defaultRoute?.id || '');
+        setAllocStopName(defaultRoute?.stops[0]?.stopName || '');
+        setAllocMonthlyFare(defaultRoute?.stops[0]?.fare || defaultRoute?.monthlyBaseFare || 2500);
         setAllocTripType('both');
         setAllocParentPhone('');
+        setIsCustomStop(false);
+        setCustomStopName('');
+        setSaveCustomStopToRoute(true);
+        setIsQuickAddingStop(false);
+        setAllocationModalOpen(true);
+    };
+
+    const handleOpenEditAllocationModal = (alloc) => {
+        setEditingAllocation(alloc);
+        setAllocStudentSearch('');
+        setAllocSelectedClassId(alloc.classId);
+        setAllocSelectedStudent({
+            id: alloc.studentId,
+            name: alloc.studentName,
+            rollNo: alloc.rollNo,
+            rollNumber: alloc.rollNo,
+            fatherName: alloc.fatherName,
+            fatherPhone: alloc.parentPhone
+        });
+        setAllocRouteId(alloc.routeId);
+        setAllocStopName(alloc.stopName);
+
+        const targetRoute = routes.find(r => r.id === alloc.routeId);
+        const existsInRoute = (targetRoute?.stops || []).some(s => s.stopName === alloc.stopName);
+        if (!existsInRoute && alloc.stopName) {
+            setIsCustomStop(true);
+            setCustomStopName(alloc.stopName);
+        } else {
+            setIsCustomStop(false);
+            setCustomStopName('');
+        }
+
+        setAllocMonthlyFare(alloc.monthlyFare || 2500);
+        setAllocTripType(alloc.tripType || 'both');
+        setAllocParentPhone(alloc.parentPhone || '');
+        setIsQuickAddingStop(false);
         setAllocationModalOpen(true);
     };
 
@@ -617,6 +1422,9 @@ const Transport = () => {
             setAllocStopName(targetRoute.stops[0].stopName);
             setAllocMonthlyFare(targetRoute.stops[0].fare || targetRoute.monthlyBaseFare || 2500);
         }
+        setIsCustomStop(false);
+        setCustomStopName('');
+        setIsQuickAddingStop(false);
     };
 
     const handleStopChangeInAlloc = (stopName) => {
@@ -628,14 +1436,82 @@ const Transport = () => {
         }
     };
 
+    // Quick Add a New Stop to Selected Route Directly from Allocation Modal
+    const handleQuickAddStopToCurrentRoute = async () => {
+        if (!quickStopData.stopName.trim()) {
+            showAlert('Please enter a stop name / landmark!', 'error');
+            return;
+        }
+
+        const targetRoute = routes.find(r => r.id === allocRouteId);
+        if (!targetRoute) {
+            showAlert('Please select a route first!', 'error');
+            return;
+        }
+
+        const newStopObj = {
+            stopName: quickStopData.stopName.trim(),
+            morningTime: quickStopData.morningTime || '07:15 AM',
+            afternoonTime: quickStopData.afternoonTime || '02:00 PM',
+            fare: Number(quickStopData.fare) || Number(allocMonthlyFare) || 2500
+        };
+
+        const existingStops = Array.isArray(targetRoute.stops) ? targetRoute.stops : [];
+        const updatedStops = [...existingStops, newStopObj];
+        const updatedRoute = { ...targetRoute, stops: updatedStops };
+        const updatedRoutes = routes.map(r => r.id === targetRoute.id ? updatedRoute : r);
+
+        const ok = await saveTransportState({ routes: updatedRoutes });
+        if (ok) {
+            setRoutes(updatedRoutes);
+            setAllocStopName(newStopObj.stopName);
+            setAllocMonthlyFare(newStopObj.fare);
+            setIsQuickAddingStop(false);
+            setQuickStopData({ stopName: '', morningTime: '07:15 AM', afternoonTime: '02:00 PM', fare: 2500 });
+            showAlert(`📍 Stop "${newStopObj.stopName}" added to Route!`, 'success');
+        }
+    };
+
+    // Quick Remove Selected Stop from Route Directly from Allocation Modal
+    const handleQuickRemoveStopFromCurrentRoute = async (stopNameToRemove) => {
+        const targetRoute = routes.find(r => r.id === allocRouteId);
+        if (!targetRoute) return;
+
+        if ((targetRoute.stops || []).length <= 1) {
+            showAlert('Route must have at least one stop!', 'warning');
+            return;
+        }
+
+        if (!window.confirm(`Are you sure you want to remove stop "${stopNameToRemove}" from Route "${targetRoute.title}"?`)) {
+            return;
+        }
+
+        const updatedStops = (targetRoute.stops || []).filter(s => s.stopName !== stopNameToRemove);
+        const updatedRoute = { ...targetRoute, stops: updatedStops };
+        const updatedRoutes = routes.map(r => r.id === targetRoute.id ? updatedRoute : r);
+
+        const ok = await saveTransportState({ routes: updatedRoutes });
+        if (ok) {
+            setRoutes(updatedRoutes);
+            if (updatedStops.length > 0) {
+                setAllocStopName(updatedStops[0].stopName);
+                setAllocMonthlyFare(updatedStops[0].fare);
+            }
+            showAlert(`Stop "${stopNameToRemove}" removed from route.`, 'success');
+        }
+    };
+
     const handleSaveAllocation = async (e) => {
         e.preventDefault();
         if (!allocSelectedStudent) {
             showAlert('Please select a student!', 'error');
             return;
         }
-        if (!allocRouteId || !allocStopName) {
-            showAlert('Please select a route and pickup stop!', 'error');
+
+        const finalStopName = isCustomStop ? customStopName.trim() : allocStopName.trim();
+
+        if (!allocRouteId || !finalStopName) {
+            showAlert('Please select a route and specify pickup stop location!', 'error');
             return;
         }
 
@@ -655,7 +1531,23 @@ const Transport = () => {
 
         setIsSavingAllocation(true);
         try {
-            const allocId = `alloc_${allocSelectedStudent.id}`;
+            // If custom stop and user opted to save to route sequence
+            if (isCustomStop && saveCustomStopToRoute && targetRoute) {
+                const stopExists = (targetRoute.stops || []).some(s => s.stopName.toLowerCase() === finalStopName.toLowerCase());
+                if (!stopExists) {
+                    const newStop = {
+                        stopName: finalStopName,
+                        morningTime: '07:15 AM',
+                        afternoonTime: '02:00 PM',
+                        fare: Number(allocMonthlyFare) || 2500
+                    };
+                    const updatedRoutes = routes.map(r => r.id === targetRoute.id ? { ...r, stops: [...(r.stops || []), newStop] } : r);
+                    setRoutes(updatedRoutes);
+                    await saveTransportState({ routes: updatedRoutes });
+                }
+            }
+
+            const allocId = editingAllocation ? editingAllocation.id : `alloc_${allocSelectedStudent.id}`;
             const allocObj = {
                 id: allocId,
                 studentId: allocSelectedStudent.id,
@@ -665,14 +1557,14 @@ const Transport = () => {
                 className: className,
                 routeId: allocRouteId,
                 routeName: targetRoute?.title || 'Route',
-                stopName: allocStopName,
+                stopName: finalStopName,
                 monthlyFare: Number(allocMonthlyFare) || 0,
                 tripType: allocTripType,
                 vehicleId: targetRoute?.vehicleId || '',
                 vehicleRegNo: targetVehicle?.regNo || 'School Van',
                 parentPhone: allocParentPhone || allocSelectedStudent.fatherPhone || allocSelectedStudent.phone || allocSelectedStudent.whatsapp || '',
                 fatherName: allocSelectedStudent.fatherName || '',
-                enrolledAt: new Date().toISOString()
+                enrolledAt: editingAllocation?.enrolledAt || new Date().toISOString()
             };
 
             const updatedAllocations = [allocObj, ...allocations.filter(a => a.studentId !== allocSelectedStudent.id)];
@@ -687,7 +1579,7 @@ const Transport = () => {
                     transportEnrolled: true,
                     transportFee: Number(allocMonthlyFare) || 0,
                     transportRouteId: allocRouteId,
-                    transportStopName: allocStopName,
+                    transportStopName: finalStopName,
                     transportVehicleRegNo: targetVehicle?.regNo || '',
                     updatedAt: new Date().toISOString()
                 }, { merge: true });
@@ -696,11 +1588,11 @@ const Transport = () => {
             }
 
             setAllocations(updatedAllocations);
-            showAlert(`🎉 ${allocSelectedStudent.name} successfully enrolled in Transport!`, 'success');
+            showAlert(editingAllocation ? `✓ Transport allocation updated for ${allocSelectedStudent.name}!` : `🎉 ${allocSelectedStudent.name} successfully enrolled in Transport!`, 'success');
             setAllocationModalOpen(false);
 
             // Ask to send WhatsApp timing notification
-            if (allocObj.parentPhone) {
+            if (allocObj.parentPhone && !editingAllocation) {
                 if (window.confirm(`Would you like to send route timing details to parent (${allocObj.parentPhone}) on WhatsApp now?`)) {
                     sendRouteDetailsWhatsApp(allocObj);
                 }
@@ -1001,6 +1893,137 @@ const Transport = () => {
     };
 
     // -------------------------------------------------------------
+    // Live GPS Demo Simulator (For Presentation & Client Demo)
+    // -------------------------------------------------------------
+    const toggleLiveSimulation = () => {
+        if (isSimulating) {
+            // Stop Simulation
+            if (simTimerRef.current) clearInterval(simTimerRef.current);
+            setIsSimulating(false);
+            setLiveTrackingData(prev => {
+                const updated = { ...prev };
+                vehicles.forEach(v => {
+                    if (updated[v.id]) {
+                        updated[v.id] = { ...updated[v.id], isLive: false, tripStatus: 'completed' };
+                    }
+                });
+                return updated;
+            });
+            showAlert('Live GPS Simulation stopped.', 'info');
+            return;
+        }
+
+        if (vehicles.length === 0) {
+            showAlert('Please restore/add vehicles first to run simulation!', 'warning');
+            return;
+        }
+
+        setIsSimulating(true);
+        showAlert('🚀 Live GPS Simulation active! Van is moving on map.', 'success');
+
+        const activeRoute = routes[0];
+        const stopsList = (activeRoute && Array.isArray(activeRoute.stops) && activeRoute.stops.length > 0)
+            ? activeRoute.stops
+            : [
+                { stopName: 'Stop 1: Township Market', latitude: 31.4700, longitude: 74.3050 },
+                { stopName: 'Stop 2: Model Town C-Block', latitude: 31.4950, longitude: 74.3300 },
+                { stopName: 'Stop 3: Kalma Chowk Underpass', latitude: 31.5150, longitude: 74.3520 },
+                { stopName: 'Stop 4: Main Boulevard Gulberg', latitude: 31.5300, longitude: 74.3680 },
+                { stopName: 'School Campus Terminal', latitude: 31.5350, longitude: 74.3750 }
+            ];
+
+        // Generate smooth interpolated waypoints
+        const waypoints = [];
+        for (let i = 0; i < stopsList.length - 1; i++) {
+            const start = stopsList[i];
+            const end = stopsList[i + 1];
+            const stepsBetween = 6;
+            for (let s = 0; s < stepsBetween; s++) {
+                const ratio = s / stepsBetween;
+                const startLat = Number(start.latitude) || (31.50 + i * 0.01);
+                const startLng = Number(start.longitude) || (74.32 + i * 0.01);
+                const endLat = Number(end.latitude) || (31.51 + i * 0.01);
+                const endLng = Number(end.longitude) || (74.33 + i * 0.01);
+
+                const lat = startLat + (endLat - startLat) * ratio;
+                const lng = startLng + (endLng - startLng) * ratio;
+
+                waypoints.push({
+                    lat,
+                    lng,
+                    stopName: s === 0 ? start.stopName : `Transit -> ${end.stopName}`,
+                    isStop: s === 0
+                });
+            }
+        }
+        // Terminal waypoint
+        waypoints.push({
+            lat: 31.5350,
+            lng: 74.3750,
+            stopName: '🏫 School Campus Central Terminal',
+            isStop: true
+        });
+
+        const targetVeh = vehicles[0];
+        simStepRef.current = 0;
+
+        simTimerRef.current = setInterval(() => {
+            simStepRef.current = (simStepRef.current + 1) % waypoints.length;
+            const currentWp = waypoints[simStepRef.current];
+            const nextWp = waypoints[(simStepRef.current + 1) % waypoints.length];
+
+            const dLat = nextWp.lat - currentWp.lat;
+            const dLng = nextWp.lng - currentWp.lng;
+            let heading = Math.round((Math.atan2(dLng, dLat) * 180) / Math.PI);
+            if (heading < 0) heading += 360;
+
+            const speed = currentWp.isStop ? 0 : Math.round(35 + Math.sin(simStepRef.current * 0.6) * 14);
+
+            setLiveTrackingData(prev => ({
+                ...prev,
+                [targetVeh.id]: {
+                    vehicleId: targetVeh.id,
+                    vehicleReg: targetVeh.regNo,
+                    driverName: targetVeh.driverName || 'Muhammad Aslam',
+                    driverPhone: targetVeh.driverPhone || '0300-1234567',
+                    tripType: 'morning',
+                    isLive: true,
+                    tripStatus: 'in_progress',
+                    latitude: currentWp.lat,
+                    longitude: currentWp.lng,
+                    speedKmH: speed,
+                    heading: heading,
+                    accuracyMeters: 4,
+                    lastTimestamp: new Date().toISOString()
+                }
+            }));
+
+            // If at a designated stop, auto-mark students at this stop as boarded
+            if (currentWp.isStop && currentWp.stopName) {
+                const todayStr = new Date().toISOString().slice(0, 10);
+                const attKey = `${todayStr}_${activeRoute?.id || 'all'}_morning`;
+                const stopAllocs = allocations.filter(a => a.pickupStop && a.pickupStop.toLowerCase().trim() === currentWp.stopName.toLowerCase().trim());
+                if (stopAllocs.length > 0) {
+                    setAttendanceLogs(prev => {
+                        const subMap = { ...(prev[attKey] || {}) };
+                        stopAllocs.forEach(st => {
+                            subMap[st.studentId] = 'boarded';
+                        });
+                        return { ...prev, [attKey]: subMap };
+                    });
+                }
+            }
+        }, 1500);
+    };
+
+    // Clean up simulation on unmount
+    useEffect(() => {
+        return () => {
+            if (simTimerRef.current) clearInterval(simTimerRef.current);
+        };
+    }, []);
+
+    // -------------------------------------------------------------
     // Financial & Capacity Metrics Computation
     // -------------------------------------------------------------
     const metrics = useMemo(() => {
@@ -1082,209 +2105,812 @@ const Transport = () => {
 
     return (
         <div style={{ padding: '0.5rem', maxWidth: '1600px', margin: '0 auto' }}>
-            {/* Top Page Header */}
+            {/* ========================================================================= */}
+            {/* TOP-LEVEL GRAND NAVIGATION SWITCHER */}
+            {/* ========================================================================= */}
             <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                marginBottom: '1.5rem',
+                marginBottom: '1.25rem',
                 flexWrap: 'wrap',
-                gap: '1rem'
+                gap: '1rem',
+                borderBottom: '1.5px solid #e2e8f0',
+                paddingBottom: '0.85rem'
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-                    <div style={{
-                        width: '48px',
-                        height: '48px',
-                        borderRadius: '14px',
-                        background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        boxShadow: '0 8px 16px -4px rgba(2, 132, 199, 0.4)'
-                    }}>
-                        <Bus color="white" size={26} />
-                    </div>
-                    <div>
-                        <h1 style={{ fontSize: '1.65rem', fontWeight: '800', color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
-                            Transport & Van Fleet Management
-                        </h1>
-                        <p style={{ color: '#64748b', fontSize: '0.86rem', margin: 0 }}>
-                            School Vans, Bus Routes, Stops, Student Seat Allocations, Fuel Logs & WhatsApp Notifications
-                        </p>
-                    </div>
-                </div>
-
-                {/* Header Action Buttons */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                {/* Grand Tab Switcher Pills */}
+                <div style={{
+                    display: 'flex',
+                    background: '#f1f5f9',
+                    padding: '4px',
+                    borderRadius: '12px',
+                    border: '1px solid #cbd5e1'
+                }}>
                     <button
-                        onClick={downloadTransportReportPDF}
-                        className="btn"
-                        style={{
-                            background: '#f8fafc',
-                            border: '1px solid #cbd5e1',
-                            color: '#334155',
-                            padding: '0.65rem 1rem',
-                            borderRadius: '10px',
-                            fontWeight: '600',
-                            fontSize: '0.85rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.4rem',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        <Download size={16} /> Export PDF Roster
-                    </button>
-                    <button
-                        onClick={handleOpenAllocationModal}
-                        className="btn hover-lift"
-                        style={{
-                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                            color: 'white',
-                            padding: '0.65rem 1.25rem',
-                            borderRadius: '10px',
-                            fontWeight: '700',
-                            fontSize: '0.88rem',
-                            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.35)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.45rem',
-                            border: 'none',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        <Users size={18} /> + Allocate Student Seat
-                    </button>
-                    <button
-                        onClick={() => handleOpenVehicleModal()}
-                        className="btn"
-                        style={{
-                            background: '#4f46e5',
-                            color: 'white',
-                            padding: '0.65rem 1.25rem',
-                            borderRadius: '10px',
-                            fontWeight: '600',
-                            fontSize: '0.88rem',
-                            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
-                        }}
-                    >
-                        <Plus size={18} /> Add New Vehicle
-                    </button>
-                </div>
-            </div>
-
-            {/* Quick Metrics Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-                <div className="card" style={{ padding: '1.1rem', borderLeft: '4px solid #0284c7' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Fleet Size</span>
-                        <Bus size={18} color="#0284c7" />
-                    </div>
-                    <h3 style={{ fontSize: '1.4rem', fontWeight: '800', color: '#0f172a', margin: '0.3rem 0' }}>
-                        {metrics.totalVehicles} Vehicles
-                    </h3>
-                    <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>
-                        🟢 {metrics.activeVehicles} Active on Road
-                    </span>
-                </div>
-
-                <div className="card" style={{ padding: '1.1rem', borderLeft: '4px solid #10b981' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Enrolled Students</span>
-                        <Users size={18} color="#10b981" />
-                    </div>
-                    <h3 style={{ fontSize: '1.4rem', fontWeight: '800', color: '#10b981', margin: '0.3rem 0' }}>
-                        {metrics.totalEnrolled} Students
-                    </h3>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                        {metrics.totalCapacity} Total Seats ({metrics.availableSeats} Vacant)
-                    </span>
-                </div>
-
-                <div className="card" style={{ padding: '1.1rem', borderLeft: '4px solid #6366f1' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Monthly Fare Revenue</span>
-                        <DollarSign size={18} color="#6366f1" />
-                    </div>
-                    <h3 style={{ fontSize: '1.4rem', fontWeight: '800', color: '#4f46e5', margin: '0.3rem 0' }}>
-                        PKR {metrics.monthlyRevenue.toLocaleString()}
-                    </h3>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                        From {routes.length} Active Routes
-                    </span>
-                </div>
-
-                <div className="card" style={{ padding: '1.1rem', borderLeft: '4px solid #f59e0b' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Fuel & Repairs (Month)</span>
-                        <Fuel size={18} color="#f59e0b" />
-                    </div>
-                    <h3 style={{ fontSize: '1.4rem', fontWeight: '800', color: '#d97706', margin: '0.3rem 0' }}>
-                        PKR {metrics.totalExpense.toLocaleString()}
-                    </h3>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                        Fuel: {metrics.monthlyFuelCost} | Maint: {metrics.monthlyMaintCost}
-                    </span>
-                </div>
-            </div>
-
-            {/* Navigation Tabs Header */}
-            <div style={{
-                display: 'flex',
-                gap: '0.5rem',
-                borderBottom: '2px solid #e2e8f0',
-                marginBottom: '1.5rem',
-                overflowX: 'auto',
-                paddingBottom: '0.25rem'
-            }}>
-                {[
-                    { id: 'fleet', label: '🚐 Fleet & Vehicles', count: vehicles.length },
-                    { id: 'routes', label: '🗺️ Routes & Stops', count: routes.length },
-                    { id: 'allocations', label: '🎓 Student Allocations', count: allocations.length },
-                    { id: 'fuel_logs', label: '⛽ Fuel & Maintenance', count: fuelLogs.length },
-                    { id: 'attendance', label: '📋 Daily Boarding Attendance' }
-                ].map(tab => (
-                    <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
+                        type="button"
+                        onClick={() => setGrandTab('radar')}
                         style={{
                             display: 'flex',
                             alignItems: 'center',
                             gap: '0.5rem',
-                            padding: '0.75rem 1.25rem',
+                            padding: '0.65rem 1.4rem',
+                            borderRadius: '9px',
                             border: 'none',
-                            background: 'transparent',
-                            color: activeTab === tab.id ? '#0284c7' : '#64748b',
-                            fontWeight: activeTab === tab.id ? '700' : '600',
+                            background: grandTab === 'radar' ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'transparent',
+                            color: grandTab === 'radar' ? 'white' : '#475569',
+                            fontWeight: '800',
                             fontSize: '0.92rem',
                             cursor: 'pointer',
-                            borderBottom: activeTab === tab.id ? '3px solid #0284c7' : '3px solid transparent',
-                            marginBottom: '-2px',
-                            transition: 'all 0.2s ease',
-                            whiteSpace: 'nowrap'
+                            boxShadow: grandTab === 'radar' ? '0 4px 12px rgba(2, 132, 199, 0.35)' : 'none',
+                            transition: 'all 0.2s ease'
                         }}
                     >
-                        <span>{tab.label}</span>
-                        {tab.count !== undefined && (
-                            <span style={{
-                                background: activeTab === tab.id ? '#e0f2fe' : '#f1f5f9',
-                                color: activeTab === tab.id ? '#0369a1' : '#64748b',
-                                fontSize: '0.72rem',
-                                padding: '0.15rem 0.45rem',
-                                borderRadius: '6px',
-                                fontWeight: '600'
-                            }}>
-                                {tab.count}
-                            </span>
-                        )}
+                        <Radio size={16} /> 🎛️ Overview & Live GPS Radar
+                        <span style={{
+                            background: grandTab === 'radar' ? 'rgba(255,255,255,0.25)' : '#dcfce7',
+                            color: grandTab === 'radar' ? 'white' : '#15803d',
+                            fontSize: '0.68rem',
+                            padding: '0.12rem 0.45rem',
+                            borderRadius: '8px',
+                            fontWeight: '800',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '3px'
+                        }}>
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: grandTab === 'radar' ? 'white' : '#15803d', animation: 'pulse 1.5s infinite' }}></span>
+                            LIVE
+                        </span>
                     </button>
-                ))}
+
+                    <button
+                        type="button"
+                        onClick={() => setGrandTab('fleet_management')}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            padding: '0.65rem 1.4rem',
+                            borderRadius: '9px',
+                            border: 'none',
+                            background: grandTab === 'fleet_management' ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : 'transparent',
+                            color: grandTab === 'fleet_management' ? 'white' : '#475569',
+                            fontWeight: '800',
+                            fontSize: '0.92rem',
+                            cursor: 'pointer',
+                            boxShadow: grandTab === 'fleet_management' ? '0 4px 12px rgba(79, 70, 229, 0.35)' : 'none',
+                            transition: 'all 0.2s ease'
+                        }}
+                    >
+                        <Bus size={16} /> 🚐 Transport & Van Fleet Management
+                        <span style={{
+                            background: grandTab === 'fleet_management' ? 'rgba(255,255,255,0.25)' : '#e0e7ff',
+                            color: grandTab === 'fleet_management' ? 'white' : '#4338ca',
+                            fontSize: '0.68rem',
+                            padding: '0.12rem 0.45rem',
+                            borderRadius: '8px',
+                            fontWeight: '800'
+                        }}>
+                            {vehicles.length} Vans
+                        </span>
+                    </button>
+                </div>
+
+                {/* Right Quick Info */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '600' }}>
+                        🏫 <b>{schoolInfo.name || 'School Transport'}</b>
+                    </span>
+                </div>
             </div>
 
             {/* ========================================================================= */}
-            {/* TAB 1: FLEET & VEHICLES DIRECTORY */}
+            {/* GRAND TAB 1: 🎛️ LIVE GPS FLEET RADAR & OVERVIEW (STANDALONE RADAR VIEW) */}
             {/* ========================================================================= */}
-            {activeTab === 'fleet' && (
+            {grandTab === 'radar' && (() => {
+                const currentOverviewVeh = selectedOverviewVehicleId !== 'all'
+                    ? vehicles.find(v => v.id === selectedOverviewVehicleId)
+                    : (vehicles.find(v => liveTrackingData[v.id]?.isLive) || vehicles[0] || null);
+
+                const currentTracking = currentOverviewVeh ? (liveTrackingData[currentOverviewVeh.id] || {}) : {};
+                const isLive = currentTracking.isLive && (currentTracking.tripStatus === 'in_progress' || currentTracking.tripStatus === 'active');
+                const speed = currentTracking.speedKmH || 0;
+                const overviewRoute = currentOverviewVeh ? (routes.find(r => r.vehicleId === currentOverviewVeh.id) || routes[0] || null) : (routes[0] || null);
+                const overviewAllocations = overviewRoute ? allocations.filter(a => a.routeId === overviewRoute.id) : allocations;
+
+                const todayStr = new Date().toISOString().slice(0, 10);
+                const attKey = `${todayStr}_${overviewRoute?.id || 'all'}_${overviewTripType}`;
+                const currentAttMap = attendanceLogs[attKey] || {};
+
+                const totalAssigned = overviewAllocations.length;
+                const boardedCount = overviewAllocations.filter(a => currentAttMap[a.studentId] === 'boarded').length;
+                const absentCount = overviewAllocations.filter(a => currentAttMap[a.studentId] === 'absent').length;
+                const pendingCount = Math.max(0, totalAssigned - boardedCount - absentCount);
+                const boardedPercent = totalAssigned > 0 ? Math.round((boardedCount / totalAssigned) * 100) : 0;
+
+                const activeVehiclesCount = vehicles.filter(v => liveTrackingData[v.id]?.isLive).length;
+
+                return (
+                    <div>
+                        {/* Top Fleet Selector & Controls Bar */}
+                        <div style={{
+                            background: 'white',
+                            padding: '1rem 1.25rem',
+                            borderRadius: '14px',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+                            marginBottom: '1.25rem',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '1rem'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                                        🎯 Target Fleet / Driver Monitor:
+                                    </label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <select
+                                            value={selectedOverviewVehicleId}
+                                            onChange={(e) => setSelectedOverviewVehicleId(e.target.value)}
+                                            style={{
+                                                padding: '0.55rem 0.85rem',
+                                                borderRadius: '8px',
+                                                border: '1.5px solid #cbd5e1',
+                                                fontSize: '0.86rem',
+                                                fontWeight: '700',
+                                                color: '#0f172a',
+                                                background: '#f8fafc',
+                                                minWidth: '280px',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            <option value="all">🌐 All Fleet Overview ({vehicles.length} Vehicles)</option>
+                                            {vehicles.map(v => {
+                                                const vLive = liveTrackingData[v.id]?.isLive;
+                                                return (
+                                                    <option key={v.id} value={v.id}>
+                                                        {v.regNo} - {v.driverName || 'Driver'} {vLive ? '🟢 (LIVE ON ROAD)' : '⚪ (Standby)'}
+                                                    </option>
+                                                );
+                                            })}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Morning / Afternoon Trip Mode Switcher */}
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                                        ⏰ Active Trip Mode:
+                                    </label>
+                                    <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setOverviewTripType('morning')}
+                                            style={{
+                                                padding: '0.4rem 0.75rem',
+                                                borderRadius: '6px',
+                                                border: 'none',
+                                                background: overviewTripType === 'morning' ? '#0284c7' : 'transparent',
+                                                color: overviewTripType === 'morning' ? 'white' : '#64748b',
+                                                fontWeight: '700',
+                                                fontSize: '0.78rem',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                        >
+                                            🌅 Morning Pick-up
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setOverviewTripType('afternoon')}
+                                            style={{
+                                                padding: '0.4rem 0.75rem',
+                                                borderRadius: '6px',
+                                                border: 'none',
+                                                background: overviewTripType === 'afternoon' ? '#0284c7' : 'transparent',
+                                                color: overviewTripType === 'afternoon' ? 'white' : '#64748b',
+                                                fontWeight: '700',
+                                                fontSize: '0.78rem',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                        >
+                                            🌇 Afternoon Drop-off
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Status, Simulation Demo & Quick Contact Actions */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: isLive ? '#dcfce7' : '#f1f5f9', padding: '0.45rem 0.85rem', borderRadius: '8px', border: `1px solid ${isLive ? '#bbf7d0' : '#e2e8f0'}` }}>
+                                    <Radio size={15} color={isLive ? '#15803d' : '#64748b'} />
+                                    <span style={{ fontSize: '0.78rem', fontWeight: '800', color: isLive ? '#15803d' : '#64748b' }}>
+                                        {isLive ? `LIVE IN TRANSIT (${speed} km/h)` : `STANDBY (${activeVehiclesCount} Live in Fleet)`}
+                                    </span>
+                                </div>
+
+                                {/* Live GPS Simulator Button for Presentation */}
+                                <button
+                                    type="button"
+                                    onClick={toggleLiveSimulation}
+                                    className="btn hover-lift"
+                                    style={{
+                                        background: isSimulating ? 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)' : 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+                                        color: 'white',
+                                        border: 'none',
+                                        padding: '0.5rem 0.95rem',
+                                        borderRadius: '8px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        boxShadow: isSimulating ? '0 0 14px rgba(239, 68, 68, 0.45)' : '0 4px 12px rgba(139, 92, 246, 0.35)',
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                >
+                                    {isSimulating ? (
+                                        <>
+                                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'white', animation: 'pulse 1s infinite' }}></span>
+                                            ⏹️ Stop Live Demo ({speed} km/h)
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span>🎮</span> 🚀 Simulate Live GPS Demo
+                                        </>
+                                    )}
+                                </button>
+
+                                {currentOverviewVeh && currentOverviewVeh.driverPhone && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            let p = currentOverviewVeh.driverPhone.replace(/[^0-9]/g, '');
+                                            if (p.startsWith('0')) p = '92' + p.slice(1);
+                                            const txt = encodeURIComponent(`Assalam-o-Alaikum ${currentOverviewVeh.driverName},\nRegarding School Van ${currentOverviewVeh.regNo}: Please confirm your live route location & trip status.`);
+                                            window.open(`https://wa.me/${p}?text=${txt}`, '_blank');
+                                        }}
+                                        className="btn hover-lift"
+                                        style={{ background: '#25D366', color: 'white', border: 'none', padding: '0.5rem 0.85rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                                    >
+                                        <MessageSquare size={14} /> WhatsApp Driver
+                                    </button>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (mapInstanceRef.current && markersLayerRef.current) {
+                                            const bounds = L.latLngBounds([]);
+                                            markersLayerRef.current.eachLayer(layer => {
+                                                if (layer.getLatLng) bounds.extend(layer.getLatLng());
+                                            });
+                                            if (bounds.isValid()) {
+                                                mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+                                            }
+                                        }
+                                    }}
+                                    className="btn"
+                                    style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569', padding: '0.5rem 0.85rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                                >
+                                    <Navigation2 size={14} color="#0284c7" /> Re-Center Map
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* 4 Live Telemetrics KPI Cards */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
+                            {/* Card 1: Speedometer */}
+                            <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #0284c7', background: 'white' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Current Speed</span>
+                                    <Navigation size={16} color="#0284c7" />
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', margin: '0.3rem 0' }}>
+                                    <h2 style={{ fontSize: '1.75rem', fontWeight: '900', color: isLive ? '#0284c7' : '#0f172a', margin: 0 }}>
+                                        {speed}
+                                    </h2>
+                                    <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#64748b' }}>km/h</span>
+                                </div>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '700', color: speed > 60 ? '#ef4444' : speed > 0 ? '#10b981' : '#64748b' }}>
+                                    {speed > 60 ? '⚠️ High Speed' : speed > 0 ? '🟢 In Motion (Normal)' : isLive ? '🟡 Stationary / At Stop' : '⚪ Engine Off'}
+                                </span>
+                            </div>
+
+                            {/* Card 2: Active Route */}
+                            <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #6366f1', background: 'white' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Assigned Route</span>
+                                    <MapPin size={16} color="#6366f1" />
+                                </div>
+                                <h4 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#1e1b4b', margin: '0.4rem 0 0.2rem 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {overviewRoute ? overviewRoute.title : 'No Route Configured'}
+                                </h4>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                    {(overviewRoute?.stops || []).length} Designated Stops | PKR {overviewRoute?.monthlyBaseFare || 2500}/mo
+                                </span>
+                            </div>
+
+                            {/* Card 3: Live Student Boarding Rate */}
+                            <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #10b981', background: 'white' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Student Boarding</span>
+                                    <Users size={16} color="#10b981" />
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', margin: '0.3rem 0' }}>
+                                    <h2 style={{ fontSize: '1.6rem', fontWeight: '900', color: '#10b981', margin: 0 }}>
+                                        {boardedCount} / {totalAssigned}
+                                    </h2>
+                                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#64748b' }}>({boardedPercent}%)</span>
+                                </div>
+                                {/* Progress Bar */}
+                                <div style={{ width: '100%', height: '6px', background: '#f1f5f9', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.35rem' }}>
+                                    <div style={{ width: `${boardedPercent}%`, height: '100%', background: 'linear-gradient(90deg, #10b981, #059669)', transition: 'width 0.3s ease' }}></div>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: '#64748b', fontWeight: '600' }}>
+                                    <span style={{ color: '#10b981' }}>🟢 {boardedCount} Boarded</span>
+                                    <span style={{ color: '#ef4444' }}>🔴 {absentCount} Absent</span>
+                                    <span style={{ color: '#f59e0b' }}>⏳ {pendingCount} Waiting</span>
+                                </div>
+                            </div>
+
+                            {/* Card 4: Active Driver & Vehicle Spec */}
+                            <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #f59e0b', background: 'white' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Driver on Duty</span>
+                                    <Bus size={16} color="#f59e0b" />
+                                </div>
+                                <h4 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#78350f', margin: '0.4rem 0 0.2rem 0' }}>
+                                    {currentOverviewVeh ? currentOverviewVeh.driverName || 'Muhammad Aslam' : 'No Vehicle Selected'}
+                                </h4>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                    Van: <b>{currentOverviewVeh?.regNo || 'LEA-4821'}</b> ({currentOverviewVeh?.type || 'HiAce Van'})
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Main Split-Screen: Live Leaflet Map (Left) + Stops & Boarding Feed (Right) */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.55fr) minmax(360px, 1fr)', gap: '1.25rem', alignItems: 'start' }}>
+                            {/* LEFT PANEL: 100% Free OpenStreetMap Interactive Leaflet Map */}
+                            <div style={{ background: 'white', borderRadius: '16px', border: '1.5px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ padding: '0.75rem 1rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px #10b981' }}></div>
+                                        <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0f172a' }}>
+                                            🗺️ Real-Time GPS Tracking Map (OpenStreetMap Powered)
+                                        </span>
+                                    </div>
+                                    <span style={{ fontSize: '0.7rem', color: '#64748b', background: 'white', border: '1px solid #cbd5e1', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '600' }}>
+                                        100% Free Cloud Radar
+                                    </span>
+                                </div>
+
+                                {/* Leaflet Map Div Container */}
+                                <div
+                                    ref={mapContainerRef}
+                                    style={{
+                                        height: '560px',
+                                        width: '100%',
+                                        zIndex: 1,
+                                        position: 'relative'
+                                    }}
+                                />
+                            </div>
+
+                            {/* RIGHT PANEL: Route Stop Sequence & Live Boarding Feed */}
+                            <div style={{ background: 'white', borderRadius: '16px', border: '1.5px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', height: '610px' }}>
+                                <div style={{ padding: '0.75rem 1rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>
+                                        <div style={{ fontSize: '0.84rem', fontWeight: '800', color: '#0f172a' }}>
+                                            📍 Route Stops & Boarding Feed
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                            {overviewRoute ? `${overviewRoute.title} (${(overviewRoute.stops || []).length} stops)` : 'Select a route to monitor'}
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleMarkAllBoarded}
+                                        style={{ background: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', padding: '0.3rem 0.65rem', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' }}
+                                    >
+                                        ✓ Mark All Boarded
+                                    </button>
+                                </div>
+
+                                {/* Scrollable Stops & Students Container */}
+                                <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
+                                    {(!overviewRoute || !Array.isArray(overviewRoute.stops) || overviewRoute.stops.length === 0) ? (
+                                        <div style={{ padding: '3rem 1.5rem', textAlign: 'center', color: '#94a3b8' }}>
+                                            <MapPin size={36} color="#cbd5e1" style={{ marginBottom: '0.75rem' }} />
+                                            <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: '600' }}>No stops configured for this vehicle's route.</p>
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                            {overviewRoute.stops.map((stop, idx) => {
+                                                const stopStudents = overviewAllocations.filter(a => a.pickupStop && a.pickupStop.toLowerCase().trim() === stop.stopName.toLowerCase().trim());
+                                                const stopBoardedCount = stopStudents.filter(s => currentAttMap[s.studentId] === 'boarded').length;
+
+                                                return (
+                                                    <div
+                                                        key={idx}
+                                                        style={{
+                                                            background: '#f8fafc',
+                                                            borderRadius: '10px',
+                                                            border: '1px solid #e2e8f0',
+                                                            overflow: 'hidden'
+                                                        }}
+                                                    >
+                                                        {/* Stop Title Banner */}
+                                                        <div style={{
+                                                            padding: '0.55rem 0.75rem',
+                                                            background: '#f1f5f9',
+                                                            borderBottom: '1px solid #e2e8f0',
+                                                            display: 'flex',
+                                                            justifyContent: 'space-between',
+                                                            alignItems: 'center'
+                                                        }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                <span style={{ fontSize: '0.7rem', fontWeight: '800', background: '#0284c7', color: 'white', padding: '0.15rem 0.4rem', borderRadius: '4px' }}>
+                                                                    #{idx + 1}
+                                                                </span>
+                                                                <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                    {stop.stopName}
+                                                                </span>
+                                                            </div>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.7rem', color: '#475569' }}>
+                                                                <Clock size={12} color="#0284c7" />
+                                                                <span>{overviewTripType === 'morning' ? stop.morningTime : stop.afternoonTime}</span>
+                                                                <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.1rem 0.35rem', borderRadius: '4px', fontWeight: '700' }}>
+                                                                    {stopBoardedCount}/{stopStudents.length}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Student Roster at this Stop */}
+                                                        <div style={{ padding: '0.45rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                                            {stopStudents.length === 0 ? (
+                                                                <div style={{ fontSize: '0.72rem', color: '#94a3b8', padding: '0.35rem 0.5rem', fontStyle: 'italic' }}>
+                                                                    No students allocated to this stop yet.
+                                                                </div>
+                                                            ) : (
+                                                                stopStudents.map(student => {
+                                                                    const status = currentAttMap[student.studentId] || 'pending';
+
+                                                                    return (
+                                                                        <div
+                                                                            key={student.id || student.studentId}
+                                                                            style={{
+                                                                                display: 'flex',
+                                                                                justifyContent: 'space-between',
+                                                                                alignItems: 'center',
+                                                                                background: 'white',
+                                                                                padding: '0.4rem 0.6rem',
+                                                                                borderRadius: '6px',
+                                                                                border: '1px solid #e2e8f0'
+                                                                            }}
+                                                                        >
+                                                                            <div>
+                                                                                <div style={{ fontSize: '0.78rem', fontWeight: '700', color: '#0f172a' }}>
+                                                                                    {student.studentName}
+                                                                                </div>
+                                                                                <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                                                                                    {student.className} {student.section ? `(${student.section})` : ''} • Roll #{student.rollNo || 'N/A'}
+                                                                                </span>
+                                                                            </div>
+
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                                                {/* Status Toggle Button */}
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleToggleStudentBoarding(student.studentId, status)}
+                                                                                    style={{
+                                                                                        padding: '0.2rem 0.5rem',
+                                                                                        borderRadius: '4px',
+                                                                                        border: 'none',
+                                                                                        fontSize: '0.68rem',
+                                                                                        fontWeight: '800',
+                                                                                        cursor: 'pointer',
+                                                                                        background: status === 'boarded' ? '#dcfce7' : status === 'absent' ? '#fee2e2' : '#fef3c7',
+                                                                                        color: status === 'boarded' ? '#15803d' : status === 'absent' ? '#b91c1c' : '#b45309'
+                                                                                    }}
+                                                                                >
+                                                                                    {status === 'boarded' ? '✓ Boarded' : status === 'absent' ? '✕ Absent' : '⏳ Waiting'}
+                                                                                </button>
+
+                                                                                {/* WhatsApp Parent Button */}
+                                                                                {student.parentPhone && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => sendBoardingAlertWhatsApp(student, status === 'boarded' ? 'boarded' : 'approaching')}
+                                                                                        title={`WhatsApp ${student.parentName || 'Parent'}`}
+                                                                                        style={{
+                                                                                            background: '#f0fdf4',
+                                                                                            border: '1px solid #bbf7d0',
+                                                                                            color: '#16a34a',
+                                                                                            padding: '0.25rem',
+                                                                                            borderRadius: '4px',
+                                                                                            cursor: 'pointer',
+                                                                                            display: 'flex',
+                                                                                            alignItems: 'center',
+                                                                                            justifyContent: 'center'
+                                                                                        }}
+                                                                                    >
+                                                                                        <MessageSquare size={13} />
+                                                                                    </button>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* ========================================================================= */}
+            {/* GRAND TAB 2: 🚐 TRANSPORT & VAN FLEET MANAGEMENT (FLEET, ROUTES, ALLOCS) */}
+            {/* ========================================================================= */}
+            {grandTab === 'fleet_management' && (
+                <div>
+                    {/* Management Top Header & Global Action Buttons */}
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: '1.25rem',
+                        flexWrap: 'wrap',
+                        gap: '1rem'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                            <div style={{
+                                width: '46px',
+                                height: '46px',
+                                borderRadius: '12px',
+                                background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                boxShadow: '0 8px 16px -4px rgba(79, 70, 229, 0.4)'
+                            }}>
+                                <Bus color="white" size={24} />
+                            </div>
+                            <div>
+                                <h2 style={{ fontSize: '1.45rem', fontWeight: '800', color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
+                                    Transport & Van Fleet Management
+                                </h2>
+                                <p style={{ color: '#64748b', fontSize: '0.82rem', margin: 0 }}>
+                                    Manage vehicles, drivers, route stops sequence, student seat allocations & fuel logs
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Management Action Buttons */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                            {vehicles.length === 0 && (
+                                <button
+                                    onClick={initializeSampleTransport}
+                                    className="btn hover-lift"
+                                    style={{
+                                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                        color: 'white',
+                                        padding: '0.55rem 1rem',
+                                        borderRadius: '8px',
+                                        fontWeight: '700',
+                                        fontSize: '0.82rem',
+                                        boxShadow: '0 4px 12px rgba(245, 158, 11, 0.35)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        border: 'none',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <RefreshCw size={15} /> 🚀 Restore Fleet Data
+                                </button>
+                            )}
+                            <button
+                                onClick={downloadTransportReportPDF}
+                                className="btn"
+                                style={{
+                                    background: '#f8fafc',
+                                    border: '1px solid #cbd5e1',
+                                    color: '#334155',
+                                    padding: '0.55rem 0.9rem',
+                                    borderRadius: '8px',
+                                    fontWeight: '600',
+                                    fontSize: '0.82rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.35rem',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <Download size={15} /> Export PDF Roster
+                            </button>
+                            <button
+                                onClick={handleOpenAllocationModal}
+                                className="btn hover-lift"
+                                style={{
+                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    color: 'white',
+                                    padding: '0.55rem 1.1rem',
+                                    borderRadius: '8px',
+                                    fontWeight: '700',
+                                    fontSize: '0.82rem',
+                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.35)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    border: 'none',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <Users size={16} /> + Allocate Student Seat
+                            </button>
+                            <button
+                                onClick={() => handleOpenDriverModal()}
+                                className="btn hover-lift"
+                                style={{
+                                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                                    color: 'white',
+                                    padding: '0.55rem 1.1rem',
+                                    borderRadius: '8px',
+                                    fontWeight: '700',
+                                    fontSize: '0.82rem',
+                                    boxShadow: '0 4px 12px rgba(2, 132, 199, 0.35)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    border: 'none',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <ShieldCheck size={16} /> + Add Driver & App Account
+                            </button>
+                            <button
+                                onClick={() => handleOpenVehicleModal()}
+                                className="btn"
+                                style={{
+                                    background: '#4f46e5',
+                                    color: 'white',
+                                    padding: '0.55rem 1.1rem',
+                                    borderRadius: '8px',
+                                    fontWeight: '700',
+                                    fontSize: '0.82rem',
+                                    boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
+                                }}
+                            >
+                                <Plus size={16} /> Add New Vehicle
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Quick Metrics Cards (ONLY IN FLEET MANAGEMENT) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
+                        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #0284c7', background: 'white' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Fleet Size</span>
+                                <Bus size={17} color="#0284c7" />
+                            </div>
+                            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#0f172a', margin: '0.3rem 0' }}>
+                                {metrics.totalVehicles} Vehicles
+                            </h3>
+                            <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: '600' }}>
+                                🟢 {metrics.activeVehicles} Active on Road
+                            </span>
+                        </div>
+
+                        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #10b981', background: 'white' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Enrolled Students</span>
+                                <Users size={17} color="#10b981" />
+                            </div>
+                            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#10b981', margin: '0.3rem 0' }}>
+                                {metrics.totalEnrolled} Students
+                            </h3>
+                            <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                {metrics.totalCapacity} Total Seats ({metrics.availableSeats} Vacant)
+                            </span>
+                        </div>
+
+                        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #6366f1', background: 'white' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Monthly Fare Revenue</span>
+                                <DollarSign size={17} color="#6366f1" />
+                            </div>
+                            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#4f46e5', margin: '0.3rem 0' }}>
+                                PKR {metrics.monthlyRevenue.toLocaleString()}
+                            </h3>
+                            <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                From {routes.length} Active Routes
+                            </span>
+                        </div>
+
+                        <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #f59e0b', background: 'white' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Fuel & Repairs (Month)</span>
+                                <Fuel size={17} color="#f59e0b" />
+                            </div>
+                            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#d97706', margin: '0.3rem 0' }}>
+                                PKR {metrics.totalExpense.toLocaleString()}
+                            </h3>
+                            <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                Fuel: {metrics.monthlyFuelCost} | Maint: {metrics.monthlyMaintCost}
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Management Sub-Navigation Tabs Bar */}
+                    <div style={{
+                        display: 'flex',
+                        gap: '0.5rem',
+                        borderBottom: '2px solid #e2e8f0',
+                        marginBottom: '1.25rem',
+                        overflowX: 'auto',
+                        paddingBottom: '0.25rem'
+                    }}>
+                        {[
+                            { id: 'fleet', label: '🚐 Fleet & Vehicles', count: vehicles.length },
+                            { id: 'drivers', label: '👨‍✈️ Drivers & App Accounts', count: drivers.length },
+                            { id: 'routes', label: '🗺️ Routes & Stops', count: routes.length },
+                            { id: 'allocations', label: '🎓 Student Allocations', count: allocations.length },
+                            { id: 'fuel_logs', label: '⛽ Fuel & Maintenance', count: fuelLogs.length },
+                            { id: 'attendance', label: '📋 Daily Boarding Attendance' }
+                        ].map(tab => (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    padding: '0.65rem 1.15rem',
+                                    border: 'none',
+                                    background: 'transparent',
+                                    color: activeTab === tab.id ? '#4f46e5' : '#64748b',
+                                    fontWeight: activeTab === tab.id ? '700' : '600',
+                                    fontSize: '0.88rem',
+                                    cursor: 'pointer',
+                                    borderBottom: activeTab === tab.id ? '3px solid #4f46e5' : '3px solid transparent',
+                                    marginBottom: '-2px',
+                                    transition: 'all 0.2s ease',
+                                    whiteSpace: 'nowrap'
+                                }}
+                            >
+                                <span>{tab.label}</span>
+                                {tab.count !== undefined && (
+                                    <span style={{
+                                        background: activeTab === tab.id ? '#e0e7ff' : '#f1f5f9',
+                                        color: activeTab === tab.id ? '#4338ca' : '#64748b',
+                                        fontSize: '0.7rem',
+                                        padding: '0.12rem 0.45rem',
+                                        borderRadius: '6px',
+                                        fontWeight: '700'
+                                    }}>
+                                        {tab.count}
+                                    </span>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* ========================================================================= */}
+                    {/* TAB 1: FLEET & VEHICLES DIRECTORY */}
+                    {/* ========================================================================= */}
+                    {activeTab === 'fleet' && (
                 <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                         <div style={{ position: 'relative', width: '320px' }}>
@@ -1445,6 +3071,226 @@ const Transport = () => {
                                 );
                             })}
                     </div>
+                </div>
+            )}
+
+            {/* ========================================================================= */}
+            {/* TAB 1.5: DRIVER ACCOUNTS & MOBILE APP CREDENTIALS */}
+            {/* ========================================================================= */}
+            {activeTab === 'drivers' && (
+                <div>
+                    {/* Top Action Bar */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                        <div style={{ position: 'relative', width: '340px' }}>
+                            <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
+                            <input
+                                type="text"
+                                placeholder="Search by Driver Name, Email, Phone, or CNIC..."
+                                value={driverSearch}
+                                onChange={(e) => setDriverSearch(e.target.value)}
+                                style={{ width: '100%', padding: '0.55rem 0.75rem 0.55rem 2rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                            />
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.6rem' }}>
+                            <button
+                                onClick={() => handleOpenDriverModal()}
+                                className="btn"
+                                style={{ background: '#0284c7', color: 'white', padding: '0.55rem 1.15rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '700' }}
+                            >
+                                <Plus size={16} /> Create Driver Account
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Drivers List Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.25rem' }}>
+                        {drivers
+                            .filter(d =>
+                                (d.name && d.name.toLowerCase().includes(driverSearch.toLowerCase())) ||
+                                (d.email && d.email.toLowerCase().includes(driverSearch.toLowerCase())) ||
+                                (d.phone && d.phone.includes(driverSearch)) ||
+                                (d.cnic && d.cnic.includes(driverSearch))
+                            )
+                            .map(drv => {
+                                const assignedVeh = vehicles.find(v => v.id === drv.assignedVehicleId);
+                                const assignedRoute = routes.find(r => r.vehicleId === drv.assignedVehicleId);
+
+                                return (
+                                    <div
+                                        key={drv.id}
+                                        className="card hover-lift"
+                                        style={{
+                                            padding: '1.25rem',
+                                            border: '1px solid #e2e8f0',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            justifyContent: 'space-between',
+                                            background: '#ffffff',
+                                            borderRadius: '16px',
+                                            boxShadow: '0 2px 10px rgba(0,0,0,0.03)'
+                                        }}
+                                    >
+                                        <div>
+                                            {/* Driver Header */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.85rem' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                    <div style={{
+                                                        width: '44px',
+                                                        height: '44px',
+                                                        borderRadius: '12px',
+                                                        background: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)',
+                                                        color: '#0284c7',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        fontWeight: '800',
+                                                        fontSize: '1.1rem'
+                                                    }}>
+                                                        {drv.name ? drv.name.charAt(0).toUpperCase() : 'D'}
+                                                    </div>
+                                                    <div>
+                                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                                            {drv.name}
+                                                        </h3>
+                                                        <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                            School Driver • UID: {drv.id.slice(0, 6)}...
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <span style={{
+                                                    padding: '0.2rem 0.6rem',
+                                                    borderRadius: '9999px',
+                                                    fontSize: '0.72rem',
+                                                    fontWeight: '700',
+                                                    background: drv.status === 'Inactive' ? '#fee2e2' : '#dcfce7',
+                                                    color: drv.status === 'Inactive' ? '#b91c1c' : '#15803d'
+                                                }}>
+                                                    ● {drv.status || 'Active'}
+                                                </span>
+                                            </div>
+
+                                            {/* App Login Credentials Box */}
+                                            <div style={{
+                                                background: '#0f172a',
+                                                padding: '0.75rem 0.9rem',
+                                                borderRadius: '10px',
+                                                color: 'white',
+                                                marginBottom: '0.85rem'
+                                            }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                                    <span style={{ fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700' }}>
+                                                        📱 Driver App Login
+                                                    </span>
+                                                    <span style={{ fontSize: '0.7rem', color: '#38bdf8', fontWeight: '600' }}>
+                                                        School ID: {schoolId}
+                                                    </span>
+                                                </div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#f8fafc', wordBreak: 'break-all' }}>
+                                                        {drv.email}
+                                                    </span>
+                                                    <button
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText(drv.email);
+                                                            showAlert('Email copied to clipboard!', 'info');
+                                                        }}
+                                                        style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px' }}
+                                                        title="Copy Login Email"
+                                                    >
+                                                        <Copy size={13} />
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* Vehicle & Contact Details */}
+                                            <div style={{ fontSize: '0.82rem', color: '#334155', display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.85rem' }}>
+                                                {drv.phone && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                        <Phone size={14} color="#0284c7" />
+                                                        <strong style={{ color: '#0f172a' }}>Phone:</strong> {drv.phone}
+                                                    </div>
+                                                )}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                    <Bus size={14} color="#4f46e5" />
+                                                    <strong style={{ color: '#0f172a' }}>Assigned Van:</strong>
+                                                    {assignedVeh ? (
+                                                        <span style={{ padding: '0.15rem 0.45rem', borderRadius: '4px', background: '#e0e7ff', color: '#4338ca', fontWeight: '700', fontSize: '0.75rem' }}>
+                                                            {assignedVeh.regNo} ({assignedVeh.type})
+                                                        </span>
+                                                    ) : (
+                                                        <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Unassigned</span>
+                                                    )}
+                                                </div>
+                                                {assignedRoute && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                        <Navigation size={14} color="#10b981" />
+                                                        <strong style={{ color: '#0f172a' }}>Route:</strong>
+                                                        <span style={{ color: '#059669', fontWeight: '600', fontSize: '0.78rem' }}>
+                                                            {assignedRoute.title}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {(drv.licenseNo || drv.cnic) && (
+                                                    <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '0.15rem' }}>
+                                                        License: <strong>{drv.licenseNo || 'N/A'}</strong> | CNIC: {drv.cnic || 'N/A'}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Action Buttons */}
+                                        <div style={{ display: 'flex', gap: '0.4rem', borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem' }}>
+                                            <button
+                                                onClick={() => sendDriverCredentialsWhatsApp(drv)}
+                                                className="btn hover-lift"
+                                                style={{ flex: 2, background: '#dcfce7', color: '#15803d', padding: '0.45rem 0.65rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: '700', justifyContent: 'center' }}
+                                                title="Share School ID, Email & Password via WhatsApp"
+                                            >
+                                                <MessageSquare size={14} /> Send WhatsApp Login
+                                            </button>
+                                            <button
+                                                onClick={() => handleOpenDriverModal(drv)}
+                                                className="btn"
+                                                style={{ flex: 1, background: '#f1f5f9', color: '#334155', padding: '0.45rem', borderRadius: '8px', fontSize: '0.78rem', justifyContent: 'center' }}
+                                            >
+                                                <Edit size={14} /> Edit
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteDriver(drv)}
+                                                style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '0.45rem 0.65rem', borderRadius: '8px', cursor: 'pointer' }}
+                                                title="Delete Driver Account"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                    </div>
+
+                    {/* Empty State */}
+                    {drivers.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '3.5rem 1rem', background: '#f8fafc', borderRadius: '16px', border: '2px dashed #cbd5e1', marginTop: '1rem' }}>
+                            <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem auto' }}>
+                                <Users size={32} />
+                            </div>
+                            <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#0f172a', margin: '0 0 0.4rem 0' }}>
+                                No Driver Accounts Created Yet
+                            </h3>
+                            <p style={{ color: '#64748b', fontSize: '0.86rem', maxWidth: '440px', margin: '0 auto 1.25rem auto' }}>
+                                Create driver login accounts so your transport staff can log in to the Driver Mobile App, run daily pickup trips, and take live boarding attendance.
+                            </p>
+                            <button
+                                onClick={() => handleOpenDriverModal()}
+                                className="btn"
+                                style={{ background: '#0284c7', color: 'white', padding: '0.65rem 1.5rem', borderRadius: '10px', fontWeight: '700' }}
+                            >
+                                <Plus size={18} /> Create First Driver Account
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1662,17 +3508,25 @@ const Transport = () => {
                                             <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }}>
                                                 <div style={{ display: 'flex', justifyContent: 'center', gap: '0.35rem' }}>
                                                     <button
+                                                        onClick={() => handleOpenEditAllocationModal(alloc)}
+                                                        title="Edit Route & Pickup Stop Allocation"
+                                                        className="btn"
+                                                        style={{ background: '#f0f9ff', color: '#0284c7', border: '1px solid #bae6fd', padding: '0.35rem 0.55rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700' }}
+                                                    >
+                                                        <Edit size={13} /> Edit
+                                                    </button>
+                                                    <button
                                                         onClick={() => sendRouteDetailsWhatsApp(alloc)}
                                                         title="Send WhatsApp Route & Timings"
                                                         className="btn"
                                                         style={{ background: '#dcfce7', color: '#15803d', padding: '0.35rem 0.6rem', borderRadius: '6px', fontSize: '0.76rem' }}
                                                     >
-                                                        <MessageSquare size={14} /> Send WhatsApp
+                                                        <MessageSquare size={14} /> WhatsApp
                                                     </button>
                                                     <button
                                                         onClick={() => handleDeleteAllocation(alloc)}
                                                         title="Remove from Transport"
-                                                        style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '0.35rem', borderRadius: '6px', cursor: 'pointer' }}
+                                                        style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '0.35rem 0.55rem', borderRadius: '6px', cursor: 'pointer' }}
                                                     >
                                                         <Trash2 size={14} />
                                                     </button>
@@ -2022,6 +3876,214 @@ const Transport = () => {
                     </div>
                 </div>
             )}
+            </div>
+        )}
+
+            {/* ========================================================================= */}
+            {/* 0. ADD / EDIT DRIVER ACCOUNT MODAL */}
+            {/* ========================================================================= */}
+            {driverModalOpen && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(15, 23, 42, 0.75)',
+                    backdropFilter: 'blur(6px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 10000,
+                    padding: '1rem'
+                }}>
+                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '620px', padding: '1.5rem', maxHeight: '90vh', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <ShieldCheck size={20} />
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                        {editingDriver ? 'Edit Driver Profile & Access' : 'Create New Driver & App Account'}
+                                    </h3>
+                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                        Driver will use these credentials on the Mobile App
+                                    </span>
+                                </div>
+                            </div>
+                            <button onClick={() => setDriverModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        {/* App Login Info Banner */}
+                        <div style={{ background: '#0f172a', padding: '0.85rem 1rem', borderRadius: '10px', marginBottom: '1.25rem', color: '#ffffff' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                <Smartphone size={16} color="#38bdf8" />
+                                <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#38bdf8' }}>
+                                    Mobile App Access Credentials
+                                </span>
+                            </div>
+                            <p style={{ fontSize: '0.74rem', color: '#cbd5e1', margin: 0, lineHeight: 1.4 }}>
+                                School ID: <strong style={{ color: '#ffffff' }}>{schoolId}</strong> (Auto-linked). Driver will enter this School ID with the Email and Password configured below.
+                            </p>
+                        </div>
+
+                        <form onSubmit={handleSaveDriver}>
+                            {/* Driver Name & Phone */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Driver Full Name *:</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. Muhammad Aslam"
+                                        value={driverFormData.name}
+                                        onChange={(e) => setDriverFormData({ ...driverFormData, name: e.target.value })}
+                                        required
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Phone / WhatsApp Number *:</label>
+                                    <input
+                                        type="text"
+                                        placeholder="0301-1234567"
+                                        value={driverFormData.phone}
+                                        onChange={(e) => setDriverFormData({ ...driverFormData, phone: e.target.value })}
+                                        required
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Driver Email & Password */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Login Email / Username *:</label>
+                                    <input
+                                        type="email"
+                                        placeholder="driver.name@school.com"
+                                        value={driverFormData.email}
+                                        onChange={(e) => setDriverFormData({ ...driverFormData, email: e.target.value })}
+                                        required
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                        <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#475569' }}>
+                                            {editingDriver ? 'New Password (Optional):' : 'Login Password *:'}
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setDriverFormData({ ...driverFormData, password: 'driver' + Math.floor(1000 + Math.random() * 9000) })}
+                                            style={{ background: 'transparent', border: 'none', color: '#0284c7', fontSize: '0.7rem', fontWeight: '700', cursor: 'pointer', padding: 0 }}
+                                        >
+                                            ⚡ Auto Generate
+                                        </button>
+                                    </div>
+                                    <div style={{ position: 'relative' }}>
+                                        <input
+                                            type={driverPasswordVisible ? 'text' : 'password'}
+                                            placeholder={editingDriver ? 'Leave blank to keep current' : 'Min 6 characters'}
+                                            value={driverFormData.password}
+                                            onChange={(e) => setDriverFormData({ ...driverFormData, password: e.target.value })}
+                                            required={!editingDriver}
+                                            minLength={editingDriver ? 0 : 6}
+                                            style={{ width: '100%', padding: '0.55rem 2rem 0.55rem 0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setDriverPasswordVisible(!driverPasswordVisible)}
+                                            style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 0 }}
+                                        >
+                                            {driverPasswordVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* License & CNIC */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Driving License Number:</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. LHR-984210"
+                                        value={driverFormData.licenseNo}
+                                        onChange={(e) => setDriverFormData({ ...driverFormData, licenseNo: e.target.value })}
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Driver CNIC Number:</label>
+                                    <input
+                                        type="text"
+                                        placeholder="35201-1234567-1"
+                                        value={driverFormData.cnic}
+                                        onChange={(e) => setDriverFormData({ ...driverFormData, cnic: e.target.value })}
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Assign Vehicle & Status */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Assign Van / Vehicle:</label>
+                                    <select
+                                        value={driverFormData.assignedVehicleId}
+                                        onChange={(e) => setDriverFormData({ ...driverFormData, assignedVehicleId: e.target.value })}
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                    >
+                                        <option value="">-- No Vehicle (Standby / Pool Driver) --</option>
+                                        {vehicles.map(v => (
+                                            <option key={v.id} value={v.id}>
+                                                {v.regNo} ({v.type})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Account Status:</label>
+                                    <select
+                                        value={driverFormData.status}
+                                        onChange={(e) => setDriverFormData({ ...driverFormData, status: e.target.value })}
+                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                    >
+                                        <option value="Active">Active (Can Login)</option>
+                                        <option value="Inactive">Inactive (Disabled)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setDriverModalOpen(false)}
+                                    disabled={isSavingDriver}
+                                    style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '600' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="btn hover-lift"
+                                    disabled={isSavingDriver}
+                                    style={{ flex: 2, background: '#0284c7', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                >
+                                    {isSavingDriver ? (
+                                        <>
+                                            <RefreshCw size={16} className="animate-spin" /> Provisioning Account...
+                                        </>
+                                    ) : (
+                                        editingDriver ? 'Update Driver Profile' : '✓ Create Driver Account'
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
 
             {/* ========================================================================= */}
             {/* 1. ADD / EDIT VEHICLE MODAL */}
@@ -2038,173 +4100,578 @@ const Transport = () => {
                     zIndex: 10000,
                     padding: '1rem'
                 }}>
-                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '600px', padding: '1.5rem', maxHeight: '90vh', overflowY: 'auto' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
-                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                {editingVehicle ? 'Edit Vehicle Profile' : 'Register New Vehicle'}
-                            </h3>
-                            <button onClick={() => setVehicleModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' }}>
-                                <X size={16} />
-                            </button>
+                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '850px', padding: '1.5rem', maxHeight: '92vh', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
+                        {/* Header with Animated Tab Switcher */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                        {editingVehicle ? `Vehicle ${vehicleFormData.regNo || ''}` : 'Register New Vehicle'}
+                                    </h3>
+                                    {editingVehicle && (
+                                        <span style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '6px', background: vehicleFormData.status === 'Active' ? '#dcfce7' : '#fee2e2', color: vehicleFormData.status === 'Active' ? '#15803d' : '#b91c1c', fontWeight: '700' }}>
+                                            {vehicleFormData.status}
+                                        </span>
+                                    )}
+                                </div>
+                                <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                                    {vehicleModalTab === 'vehicle' ? 'Manage fleet specs, driver account & fitness documents' : 'Manage route stops sequence, timings & fares'}
+                                </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                {/* Swipe Tab Segmented Switcher */}
+                                <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setVehicleModalTab('vehicle')}
+                                        style={{
+                                            padding: '0.35rem 0.75rem',
+                                            borderRadius: '6px',
+                                            border: 'none',
+                                            background: vehicleModalTab === 'vehicle' ? 'white' : 'transparent',
+                                            color: vehicleModalTab === 'vehicle' ? '#0f172a' : '#64748b',
+                                            fontWeight: '700',
+                                            fontSize: '0.76rem',
+                                            cursor: 'pointer',
+                                            boxShadow: vehicleModalTab === 'vehicle' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                            transition: 'all 0.2s ease',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.3rem'
+                                        }}
+                                    >
+                                        <Truck size={14} color={vehicleModalTab === 'vehicle' ? '#0284c7' : '#64748b'} /> Vehicle Profile
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setVehicleModalTab('route')}
+                                        style={{
+                                            padding: '0.35rem 0.75rem',
+                                            borderRadius: '6px',
+                                            border: 'none',
+                                            background: vehicleModalTab === 'route' ? '#0284c7' : 'transparent',
+                                            color: vehicleModalTab === 'route' ? 'white' : '#64748b',
+                                            fontWeight: '700',
+                                            fontSize: '0.76rem',
+                                            cursor: 'pointer',
+                                            boxShadow: vehicleModalTab === 'route' ? '0 2px 6px rgba(2,132,199,0.3)' : 'none',
+                                            transition: 'all 0.2s ease',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.3rem'
+                                        }}
+                                    >
+                                        <MapPin size={14} color={vehicleModalTab === 'route' ? 'white' : '#64748b'} /> 🗺️ Route
+                                        {editingRoute && (
+                                            <span style={{ background: vehicleModalTab === 'route' ? 'rgba(255,255,255,0.3)' : '#dbeafe', color: vehicleModalTab === 'route' ? 'white' : '#1e40af', padding: '0.1rem 0.35rem', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800' }}>
+                                                {(editingRoute.stops || []).length} stops
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
+
+                                <button onClick={() => setVehicleModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <X size={16} />
+                                </button>
+                            </div>
                         </div>
 
-                        <form onSubmit={handleSaveVehicle}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Registration Number *:</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. LEA-2024 or KHI-8891"
-                                        value={vehicleFormData.regNo}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, regNo: e.target.value })}
-                                        required
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Seating Capacity *:</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        value={vehicleFormData.capacity}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, capacity: Number(e.target.value) })}
-                                        required
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
-                                    />
-                                </div>
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Vehicle Type:</label>
-                                    <select
-                                        value={vehicleFormData.type}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, type: e.target.value })}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                        {/* Swipe Animated Container */}
+                        <div style={{ overflow: 'hidden', width: '100%', position: 'relative' }}>
+                            <div style={{
+                                display: 'flex',
+                                width: '200%',
+                                transform: vehicleModalTab === 'vehicle' ? 'translateX(0%)' : 'translateX(-50%)',
+                                transition: 'transform 0.38s cubic-bezier(0.16, 1, 0.3, 1)'
+                            }}>
+                                {/* ========================================================================= */}
+                                {/* SLIDE 1: VEHICLE PROFILE FORM */}
+                                {/* ========================================================================= */}
+                                <div style={{ width: '50%', paddingRight: '0.6rem', boxSizing: 'border-box' }}>
+                                    {/* Prominent Route Banner with One-Click Swipe Action */}
+                                    <div
+                                        onClick={() => setVehicleModalTab('route')}
+                                        style={{
+                                            background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                                            border: '1px solid #bfdbfe',
+                                            borderRadius: '10px',
+                                            padding: '0.65rem 0.9rem',
+                                            marginBottom: '1rem',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            boxShadow: '0 2px 5px rgba(2, 132, 199, 0.08)',
+                                            transition: 'all 0.2s ease'
+                                        }}
                                     >
-                                        {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Status:</label>
-                                    <select
-                                        value={vehicleFormData.status}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, status: e.target.value })}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                    >
-                                        <option value="Active">Active</option>
-                                        <option value="Maintenance">Maintenance</option>
-                                        <option value="Off Duty">Off Duty</option>
-                                    </select>
-                                </div>
-                            </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#0284c7', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                <MapPin size={18} />
+                                            </div>
+                                            <div>
+                                                <strong style={{ fontSize: '0.82rem', color: '#1e3a8a', display: 'block' }}>
+                                                    {editingRoute ? `Assigned Route: ${editingRoute.title}` : `🗺️ Route & Stops for ${vehicleFormData.regNo || 'this Van'}`}
+                                                </strong>
+                                                <span style={{ fontSize: '0.72rem', color: '#2563eb' }}>
+                                                    {(editingRoute?.stops || []).length} Stops configured · Click to swipe and manage route ➔
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            style={{
+                                                background: '#0284c7',
+                                                color: 'white',
+                                                border: 'none',
+                                                padding: '0.35rem 0.75rem',
+                                                borderRadius: '6px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: '700',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.3rem'
+                                            }}
+                                        >
+                                            Route ➔
+                                        </button>
+                                    </div>
 
-                            {/* Driver Profile */}
-                            <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
-                                <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.5rem' }}>👨‍✈️ Driver Information</span>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.5rem' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Driver Full Name"
-                                        value={vehicleFormData.driverName}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverName: e.target.value })}
-                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                    />
-                                    <input
-                                        type="text"
-                                        placeholder="Mobile / WhatsApp (0300...)"
-                                        value={vehicleFormData.driverPhone}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverPhone: e.target.value })}
-                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                    />
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Driving License No"
-                                        value={vehicleFormData.driverLicense}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverLicense: e.target.value })}
-                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                    />
-                                    <input
-                                        type="text"
-                                        placeholder="Driver CNIC (35201-...)"
-                                        value={vehicleFormData.driverCnic}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverCnic: e.target.value })}
-                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                    />
-                                </div>
-                            </div>
+                                    <form onSubmit={handleSaveVehicle}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Registration Number *:</label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. LEA-2024 or KHI-8891"
+                                                    value={vehicleFormData.regNo}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, regNo: e.target.value })}
+                                                    required
+                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Seating Capacity *:</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    value={vehicleFormData.capacity}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, capacity: Number(e.target.value) })}
+                                                    required
+                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
+                                                />
+                                            </div>
+                                        </div>
 
-                            {/* Helper / Conductor */}
-                            <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
-                                <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.5rem' }}>🤝 Conductor / Helper (Optional)</span>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Helper Name"
-                                        value={vehicleFormData.helperName}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperName: e.target.value })}
-                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                    />
-                                    <input
-                                        type="text"
-                                        placeholder="Helper Phone No"
-                                        value={vehicleFormData.helperPhone}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperPhone: e.target.value })}
-                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                                    />
-                                </div>
-                            </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Vehicle Type:</label>
+                                                <select
+                                                    value={vehicleFormData.type}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, type: e.target.value })}
+                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                                >
+                                                    {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Status:</label>
+                                                <select
+                                                    value={vehicleFormData.status}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, status: e.target.value })}
+                                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                                >
+                                                    <option value="Active">Active</option>
+                                                    <option value="Maintenance">Maintenance</option>
+                                                    <option value="Off Duty">Off Duty</option>
+                                                </select>
+                                            </div>
+                                        </div>
 
-                            {/* Document Expiries */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem', marginBottom: '1.25rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Fitness Expiry:</label>
-                                    <input
-                                        type="date"
-                                        value={vehicleFormData.fitnessExpiry}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, fitnessExpiry: e.target.value })}
-                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Token Tax Expiry:</label>
-                                    <input
-                                        type="date"
-                                        value={vehicleFormData.tokenTaxExpiry}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, tokenTaxExpiry: e.target.value })}
-                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Insurance Expiry:</label>
-                                    <input
-                                        type="date"
-                                        value={vehicleFormData.insuranceExpiry}
-                                        onChange={(e) => setVehicleFormData({ ...vehicleFormData, insuranceExpiry: e.target.value })}
-                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                    />
-                                </div>
-                            </div>
+                                        {/* Driver Profile */}
+                                        <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#0f172a' }}>
+                                                    👨‍✈️ Driver Information & App Account
+                                                </span>
+                                                {drivers.length > 0 && (
+                                                    <span style={{ fontSize: '0.7rem', color: '#0284c7', fontWeight: '600' }}>
+                                                        Select from registered accounts below
+                                                    </span>
+                                                )}
+                                            </div>
 
-                            <div style={{ display: 'flex', gap: '0.75rem' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setVehicleModalOpen(false)}
-                                    style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="btn"
-                                    style={{ flex: 2, background: '#0284c7', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
-                                >
-                                    {editingVehicle ? 'Update Vehicle' : 'Save to Fleet'}
-                                </button>
+                                            {drivers.length > 0 && (
+                                                <div style={{ marginBottom: '0.6rem' }}>
+                                                    <select
+                                                        onChange={(e) => {
+                                                            const selDrv = drivers.find(d => d.id === e.target.value);
+                                                            if (selDrv) {
+                                                                setVehicleFormData({
+                                                                    ...vehicleFormData,
+                                                                    driverName: selDrv.name || '',
+                                                                    driverPhone: selDrv.phone || '',
+                                                                    driverLicense: selDrv.licenseNo || '',
+                                                                    driverCnic: selDrv.cnic || '',
+                                                                    driverEmail: selDrv.email || '',
+                                                                    driverId: selDrv.id
+                                                                });
+                                                            }
+                                                        }}
+                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #93c5fd', background: '#eff6ff', fontSize: '0.82rem', fontWeight: '600', color: '#1e40af' }}
+                                                    >
+                                                        <option value="">-- Quick Select from Registered Drivers --</option>
+                                                        {drivers.map(d => (
+                                                            <option key={d.id} value={d.id}>
+                                                                {d.name} ({d.email}) - {d.phone || 'No Phone'}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
+
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Driver Full Name"
+                                                    value={vehicleFormData.driverName}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverName: e.target.value })}
+                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Mobile / WhatsApp (0300...)"
+                                                    value={vehicleFormData.driverPhone}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverPhone: e.target.value })}
+                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                                />
+                                            </div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Driving License No"
+                                                    value={vehicleFormData.driverLicense}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverLicense: e.target.value })}
+                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Driver CNIC (35201-...)"
+                                                    value={vehicleFormData.driverCnic}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, driverCnic: e.target.value })}
+                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Helper / Conductor */}
+                                        <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
+                                            <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.5rem' }}>🤝 Conductor / Helper (Optional)</span>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Helper Name"
+                                                    value={vehicleFormData.helperName}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperName: e.target.value })}
+                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Helper Phone No"
+                                                    value={vehicleFormData.helperPhone}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, helperPhone: e.target.value })}
+                                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Document Expiries */}
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem', marginBottom: '1.25rem' }}>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Fitness Expiry:</label>
+                                                <input
+                                                    type="date"
+                                                    value={vehicleFormData.fitnessExpiry}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, fitnessExpiry: e.target.value })}
+                                                    style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Token Tax Expiry:</label>
+                                                <input
+                                                    type="date"
+                                                    value={vehicleFormData.tokenTaxExpiry}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, tokenTaxExpiry: e.target.value })}
+                                                    style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#64748b' }}>Insurance Expiry:</label>
+                                                <input
+                                                    type="date"
+                                                    value={vehicleFormData.insuranceExpiry}
+                                                    onChange={(e) => setVehicleFormData({ ...vehicleFormData, insuranceExpiry: e.target.value })}
+                                                    style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setVehicleModalOpen(false)}
+                                                style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                type="submit"
+                                                className="btn"
+                                                style={{ flex: 2, background: '#0284c7', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
+                                            >
+                                                {editingVehicle ? 'Update Vehicle' : 'Save to Fleet'}
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+
+                                {/* ========================================================================= */}
+                                {/* SLIDE 2: ROUTE & STOPS MANAGEMENT FORM */}
+                                {/* ========================================================================= */}
+                                <div style={{ width: '50%', paddingLeft: '0.6rem', boxSizing: 'border-box' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '0.5rem 0.85rem', borderRadius: '8px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#1e40af' }}>
+                                                🗺️ Route Configuration for {vehicleFormData.regNo || 'Selected Van'}
+                                            </span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setVehicleModalTab('vehicle')}
+                                            style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '700', color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                                        >
+                                            ← Back to Vehicle
+                                        </button>
+                                    </div>
+
+                                    <form onSubmit={handleSaveRouteForVehicle}>
+                                        {/* Compact Top Route Info: Title & Base Fare */}
+                                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.6rem', marginBottom: '0.6rem' }}>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Route Title *:</label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. Route 1 - Gulberg & Model Town"
+                                                    value={routeFormData.title}
+                                                    onChange={(e) => setRouteFormData({ ...routeFormData, title: e.target.value })}
+                                                    required
+                                                    style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700' }}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Monthly Base Fare (PKR):</label>
+                                                <input
+                                                    type="number"
+                                                    value={routeFormData.monthlyBaseFare}
+                                                    onChange={(e) => setRouteFormData({ ...routeFormData, monthlyBaseFare: Number(e.target.value) })}
+                                                    required
+                                                    style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981' }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Dropdown / Accordion for Schedule & Landmarks */}
+                                        <div style={{ marginBottom: '0.75rem', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#fafbfc' }}>
+                                            <div 
+                                                onClick={() => setShowRouteTimingDropdown(!showRouteTimingDropdown)}
+                                                style={{
+                                                    padding: '0.45rem 0.75rem',
+                                                    background: showRouteTimingDropdown ? '#eff6ff' : '#f8fafc',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center',
+                                                    userSelect: 'none',
+                                                    borderBottom: showRouteTimingDropdown ? '1px solid #bfdbfe' : 'none'
+                                                }}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.75rem' }}>
+                                                    <Clock size={13} color="#0284c7" />
+                                                    <span style={{ fontWeight: '700', color: '#1e293b' }}>
+                                                        ⚙️ Route Landmarks & Schedule Timings
+                                                    </span>
+                                                    {!showRouteTimingDropdown && (
+                                                        <span style={{ color: '#64748b', fontSize: '0.7rem', marginLeft: '0.25rem' }}>
+                                                            ({routeFormData.startPoint || 'Start'} ➔ {routeFormData.endPoint || 'Campus'} | ⏰ {routeFormData.morningDepartureTime || '06:45 AM'} / {routeFormData.afternoonDepartureTime || '01:45 PM'})
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#0284c7', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                                    {showRouteTimingDropdown ? '▲ Hide Details' : '▼ Expand / Edit'}
+                                                </span>
+                                            </div>
+
+                                            {showRouteTimingDropdown && (
+                                                <div style={{ padding: '0.65rem 0.75rem', background: 'white', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                                                    <div>
+                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Start Landmark:</label>
+                                                        <input
+                                                            type="text"
+                                                            placeholder="e.g. Main Station / Liberty Market"
+                                                            value={routeFormData.startPoint}
+                                                            onChange={(e) => setRouteFormData({ ...routeFormData, startPoint: e.target.value })}
+                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Destination Campus:</label>
+                                                        <input
+                                                            type="text"
+                                                            value={routeFormData.endPoint}
+                                                            onChange={(e) => setRouteFormData({ ...routeFormData, endPoint: e.target.value })}
+                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Morning Start Time:</label>
+                                                        <input
+                                                            type="text"
+                                                            placeholder="06:45 AM"
+                                                            value={routeFormData.morningDepartureTime}
+                                                            onChange={(e) => setRouteFormData({ ...routeFormData, morningDepartureTime: e.target.value })}
+                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Afternoon Return Time:</label>
+                                                        <input
+                                                            type="text"
+                                                            placeholder="01:45 PM"
+                                                            value={routeFormData.afternoonDepartureTime}
+                                                            onChange={(e) => setRouteFormData({ ...routeFormData, afternoonDepartureTime: e.target.value })}
+                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Enlarged & Spacious Stops Sequence Card */}
+                                        <div style={{ background: '#ffffff', padding: '0.85rem', borderRadius: '12px', border: '1.5px solid #cbd5e1', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', marginBottom: '1rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                    <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a' }}>
+                                                        📍 Route Stops Sequence
+                                                    </span>
+                                                    <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.72rem', fontWeight: '800' }}>
+                                                        {(routeFormData.stops || []).length} stops configured
+                                                    </span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleAddStopToForm}
+                                                    className="btn hover-lift"
+                                                    style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                                                >
+                                                    <Plus size={14} /> Add Next Stop
+                                                </button>
+                                            </div>
+
+                                            {/* Column Headings */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', padding: '0.35rem 0.5rem', background: '#f1f5f9', borderRadius: '6px', marginBottom: '0.45rem', fontSize: '0.68rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                                <span># Seq</span>
+                                                <span>Pickup Landmark Name</span>
+                                                <span>🌅 Morning</span>
+                                                <span>🌇 Return</span>
+                                                <span>💵 Fare</span>
+                                                <span style={{ textAlign: 'center' }}>Del</span>
+                                            </div>
+
+                                            {/* Spacious Scrollable Stops Sequence Area */}
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', maxHeight: '380px', minHeight: '220px', overflowY: 'auto', paddingRight: '0.2rem' }}>
+                                                {(routeFormData.stops || []).length === 0 ? (
+                                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
+                                                        <MapPin size={28} color="#94a3b8" style={{ marginBottom: '0.5rem' }} />
+                                                        <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.82rem', fontWeight: '600' }}>No stops added to this route yet.</p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleAddStopToForm}
+                                                            style={{ background: '#0284c7', color: 'white', border: 'none', padding: '0.4rem 0.85rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', cursor: 'pointer' }}
+                                                        >
+                                                            + Add First Pickup Stop
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    (routeFormData.stops || []).map((stop, idx) => (
+                                                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', alignItems: 'center', background: '#fafbfc', padding: '0.45rem 0.5rem', borderRadius: '6px', border: '1px solid #e2e8f0', transition: 'all 0.15s ease' }}>
+                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0284c7', padding: '0.25rem 0.4rem', background: '#e0f2fe', borderRadius: '5px', textAlign: 'center' }}>
+                                                                #{idx + 1}
+                                                            </span>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="e.g. Model Town Park Gate 2"
+                                                                value={stop.stopName}
+                                                                onChange={(e) => handleUpdateStopField(idx, 'stopName', e.target.value)}
+                                                                required
+                                                                style={{ padding: '0.45rem 0.6rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: 'white' }}
+                                                            />
+                                                            <input
+                                                                type="text"
+                                                                placeholder="07:15 AM"
+                                                                value={stop.morningTime}
+                                                                onChange={(e) => handleUpdateStopField(idx, 'morningTime', e.target.value)}
+                                                                style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                            />
+                                                            <input
+                                                                type="text"
+                                                                placeholder="02:00 PM"
+                                                                value={stop.afternoonTime}
+                                                                onChange={(e) => handleUpdateStopField(idx, 'afternoonTime', e.target.value)}
+                                                                style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                            />
+                                                            <input
+                                                                type="number"
+                                                                placeholder="Fare"
+                                                                value={stop.fare}
+                                                                onChange={(e) => handleUpdateStopField(idx, 'fare', Number(e.target.value))}
+                                                                style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981', background: 'white' }}
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRemoveStopFromForm(idx)}
+                                                                title="Delete Stop"
+                                                                style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '0.45rem', borderRadius: '5px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setVehicleModalTab('vehicle')}
+                                                style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '700' }}
+                                            >
+                                                ← Back to Vehicle Profile
+                                            </button>
+                                            <button
+                                                type="submit"
+                                                className="btn"
+                                                style={{ flex: 2, background: '#10b981', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
+                                            >
+                                                ✓ Save Route Configuration
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
-                        </form>
+                        </div>
                     </div>
                 </div>
             )}
@@ -2224,110 +4691,222 @@ const Transport = () => {
                     zIndex: 10000,
                     padding: '1rem'
                 }}>
-                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '680px', padding: '1.5rem', maxHeight: '90vh', overflowY: 'auto' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
-                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                {editingRoute ? 'Edit Transport Route & Stops' : 'Create New Route'}
-                            </h3>
-                            <button onClick={() => setRouteModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' }}>
+                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '850px', padding: '1.5rem', maxHeight: '92vh', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                    {editingRoute ? 'Edit Transport Route & Stops' : 'Create New Route'}
+                                </h3>
+                                <span style={{ fontSize: '0.74rem', color: '#64748b' }}>Configure route title, vehicle, timings and stop sequence</span>
+                            </div>
+                            <button onClick={() => setRouteModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <X size={16} />
                             </button>
                         </div>
 
                         <form onSubmit={handleSaveRoute}>
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Route Title *:</label>
-                                <input
-                                    type="text"
-                                    placeholder="e.g. Route #3: Shadman -> Gulberg -> Campus"
-                                    value={routeFormData.title}
-                                    onChange={(e) => setRouteFormData({ ...routeFormData, title: e.target.value })}
-                                    required
-                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700' }}
-                                />
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                            {/* Compact Top Info */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '0.6rem', marginBottom: '0.6rem' }}>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Assigned Van / Bus:</label>
+                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Route Title *:</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. Route #3: Shadman -> Gulberg -> Campus"
+                                        value={routeFormData.title}
+                                        onChange={(e) => setRouteFormData({ ...routeFormData, title: e.target.value })}
+                                        required
+                                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Assigned Van / Bus:</label>
                                     <select
                                         value={routeFormData.vehicleId}
                                         onChange={(e) => setRouteFormData({ ...routeFormData, vehicleId: e.target.value })}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
                                     >
                                         <option value="">-- Select Vehicle --</option>
                                         {vehicles.map(v => <option key={v.id} value={v.id}>{v.regNo} ({v.type})</option>)}
                                     </select>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>Default Monthly Base Fare (PKR):</label>
+                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>Base Fare (PKR):</label>
                                     <input
                                         type="number"
                                         value={routeFormData.monthlyBaseFare}
                                         onChange={(e) => setRouteFormData({ ...routeFormData, monthlyBaseFare: Number(e.target.value) })}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700', color: '#10b981' }}
+                                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981' }}
                                     />
                                 </div>
                             </div>
 
-                            {/* Dynamic Stops Builder */}
-                            <div style={{ marginBottom: '1rem' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                    <label style={{ fontSize: '0.78rem', fontWeight: '800', color: '#0f172a' }}>
-                                        📍 Route Stops & Pickup Sequence:
-                                    </label>
+                            {/* Dropdown / Accordion for Schedule & Landmarks */}
+                            <div style={{ marginBottom: '0.75rem', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#fafbfc' }}>
+                                <div 
+                                    onClick={() => setShowRouteTimingDropdown(!showRouteTimingDropdown)}
+                                    style={{
+                                        padding: '0.45rem 0.75rem',
+                                        background: showRouteTimingDropdown ? '#eff6ff' : '#f8fafc',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        userSelect: 'none',
+                                        borderBottom: showRouteTimingDropdown ? '1px solid #bfdbfe' : 'none'
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.75rem' }}>
+                                        <Clock size={13} color="#0284c7" />
+                                        <span style={{ fontWeight: '700', color: '#1e293b' }}>
+                                            ⚙️ Route Landmarks & Schedule Timings
+                                        </span>
+                                        {!showRouteTimingDropdown && (
+                                            <span style={{ color: '#64748b', fontSize: '0.7rem', marginLeft: '0.25rem' }}>
+                                                ({routeFormData.startPoint || 'Start'} ➔ {routeFormData.endPoint || 'Campus'} | ⏰ {routeFormData.morningDepartureTime || '06:45 AM'} / {routeFormData.afternoonDepartureTime || '01:45 PM'})
+                                            </span>
+                                        )}
+                                    </div>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#0284c7', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                        {showRouteTimingDropdown ? '▲ Hide Details' : '▼ Expand / Edit'}
+                                    </span>
+                                </div>
+
+                                {showRouteTimingDropdown && (
+                                    <div style={{ padding: '0.65rem 0.75rem', background: 'white', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Start Landmark:</label>
+                                            <input
+                                                type="text"
+                                                placeholder="e.g. Main Station / Liberty Market"
+                                                value={routeFormData.startPoint}
+                                                onChange={(e) => setRouteFormData({ ...routeFormData, startPoint: e.target.value })}
+                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Destination Campus:</label>
+                                            <input
+                                                type="text"
+                                                value={routeFormData.endPoint}
+                                                onChange={(e) => setRouteFormData({ ...routeFormData, endPoint: e.target.value })}
+                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Morning Start Time:</label>
+                                            <input
+                                                type="text"
+                                                placeholder="06:45 AM"
+                                                value={routeFormData.morningDepartureTime}
+                                                onChange={(e) => setRouteFormData({ ...routeFormData, morningDepartureTime: e.target.value })}
+                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>Afternoon Return Time:</label>
+                                            <input
+                                                type="text"
+                                                placeholder="01:45 PM"
+                                                value={routeFormData.afternoonDepartureTime}
+                                                onChange={(e) => setRouteFormData({ ...routeFormData, afternoonDepartureTime: e.target.value })}
+                                                style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Enlarged Stops Sequence Manager */}
+                            <div style={{ background: '#ffffff', padding: '0.85rem', borderRadius: '12px', border: '1.5px solid #cbd5e1', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', marginBottom: '1rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a' }}>
+                                            📍 Route Stops Sequence
+                                        </span>
+                                        <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.72rem', fontWeight: '800' }}>
+                                            {(routeFormData.stops || []).length} stops configured
+                                        </span>
+                                    </div>
                                     <button
                                         type="button"
                                         onClick={handleAddStopToForm}
-                                        style={{ background: '#e0f2fe', color: '#0369a1', border: 'none', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer' }}
+                                        className="btn hover-lift"
+                                        style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
                                     >
-                                        + Add Next Stop
+                                        <Plus size={14} /> Add Next Stop
                                     </button>
                                 </div>
 
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '220px', overflowY: 'auto', padding: '0.35rem', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#fafbfc' }}>
-                                    {routeFormData.stops.map((stop, idx) => (
-                                        <div key={idx} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', background: 'white', padding: '0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', minWidth: '22px' }}>
-                                                #{idx + 1}
-                                            </span>
-                                            <input
-                                                type="text"
-                                                placeholder="Stop Landmark (e.g. Liberty Chowk)"
-                                                value={stop.stopName}
-                                                onChange={(e) => handleUpdateStopField(idx, 'stopName', e.target.value)}
-                                                style={{ flex: 3, padding: '0.4rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.8rem' }}
-                                            />
-                                            <input
-                                                type="text"
-                                                placeholder="Pick (07:15 AM)"
-                                                value={stop.morningTime}
-                                                onChange={(e) => handleUpdateStopField(idx, 'morningTime', e.target.value)}
-                                                style={{ width: '95px', padding: '0.4rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.75rem' }}
-                                            />
-                                            <input
-                                                type="text"
-                                                placeholder="Drop (02:00 PM)"
-                                                value={stop.afternoonTime}
-                                                onChange={(e) => handleUpdateStopField(idx, 'afternoonTime', e.target.value)}
-                                                style={{ width: '95px', padding: '0.4rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.75rem' }}
-                                            />
-                                            <input
-                                                type="number"
-                                                placeholder="Fare"
-                                                value={stop.fare}
-                                                onChange={(e) => handleUpdateStopField(idx, 'fare', Number(e.target.value))}
-                                                style={{ width: '75px', padding: '0.4rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.8rem', fontWeight: '700', color: '#10b981' }}
-                                            />
+                                {/* Column Headings */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', padding: '0.35rem 0.5rem', background: '#f1f5f9', borderRadius: '6px', marginBottom: '0.45rem', fontSize: '0.68rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                    <span># Seq</span>
+                                    <span>Pickup Landmark Name</span>
+                                    <span>🌅 Morning</span>
+                                    <span>🌇 Return</span>
+                                    <span>💵 Fare</span>
+                                    <span style={{ textAlign: 'center' }}>Del</span>
+                                </div>
+
+                                {/* Spacious Scrollable Stops Sequence Area */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', maxHeight: '380px', minHeight: '220px', overflowY: 'auto', paddingRight: '0.2rem' }}>
+                                    {(routeFormData.stops || []).length === 0 ? (
+                                        <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
+                                            <MapPin size={28} color="#94a3b8" style={{ marginBottom: '0.5rem' }} />
+                                            <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.82rem', fontWeight: '600' }}>No stops added to this route yet.</p>
                                             <button
                                                 type="button"
-                                                onClick={() => handleRemoveStopFromForm(idx)}
-                                                style={{ background: '#fee2e2', border: 'none', color: '#ef4444', borderRadius: '4px', padding: '0.35rem', cursor: 'pointer' }}
+                                                onClick={handleAddStopToForm}
+                                                style={{ background: '#0284c7', color: 'white', border: 'none', padding: '0.4rem 0.85rem', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', cursor: 'pointer' }}
                                             >
-                                                <X size={14} />
+                                                + Add First Pickup Stop
                                             </button>
                                         </div>
-                                    ))}
+                                    ) : (
+                                        (routeFormData.stops || []).map((stop, idx) => (
+                                            <div key={idx} style={{ display: 'grid', gridTemplateColumns: '42px 2.2fr 1.1fr 1.1fr 1fr 34px', gap: '0.45rem', alignItems: 'center', background: '#fafbfc', padding: '0.45rem 0.5rem', borderRadius: '6px', border: '1px solid #e2e8f0', transition: 'all 0.15s ease' }}>
+                                                <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0284c7', padding: '0.25rem 0.4rem', background: '#e0f2fe', borderRadius: '5px', textAlign: 'center' }}>
+                                                    #{idx + 1}
+                                                </span>
+                                                <input
+                                                    type="text"
+                                                    placeholder="e.g. Model Town Park Gate 2"
+                                                    value={stop.stopName}
+                                                    onChange={(e) => handleUpdateStopField(idx, 'stopName', e.target.value)}
+                                                    required
+                                                    style={{ padding: '0.45rem 0.6rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: 'white' }}
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="07:15 AM"
+                                                    value={stop.morningTime}
+                                                    onChange={(e) => handleUpdateStopField(idx, 'morningTime', e.target.value)}
+                                                    style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="02:00 PM"
+                                                    value={stop.afternoonTime}
+                                                    onChange={(e) => handleUpdateStopField(idx, 'afternoonTime', e.target.value)}
+                                                    style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.78rem', background: 'white' }}
+                                                />
+                                                <input
+                                                    type="number"
+                                                    placeholder="Fare"
+                                                    value={stop.fare}
+                                                    onChange={(e) => handleUpdateStopField(idx, 'fare', Number(e.target.value))}
+                                                    style={{ padding: '0.45rem 0.5rem', borderRadius: '5px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', color: '#10b981', background: 'white' }}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveStopFromForm(idx)}
+                                                    title="Delete Stop"
+                                                    style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '0.45rem', borderRadius: '5px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
                             </div>
 
@@ -2335,7 +4914,7 @@ const Transport = () => {
                                 <button
                                     type="button"
                                     onClick={() => setRouteModalOpen(false)}
-                                    style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
+                                    style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '600' }}
                                 >
                                     Cancel
                                 </button>
@@ -2369,10 +4948,15 @@ const Transport = () => {
                 }}>
                     <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '580px', padding: '1.5rem', maxHeight: '90vh', overflowY: 'auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
-                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                <Users color="#10b981" size={20} /> Allocate Student to Transport
-                            </h3>
-                            <button onClick={() => setAllocationModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' }}>
+                            <div>
+                                <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <Users color="#10b981" size={20} /> {editingAllocation ? 'Edit Transport Allocation' : 'Allocate Student to Transport'}
+                                </h3>
+                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                    Assign route, pickup stop, or enter custom manual pickup point
+                                </span>
+                            </div>
+                            <button onClick={() => setAllocationModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <X size={16} />
                             </button>
                         </div>
@@ -2387,7 +4971,8 @@ const Transport = () => {
                                         setAllocSelectedClassId(e.target.value);
                                         setAllocSelectedStudent(null);
                                     }}
-                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                    disabled={!!editingAllocation}
+                                    style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', background: editingAllocation ? '#f8fafc' : 'white' }}
                                 >
                                     {classesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
@@ -2395,76 +4980,272 @@ const Transport = () => {
 
                             {/* Student Picker */}
                             <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>2. Pick Student:</label>
-                                <div style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                                    {classStudents.map(st => {
-                                        const isSel = allocSelectedStudent?.id === st.id;
-                                        return (
-                                            <div
-                                                key={st.id}
-                                                onClick={() => {
-                                                    setAllocSelectedStudent(st);
-                                                    setAllocParentPhone(st.fatherPhone || st.phone || st.whatsapp || '');
-                                                }}
-                                                style={{
-                                                    padding: '0.45rem 0.65rem',
-                                                    borderRadius: '6px',
-                                                    border: isSel ? '2px solid #10b981' : '1px solid #e2e8f0',
-                                                    background: isSel ? '#ecfdf5' : 'white',
-                                                    cursor: 'pointer',
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    alignItems: 'center'
-                                                }}
-                                            >
-                                                <div>
-                                                    <strong style={{ fontSize: '0.82rem', color: '#0f172a' }}>{st.name}</strong>
-                                                    <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block' }}>
-                                                        Father: {st.fatherName || 'N/A'} · Roll #{st.rollNumber || st.rollNo || 'N/A'}
-                                                    </span>
-                                                </div>
-                                                {st.transportEnrolled && (
-                                                    <span style={{ fontSize: '0.68rem', padding: '0.15rem 0.4rem', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: '700' }}>
-                                                        Already Enrolled
-                                                    </span>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-
-                                    {classStudents.length === 0 && (
-                                        <p style={{ textAlign: 'center', padding: '1rem', color: '#94a3b8', fontSize: '0.8rem' }}>
-                                            No students found in this class.
-                                        </p>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                    <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#475569' }}>2. Pick Student:</label>
+                                    {editingAllocation && (
+                                        <span style={{ fontSize: '0.72rem', color: '#0284c7', fontWeight: '700' }}>
+                                            Editing: {editingAllocation.studentName}
+                                        </span>
                                     )}
                                 </div>
+                                {!editingAllocation ? (
+                                    <>
+                                        <div style={{ marginBottom: '0.4rem' }}>
+                                            <input
+                                                type="text"
+                                                placeholder="🔍 Search student by name, roll no, father name..."
+                                                value={allocStudentSearch}
+                                                onChange={(e) => setAllocStudentSearch(e.target.value)}
+                                                style={{ width: '100%', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem' }}
+                                            />
+                                        </div>
+                                        <div style={{ maxHeight: '140px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                                            {classStudents
+                                                .filter(st => {
+                                                    if (!allocStudentSearch.trim()) return true;
+                                                    const q = allocStudentSearch.toLowerCase().trim();
+                                                    return (
+                                                        (st.name || '').toLowerCase().includes(q) ||
+                                                        (st.fatherName || '').toLowerCase().includes(q) ||
+                                                        (st.rollNumber || st.rollNo || '').toString().toLowerCase().includes(q)
+                                                    );
+                                                })
+                                                .map(st => {
+                                                    const isSel = allocSelectedStudent?.id === st.id;
+                                                    return (
+                                                        <div
+                                                            key={st.id}
+                                                            onClick={() => {
+                                                                setAllocSelectedStudent(st);
+                                                                setAllocParentPhone(st.fatherPhone || st.phone || st.whatsapp || '');
+                                                            }}
+                                                            style={{
+                                                                padding: '0.45rem 0.65rem',
+                                                                borderRadius: '6px',
+                                                                border: isSel ? '2px solid #10b981' : '1px solid #e2e8f0',
+                                                                background: isSel ? '#ecfdf5' : 'white',
+                                                                cursor: 'pointer',
+                                                                display: 'flex',
+                                                                justifyContent: 'space-between',
+                                                                alignItems: 'center',
+                                                                transition: 'all 0.2s ease'
+                                                            }}
+                                                        >
+                                                            <div>
+                                                                <strong style={{ fontSize: '0.82rem', color: isSel ? '#047857' : '#0f172a' }}>{st.name}</strong>
+                                                                <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block' }}>
+                                                                    Father: {st.fatherName || 'N/A'} · Roll #{st.rollNumber || st.rollNo || 'N/A'}
+                                                                </span>
+                                                            </div>
+                                                            <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                                                {st.transportEnrolled && (
+                                                                    <span style={{ fontSize: '0.68rem', padding: '0.15rem 0.4rem', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: '700' }}>
+                                                                        Enrolled
+                                                                    </span>
+                                                                )}
+                                                                {isSel && (
+                                                                    <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: '800' }}>
+                                                                        ✓ Selected
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+
+                                            {classStudents.length === 0 && (
+                                                <p style={{ textAlign: 'center', padding: '1rem', color: '#94a3b8', fontSize: '0.8rem' }}>
+                                                    No students found in this class.
+                                                </p>
+                                            )}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div style={{ padding: '0.65rem 0.85rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div>
+                                            <strong style={{ fontSize: '0.88rem', color: '#15803d' }}>{allocSelectedStudent?.name}</strong>
+                                            <span style={{ display: 'block', fontSize: '0.74rem', color: '#64748b' }}>
+                                                Father: {allocSelectedStudent?.fatherName || 'N/A'} · Roll #{allocSelectedStudent?.rollNo || 'N/A'}
+                                            </span>
+                                        </div>
+                                        <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '9999px', background: '#dcfce7', color: '#166534', fontWeight: '700' }}>
+                                            Enrolled
+                                        </span>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Route & Stop Selection */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>3. Assigned Route:</label>
-                                    <select
-                                        value={allocRouteId}
-                                        onChange={(e) => handleRouteChangeInAlloc(e.target.value)}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                    >
-                                        {routes.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}
-                                    </select>
+                            <div style={{ marginBottom: '1rem', background: '#f8fafc', padding: '0.85rem', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>3. Assigned Route:</label>
+                                        <select
+                                            value={allocRouteId}
+                                            onChange={(e) => handleRouteChangeInAlloc(e.target.value)}
+                                            style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '600' }}
+                                        >
+                                            {routes.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#475569' }}>
+                                                4. Pickup Location Mode:
+                                            </label>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsCustomStop(false)}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '0.45rem 0.5rem',
+                                                    borderRadius: '6px',
+                                                    border: !isCustomStop ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                                                    background: !isCustomStop ? '#e0f2fe' : 'white',
+                                                    color: !isCustomStop ? '#0369a1' : '#64748b',
+                                                    fontSize: '0.74rem',
+                                                    fontWeight: '700',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                📍 Route Stops
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setIsCustomStop(true);
+                                                    if (!customStopName) setCustomStopName(allocStopName || '');
+                                                }}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '0.45rem 0.5rem',
+                                                    borderRadius: '6px',
+                                                    border: isCustomStop ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                                                    background: isCustomStop ? '#e0f2fe' : 'white',
+                                                    color: isCustomStop ? '#0369a1' : '#64748b',
+                                                    fontSize: '0.74rem',
+                                                    fontWeight: '700',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                ✏️ Manual / Custom
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>4. Pickup Stop:</label>
-                                    <select
-                                        value={allocStopName}
-                                        onChange={(e) => handleStopChangeInAlloc(e.target.value)}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                    >
-                                        {(routes.find(r => r.id === allocRouteId)?.stops || []).map((s, idx) => (
-                                            <option key={idx} value={s.stopName}>{s.stopName} (PKR {s.fare})</option>
-                                        ))}
-                                    </select>
-                                </div>
+                                {/* Pickup Stop Section based on Mode */}
+                                {!isCustomStop ? (
+                                    <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0f172a' }}>
+                                                Select Pickup Stop from Route:
+                                            </label>
+                                            <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setIsQuickAddingStop(!isQuickAddingStop)}
+                                                    style={{ background: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' }}
+                                                >
+                                                    {isQuickAddingStop ? '✕ Close Form' : '+ Add New Stop to Route'}
+                                                </button>
+                                                {allocStopName && (routes.find(r => r.id === allocRouteId)?.stops || []).length > 1 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleQuickRemoveStopFromCurrentRoute(allocStopName)}
+                                                        title="Remove this stop from route"
+                                                        style={{ background: '#fee2e2', color: '#ef4444', border: '1px solid #fecaca', padding: '0.2rem 0.4rem', borderRadius: '4px', fontSize: '0.72rem', cursor: 'pointer' }}
+                                                    >
+                                                        🗑️ Delete Stop
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <select
+                                            value={allocStopName}
+                                            onChange={(e) => handleStopChangeInAlloc(e.target.value)}
+                                            style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                        >
+                                            {(routes.find(r => r.id === allocRouteId)?.stops || []).map((s, idx) => (
+                                                <option key={idx} value={s.stopName}>{idx + 1}. {s.stopName} (PKR {s.fare})</option>
+                                            ))}
+                                        </select>
+
+                                        {/* Quick Add Stop to Route Inline Form */}
+                                        {isQuickAddingStop && (
+                                            <div style={{ marginTop: '0.65rem', background: '#ffffff', padding: '0.75rem', borderRadius: '8px', border: '1.5px dashed #0284c7' }}>
+                                                <span style={{ display: 'block', fontSize: '0.76rem', fontWeight: '800', color: '#0284c7', marginBottom: '0.45rem' }}>
+                                                    ➕ Add New Stop to Selected Route
+                                                </span>
+                                                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Stop Landmark (e.g. Model Town Park)"
+                                                        value={quickStopData.stopName}
+                                                        onChange={(e) => setQuickStopData({ ...quickStopData, stopName: e.target.value })}
+                                                        style={{ padding: '0.45rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.8rem' }}
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Pick (07:15 AM)"
+                                                        value={quickStopData.morningTime}
+                                                        onChange={(e) => setQuickStopData({ ...quickStopData, morningTime: e.target.value })}
+                                                        style={{ padding: '0.45rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.75rem' }}
+                                                    />
+                                                    <input
+                                                        type="number"
+                                                        placeholder="Fare"
+                                                        value={quickStopData.fare}
+                                                        onChange={(e) => setQuickStopData({ ...quickStopData, fare: e.target.value })}
+                                                        style={{ padding: '0.45rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.8rem', fontWeight: '700', color: '#10b981' }}
+                                                    />
+                                                </div>
+                                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem' }}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsQuickAddingStop(false)}
+                                                        style={{ padding: '0.35rem 0.65rem', borderRadius: '4px', border: '1px solid #cbd5e1', background: 'white', fontSize: '0.75rem', cursor: 'pointer' }}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleQuickAddStopToCurrentRoute}
+                                                        style={{ padding: '0.35rem 0.85rem', borderRadius: '4px', border: 'none', background: '#0284c7', color: 'white', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer' }}
+                                                    >
+                                                        ✓ Save & Select Stop
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#0f172a', marginBottom: '0.25rem' }}>
+                                            ✏️ Type Exact Manual Pickup Location / House Address:
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. House #45, Street 12, Cavalry Ground or Near Alfatah Store"
+                                            value={customStopName}
+                                            onChange={(e) => setCustomStopName(e.target.value)}
+                                            required={isCustomStop}
+                                            style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1.5px solid #0284c7', fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.4rem' }}
+                                        />
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: '#475569', cursor: 'pointer' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={saveCustomStopToRoute}
+                                                onChange={(e) => setSaveCustomStopToRoute(e.target.checked)}
+                                            />
+                                            <span>Also add this stop to Route sequence for all students in future</span>
+                                        </label>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Monthly Transport Fare & Parent Contact */}
@@ -2517,7 +5298,13 @@ const Transport = () => {
                                         cursor: !allocSelectedStudent ? 'not-allowed' : 'pointer'
                                     }}
                                 >
-                                    {isSavingAllocation ? 'Allocating...' : '✓ Confirm Transport Seat'}
+                                    {isSavingAllocation ? (
+                                        <>
+                                            <RefreshCw size={15} className="animate-spin" /> Saving Allocation...
+                                        </>
+                                    ) : (
+                                        editingAllocation ? '✓ Update Allocation' : '✓ Confirm Transport Seat'
+                                    )}
                                 </button>
                             </div>
                         </form>
