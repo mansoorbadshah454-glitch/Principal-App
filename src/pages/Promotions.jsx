@@ -310,60 +310,63 @@ const Promotions = () => {
     };
 
 
-    // 2. Fetch Classes
-    const fetchClasses = async () => {
+    // 2. Real-Time Classes Listener (Robust, Instant & Non-Blocking)
+    useEffect(() => {
         if (!schoolId) return;
-        try {
-            const q = query(collection(db, `schools/${schoolId}/classes`));
-            const snapshot = await getDocs(q);
 
-            // Fetch real student counts for each class
-            const classesData = await Promise.all(snapshot.docs.map(async (docSnap) => {
-                const classId = docSnap.id;
-                const studentsRef = collection(db, `schools/${schoolId}/classes/${classId}/students`);
-                const studentsSnap = await getDocsFast(studentsRef);
-                return {
-                    id: classId,
-                    ...docSnap.data(),
-                    students: studentsSnap.size
-                };
+        setLoading(true);
+        const classesRef = collection(db, `schools/${schoolId}/classes`);
+
+        const unsubClasses = onSnapshot(classesRef, async (snapshot) => {
+            const list = snapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data(),
+                students: docSnap.data().students || 0
             }));
 
-            classesData.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
-            setClasses(classesData);
+            list.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
+            setClasses(list);
             setLoading(false);
 
-            // Auto-restore previously selected class if returning from another page, or default to first class
+            // Auto-restore previously selected class or default to first class
             const savedClassId = localStorage.getItem('promotions_selected_class_id');
-            if (savedClassId) {
-                const matchedClass = classesData.find(c => c.id === savedClassId);
-                if (matchedClass) {
-                    handleClassSelect(matchedClass, classesData);
-                } else if (classesData.length > 0) {
-                    handleClassSelect(classesData[0], classesData);
+            setSelectedClass(prev => {
+                if (savedClassId) {
+                    const matched = list.find(c => c.id === savedClassId);
+                    if (matched) return matched;
                 }
-            } else if (classesData.length > 0) {
-                handleClassSelect(classesData[0], classesData);
-            }
-        } catch (error) {
-            console.error("Error fetching classes:", error);
+                if (prev) {
+                    const matched = list.find(c => c.id === prev.id);
+                    if (matched) return matched;
+                }
+                return list.length > 0 ? list[0] : null;
+            });
+
+            // Async background update of student counts (Non-blocking)
+            try {
+                const updatedList = await Promise.all(list.map(async (cls) => {
+                    try {
+                        const sSnap = await getDocsFast(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+                        return { ...cls, students: sSnap.size };
+                    } catch (e) {
+                        return cls;
+                    }
+                }));
+                setClasses(updatedList);
+            } catch (e) {}
+        }, (error) => {
+            console.error("Classes stream error:", error);
             setLoading(false);
-        }
-    };
+        });
 
-    useEffect(() => {
-        if (schoolId) {
-            fetchClasses();
+        const timeout = setTimeout(() => {
+            setLoading(false);
+        }, 5000);
 
-            // Safety Timeout
-            const timeout = setTimeout(() => {
-                if (loading) {
-                    console.warn("Loading classes timed out.");
-                    setLoading(false);
-                }
-            }, 5000);
-            return () => clearTimeout(timeout);
-        }
+        return () => {
+            unsubClasses();
+            clearTimeout(timeout);
+        };
     }, [schoolId]);
 
     // 3. Handle Class Selection
