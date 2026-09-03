@@ -126,6 +126,8 @@ const Transport = () => {
     const markersLayerRef = useRef(null);
     const polylineLayerRef = useRef(null);
     const vehiclesLayerRef = useRef(null);
+    const tileLayerRef = useRef(null);
+    const [mapStyle, setMapStyle] = useState('osm2d'); // 'osm2d', 'clean2d', 'satellite2d', 'dark2d'
     const [deviceCoords, setDeviceCoords] = useState(null); // { lat, lng, city }
     const [isLocatingDevice, setIsLocatingDevice] = useState(false);
 
@@ -549,10 +551,11 @@ const Transport = () => {
                 });
 
                 // 100% Free OpenStreetMap Carto Tiles
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                const initialTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19,
                     attribution: '© OpenStreetMap'
                 }).addTo(map);
+                tileLayerRef.current = initialTile;
 
                 markersLayerRef.current = L.layerGroup().addTo(map);
                 polylineLayerRef.current = L.layerGroup().addTo(map);
@@ -803,6 +806,50 @@ const Transport = () => {
             console.warn('Vehicle layer sync error:', vehErr);
         }
     }, [grandTab, liveTrackingData, selectedOverviewVehicleId, vehicles, deviceCoords]);
+
+    // -------------------------------------------------------------
+    // Dynamic 100% Free 2D / Satellite Map Tile Style Switcher
+    // -------------------------------------------------------------
+    useEffect(() => {
+        if (!mapInstanceRef.current) return;
+        const tileConfigs = {
+            osm2d: {
+                url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                maxZoom: 19,
+                subdomains: 'abc'
+            },
+            clean2d: {
+                url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+                maxZoom: 19,
+                subdomains: 'abcd'
+            },
+            satellite2d: {
+                url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                maxZoom: 19,
+                subdomains: ''
+            },
+            dark2d: {
+                url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                maxZoom: 19,
+                subdomains: 'abcd'
+            }
+        };
+
+        const cfg = tileConfigs[mapStyle] || tileConfigs.osm2d;
+        try {
+            if (tileLayerRef.current && mapInstanceRef.current.hasLayer(tileLayerRef.current)) {
+                mapInstanceRef.current.removeLayer(tileLayerRef.current);
+            }
+            const newTile = L.tileLayer(cfg.url, {
+                maxZoom: cfg.maxZoom,
+                subdomains: cfg.subdomains || 'abc'
+            }).addTo(mapInstanceRef.current);
+            tileLayerRef.current = newTile;
+            newTile.bringToBack();
+        } catch (e) {
+            console.warn('Map tile switch notice:', e);
+        }
+    }, [mapStyle]);
 
     // Initialize Default Transport Setup if First Time
     const initializeSampleTransport = async () => {
@@ -2922,18 +2969,91 @@ const Transport = () => {
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px #10b981' }}></div>
                                         <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0f172a' }}>
-                                            🗺️ Real-Time GPS Tracking Map (Real Road Routing Engine)
+                                            🗺️ Real-Time GPS Tracking Map (2D Real-Road Engine)
                                         </span>
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                        {/* 100% Free 2D / Satellite Map Style Switcher */}
+                                        <div style={{ display: 'flex', background: '#e2e8f0', padding: '2px', borderRadius: '8px', gap: '2px' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setMapStyle('osm2d')}
+                                                style={{
+                                                    background: mapStyle === 'osm2d' ? 'white' : 'transparent',
+                                                    color: mapStyle === 'osm2d' ? '#0284c7' : '#64748b',
+                                                    border: 'none',
+                                                    padding: '0.22rem 0.55rem',
+                                                    borderRadius: '6px',
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: '800',
+                                                    cursor: 'pointer',
+                                                    boxShadow: mapStyle === 'osm2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                🗺️ 2D Streets
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setMapStyle('clean2d')}
+                                                style={{
+                                                    background: mapStyle === 'clean2d' ? 'white' : 'transparent',
+                                                    color: mapStyle === 'clean2d' ? '#0284c7' : '#64748b',
+                                                    border: 'none',
+                                                    padding: '0.22rem 0.55rem',
+                                                    borderRadius: '6px',
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: '800',
+                                                    cursor: 'pointer',
+                                                    boxShadow: mapStyle === 'clean2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                🎨 Clean 2D
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setMapStyle('satellite2d')}
+                                                style={{
+                                                    background: mapStyle === 'satellite2d' ? 'white' : 'transparent',
+                                                    color: mapStyle === 'satellite2d' ? '#0284c7' : '#64748b',
+                                                    border: 'none',
+                                                    padding: '0.22rem 0.55rem',
+                                                    borderRadius: '6px',
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: '800',
+                                                    cursor: 'pointer',
+                                                    boxShadow: mapStyle === 'satellite2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                🛰️ Satellite 2D
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setMapStyle('dark2d')}
+                                                style={{
+                                                    background: mapStyle === 'dark2d' ? '#0f172a' : 'transparent',
+                                                    color: mapStyle === 'dark2d' ? '#38bdf8' : '#64748b',
+                                                    border: 'none',
+                                                    padding: '0.22rem 0.55rem',
+                                                    borderRadius: '6px',
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: '800',
+                                                    cursor: 'pointer',
+                                                    boxShadow: mapStyle === 'dark2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                🌙 Dark 2D
+                                            </button>
+                                        </div>
+
                                         {roadRouteInfo.distanceKm > 0 && (
-                                            <span style={{ fontSize: '0.72rem', color: '#0284c7', background: '#e0f2fe', border: '1px solid #bae6fd', padding: '0.18rem 0.55rem', borderRadius: '6px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                            <span style={{ fontSize: '0.72rem', color: '#0284c7', background: '#e0f2fe', border: '1px solid #bae6fd', padding: '0.22rem 0.55rem', borderRadius: '6px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                                                 🛣️ {roadRouteInfo.distanceKm} KM · ~{roadRouteInfo.durationMin} Mins Drive
                                             </span>
                                         )}
-                                        <span style={{ fontSize: '0.7rem', color: '#64748b', background: 'white', border: '1px solid #cbd5e1', padding: '0.18rem 0.5rem', borderRadius: '6px', fontWeight: '600' }}>
-                                            100% Free Cloud Radar
-                                        </span>
                                     </div>
                                 </div>
 
