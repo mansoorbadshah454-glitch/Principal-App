@@ -125,6 +125,7 @@ const Transport = () => {
     const mapInstanceRef = useRef(null);
     const markersLayerRef = useRef(null);
     const polylineLayerRef = useRef(null);
+    const vehiclesLayerRef = useRef(null);
     const [deviceCoords, setDeviceCoords] = useState(null); // { lat, lng, city }
     const [isLocatingDevice, setIsLocatingDevice] = useState(false);
 
@@ -511,7 +512,8 @@ const Transport = () => {
     }, [schoolId, slideAllocClassId]);
 
     // -------------------------------------------------------------
-    // Leaflet Real-Time Interactive Map Synchronization (Overview Tab)
+    // Leaflet Real-Time Interactive Map Initialization & Static Route Layer
+    // (Stops, 3D School Building, & OSRM Road Polyline - FIXED & NEVER JUMP)
     // -------------------------------------------------------------
     useEffect(() => {
         if (grandTab !== 'radar') {
@@ -522,6 +524,7 @@ const Transport = () => {
                 mapInstanceRef.current = null;
                 markersLayerRef.current = null;
                 polylineLayerRef.current = null;
+                vehiclesLayerRef.current = null;
             }
             return;
         }
@@ -533,7 +536,6 @@ const Transport = () => {
         const defaultLng = deviceCoords?.lng || 73.0479;
 
         if (!mapInstanceRef.current) {
-            // Clean up any stale leaflet ID on DOM node
             if (mapContainerRef.current._leaflet_id) {
                 mapContainerRef.current._leaflet_id = null;
             }
@@ -554,6 +556,7 @@ const Transport = () => {
 
                 markersLayerRef.current = L.layerGroup().addTo(map);
                 polylineLayerRef.current = L.layerGroup().addTo(map);
+                vehiclesLayerRef.current = L.layerGroup().addTo(map);
                 mapInstanceRef.current = map;
             } catch (err) {
                 console.warn('Leaflet initialization warning:', err);
@@ -572,11 +575,6 @@ const Transport = () => {
 
             const bounds = L.latLngBounds([]);
 
-            // Determine which vehicles to display
-            const targetVehicles = selectedOverviewVehicleId === 'all'
-                ? vehicles
-                : vehicles.filter(v => v.id === selectedOverviewVehicleId);
-
             // Find active route for selected vehicle
             let activeRoute = null;
             if (selectedOverviewVehicleId !== 'all') {
@@ -585,19 +583,9 @@ const Transport = () => {
                 activeRoute = routes[0];
             }
 
-            // Find any live vehicle with active GPS coordinates
-            const liveVehWithCoords = targetVehicles.find(v => {
-                const live = liveTrackingData[v.id];
-                return live && live.isLive && Number(live.latitude) && Number(live.longitude);
-            });
-            const liveCoords = liveVehWithCoords ? {
-                lat: Number(liveTrackingData[liveVehWithCoords.id].latitude),
-                lng: Number(liveTrackingData[liveVehWithCoords.id].longitude)
-            } : null;
-
-            // Intelligent Anchor Coordinate: Priority 1: Live Driver GPS -> Priority 2: PC/Device Geolocation -> Priority 3: Default
-            const anchorLat = liveCoords?.lat || deviceCoords?.lat || 33.6844;
-            const anchorLng = liveCoords?.lng || deviceCoords?.lng || 73.0479;
+            // Fixed Base Anchor for Static Stops & School Campus (Never shifts during simulation)
+            const fixedAnchorLat = deviceCoords?.lat || 33.6844;
+            const fixedAnchorLng = deviceCoords?.lng || 73.0479;
 
             // Draw Route Stops Sequence & Polyline if Route exists
             const routeCoords = [];
@@ -607,8 +595,8 @@ const Transport = () => {
                     let lng = Number(stop.longitude);
                     if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
                         // Spread coordinates realistically relative to anchor location
-                        lat = anchorLat + (idx * 0.006) - 0.008;
-                        lng = anchorLng + (idx * 0.008) - 0.006;
+                        lat = fixedAnchorLat + (idx * 0.006) - 0.008;
+                        lng = fixedAnchorLng + (idx * 0.008) - 0.006;
                     }
 
                     const stopLatLng = L.latLng(lat, lng);
@@ -633,21 +621,48 @@ const Transport = () => {
                     markersGroup.addLayer(stopMarker);
                 });
 
-                // School Campus Terminal Pin
-                const schoolLatLng = L.latLng(anchorLat + 0.012, anchorLng + 0.012);
+                // 3D Realistic School Building Terminal Pin
+                const schoolLatLng = L.latLng(fixedAnchorLat + 0.012, fixedAnchorLng + 0.012);
                 routeCoords.push(schoolLatLng);
                 bounds.extend(schoolLatLng);
 
-                const schoolIcon = L.divIcon({
-                    className: 'custom-school-marker',
-                    html: `<div style="background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%); color: white; border: 2px solid white; box-shadow: 0 4px 14px rgba(79,70,229,0.45); border-radius: 8px; padding: 4px 10px; display: flex; align-items: center; gap: 4px; font-weight: 800; font-size: 11px; white-space: nowrap;">🏫 School Campus</div>`,
-                    iconSize: [110, 32],
-                    iconAnchor: [55, 16]
+                const school3DIcon = L.divIcon({
+                    className: 'custom-school-3d-marker',
+                    html: `
+                        <div style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.35));">
+                            <!-- 3D Isometric School Building Body -->
+                            <div style="width: 52px; height: 42px; background: linear-gradient(135deg, #4f46e5 0%, #312e81 100%); border-radius: 8px 8px 4px 4px; border: 2.5px solid #a5b4fc; position: relative; box-shadow: 0 5px 0 #1e1b4b, 0 10px 20px rgba(0,0,0,0.35); display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 4px;">
+                                <!-- 3D Triangular Roof Pediment with Flag -->
+                                <div style="position: absolute; top: -14px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 17px solid transparent; border-right: 17px solid transparent; border-bottom: 14px solid #ef4444;">
+                                    <div style="position: absolute; top: -11px; left: -3px; font-size: 11px;">🚩</div>
+                                </div>
+                                <!-- 3D Glowing Class Windows -->
+                                <div style="display: flex; gap: 4px; margin-top: 5px;">
+                                    <div style="width: 7px; height: 7px; background: #fef08a; border-radius: 2px; box-shadow: 0 0 4px #fde047;"></div>
+                                    <div style="width: 7px; height: 7px; background: #fef08a; border-radius: 2px; box-shadow: 0 0 4px #fde047;"></div>
+                                    <div style="width: 7px; height: 7px; background: #fef08a; border-radius: 2px; box-shadow: 0 0 4px #fde047;"></div>
+                                </div>
+                                <!-- Central Arch Entrance Gate -->
+                                <div style="width: 15px; height: 12px; background: #1e1b4b; border-radius: 4px 4px 0 0; border: 1.5px solid #c7d2fe; display: flex; align-items: center; justify-content: center;">
+                                    <div style="width: 2px; height: 8px; background: #818cf8;"></div>
+                                </div>
+                            </div>
+                            <!-- 3D Base Shadow -->
+                            <div style="width: 46px; height: 7px; background: rgba(0,0,0,0.3); border-radius: 50%; margin-top: 2px;"></div>
+                            <!-- Floating Campus Label Badge -->
+                            <div style="margin-top: 2px; background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%); color: #ffffff; border: 1.5px solid #818cf8; border-radius: 6px; padding: 2px 7px; font-size: 10px; font-weight: 900; white-space: nowrap; box-shadow: 0 4px 10px rgba(0,0,0,0.3); display: flex; align-items: center; gap: 3px;">
+                                🏫 ${schoolInfo.name || 'School Campus'}
+                            </div>
+                        </div>
+                    `,
+                    iconSize: [120, 80],
+                    iconAnchor: [60, 48]
                 });
-                const schoolMarker = L.marker(schoolLatLng, { icon: schoolIcon }).bindPopup(`
+
+                const schoolMarker = L.marker(schoolLatLng, { icon: school3DIcon }).bindPopup(`
                     <div style="font-family: inherit; padding: 4px;">
                         <div style="font-weight: 800; color: #4f46e5; font-size: 13px;">🏫 ${schoolInfo.name || 'School Campus'}</div>
-                        <div style="font-size: 11px; color: #64748b;">Central Transport Terminal</div>
+                        <div style="font-size: 11px; color: #64748b;">Central Transport Hub & Main Terminal</div>
                     </div>
                 `);
                 markersGroup.addLayer(schoolMarker);
@@ -704,7 +719,38 @@ const Transport = () => {
                 }
             }
 
-            // Draw Vehicle Markers with real-time GPS telemetry
+            if (bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [45, 45], maxZoom: 15 });
+            } else {
+                map.setView([fixedAnchorLat, fixedAnchorLng], 14);
+            }
+        } catch (syncErr) {
+            console.warn('Map static layer sync error:', syncErr);
+        }
+
+        const resizeTimer = setTimeout(() => {
+            if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
+        }, 300);
+        return () => clearTimeout(resizeTimer);
+    }, [grandTab, routes, selectedOverviewVehicleId, deviceCoords, schoolInfo.name]);
+
+    // -------------------------------------------------------------
+    // Dynamic Moving Vehicle Markers Layer (Updates smooth GPS without touching static route)
+    // -------------------------------------------------------------
+    useEffect(() => {
+        if (grandTab !== 'radar' || !mapInstanceRef.current || !vehiclesLayerRef.current) return;
+
+        try {
+            const vehiclesGroup = vehiclesLayerRef.current;
+            vehiclesGroup.clearLayers();
+
+            const targetVehicles = selectedOverviewVehicleId === 'all'
+                ? vehicles
+                : vehicles.filter(v => v.id === selectedOverviewVehicleId);
+
+            const fixedAnchorLat = deviceCoords?.lat || 33.6844;
+            const fixedAnchorLng = deviceCoords?.lng || 73.0479;
+
             targetVehicles.forEach((veh, vIdx) => {
                 const live = liveTrackingData[veh.id] || {};
                 const isLive = live.isLive && (live.tripStatus === 'in_progress' || live.tripStatus === 'active');
@@ -714,13 +760,11 @@ const Transport = () => {
                 let lat = Number(live.latitude);
                 let lng = Number(live.longitude);
                 if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-                    // Fallback coordinates relative to anchor location
-                    lat = anchorLat + (vIdx * 0.004 - 0.002);
-                    lng = anchorLng + (vIdx * 0.004 - 0.002);
+                    lat = fixedAnchorLat + (vIdx * 0.004 - 0.002);
+                    lng = fixedAnchorLng + (vIdx * 0.004 - 0.002);
                 }
 
                 const vehLatLng = L.latLng(lat, lng);
-                bounds.extend(vehLatLng);
 
                 const vanIcon = L.divIcon({
                     className: 'custom-van-marker',
@@ -753,26 +797,12 @@ const Transport = () => {
                         <div style="font-size: 10px; color: #94a3b8;">🕒 Last Synced: ${live.lastTimestamp ? new Date(live.lastTimestamp).toLocaleTimeString() : 'Awaiting Trip'}</div>
                     </div>
                 `);
-                markersGroup.addLayer(vanMarker);
+                vehiclesGroup.addLayer(vanMarker);
             });
-
-            if (bounds.isValid()) {
-                map.fitBounds(bounds, { padding: [45, 45], maxZoom: 15 });
-            } else {
-                map.setView([anchorLat, anchorLng], 14);
-            }
-        } catch (syncErr) {
-            console.warn('Map layer sync error:', syncErr);
+        } catch (vehErr) {
+            console.warn('Vehicle layer sync error:', vehErr);
         }
-
-        const resizeTimer = setTimeout(() => {
-            if (mapInstanceRef.current) mapInstanceRef.current.invalidateSize();
-        }, 300);
-
-        return () => {
-            clearTimeout(resizeTimer);
-        };
-    }, [grandTab, selectedOverviewVehicleId, vehicles, routes, liveTrackingData, schoolInfo]);
+    }, [grandTab, liveTrackingData, selectedOverviewVehicleId, vehicles, deviceCoords]);
 
     // Initialize Default Transport Setup if First Time
     const initializeSampleTransport = async () => {
