@@ -2331,19 +2331,30 @@ const Transport = () => {
                     ? (routes.find(r => r.vehicleId === currentOverviewVeh.id) || routes.find(r => r.id === currentTracking.routeId) || routes[0] || null)
                     : (routes[0] || null);
 
-                // Find all allocations for this vehicle or route
+                // Determine active trip mode: If driver is currently running an active/live trip, auto-sync to driver's tripType ('morning' or 'afternoon')
+                const liveTripType = (currentTracking.isLive && currentTracking.tripType) ? currentTracking.tripType : null;
+                const effectiveTripType = liveTripType || overviewTripType;
+
+                // Find all allocations for this vehicle or route, filtering by tripType if specific
                 const overviewAllocations = allocations.filter(a => {
-                    if (currentOverviewVeh && (a.vehicleId === currentOverviewVeh.id || (currentOverviewVeh.regNo && a.vehicleRegNo === currentOverviewVeh.regNo))) return true;
-                    if (overviewRoute && a.routeId === overviewRoute.id) return true;
-                    return false;
+                    const matchesVehicle = currentOverviewVeh && (a.vehicleId === currentOverviewVeh.id || (currentOverviewVeh.regNo && a.vehicleRegNo === currentOverviewVeh.regNo));
+                    const matchesRoute = overviewRoute && a.routeId === overviewRoute.id;
+                    if (!matchesVehicle && !matchesRoute && allocations.length > 50) return false;
+
+                    const aType = (a.tripType || 'both').toLowerCase();
+                    if (aType !== 'both' && aType !== effectiveTripType && effectiveTripType) {
+                        return false;
+                    }
+                    return true;
                 });
 
                 const dNow = new Date();
                 const todayStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
                 const todayUtc = dNow.toISOString().slice(0, 10);
-                const attKey = `${todayStr}_${overviewRoute?.id || 'all'}_${overviewTripType}`;
-                const altKeyWithVeh = `${todayStr}_${currentOverviewVeh?.id}_${overviewTripType}`;
-                const altKeyWithTripRoute = `${todayStr}_${currentTracking.routeId}_${overviewTripType}`;
+                const attKey = `${todayStr}_${overviewRoute?.id || 'all'}_${effectiveTripType}`;
+                const altKeyWithVeh = `${todayStr}_${currentOverviewVeh?.id}_${effectiveTripType}`;
+                const altKeyWithTripRoute = `${todayStr}_${currentTracking.routeId}_${effectiveTripType}`;
+                const altKeyOtherTrip = `${todayStr}_${overviewRoute?.id || 'all'}_${effectiveTripType === 'morning' ? 'afternoon' : 'morning'}`;
 
                 // 1. Collect ALL live status maps from ALL active/live tracking documents streaming in Firestore
                 const allLiveStatusMaps = {};
@@ -2364,6 +2375,7 @@ const Transport = () => {
                 // 3. Robust unified map with live stream priority
                 const currentAttMap = {
                     ...allTodayAttendanceLogs,
+                    ...(attendanceLogs[altKeyOtherTrip] || {}),
                     ...(attendanceLogs[attKey] || {}),
                     ...(attendanceLogs[altKeyWithTripRoute] || {}),
                     ...(attendanceLogs[altKeyWithVeh] || {}),
@@ -2464,15 +2476,21 @@ const Transport = () => {
                                                 padding: '0.4rem 0.75rem',
                                                 borderRadius: '6px',
                                                 border: 'none',
-                                                background: overviewTripType === 'morning' ? '#0284c7' : 'transparent',
-                                                color: overviewTripType === 'morning' ? 'white' : '#64748b',
+                                                background: effectiveTripType === 'morning' ? '#0284c7' : 'transparent',
+                                                color: effectiveTripType === 'morning' ? 'white' : '#64748b',
                                                 fontWeight: '700',
                                                 fontSize: '0.78rem',
                                                 cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.35rem',
                                                 transition: 'all 0.15s ease'
                                             }}
                                         >
-                                            🌅 Morning Pick-up
+                                            <span>🌅 Morning Pick-up</span>
+                                            {liveTripType === 'morning' && (
+                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 6px #4ade80' }}></span>
+                                            )}
                                         </button>
                                         <button
                                             type="button"
@@ -2481,15 +2499,21 @@ const Transport = () => {
                                                 padding: '0.4rem 0.75rem',
                                                 borderRadius: '6px',
                                                 border: 'none',
-                                                background: overviewTripType === 'afternoon' ? '#0284c7' : 'transparent',
-                                                color: overviewTripType === 'afternoon' ? 'white' : '#64748b',
+                                                background: effectiveTripType === 'afternoon' ? '#0284c7' : 'transparent',
+                                                color: effectiveTripType === 'afternoon' ? 'white' : '#64748b',
                                                 fontWeight: '700',
                                                 fontSize: '0.78rem',
                                                 cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.35rem',
                                                 transition: 'all 0.15s ease'
                                             }}
                                         >
-                                            🌇 Afternoon Drop-off
+                                            <span>🌇 Afternoon Drop-off</span>
+                                            {liveTripType === 'afternoon' && (
+                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 6px #4ade80' }}></span>
+                                            )}
                                         </button>
                                     </div>
                                 </div>
@@ -2738,7 +2762,7 @@ const Transport = () => {
                                                             </div>
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.7rem', color: '#475569' }}>
                                                                 <Clock size={12} color="#0284c7" />
-                                                                <span>{overviewTripType === 'morning' ? stop.morningTime : stop.afternoonTime}</span>
+                                                                <span>{effectiveTripType === 'morning' ? (stop.morningTime || 'Pick-up') : (stop.afternoonTime || stop.morningTime || 'Drop-off')}</span>
                                                                 <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.1rem 0.35rem', borderRadius: '4px', fontWeight: '700' }}>
                                                                     {stopBoardedCount}/{stopStudents.length}
                                                                 </span>
