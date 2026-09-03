@@ -1941,7 +1941,7 @@ const Transport = () => {
 
     const handleToggleStudentBoarding = async (studentId, currentStatus) => {
         const key = getAttendanceKey();
-        const nextStatus = currentStatus === 'boarded' ? 'absent' : 'boarded';
+        const nextStatus = currentStatus === 'boarded' ? 'absent' : currentStatus === 'absent' ? 'pending' : 'boarded';
         const updatedSubMap = {
             ...(attendanceLogs[key] || {}),
             [studentId]: nextStatus
@@ -1955,9 +1955,21 @@ const Transport = () => {
         setAttendanceLogs(updatedMasterMap);
         await saveTransportState({ attendanceLogs: updatedMasterMap });
 
+        // Also sync to live_tracking document so Driver App gets the update in real-time
+        const targetVehId = selectedOverviewVehicleId !== 'all' ? selectedOverviewVehicleId : (vehicles[0]?.id || 'fleet_default');
+        if (targetVehId && schoolId) {
+            setDoc(doc(db, 'schools', schoolId, 'live_tracking', targetVehId), {
+                studentStatusMap: {
+                    ...(liveTrackingData[targetVehId]?.studentStatusMap || {}),
+                    [studentId]: nextStatus
+                },
+                lastStatusUpdate: new Date().toISOString()
+            }, { merge: true }).catch(console.error);
+        }
+
         // Optionally send WhatsApp alert if boarded
         if (nextStatus === 'boarded') {
-            const alloc = allocations.find(a => a.studentId === studentId);
+            const alloc = allocations.find(a => a.studentId === studentId || a.id === studentId);
             if (alloc && alloc.parentPhone) {
                 sendBoardingAlertWhatsApp(alloc, 'boarded');
             }
@@ -1970,7 +1982,8 @@ const Transport = () => {
         const updatedSubMap = { ...(attendanceLogs[key] || {}) };
 
         currentRouteAllocs.forEach(a => {
-            updatedSubMap[a.studentId] = 'boarded';
+            const stId = a.studentId || a.id;
+            if (stId) updatedSubMap[stId] = 'boarded';
         });
 
         const updatedMasterMap = {
@@ -1980,6 +1993,15 @@ const Transport = () => {
 
         setAttendanceLogs(updatedMasterMap);
         await saveTransportState({ attendanceLogs: updatedMasterMap });
+
+        const targetVehId = selectedOverviewVehicleId !== 'all' ? selectedOverviewVehicleId : (vehicles[0]?.id || 'fleet_default');
+        if (targetVehId && schoolId) {
+            setDoc(doc(db, 'schools', schoolId, 'live_tracking', targetVehId), {
+                studentStatusMap: updatedSubMap,
+                lastStatusUpdate: new Date().toISOString()
+            }, { merge: true }).catch(console.error);
+        }
+
         showAlert(`All ${currentRouteAllocs.length} students marked boarded for today's trip!`, 'success');
     };
 
@@ -2305,16 +2327,44 @@ const Transport = () => {
                 const currentTracking = currentOverviewVeh ? (liveTrackingData[currentOverviewVeh.id] || {}) : {};
                 const isLive = currentTracking.isLive && (currentTracking.tripStatus === 'in_progress' || currentTracking.tripStatus === 'active');
                 const speed = currentTracking.speedKmH || 0;
-                const overviewRoute = currentOverviewVeh ? (routes.find(r => r.vehicleId === currentOverviewVeh.id) || routes[0] || null) : (routes[0] || null);
-                const overviewAllocations = overviewRoute ? allocations.filter(a => a.routeId === overviewRoute.id) : allocations;
+                const overviewRoute = currentOverviewVeh
+                    ? (routes.find(r => r.vehicleId === currentOverviewVeh.id) || routes.find(r => r.id === currentTracking.routeId) || routes[0] || null)
+                    : (routes[0] || null);
+
+                // Find all allocations for this vehicle or route
+                const overviewAllocations = allocations.filter(a => {
+                    if (currentOverviewVeh && (a.vehicleId === currentOverviewVeh.id || (currentOverviewVeh.regNo && a.vehicleRegNo === currentOverviewVeh.regNo))) return true;
+                    if (overviewRoute && a.routeId === overviewRoute.id) return true;
+                    return false;
+                });
 
                 const todayStr = new Date().toISOString().slice(0, 10);
                 const attKey = `${todayStr}_${overviewRoute?.id || 'all'}_${overviewTripType}`;
-                const currentAttMap = attendanceLogs[attKey] || {};
+                const altKeyWithVeh = `${todayStr}_${currentOverviewVeh?.id}_${overviewTripType}`;
+                const altKeyWithTripRoute = `${todayStr}_${currentTracking.routeId}_${overviewTripType}`;
+
+                // Real-time merge: 1. Live stream student status map from driver app GPS 2. Daily attendance logs in Firestore
+                const liveStudentStatusMap = currentTracking.studentStatusMap || {};
+                const docAttMap = {
+                    ...(attendanceLogs[altKeyWithVeh] || {}),
+                    ...(attendanceLogs[altKeyWithTripRoute] || {}),
+                    ...(attendanceLogs[attKey] || {})
+                };
+
+                const currentAttMap = {
+                    ...docAttMap,
+                    ...liveStudentStatusMap
+                };
 
                 const totalAssigned = overviewAllocations.length;
-                const boardedCount = overviewAllocations.filter(a => currentAttMap[a.studentId] === 'boarded').length;
-                const absentCount = overviewAllocations.filter(a => currentAttMap[a.studentId] === 'absent').length;
+                const boardedCount = overviewAllocations.filter(a => {
+                    const stId = a.studentId || a.id;
+                    return currentAttMap[stId] === 'boarded' || currentAttMap[a.studentId] === 'boarded' || currentAttMap[a.id] === 'boarded';
+                }).length;
+                const absentCount = overviewAllocations.filter(a => {
+                    const stId = a.studentId || a.id;
+                    return currentAttMap[stId] === 'absent' || currentAttMap[a.studentId] === 'absent' || currentAttMap[a.id] === 'absent';
+                }).length;
                 const pendingCount = Math.max(0, totalAssigned - boardedCount - absentCount);
                 const boardedPercent = totalAssigned > 0 ? Math.round((boardedCount / totalAssigned) * 100) : 0;
 
@@ -2622,8 +2672,15 @@ const Transport = () => {
                                     ) : (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                                             {overviewRoute.stops.map((stop, idx) => {
-                                                const stopStudents = overviewAllocations.filter(a => a.pickupStop && a.pickupStop.toLowerCase().trim() === stop.stopName.toLowerCase().trim());
-                                                const stopBoardedCount = stopStudents.filter(s => currentAttMap[s.studentId] === 'boarded').length;
+                                                const stopStudents = overviewAllocations.filter(a => {
+                                                    const stStop = (a.pickupStop || a.stopName || '').toLowerCase().trim();
+                                                    const rStop = (stop.stopName || '').toLowerCase().trim();
+                                                    return stStop === rStop;
+                                                });
+                                                const stopBoardedCount = stopStudents.filter(s => {
+                                                    const stId = s.studentId || s.id;
+                                                    return currentAttMap[stId] === 'boarded' || currentAttMap[s.studentId] === 'boarded' || currentAttMap[s.id] === 'boarded';
+                                                }).length;
 
                                                 return (
                                                     <div
@@ -2669,7 +2726,8 @@ const Transport = () => {
                                                                 </div>
                                                             ) : (
                                                                 stopStudents.map(student => {
-                                                                    const status = currentAttMap[student.studentId] || 'pending';
+                                                                    const stId = student.studentId || student.id;
+                                                                    const status = currentAttMap[stId] || currentAttMap[student.studentId] || currentAttMap[student.id] || 'pending';
 
                                                                     return (
                                                                         <div
@@ -2697,7 +2755,7 @@ const Transport = () => {
                                                                                 {/* Status Toggle Button */}
                                                                                 <button
                                                                                     type="button"
-                                                                                    onClick={() => handleToggleStudentBoarding(student.studentId, status)}
+                                                                                    onClick={() => handleToggleStudentBoarding(stId, status)}
                                                                                     style={{
                                                                                         padding: '0.2rem 0.5rem',
                                                                                         borderRadius: '4px',
