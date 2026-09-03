@@ -586,20 +586,30 @@ const Transport = () => {
                 activeRoute = routes[0];
             }
 
-            // Fixed Base Anchor for Static Stops & School Campus (Never shifts during simulation)
-            const fixedAnchorLat = deviceCoords?.lat || 33.6844;
-            const fixedAnchorLng = deviceCoords?.lng || 73.0479;
+            // Fixed Base Anchor for School Building (Exact pinpoint at detected device / school coords with ZERO offset)
+            const fixedAnchorLat = (schoolInfo?.latitude && Number(schoolInfo.latitude))
+                ? Number(schoolInfo.latitude)
+                : (deviceCoords?.lat || 33.6844);
+
+            const fixedAnchorLng = (schoolInfo?.longitude && Number(schoolInfo.longitude))
+                ? Number(schoolInfo.longitude)
+                : (deviceCoords?.lng || 73.0479);
+
+            // 3D Realistic School Building Terminal Pin (Exact Zero-Offset Pinpoint)
+            const schoolLatLng = L.latLng(fixedAnchorLat, fixedAnchorLng);
 
             // Draw Route Stops Sequence & Polyline if Route exists
             const routeCoords = [];
             if (activeRoute && Array.isArray(activeRoute.stops) && activeRoute.stops.length > 0) {
+                const totalStops = activeRoute.stops.length;
                 activeRoute.stops.forEach((stop, idx) => {
                     let lat = Number(stop.latitude);
                     let lng = Number(stop.longitude);
                     if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-                        // Spread coordinates realistically relative to anchor location
-                        lat = fixedAnchorLat + (idx * 0.006) - 0.008;
-                        lng = fixedAnchorLng + (idx * 0.008) - 0.006;
+                        // Natural approach path leading into the school campus
+                        const stepOffset = (totalStops - idx) * 0.004;
+                        lat = fixedAnchorLat - stepOffset - 0.002;
+                        lng = fixedAnchorLng - (stepOffset * 1.2) - 0.002;
                     }
 
                     const stopLatLng = L.latLng(lat, lng);
@@ -624,15 +634,14 @@ const Transport = () => {
                     markersGroup.addLayer(stopMarker);
                 });
 
-                // 3D Realistic School Building Terminal Pin
-                const schoolLatLng = L.latLng(fixedAnchorLat + 0.012, fixedAnchorLng + 0.012);
+                // Add school campus as the final destination terminal
                 routeCoords.push(schoolLatLng);
                 bounds.extend(schoolLatLng);
 
                 const school3DIcon = L.divIcon({
                     className: 'custom-school-3d-marker',
                     html: `
-                        <div style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.35));">
+                        <div style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: grab; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.35));">
                             <!-- 3D Isometric School Building Body -->
                             <div style="width: 52px; height: 42px; background: linear-gradient(135deg, #4f46e5 0%, #312e81 100%); border-radius: 8px 8px 4px 4px; border: 2.5px solid #a5b4fc; position: relative; box-shadow: 0 5px 0 #1e1b4b, 0 10px 20px rgba(0,0,0,0.35); display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 4px;">
                                 <!-- 3D Triangular Roof Pediment with Flag -->
@@ -662,12 +671,20 @@ const Transport = () => {
                     iconAnchor: [60, 48]
                 });
 
-                const schoolMarker = L.marker(schoolLatLng, { icon: school3DIcon }).bindPopup(`
+                const schoolMarker = L.marker(schoolLatLng, { icon: school3DIcon, draggable: true }).bindPopup(`
                     <div style="font-family: inherit; padding: 4px;">
                         <div style="font-weight: 800; color: #4f46e5; font-size: 13px;">🏫 ${schoolInfo.name || 'School Campus'}</div>
                         <div style="font-size: 11px; color: #64748b;">Central Transport Hub & Main Terminal</div>
+                        <div style="font-size: 10px; color: #10b981; margin-top: 3px; font-weight: 700;">💡 Tip: Drag pin to adjust exact school gate!</div>
                     </div>
                 `);
+
+                schoolMarker.on('dragend', (evt) => {
+                    const newPos = evt.target.getLatLng();
+                    setDeviceCoords({ lat: newPos.lat, lng: newPos.lng, city: 'Custom Pinned' });
+                    showAlert(`📍 School Campus pin set to: ${newPos.lat.toFixed(4)}, ${newPos.lng.toFixed(4)}`, 'success');
+                });
+
                 markersGroup.addLayer(schoolMarker);
 
                 // Initial Direct Road Line
