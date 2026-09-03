@@ -125,23 +125,66 @@ const Transport = () => {
     const mapInstanceRef = useRef(null);
     const markersLayerRef = useRef(null);
     const polylineLayerRef = useRef(null);
-    const [deviceCoords, setDeviceCoords] = useState(null); // { lat, lng } from PC / Laptop / Device
+    const [deviceCoords, setDeviceCoords] = useState(null); // { lat, lng, city }
     const [isLocatingDevice, setIsLocatingDevice] = useState(false);
 
-    // Auto-detect PC / Laptop / Device Location for Accurate Local Map Focus
+    // Fast & Free Auto IP City Fallback (No browser permission required)
+    const fetchIpFallbackLocation = async () => {
+        try {
+            const res = await fetch('https://ipapi.co/json/');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.latitude && data.longitude) {
+                    const coords = {
+                        lat: Number(data.latitude),
+                        lng: Number(data.longitude),
+                        city: data.city || data.region || ''
+                    };
+                    setDeviceCoords(coords);
+                    return coords;
+                }
+            }
+        } catch (e) {}
+
+        try {
+            const res2 = await fetch('https://ipwho.is/');
+            if (res2.ok) {
+                const data2 = await res2.json();
+                if (data2.latitude && data2.longitude) {
+                    const coords = {
+                        lat: Number(data2.latitude),
+                        lng: Number(data2.longitude),
+                        city: data2.city || ''
+                    };
+                    setDeviceCoords(coords);
+                    return coords;
+                }
+            }
+        } catch (e) {}
+
+        return null;
+    };
+
+    // Auto-detect PC / Laptop Location with IP Fallback
     useEffect(() => {
+        let isResolved = false;
         if (typeof window !== 'undefined' && navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
+                    isResolved = true;
                     const lat = pos.coords.latitude;
                     const lng = pos.coords.longitude;
-                    setDeviceCoords({ lat, lng });
+                    setDeviceCoords({ lat, lng, city: 'Exact GPS' });
                 },
-                (err) => {
-                    console.log("Device location info:", err?.message || err);
+                () => {
+                    if (!isResolved) {
+                        fetchIpFallbackLocation();
+                    }
                 },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
+                { enableHighAccuracy: true, timeout: 5000, maximumAge: 300000 }
             );
+        } else {
+            fetchIpFallbackLocation();
         }
     }, []);
 
@@ -2617,28 +2660,43 @@ const Transport = () => {
 
                                 <button
                                     type="button"
-                                    onClick={() => {
+                                    onClick={async () => {
+                                        setIsLocatingDevice(true);
+                                        let resolved = false;
+
+                                        const applyIpFallback = async () => {
+                                            const ipCoords = await fetchIpFallbackLocation();
+                                            setIsLocatingDevice(false);
+                                            if (ipCoords && mapInstanceRef.current) {
+                                                mapInstanceRef.current.setView([ipCoords.lat, ipCoords.lng], 13);
+                                                showAlert(`📍 Map focused on ${ipCoords.city || 'your region'} (Network IP)!`, 'success');
+                                            } else {
+                                                showAlert('Unable to detect location. Regional center active.', 'warning');
+                                            }
+                                        };
+
                                         if (navigator.geolocation) {
-                                            setIsLocatingDevice(true);
                                             navigator.geolocation.getCurrentPosition(
                                                 (pos) => {
+                                                    resolved = true;
                                                     setIsLocatingDevice(false);
                                                     const lat = pos.coords.latitude;
                                                     const lng = pos.coords.longitude;
-                                                    setDeviceCoords({ lat, lng });
+                                                    setDeviceCoords({ lat, lng, city: 'Exact GPS' });
                                                     if (mapInstanceRef.current) {
                                                         mapInstanceRef.current.setView([lat, lng], 15);
                                                     }
-                                                    showAlert('📍 Map centered on your device location!', 'success');
+                                                    showAlert('📍 Map centered on your exact GPS location!', 'success');
                                                 },
-                                                (err) => {
-                                                    setIsLocatingDevice(false);
-                                                    showAlert('Location permission not granted by browser.', 'warning');
+                                                () => {
+                                                    if (!resolved) {
+                                                        applyIpFallback();
+                                                    }
                                                 },
-                                                { enableHighAccuracy: true, timeout: 8000 }
+                                                { enableHighAccuracy: true, timeout: 3500 }
                                             );
                                         } else {
-                                            showAlert('Geolocation is not supported by your browser.', 'warning');
+                                            applyIpFallback();
                                         }
                                     }}
                                     className="btn hover-lift"
