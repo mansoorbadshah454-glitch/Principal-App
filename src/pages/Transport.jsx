@@ -546,13 +546,16 @@ const Transport = () => {
                 const map = L.map(mapContainerRef.current, {
                     center: [defaultLat, defaultLng],
                     zoom: 14,
+                    maxZoom: 22,
                     zoomControl: true,
                     attributionControl: false
                 });
 
-                // 100% Free OpenStreetMap Carto Tiles
+                // 100% Free OpenStreetMap Carto Tiles with High-Zoom Scaling
                 const initialTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19,
+                    maxZoom: 22,
+                    maxNativeZoom: 19,
+                    subdomains: 'abc',
                     attribution: '© OpenStreetMap'
                 }).addTo(map);
                 tileLayerRef.current = initialTile;
@@ -832,22 +835,26 @@ const Transport = () => {
         const tileConfigs = {
             osm2d: {
                 url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                maxZoom: 19,
+                maxZoom: 22,
+                maxNativeZoom: 19,
                 subdomains: 'abc'
             },
             clean2d: {
                 url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                maxZoom: 19,
+                maxZoom: 22,
+                maxNativeZoom: 19,
                 subdomains: 'abcd'
             },
             satellite2d: {
-                url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                maxZoom: 19,
-                subdomains: ''
+                url: 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                maxZoom: 22,
+                maxNativeZoom: 20,
+                subdomains: ['0', '1', '2', '3']
             },
             dark2d: {
                 url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                maxZoom: 19,
+                maxZoom: 22,
+                maxNativeZoom: 19,
                 subdomains: 'abcd'
             }
         };
@@ -858,7 +865,8 @@ const Transport = () => {
                 mapInstanceRef.current.removeLayer(tileLayerRef.current);
             }
             const newTile = L.tileLayer(cfg.url, {
-                maxZoom: cfg.maxZoom,
+                maxZoom: cfg.maxZoom || 22,
+                maxNativeZoom: cfg.maxNativeZoom || 19,
                 subdomains: cfg.subdomains || 'abc'
             }).addTo(mapInstanceRef.current);
             tileLayerRef.current = newTile;
