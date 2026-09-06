@@ -5,6 +5,7 @@ import { db, auth, messaging } from '../firebase';
 import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
 import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import PrincipalAiAssistant from '../components/PrincipalAiAssistant/PrincipalAiAssistant';
 
 const MainLayout = () => {
     const [isSuspended, setIsSuspended] = useState(false);
@@ -293,6 +294,7 @@ const MainLayout = () => {
             <main ref={mainContentRef} className="main-content" style={{ paddingTop: announcement ? '50px' : '0' }}>
                 <Outlet />
             </main>
+            {schoolId && <PrincipalAiAssistant schoolId={schoolId} />}
         </div>
     );
 };

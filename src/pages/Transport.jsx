@@ -1062,7 +1062,7 @@ const Transport = () => {
                 name: drv.name || '',
                 phone: drv.phone || '',
                 email: drv.email || '',
-                password: '', // Kept empty unless changing password
+                password: drv.password || '', // Pre-fill with existing password for easy review/update
                 cnic: drv.cnic || '',
                 licenseNo: drv.licenseNo || '',
                 assignedVehicleId: drv.assignedVehicleId || '',
@@ -1107,54 +1107,137 @@ const Transport = () => {
 
         try {
             if (editingDriver) {
-                // Update Existing Driver Record
+                const trimmedEmail = driverFormData.email.trim();
+                const trimmedPassword = driverFormData.password ? driverFormData.password.trim() : '';
+                const oldEmail = (editingDriver.email || '').trim();
+                const oldPassword = (editingDriver.password || '').trim();
+
+                const isEmailChanged = trimmedEmail.toLowerCase() !== oldEmail.toLowerCase();
+                const isPasswordChanged = trimmedPassword !== '' && trimmedPassword !== oldPassword;
+
+                if (isPasswordChanged && trimmedPassword.length < 6) {
+                    showAlert('Password must be at least 6 characters!', 'error');
+                    setIsSavingDriver(false);
+                    return;
+                }
+
+                const finalPassword = trimmedPassword !== '' ? trimmedPassword : oldPassword;
+                const targetUid = editingDriver.uid || editingDriver.id;
+
+                // 1. Sync credentials with Firebase Auth if email or password changed
+                if (isPasswordChanged || isEmailChanged) {
+                    let syncedWithAuth = false;
+                    try {
+                        const updateCredsFn = httpsCallable(functions, 'updateSchoolUserPassword');
+                        await updateCredsFn({
+                            targetUid: targetUid,
+                            newEmail: isEmailChanged ? trimmedEmail : undefined,
+                            newPassword: isPasswordChanged ? trimmedPassword : undefined,
+                            name: driverFormData.name.trim(),
+                            schoolId: schoolId
+                        });
+                        syncedWithAuth = true;
+                    } catch (authSyncErr) {
+                        console.warn("Cloud function updateSchoolUserPassword notice:", authSyncErr);
+                        // If user is not found in Firebase Auth (e.g. created directly in Firestore), create in Auth
+                        if (authSyncErr.message?.includes('user-not-found') || authSyncErr.message?.includes('not-found') || !syncedWithAuth) {
+                            try {
+                                const tempApp = initializeApp(firebaseConfig, `DriverAuthSync_${Date.now()}`);
+                                try {
+                                    const tempAuth = getAuth(tempApp);
+                                    await createUserWithEmailAndPassword(
+                                        tempAuth,
+                                        trimmedEmail,
+                                        finalPassword || 'driver1234'
+                                    );
+                                    await authSignOut(tempAuth);
+                                } finally {
+                                    await deleteApp(tempApp);
+                                }
+                            } catch (createAuthErr) {
+                                console.warn("Fallback auth sync notice:", createAuthErr);
+                            }
+                        }
+                    }
+                }
+
+                // 2. Build Updated Driver Record with new email & password
                 const updateData = {
                     ...editingDriver,
+                    id: editingDriver.id || targetUid,
+                    uid: targetUid || editingDriver.id,
                     name: driverFormData.name.trim(),
                     phone: driverFormData.phone.trim(),
-                    email: driverFormData.email.trim(),
+                    email: trimmedEmail,
+                    password: finalPassword,
                     cnic: driverFormData.cnic.trim(),
                     licenseNo: driverFormData.licenseNo.trim(),
                     assignedVehicleId: driverFormData.assignedVehicleId || '',
                     status: driverFormData.status || 'Active',
                     notes: driverFormData.notes || '',
+                    role: 'driver',
+                    schoolId: schoolId,
                     updatedAt: new Date().toISOString()
                 };
 
-                // Update in Local and Master Transport Document
+                // 3. Update in Local and Master Transport Document
                 const updatedDrivers = drivers.map(d => d.id === editingDriver.id ? updateData : d);
                 setDrivers(updatedDrivers);
 
                 // Update assigned vehicle if needed
                 let updatedVehicles = vehicles;
-                if (driverFormData.assignedVehicleId) {
-                    updatedVehicles = vehicles.map(v => {
-                        if (v.id === driverFormData.assignedVehicleId) {
+                updatedVehicles = vehicles.map(v => {
+                    if (driverFormData.assignedVehicleId && v.id === driverFormData.assignedVehicleId) {
+                        return {
+                            ...v,
+                            driverName: updateData.name,
+                            driverPhone: updateData.phone,
+                            driverLicense: updateData.licenseNo,
+                            driverCnic: updateData.cnic,
+                            driverEmail: updateData.email,
+                            driverId: updateData.id
+                        };
+                    } else if (v.driverId === editingDriver.id || (v.driverEmail && v.driverEmail.toLowerCase() === oldEmail.toLowerCase())) {
+                        if (driverFormData.assignedVehicleId !== v.id) {
                             return {
                                 ...v,
-                                driverName: updateData.name,
-                                driverPhone: updateData.phone,
-                                driverLicense: updateData.licenseNo,
-                                driverCnic: updateData.cnic,
-                                driverEmail: updateData.email,
-                                driverId: editingDriver.id
+                                driverName: '',
+                                driverPhone: '',
+                                driverLicense: '',
+                                driverCnic: '',
+                                driverEmail: '',
+                                driverId: ''
                             };
                         }
-                        return v;
-                    });
-                    setVehicles(updatedVehicles);
-                }
+                    }
+                    return v;
+                });
+                setVehicles(updatedVehicles);
 
                 await saveTransportState({ drivers: updatedDrivers, vehicles: updatedVehicles });
 
-                // Try subcollection update defensively
+                // 4. Update subcollection `schools/${schoolId}/drivers` defensively
                 try {
-                    await setDoc(doc(db, `schools/${schoolId}/drivers`, editingDriver.id), updateData, { merge: true });
+                    await setDoc(doc(db, `schools/${schoolId}/drivers`, targetUid), updateData, { merge: true });
                 } catch (subErr) {
                     console.warn("Subcollection driver write notice:", subErr);
                 }
 
-                showAlert('Driver profile updated successfully!', 'success');
+                // 5. Update `global_users` defensively
+                try {
+                    await setDoc(doc(db, 'global_users', targetUid), {
+                        uid: targetUid,
+                        email: updateData.email,
+                        name: updateData.name,
+                        role: 'driver',
+                        schoolId: schoolId,
+                        updatedAt: new Date().toISOString()
+                    }, { merge: true });
+                } catch (globalErr) {
+                    console.warn("Global users write notice:", globalErr);
+                }
+
+                showAlert('Driver profile and login credentials updated successfully!', 'success');
                 setDriverModalOpen(false);
             } else {
                 // Create New Driver

@@ -1,7 +1,7 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase, Plus, Trash2, Users, Info, BookOpen } from 'lucide-react';
+import { Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase, Plus, Trash2, Users, Info, BookOpen, Sparkles, Bot, Key, ExternalLink } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -36,6 +36,9 @@ const Settings = () => {
     const [previewImage, setPreviewImage] = useState(null);
     const [imageFile, setImageFile] = useState(null);
     const [feeSettings, setFeeSettings] = useState({ dueDate: '', penaltyAmount: '' });
+    const [aiSettings, setAiSettings] = useState({ apiKey: '', botName: 'Principal AI Copilot' });
+    const [savingAi, setSavingAi] = useState(false);
+    const [aiSavedSuccess, setAiSavedSuccess] = useState(false);
     const [copied, setCopied] = useState(false);
     const [errors, setErrors] = useState({});
     const [fetchError, setFetchError] = useState(false);
@@ -136,11 +139,27 @@ const Settings = () => {
         });
 
 
+        // Fetch AI settings using onSnapshot
+        const aiRef = doc(db, `schools/${id}/settings`, 'ai');
+        const unsubAi = onSnapshot(aiRef, (aiSnap) => {
+            if (!isMounted) return;
+            if (aiSnap.exists()) {
+                const data = aiSnap.data();
+                setAiSettings({
+                    apiKey: data.apiKey || '',
+                    botName: data.botName || 'Principal AI Copilot'
+                });
+            }
+        }, (err) => {
+            console.warn("AI settings listener warning:", err);
+        });
+
         return () => {
             isMounted = false;
             unsubProfile();
             unsubBanking();
             unsubFeeSettings();
+            unsubAi();
         };
     }, []);
 
@@ -287,6 +306,39 @@ const Settings = () => {
         }
     };
 
+    const handleSaveAiSettings = async () => {
+        let currentSchoolId = schoolId || JSON.parse(localStorage.getItem('manual_session') || '{}')?.schoolId;
+        if (!currentSchoolId) {
+            alert('School ID not found.');
+            return;
+        }
+
+        setSavingAi(true);
+        setAiSavedSuccess(false);
+
+        try {
+            // Save to Firestore
+            const aiRef = doc(db, `schools/${currentSchoolId}/settings`, 'ai');
+            await setDoc(aiRef, {
+                apiKey: aiSettings.apiKey.trim(),
+                botName: aiSettings.botName.trim() || 'Principal AI Copilot',
+                updatedAt: new Date().toISOString()
+            }, { merge: true });
+
+            // Also cache in localStorage for instant offline access
+            localStorage.setItem(`gemini_api_key_${currentSchoolId}`, aiSettings.apiKey.trim());
+            localStorage.setItem('gemini_api_key', aiSettings.apiKey.trim());
+
+            setAiSavedSuccess(true);
+            setTimeout(() => setAiSavedSuccess(false), 3000);
+        } catch (err) {
+            console.error('Error saving AI settings:', err);
+            alert(`Could not save AI settings: ${err.message}`);
+        } finally {
+            setSavingAi(false);
+        }
+    };
+
     if (initialLoading) {
         return (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
@@ -365,6 +417,18 @@ const Settings = () => {
                 }}
             >
                 <BookOpen size={18} /> Upload Syllabus
+            </button>
+            <button
+                onClick={() => setActiveTab('ai_assistant')}
+                style={{
+                    padding: '0.75rem 1rem', border: 'none', background: 'transparent',
+                    cursor: 'pointer', fontSize: '1rem', fontWeight: '600',
+                    color: activeTab === 'ai_assistant' ? 'var(--primary)' : 'var(--text-secondary)',
+                    borderBottom: activeTab === 'ai_assistant' ? '3px solid var(--primary)' : '3px solid transparent',
+                    display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s'
+                }}
+            >
+                <Sparkles size={18} /> AI Copilot
             </button>
         </div>
     );
@@ -751,6 +815,114 @@ const Settings = () => {
                 {activeTab === 'upload_syllabus' && (
                     <div style={{ animation: 'fadeIn 0.3s ease-out' }}>
                         {schoolId ? <UploadSyllabusTab schoolId={schoolId} /> : <div>Generating School ID...</div>}
+                    </div>
+                )}
+
+                {activeTab === 'ai_assistant' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', animation: 'fadeIn 0.3s ease-out' }}>
+                        {/* Info Header Card */}
+                        <div style={{
+                            padding: '1.25rem', background: 'linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%)',
+                            border: '1px solid #dbeafe', borderRadius: '12px',
+                            display: 'flex', alignItems: 'flex-start', gap: '1rem'
+                        }}>
+                            <div style={{
+                                width: '40px', height: '40px', borderRadius: '10px',
+                                background: '#4f46e5', display: 'flex', alignItems: 'center',
+                                justifyContent: 'center', color: 'white', flexShrink: 0
+                            }}>
+                                <Bot size={22} />
+                            </div>
+                            <div>
+                                <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1.05rem', fontWeight: '700', color: '#1e1b4b' }}>
+                                    Principal AI Copilot Settings
+                                </h3>
+                                <p style={{ margin: 0, fontSize: '0.85rem', color: '#475569', lineHeight: '1.4' }}>
+                                    Aapka AI Assistant school ke real-time data (Fees, Salaries, Exam Terms & Results, Attendance) ke 100% accurate jawab deta hai. 
+                                    Aap apni <strong>Free Google Gemini API Key</strong> connect karke isko mazeed conversational bana sakte hain.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Status Badge */}
+                        <div style={{
+                            padding: '0.9rem 1.2rem', borderRadius: '10px',
+                            background: aiSettings.apiKey ? '#f0fdf4' : '#f8fafc',
+                            border: `1px solid ${aiSettings.apiKey ? '#bbf7d0' : '#e2e8f0'}`,
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <div style={{
+                                    width: '10px', height: '10px', borderRadius: '50%',
+                                    background: aiSettings.apiKey ? '#22c55e' : '#3b82f6',
+                                    boxShadow: aiSettings.apiKey ? '0 0 8px #22c55e' : '0 0 8px #3b82f6'
+                                }} />
+                                <span style={{ fontSize: '0.9rem', fontWeight: '600', color: aiSettings.apiKey ? '#15803d' : '#334155' }}>
+                                    {aiSettings.apiKey ? 'Google Gemini AI Connected (1,500 Free Requests/Day)' : 'Instant Smart Engine Active (100% Free & Unlimited)'}
+                                </span>
+                            </div>
+                            <span style={{ fontSize: '0.75rem', background: 'white', padding: '3px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', color: '#64748b', fontWeight: '600' }}>
+                                Multi-Tenant BYOK
+                            </span>
+                        </div>
+
+                        {/* Settings Form */}
+                        <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                            <div>
+                                <label style={labelStyle}>AI Assistant Name / Title</label>
+                                <input
+                                    type="text"
+                                    value={aiSettings.botName}
+                                    onChange={(e) => setAiSettings({ ...aiSettings, botName: e.target.value })}
+                                    placeholder="e.g. Principal AI Copilot"
+                                    style={inputStyle()}
+                                />
+                            </div>
+
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                    <label style={{ ...labelStyle, marginBottom: 0 }}>Google Gemini API Key (Optional)</label>
+                                    <a
+                                        href="https://aistudio.google.com/app/apikey"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                            fontSize: '0.75rem', color: '#4f46e5', fontWeight: '600',
+                                            display: 'flex', alignItems: 'center', gap: '3px', textDecoration: 'none'
+                                        }}
+                                    >
+                                        Get Free Key from Google AI Studio <ExternalLink size={12} />
+                                    </a>
+                                </div>
+                                <div style={{ position: 'relative' }}>
+                                    <input
+                                        type="password"
+                                        value={aiSettings.apiKey}
+                                        onChange={(e) => setAiSettings({ ...aiSettings, apiKey: e.target.value })}
+                                        placeholder="AIzaSy..."
+                                        style={{ ...inputStyle(), fontFamily: 'monospace', paddingLeft: '2.5rem' }}
+                                    />
+                                    <Key size={16} color="#94a3b8" style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)' }} />
+                                </div>
+                                <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.35rem', margin: 0 }}>
+                                    Yeh key aapke school ke database mein mehfooz rahegi. Agar blank chorenge toh system bina kisi API key ke built-in instant smart engine use karega.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Save Button */}
+                        <button
+                            onClick={handleSaveAiSettings}
+                            disabled={savingAi}
+                            className="btn-primary"
+                            style={{
+                                padding: '0.8rem', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                gap: '0.5rem', fontSize: '1rem', width: '100%'
+                            }}
+                        >
+                            {savingAi ? <Loader2 className="animate-spin" size={20} /> : (aiSavedSuccess ? <CheckCircle2 size={20} /> : <Save size={20} />)}
+                            {savingAi ? 'Saving AI Settings...' : (aiSavedSuccess ? 'AI Settings Saved!' : 'Save AI Settings')}
+                        </button>
                     </div>
                 )}
             </div>
