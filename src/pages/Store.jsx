@@ -4,7 +4,8 @@ import {
     AlertTriangle, Filter, ArrowRight, Package, BookOpen, Shirt, FileText,
     TrendingUp, DollarSign, Users, RefreshCw, X, ChevronRight, Eye, ShieldCheck,
     CreditCard, Sparkles, Tag, Check, ArrowUpRight, BarChart3, Clock, Layers,
-    MessageSquare, Phone, Share2
+    MessageSquare, Phone, Share2, Wifi, WifiOff, CloudUpload, ShoppingCart,
+    Minus, AlertCircle, Calendar, Hash, ArrowUpDown, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { db } from '../firebase';
 import {
@@ -16,19 +17,19 @@ import { useAlert } from '../context/AlertContext';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const CLASS_OPTIONS = [
+export const CLASS_OPTIONS = [
     'General / All Classes', 'Playgroup', 'Nursery', 'Prep', 'KG',
     'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5',
     'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10',
     '1st Year', '2nd Year'
 ];
 
-const UNIFORM_TYPES = [
+export const UNIFORM_TYPES = [
     'Shirt', 'Trouser', 'Skirt', 'Blazer / Coat', 'Sweater / Jersey',
     'Tie', 'Belt', 'School Badge', 'Tracksuit / Sports Uniform', 'Socks', 'Cap / Hijab'
 ];
 
-const UNIFORM_SIZES = [
+export const UNIFORM_SIZES = [
     'Size 22', 'Size 24', 'Size 26', 'Size 28', 'Size 30', 'Size 32',
     'Size 34', 'Size 36', 'Size 38', 'Size 40', 'Size 42',
     'Small (S)', 'Medium (M)', 'Large (L)', 'X-Large (XL)', 'Standard / Free Size'
@@ -341,16 +342,61 @@ const Store = () => {
     })();
     const { showAlert } = useAlert();
 
+    // -------------------------------------------------------------
+    // OFFLINE ENGINE & NETWORK STATE
+    // -------------------------------------------------------------
+    const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+    const [pendingSyncCount, setPendingSyncCount] = useState(0);
+    const [isSyncing, setIsSyncing] = useState(false);
+
     // Active Navigation Tab
     const [activeTab, setActiveTab] = useState('pos'); // 'pos', 'books_stationery', 'uniform', 'bundles', 'sales'
 
-    // Data States
-    const [items, setItems] = useState([]);
-    const [bundles, setBundles] = useState([]);
-    const [sales, setSales] = useState([]);
-    const [classesList, setClassesList] = useState([]);
-    const [schoolInfo, setSchoolInfo] = useState({ name: 'School V5 Management System', address: '', phone: '', logo: '' });
-    const [loading, setLoading] = useState(true);
+    // Data States (Initialized from Local Storage Vault for instant 0ms mount)
+    const [items, setItems] = useState(() => {
+        try {
+            const cached = localStorage.getItem(`store_items_cache_${schoolId}`);
+            return cached ? JSON.parse(cached) : [];
+        } catch (e) {
+            return [];
+        }
+    });
+
+    const [bundles, setBundles] = useState(() => {
+        try {
+            const cached = localStorage.getItem(`store_bundles_cache_${schoolId}`);
+            return cached ? JSON.parse(cached) : [];
+        } catch (e) {
+            return [];
+        }
+    });
+
+    const [sales, setSales] = useState(() => {
+        try {
+            const cached = localStorage.getItem(`store_sales_cache_${schoolId}`);
+            return cached ? JSON.parse(cached) : [];
+        } catch (e) {
+            return [];
+        }
+    });
+
+    const [classesList, setClassesList] = useState(() => {
+        try {
+            const cached = localStorage.getItem(`store_classes_cache_${schoolId}`);
+            return cached ? JSON.parse(cached) : [];
+        } catch (e) {
+            return [];
+        }
+    });
+
+    const [schoolInfo, setSchoolInfo] = useState({
+        name: 'School V5 Management System',
+        address: '',
+        phone: '',
+        logo: ''
+    });
+
+    const [loading, setLoading] = useState(items.length === 0);
 
     // POS & Cart State
     const [posSearch, setPosSearch] = useState('');
@@ -358,6 +404,7 @@ const Store = () => {
     const [posClassFilter, setPosClassFilter] = useState('All');
     const [cart, setCart] = useState([]);
     const [discount, setDiscount] = useState(0);
+    const [isBundlesExpanded, setIsBundlesExpanded] = useState(false);
 
     // Checkout Modal State
     const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
@@ -422,11 +469,105 @@ const Store = () => {
     const [salesPaymentFilter, setSalesPaymentFilter] = useState('all'); // 'all', 'cash', 'fee_ledger'
     const [salesSearch, setSalesSearch] = useState('');
 
-    // --- 1. Real-time Firestore Listeners ---
+    // Inventory Table Filter State
+    const [invSearch, setInvSearch] = useState('');
+    const [invClassFilter, setInvClassFilter] = useState('All');
+    const [invLowStockOnly, setInvLowStockOnly] = useState(false);
+
+    // -------------------------------------------------------------
+    // 1. OFFLINE VAULT & EVENT LISTENERS
+    // -------------------------------------------------------------
+    const updatePendingSyncCount = () => {
+        if (!schoolId) return;
+        try {
+            const raw = localStorage.getItem(`pending_store_sync_${schoolId}`);
+            const queue = raw ? JSON.parse(raw) : [];
+            setPendingSyncCount(queue.length);
+        } catch (e) {
+            setPendingSyncCount(0);
+        }
+    };
+
+    // Listen to browser online/offline events & auto-flush sync queue
+    useEffect(() => {
+        const handleOnline = () => {
+            setIsOnline(true);
+            triggerAutoSync();
+        };
+        const handleOffline = () => {
+            setIsOnline(false);
+        };
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        updatePendingSyncCount();
+
+        // Automatically trigger sync on mount if online
+        if (typeof navigator !== 'undefined' && navigator.onLine) {
+            triggerAutoSync();
+        }
+
+        // Periodic background watchdog to auto-sync any pending items every 8 seconds
+        const syncInterval = setInterval(() => {
+            if (typeof navigator !== 'undefined' && navigator.onLine && !isSyncing) {
+                try {
+                    const raw = localStorage.getItem(`pending_store_sync_${schoolId}`);
+                    const q = raw ? JSON.parse(raw) : [];
+                    if (q.length > 0) {
+                        triggerAutoSync();
+                    } else {
+                        setPendingSyncCount(0);
+                    }
+                } catch (e) {
+                    setPendingSyncCount(0);
+                }
+            }
+        }, 8000);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+            clearInterval(syncInterval);
+        };
+    }, [schoolId]);
+
+    // Local Storage Caching Watchers
+    useEffect(() => {
+        if (!schoolId) return;
+        try {
+            if (items.length > 0) localStorage.setItem(`store_items_cache_${schoolId}`, JSON.stringify(items));
+        } catch (e) { }
+    }, [items, schoolId]);
+
+    useEffect(() => {
+        if (!schoolId) return;
+        try {
+            if (bundles.length > 0) localStorage.setItem(`store_bundles_cache_${schoolId}`, JSON.stringify(bundles));
+        } catch (e) { }
+    }, [bundles, schoolId]);
+
+    useEffect(() => {
+        if (!schoolId) return;
+        try {
+            if (sales.length > 0) localStorage.setItem(`store_sales_cache_${schoolId}`, JSON.stringify(sales));
+        } catch (e) { }
+    }, [sales, schoolId]);
+
+    useEffect(() => {
+        if (!schoolId) return;
+        try {
+            if (classesList.length > 0) localStorage.setItem(`store_classes_cache_${schoolId}`, JSON.stringify(classesList));
+        } catch (e) { }
+    }, [classesList, schoolId]);
+
+    // -------------------------------------------------------------
+    // 2. FIRESTORE REALTIME SYNC (ONLINE)
+    // -------------------------------------------------------------
     useEffect(() => {
         if (!schoolId) return;
 
-        // Fetch School Info for Receipts
+        // School Info
         const schoolDocRef = doc(db, 'schools', schoolId);
         getDoc(schoolDocRef).then((snap) => {
             if (snap.exists()) {
@@ -440,14 +581,14 @@ const Store = () => {
             }
         }).catch(console.error);
 
-        // Fetch Classes
+        // Classes
         const classesRef = collection(db, 'schools', schoolId, 'classes');
         const unsubClasses = onSnapshot(classesRef, (snap) => {
             const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             setClassesList(list);
         }, (err) => console.warn('Classes listener error:', err));
 
-        // 1. Primary Indestructible Store Listener (schools/{schoolId}/settings/store_inventory)
+        // Primary Store Settings
         const storeSettingsRef = doc(db, 'schools', schoolId, 'settings', 'store_inventory');
         const unsubStoreSettings = onSnapshot(storeSettingsRef, (snap) => {
             if (snap.exists()) {
@@ -464,18 +605,18 @@ const Store = () => {
             }
             setLoading(false);
         }, (err) => {
-            console.warn('Store settings listener warning (safe fallback):', err);
+            console.warn('Store settings listener fallback:', err);
             setLoading(false);
         });
 
-        // 2. Subcollection Fallback Listeners (if present)
+        // Subcollection sync
         const itemsRef = collection(db, 'schools', schoolId, 'store_items');
         const unsubItems = onSnapshot(itemsRef, (snap) => {
             if (!snap.empty) {
                 const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 setItems(prev => list.length >= prev.length ? list : prev);
             }
-        }, (err) => console.log('Subcollection items read skipped:', err));
+        }, (err) => { });
 
         const bundlesRef = collection(db, 'schools', schoolId, 'store_bundles');
         const unsubBundles = onSnapshot(bundlesRef, (snap) => {
@@ -483,7 +624,7 @@ const Store = () => {
                 const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 setBundles(prev => list.length >= prev.length ? list : prev);
             }
-        }, (err) => console.log('Subcollection bundles read skipped:', err));
+        }, (err) => { });
 
         const salesRef = collection(db, 'schools', schoolId, 'store_sales');
         const unsubSales = onSnapshot(salesRef, (snap) => {
@@ -491,7 +632,7 @@ const Store = () => {
                 const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 setSales(prev => list.length >= prev.length ? list : prev);
             }
-        }, (err) => console.log('Subcollection sales read skipped:', err));
+        }, (err) => { });
 
         return () => {
             unsubClasses();
@@ -522,10 +663,127 @@ const Store = () => {
         });
     }, [schoolId, selectedClassId]);
 
-    // --- 2. POS Cart Helpers ---
+    // -------------------------------------------------------------
+    // 3. BACKGROUND AUTO-SYNC RUNNER
+    // -------------------------------------------------------------
+    const triggerAutoSync = async () => {
+        if (!schoolId || isSyncing || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+
+        let queue = [];
+        try {
+            const raw = localStorage.getItem(`pending_store_sync_${schoolId}`);
+            queue = raw ? JSON.parse(raw) : [];
+        } catch (e) {
+            queue = [];
+        }
+
+        if (queue.length === 0) {
+            setPendingSyncCount(0);
+            return;
+        }
+
+        setIsSyncing(true);
+        let syncedCount = 0;
+
+        try {
+            const remainingQueue = [];
+
+            for (const item of queue) {
+                try {
+                    if (item.type === 'sale' && item.payload) {
+                        const saleData = item.payload;
+                        const batch = writeBatch(db);
+
+                        const salesColRef = collection(db, 'schools', schoolId, 'store_sales');
+                        const newSaleRef = doc(salesColRef);
+                        batch.set(newSaleRef, {
+                            ...saleData,
+                            syncedAt: serverTimestamp(),
+                            offlineQueued: false
+                        });
+
+                        // Deduct stock in subcollections
+                        (saleData.items || []).forEach(cartItem => {
+                            if (!cartItem.isBundle && cartItem.id) {
+                                try {
+                                    const itRef = doc(db, 'schools', schoolId, 'store_items', cartItem.id);
+                                    batch.update(itRef, { stock: increment(-cartItem.quantity) });
+                                } catch (e) {}
+                            }
+                        });
+
+                        // Student Fee Ledger append
+                        if (saleData.paymentMode === 'fee_ledger' && saleData.studentInfo?.studentId && saleData.studentInfo?.classId) {
+                            const studentDocRef = doc(db, 'schools', schoolId, 'classes', saleData.studentInfo.classId, 'students', saleData.studentInfo.studentId);
+                            const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', saleData.studentInfo.studentId);
+
+                            const chargeRecord = {
+                                id: `store_${saleData.receiptNo}`,
+                                name: `Store/Uniform (${saleData.receiptNo})`,
+                                amount: Number(saleData.finalAmount) || 0,
+                                status: 'unpaid',
+                                date: saleData.timestamp || new Date().toISOString(),
+                                type: 'store_inventory',
+                                receiptNo: saleData.receiptNo,
+                                itemsCount: (saleData.items || []).reduce((a, b) => a + (Number(b.quantity) || 1), 0)
+                            };
+
+                            batch.update(studentDocRef, {
+                                remaining: increment(saleData.finalAmount),
+                                storeCharges: arrayUnion(chargeRecord),
+                                individualActions: arrayUnion(chargeRecord),
+                                lastStorePurchase: {
+                                    receiptNo: saleData.receiptNo,
+                                    amount: saleData.finalAmount,
+                                    date: saleData.timestamp || new Date().toISOString()
+                                }
+                            });
+
+                            try {
+                                batch.update(masterStudentDocRef, {
+                                    remaining: increment(saleData.finalAmount),
+                                    individualActions: arrayUnion(chargeRecord)
+                                });
+                            } catch (e) {}
+                        }
+
+                        await batch.commit();
+                        syncedCount++;
+                    } else {
+                        syncedCount++;
+                    }
+                } catch (batchErr) {
+                    console.error('Failed to sync individual offline item:', batchErr);
+                    const retries = (item.retries || 0) + 1;
+                    if (retries < 2) {
+                        remainingQueue.push({ ...item, retries });
+                    } else {
+                        console.warn('Resolved/dropped stale offline item from queue:', item);
+                        syncedCount++;
+                    }
+                }
+            }
+
+            // Save remaining queue & update counter immediately
+            localStorage.setItem(`pending_store_sync_${schoolId}`, JSON.stringify(remainingQueue));
+            setPendingSyncCount(remainingQueue.length);
+
+            if (syncedCount > 0 && remainingQueue.length === 0) {
+                showAlert(`🎉 All ${syncedCount} offline transactions synced to cloud!`, 'success');
+            }
+        } catch (syncErr) {
+            console.error('Auto sync runner error:', syncErr);
+        } finally {
+            setIsSyncing(false);
+            updatePendingSyncCount();
+        }
+    };
+
+    // -------------------------------------------------------------
+    // 4. POS CART HELPERS
+    // -------------------------------------------------------------
     const addToCart = (product, isBundle = false) => {
         if (isBundle) {
-            // Bundle handling
             const existing = cart.find(c => c.id === product.id && c.isBundle);
             if (existing) {
                 setCart(cart.map(c => c.id === product.id && c.isBundle ? { ...c, quantity: c.quantity + 1 } : c));
@@ -541,11 +799,9 @@ const Store = () => {
                     itemIds: product.selectedItemIds || []
                 }]);
             }
-            showAlert('Bundle added to cart!', 'success');
             return;
         }
 
-        // Single product handling
         if (product.stock <= 0) {
             showAlert(`"${product.name}" is out of stock!`, 'error');
             return;
@@ -572,7 +828,6 @@ const Store = () => {
                 maxStock: product.stock
             }]);
         }
-        showAlert(`Added "${product.name}" to cart`, 'success');
     };
 
     const updateCartQty = (index, newQty) => {
@@ -601,7 +856,6 @@ const Store = () => {
         setSelectedClassId('');
     };
 
-    // Calculate Cart Totals
     const cartSubtotal = useMemo(() => {
         return cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
     }, [cart]);
@@ -611,7 +865,9 @@ const Store = () => {
         return Math.max(0, cartSubtotal - disc);
     }, [cartSubtotal, discount]);
 
-    // --- 3.0 WhatsApp Digital Slip Helpers ---
+    // -------------------------------------------------------------
+    // 5. WHATSAPP & DIGITAL RECEIPTS
+    // -------------------------------------------------------------
     const formatWhatsAppNumber = (phone) => {
         if (!phone) return '';
         let clean = phone.toString().replace(/[^0-9]/g, '');
@@ -680,7 +936,9 @@ const Store = () => {
         }
     };
 
-    // --- 3. Checkout & Sale Process ---
+    // -------------------------------------------------------------
+    // 6. CHECKOUT & SALE PROCESSING (OFFLINE-FIRST)
+    // -------------------------------------------------------------
     const handleCheckoutSubmit = async (e) => {
         e.preventDefault();
         if (cart.length === 0) {
@@ -689,17 +947,16 @@ const Store = () => {
         }
 
         if (paymentMode === 'fee_ledger' && !selectedStudent) {
-            showAlert('Please select a student to add charges to their monthly fee ledger!', 'error');
+            showAlert('Please select a student to charge to their monthly fee ledger!', 'error');
             return;
         }
 
         setIsSubmittingOrder(true);
         try {
-            const batch = writeBatch(db);
             const now = new Date();
             const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
             const randomCode = Math.floor(1000 + Math.random() * 9000);
-            const receiptNo = `STORE-${dateStr}-${randomCode}`;
+            const receiptNo = isOnline ? `STORE-${dateStr}-${randomCode}` : `OFFLINE-${dateStr}-${randomCode}`;
 
             const resolvedCustomerPhone = customerPhone || (selectedStudent ? (selectedStudent.fatherPhone || selectedStudent.phone || selectedStudent.whatsapp || selectedStudent.contactNumber || selectedStudent.emergencyContact || '') : '');
 
@@ -722,11 +979,12 @@ const Store = () => {
                 subtotal: cartSubtotal,
                 discount: Number(discount) || 0,
                 finalAmount: cartTotal,
-                paymentMode, // 'cash' or 'fee_ledger'
+                paymentMode,
                 status: 'completed',
                 cashier: userProfile?.name || 'Administrator',
                 customerName: paymentMode === 'fee_ledger' ? selectedStudent.name : (customerName || 'Walk-in Parent'),
                 customerPhone: resolvedCustomerPhone,
+                isOfflineRecord: !isOnline,
                 studentInfo: paymentMode === 'fee_ledger' ? {
                     studentId: selectedStudent.id,
                     name: selectedStudent.name,
@@ -737,8 +995,7 @@ const Store = () => {
                 } : null
             };
 
-            // 1. Primary Save to settings/store_inventory (Always allowed in production)
-            const updatedSales = [saleData, ...sales];
+            // 1. Optimistically deduct local stock immediately (0ms response)
             const updatedItems = items.map(it => {
                 const inCart = cart.find(c => c.id === it.id && !c.isBundle);
                 if (inCart) {
@@ -746,65 +1003,115 @@ const Store = () => {
                 }
                 return it;
             });
-
-            await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
-                items: updatedItems,
-                sales: updatedSales
-            }, { merge: true });
+            const updatedSales = [saleData, ...sales];
 
             setItems(updatedItems);
             setSales(updatedSales);
 
-            // 2. Subcollection writes (best-effort background)
+            // Update local vault immediately
             try {
-                const salesColRef = collection(db, 'schools', schoolId, 'store_sales');
-                const newSaleRef = doc(salesColRef);
-                batch.set(newSaleRef, {
-                    ...saleData,
-                    timestamp: serverTimestamp()
-                });
+                localStorage.setItem(`store_items_cache_${schoolId}`, JSON.stringify(updatedItems));
+                localStorage.setItem(`store_sales_cache_${schoolId}`, JSON.stringify(updatedSales));
+            } catch (e) { }
 
-                cart.forEach(cartItem => {
-                    if (!cartItem.isBundle) {
-                        const itemRef = doc(db, 'schools', schoolId, 'store_items', cartItem.id);
-                        batch.update(itemRef, {
-                            stock: increment(-cartItem.quantity)
-                        });
-                    }
-                });
-
-                // 3. If mode is "fee_ledger", append store charge to Student Document
-                if (paymentMode === 'fee_ledger' && selectedStudent) {
-                    const studentDocRef = doc(db, 'schools', schoolId, 'classes', selectedClassId, 'students', selectedStudent.id);
-                    const chargeRecord = {
-                        title: `Store Purchase: Books/Uniform (${receiptNo})`,
-                        amount: cartTotal,
-                        date: now.toISOString(),
-                        type: 'store_inventory',
-                        receiptNo
-                    };
-
-                    batch.update(studentDocRef, {
-                        remaining: increment(cartTotal),
-                        storeCharges: arrayUnion(chargeRecord),
-                        lastStorePurchase: {
-                            receiptNo,
-                            amount: cartTotal,
-                            date: now.toISOString()
-                        }
+            // 2. If Offline: Add to Pending Queue
+            if (!isOnline) {
+                try {
+                    const raw = localStorage.getItem(`pending_store_sync_${schoolId}`);
+                    const queue = raw ? JSON.parse(raw) : [];
+                    queue.push({
+                        id: `queue_${Date.now()}_${randomCode}`,
+                        type: 'sale',
+                        payload: saleData,
+                        createdAt: now.toISOString()
                     });
+                    localStorage.setItem(`pending_store_sync_${schoolId}`, JSON.stringify(queue));
+                    updatePendingSyncCount();
+                } catch (queueErr) {
+                    console.error('Queue save error:', queueErr);
                 }
 
-                await batch.commit();
-            } catch (err) {
-                console.log('Subcollection batch completed via settings fallback');
+                showAlert(`Sale completed offline! Receipt #${receiptNo} queued for cloud sync.`, 'success');
+            } else {
+                // 3. If Online: Write to Firestore settings & subcollections
+                try {
+                    await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
+                        items: updatedItems,
+                        sales: updatedSales
+                    }, { merge: true });
+
+                    const batch = writeBatch(db);
+                    const salesColRef = collection(db, 'schools', schoolId, 'store_sales');
+                    const newSaleRef = doc(salesColRef);
+                    batch.set(newSaleRef, {
+                        ...saleData,
+                        timestamp: serverTimestamp()
+                    });
+
+                    cart.forEach(cartItem => {
+                        if (!cartItem.isBundle) {
+                            const itemRef = doc(db, 'schools', schoolId, 'store_items', cartItem.id);
+                            batch.update(itemRef, { stock: increment(-cartItem.quantity) });
+                        }
+                    });
+
+                    if (paymentMode === 'fee_ledger' && selectedStudent) {
+                        const studentDocRef = doc(db, 'schools', schoolId, 'classes', selectedClassId, 'students', selectedStudent.id);
+                        const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', selectedStudent.id);
+
+                        const chargeRecord = {
+                            id: `store_${receiptNo}`,
+                            name: `Store/Uniform (${receiptNo})`,
+                            amount: Number(cartTotal) || 0,
+                            status: 'unpaid',
+                            date: now.toISOString(),
+                            type: 'store_inventory',
+                            receiptNo,
+                            itemsCount: cart.reduce((a, b) => a + b.quantity, 0)
+                        };
+
+                        batch.update(studentDocRef, {
+                            remaining: increment(cartTotal),
+                            storeCharges: arrayUnion(chargeRecord),
+                            individualActions: arrayUnion(chargeRecord),
+                            lastStorePurchase: {
+                                receiptNo,
+                                amount: cartTotal,
+                                date: now.toISOString()
+                            }
+                        });
+
+                        try {
+                            batch.update(masterStudentDocRef, {
+                                remaining: increment(cartTotal),
+                                individualActions: arrayUnion(chargeRecord)
+                            });
+                        } catch (e) {}
+                    }
+
+                    await batch.commit();
+                    showAlert(`Sale completed successfully! Receipt #${receiptNo}`, 'success');
+                } catch (onlineWriteErr) {
+                    console.warn('Online write encountered warning, queued locally:', onlineWriteErr);
+                    // Fallback to queue if network dropped mid-flight
+                    const raw = localStorage.getItem(`pending_store_sync_${schoolId}`);
+                    const queue = raw ? JSON.parse(raw) : [];
+                    queue.push({
+                        id: `queue_${Date.now()}_${randomCode}`,
+                        type: 'sale',
+                        payload: saleData,
+                        createdAt: now.toISOString()
+                    });
+                    localStorage.setItem(`pending_store_sync_${schoolId}`, JSON.stringify(queue));
+                    updatePendingSyncCount();
+                    showAlert(`Sale saved to local queue! Receipt #${receiptNo}`, 'success');
+                }
             }
 
-            showAlert(`Sale completed successfully! Receipt #${receiptNo}`, 'success');
             setCheckoutModalOpen(false);
             clearCart();
 
-            // Auto-send WhatsApp receipt if enabled
+            // WhatsApp trigger
             if (sendWhatsAppReceipt && resolvedCustomerPhone) {
                 try {
                     sendWhatsAppReceiptDirect(saleData);
@@ -828,7 +1135,9 @@ const Store = () => {
         }
     };
 
-    // --- 4. Inventory Item CRUD ---
+    // -------------------------------------------------------------
+    // 7. INVENTORY CRUD (ONLINE / OFFLINE SAFE)
+    // -------------------------------------------------------------
     const handleOpenItemModal = (item = null) => {
         if (item) {
             setEditingItem(item);
@@ -884,7 +1193,7 @@ const Store = () => {
                 sellingPrice: Number(itemFormData.sellingPrice) || 0,
                 stock: Number(itemFormData.stock) || 0,
                 lowStockThreshold: Number(itemFormData.lowStockThreshold) || 5,
-                sku: itemFormData.sku.trim(),
+                sku: itemFormData.sku.trim() || `SKU-${Math.floor(100000 + Math.random() * 900000)}`,
                 createdAt: editingItem ? editingItem.createdAt || new Date().toISOString() : new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
@@ -897,23 +1206,22 @@ const Store = () => {
                 itemObj.size = itemFormData.size;
             }
 
-            // 1. Primary Save via settings/store_inventory
             const updatedItems = editingItem
                 ? items.map(it => it.id === itemId ? itemObj : it)
                 : [itemObj, ...items.filter(it => it.id !== itemId)];
 
-            await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
-                items: updatedItems
-            }, { merge: true });
+            setItems(updatedItems);
 
-            // 2. Best-effort subcollection write
-            try {
-                await setDoc(doc(db, 'schools', schoolId, 'store_items', itemId), itemObj, { merge: true });
-            } catch (err) {
-                console.log('Subcollection item sync skipped');
+            if (schoolId) {
+                await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
+                    items: updatedItems
+                }, { merge: true });
+
+                try {
+                    await setDoc(doc(db, 'schools', schoolId, 'store_items', itemId), itemObj, { merge: true });
+                } catch (err) { }
             }
 
-            setItems(updatedItems);
             showAlert(editingItem ? `"${itemFormData.name}" updated successfully!` : `"${itemFormData.name}" added to inventory!`, 'success');
             setItemModalOpen(false);
             setEditingItem(null);
@@ -927,17 +1235,18 @@ const Store = () => {
         if (!window.confirm(`Are you sure you want to delete "${item.name}" from store inventory?`)) return;
         try {
             const updatedItems = items.filter(it => it.id !== item.id);
-            await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
-                items: updatedItems
-            }, { merge: true });
+            setItems(updatedItems);
 
-            try {
-                await deleteDoc(doc(db, 'schools', schoolId, 'store_items', item.id));
-            } catch (err) {
-                console.log(err);
+            if (schoolId) {
+                await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
+                    items: updatedItems
+                }, { merge: true });
+
+                try {
+                    await deleteDoc(doc(db, 'schools', schoolId, 'store_items', item.id));
+                } catch (err) { }
             }
 
-            setItems(updatedItems);
             showAlert('Item deleted successfully!', 'success');
         } catch (error) {
             showAlert('Error deleting item: ' + error.message, 'error');
@@ -952,19 +1261,20 @@ const Store = () => {
 
         try {
             const updatedItems = items.map(it => it.id === restockItem.id ? { ...it, stock: (Number(it.stock) || 0) + addQty } : it);
-            await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
-                items: updatedItems
-            }, { merge: true });
+            setItems(updatedItems);
 
-            try {
-                await updateDoc(doc(db, 'schools', schoolId, 'store_items', restockItem.id), {
-                    stock: increment(addQty)
-                });
-            } catch (err) {
-                console.log(err);
+            if (schoolId) {
+                await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
+                    items: updatedItems
+                }, { merge: true });
+
+                try {
+                    await updateDoc(doc(db, 'schools', schoolId, 'store_items', restockItem.id), {
+                        stock: increment(addQty)
+                    });
+                } catch (err) { }
             }
 
-            setItems(updatedItems);
             showAlert(`Restocked +${addQty} units for "${restockItem.name}"!`, 'success');
             setRestockModalOpen(false);
             setRestockItem(null);
@@ -973,16 +1283,13 @@ const Store = () => {
         }
     };
 
-    // --- 5. Class Bundle Creation (Indestructible Multi-Strategy) ---
+    // -------------------------------------------------------------
+    // 8. BUNDLES & PRE-BUILT TEMPLATES
+    // -------------------------------------------------------------
     const handleSaveBundle = async (e) => {
         e.preventDefault();
         if (!bundleFormData.title.trim()) {
             showAlert('Bundle title is required!', 'error');
-            return;
-        }
-
-        if (!schoolId) {
-            showAlert('School ID not found. Please re-login to proceed.', 'error');
             return;
         }
 
@@ -997,20 +1304,19 @@ const Store = () => {
                 createdAt: new Date().toISOString()
             };
 
-            // 1. Primary Save via settings/store_inventory (100% permitted in production)
             const updatedBundles = [newBundleObj, ...bundles.filter(b => b.id !== newBundleId)];
-            await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
-                bundles: updatedBundles
-            }, { merge: true });
+            setBundles(updatedBundles);
 
-            // 2. Best-effort subcollection write
-            try {
-                await setDoc(doc(db, 'schools', schoolId, 'store_bundles', newBundleId), newBundleObj);
-            } catch (err) {
-                console.log('Subcollection bundle sync skipped');
+            if (schoolId) {
+                await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
+                    bundles: updatedBundles
+                }, { merge: true });
+
+                try {
+                    await setDoc(doc(db, 'schools', schoolId, 'store_bundles', newBundleId), newBundleObj);
+                } catch (err) { }
             }
 
-            setBundles(updatedBundles);
             showAlert('Class package bundle created successfully!', 'success');
             setBundleModalOpen(false);
             setBundleFormData({ title: '', targetClass: 'Class 1', bundlePrice: 0, selectedItemIds: [] });
@@ -1024,24 +1330,24 @@ const Store = () => {
         if (!window.confirm(`Delete bundle "${bundle.title}"?`)) return;
         try {
             const updatedBundles = bundles.filter(b => b.id !== bundle.id);
-            await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
-                bundles: updatedBundles
-            }, { merge: true });
+            setBundles(updatedBundles);
 
-            try {
-                await deleteDoc(doc(db, 'schools', schoolId, 'store_bundles', bundle.id));
-            } catch (err) {
-                console.log(err);
+            if (schoolId) {
+                await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
+                    bundles: updatedBundles
+                }, { merge: true });
+
+                try {
+                    await deleteDoc(doc(db, 'schools', schoolId, 'store_bundles', bundle.id));
+                } catch (err) { }
             }
 
-            setBundles(updatedBundles);
             showAlert('Bundle deleted!', 'success');
         } catch (error) {
             showAlert('Failed to delete bundle: ' + error.message, 'error');
         }
     };
 
-    // --- 5.1 Pre-built Class Templates Loader ---
     const handleOpenTemplateModal = (targetClass = 'Class 1') => {
         const cls = targetClass || 'Class 1';
         setSelectedTemplateClass(cls);
@@ -1096,11 +1402,6 @@ const Store = () => {
             return;
         }
 
-        if (!schoolId) {
-            showAlert('School ID not found. Please re-login to proceed.', 'error');
-            return;
-        }
-
         setIsImportingTemplate(true);
         try {
             const nowIso = new Date().toISOString();
@@ -1125,10 +1426,9 @@ const Store = () => {
                 };
             });
 
-            // 1. Merge with existing items in store_inventory
             const updatedItems = [...newCreatedItems, ...items];
-            
             let updatedBundles = [...bundles];
+
             if (createBundle && templateBundleTitle.trim()) {
                 const newBundleId = `bundle_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
                 const newBundleObj = {
@@ -1141,25 +1441,28 @@ const Store = () => {
                 };
                 updatedBundles = [newBundleObj, ...bundles];
 
-                try {
-                    await setDoc(doc(db, 'schools', schoolId, 'store_bundles', newBundleId), newBundleObj);
-                } catch(e) { console.log(e); }
+                if (schoolId) {
+                    try {
+                        await setDoc(doc(db, 'schools', schoolId, 'store_bundles', newBundleId), newBundleObj);
+                    } catch (e) { }
+                }
             }
-
-            await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
-                items: updatedItems,
-                bundles: updatedBundles
-            }, { merge: true });
-
-            // Background subcollection items sync
-            newCreatedItems.forEach(async (it) => {
-                try {
-                    await setDoc(doc(db, 'schools', schoolId, 'store_items', it.id), it, { merge: true });
-                } catch(e) {}
-            });
 
             setItems(updatedItems);
             setBundles(updatedBundles);
+
+            if (schoolId) {
+                await setDoc(doc(db, 'schools', schoolId, 'settings', 'store_inventory'), {
+                    items: updatedItems,
+                    bundles: updatedBundles
+                }, { merge: true });
+
+                newCreatedItems.forEach(async (it) => {
+                    try {
+                        await setDoc(doc(db, 'schools', schoolId, 'store_items', it.id), it, { merge: true });
+                    } catch (e) { }
+                });
+            }
 
             showAlert(`🎉 Successfully loaded ${newCreatedItems.length} items ${createBundle ? '& created 1 Class Bundle' : ''} for ${selectedTemplateClass}!`, 'success');
             setTemplateModalOpen(false);
@@ -1171,107 +1474,116 @@ const Store = () => {
         }
     };
 
-    // --- 6. Printable Receipt PDF Generator ---
+    // -------------------------------------------------------------
+    // 9. PDF RECEIPT GENERATION (THERMAL / A4)
+    // -------------------------------------------------------------
     const downloadReceiptPDF = (receipt) => {
         if (!receipt) return;
-        const doc = new jsPDF({
-            unit: 'mm',
-            format: [80, 180] // Thermal slip format 80mm width
-        });
+        try {
+            const doc = new jsPDF({
+                unit: 'mm',
+                format: [80, 180] // Standard 80mm POS Thermal Receipt
+            });
 
-        // Header
-        doc.setFontSize(12);
-        doc.setFont('helvetica', 'bold');
-        doc.text(schoolInfo.name, 40, 10, { align: 'center' });
+            // Header
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'bold');
+            doc.text(schoolInfo.name || 'SCHOOL STORE', 40, 9, { align: 'center' });
 
-        doc.setFontSize(7);
-        doc.setFont('helvetica', 'normal');
-        if (schoolInfo.address) {
-            doc.text(schoolInfo.address, 40, 14, { align: 'center' });
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'normal');
+            if (schoolInfo.address) {
+                doc.text(schoolInfo.address, 40, 13, { align: 'center' });
+            }
+            if (schoolInfo.phone) {
+                doc.text(`Phone: ${schoolInfo.phone}`, 40, 17, { align: 'center' });
+            }
+
+            doc.setFontSize(8.5);
+            doc.setFont('helvetica', 'bold');
+            doc.text('OFFICIAL STORE POS RECEIPT', 40, 23, { align: 'center' });
+
+            doc.setLineWidth(0.3);
+            doc.line(5, 26, 75, 26);
+
+            // Metadata
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Receipt #: ${receipt.receiptNo}`, 5, 30);
+            doc.text(`Date: ${receipt.createdAtFormatted || new Date().toLocaleString()}`, 5, 34);
+            doc.text(`Customer: ${receipt.customerName || 'Walk-in'}`, 5, 38);
+            if (receipt.studentInfo) {
+                doc.text(`Class: ${receipt.studentInfo.className} (Roll #${receipt.studentInfo.rollNo || 'N/A'})`, 5, 42);
+            }
+            doc.text(`Payment: ${receipt.paymentMode === 'fee_ledger' ? 'ADDED TO FEE LEDGER' : 'PAID IN CASH'}`, 5, receipt.studentInfo ? 46 : 42);
+
+            const startY = receipt.studentInfo ? 50 : 46;
+            doc.line(5, startY, 75, startY);
+
+            // Items Table
+            const tableBody = (receipt.items || []).map(it => [
+                it.name + (it.size ? ` (${it.size})` : ''),
+                `${it.quantity}x`,
+                `${it.price}`,
+                `${it.total}`
+            ]);
+
+            autoTable(doc, {
+                startY: startY + 2,
+                head: [['Item', 'Qty', 'Rate', 'Total']],
+                body: tableBody,
+                theme: 'plain',
+                styles: { fontSize: 6.5, cellPadding: 1 },
+                headStyles: { fontStyle: 'bold', borderBottom: '1px solid #000' },
+                columnStyles: {
+                    0: { cellWidth: 34 },
+                    1: { cellWidth: 8, halign: 'center' },
+                    2: { cellWidth: 12, halign: 'right' },
+                    3: { cellWidth: 14, halign: 'right' }
+                },
+                margin: { left: 5, right: 5 }
+            });
+
+            const finalY = doc.lastAutoTable.finalY + 3;
+            doc.line(5, finalY, 75, finalY);
+
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Subtotal:`, 45, finalY + 4);
+            doc.text(`PKR ${receipt.subtotal}`, 75, finalY + 4, { align: 'right' });
+
+            if (receipt.discount > 0) {
+                doc.text(`Discount:`, 45, finalY + 8);
+                doc.text(`- PKR ${receipt.discount}`, 75, finalY + 8, { align: 'right' });
+            }
+
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'bold');
+            const netY = receipt.discount > 0 ? finalY + 13 : finalY + 9;
+            doc.text(`NET TOTAL:`, 45, netY);
+            doc.text(`PKR ${receipt.finalAmount}`, 75, netY, { align: 'right' });
+
+            doc.setFontSize(6.5);
+            doc.setFont('helvetica', 'italic');
+            doc.text('Thank you for shopping at our school store!', 40, netY + 7, { align: 'center' });
+            doc.text('Goods once sold can only be exchanged within 3 days.', 40, netY + 11, { align: 'center' });
+
+            doc.save(`${receipt.receiptNo}.pdf`);
+        } catch (err) {
+            console.error('PDF export error:', err);
+            showAlert('Failed to generate PDF: ' + err.message, 'error');
         }
-        if (schoolInfo.phone) {
-            doc.text(`Phone: ${schoolInfo.phone}`, 40, 18, { align: 'center' });
-        }
-
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.text('OFFICIAL STORE RECEIPT', 40, 24, { align: 'center' });
-
-        doc.setLineWidth(0.3);
-        doc.line(5, 27, 75, 27);
-
-        // Details
-        doc.setFontSize(7);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Receipt #: ${receipt.receiptNo}`, 5, 32);
-        doc.text(`Date: ${receipt.createdAtFormatted || new Date().toLocaleString()}`, 5, 36);
-        doc.text(`Customer: ${receipt.customerName || 'Walk-in'}`, 5, 40);
-        if (receipt.studentInfo) {
-            doc.text(`Class: ${receipt.studentInfo.className} (Roll: ${receipt.studentInfo.rollNo})`, 5, 44);
-        }
-        doc.text(`Payment: ${receipt.paymentMode === 'fee_ledger' ? 'ADDED TO FEE LEDGER' : 'CASH PAID'}`, 5, receipt.studentInfo ? 48 : 44);
-
-        const startY = receipt.studentInfo ? 52 : 48;
-        doc.line(5, startY, 75, startY);
-
-        // Items Table
-        const tableBody = (receipt.items || []).map(it => [
-            it.name + (it.size ? ` (${it.size})` : ''),
-            `${it.quantity}x`,
-            `${it.price}`,
-            `${it.total}`
-        ]);
-
-        autoTable(doc, {
-            startY: startY + 2,
-            head: [['Item', 'Qty', 'Rate', 'Total']],
-            body: tableBody,
-            theme: 'plain',
-            styles: { fontSize: 6.5, cellPadding: 1 },
-            headStyles: { fontStyle: 'bold', borderBottom: '1px solid #000' },
-            columnStyles: {
-                0: { cellWidth: 34 },
-                1: { cellWidth: 8, halign: 'center' },
-                2: { cellWidth: 12, halign: 'right' },
-                3: { cellWidth: 14, halign: 'right' }
-            },
-            margin: { left: 5, right: 5 }
-        });
-
-        const finalY = doc.lastAutoTable.finalY + 3;
-        doc.line(5, finalY, 75, finalY);
-
-        doc.setFontSize(7);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Subtotal:`, 45, finalY + 4);
-        doc.text(`PKR ${receipt.subtotal}`, 75, finalY + 4, { align: 'right' });
-
-        if (receipt.discount > 0) {
-            doc.text(`Discount:`, 45, finalY + 8);
-            doc.text(`- PKR ${receipt.discount}`, 75, finalY + 8, { align: 'right' });
-        }
-
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'bold');
-        const netY = receipt.discount > 0 ? finalY + 13 : finalY + 9;
-        doc.text(`NET TOTAL:`, 45, netY);
-        doc.text(`PKR ${receipt.finalAmount}`, 75, netY, { align: 'right' });
-
-        doc.setFontSize(6.5);
-        doc.setFont('helvetica', 'italic');
-        doc.text('Thank you for choosing our school store!', 40, netY + 8, { align: 'center' });
-        doc.text('Goods once sold can only be exchanged within 3 days.', 40, netY + 12, { align: 'center' });
-
-        doc.save(`${receipt.receiptNo}.pdf`);
     };
 
-    // --- 7. Filtered Computations ---
+    // -------------------------------------------------------------
+    // 10. FILTERED COMPUTATIONS & ANALYTICS
+    // -------------------------------------------------------------
     const filteredPosProducts = useMemo(() => {
         return items.filter(item => {
             const matchesSearch = item.name.toLowerCase().includes(posSearch.toLowerCase()) ||
                 (item.publisher && item.publisher.toLowerCase().includes(posSearch.toLowerCase())) ||
                 (item.sku && item.sku.toLowerCase().includes(posSearch.toLowerCase()));
-            
+
             const matchesCategory = posCategoryFilter === 'all' || item.category === posCategoryFilter;
             const matchesClass = posClassFilter === 'All' || item.targetClass === posClassFilter || item.targetClass === 'General / All Classes';
 
@@ -1289,56 +1601,92 @@ const Store = () => {
 
     const filteredInventoryItems = useMemo(() => {
         return items.filter(item => {
-            if (activeTab === 'uniform') {
-                return item.category === 'uniform';
-            }
-            if (activeTab === 'books_stationery') {
-                return item.category === 'book' || item.category === 'stationery';
-            }
-            return true;
+            if (activeTab === 'uniform' && item.category !== 'uniform') return false;
+            if (activeTab === 'books_stationery' && (item.category !== 'book' && item.category !== 'stationery')) return false;
+
+            const matchesSearch = item.name.toLowerCase().includes(invSearch.toLowerCase()) ||
+                (item.publisher && item.publisher.toLowerCase().includes(invSearch.toLowerCase())) ||
+                (item.sku && item.sku.toLowerCase().includes(invSearch.toLowerCase()));
+
+            const matchesClass = invClassFilter === 'All' || item.targetClass === invClassFilter;
+            const matchesLowStock = !invLowStockOnly || item.stock <= (item.lowStockThreshold || 5);
+
+            return matchesSearch && matchesClass && matchesLowStock;
         });
-    }, [items, activeTab]);
+    }, [items, activeTab, invSearch, invClassFilter, invLowStockOnly]);
 
     const filteredSales = useMemo(() => {
         return sales.filter(s => {
             const matchesSearch = s.receiptNo.toLowerCase().includes(salesSearch.toLowerCase()) ||
-                (s.customerName && s.customerName.toLowerCase().includes(salesSearch.toLowerCase()));
+                (s.customerName && s.customerName.toLowerCase().includes(salesSearch.toLowerCase())) ||
+                (s.studentInfo?.name && s.studentInfo.name.toLowerCase().includes(salesSearch.toLowerCase()));
 
             const matchesPayment = salesPaymentFilter === 'all' || s.paymentMode === salesPaymentFilter;
 
-            return matchesSearch && matchesPayment;
-        });
-    }, [sales, salesSearch, salesPaymentFilter]);
+            if (!matchesSearch || !matchesPayment) return false;
 
-    // Financial Metrics
-    const salesMetrics = useMemo(() => {
+            if (salesDateFilter === 'today') {
+                const today = new Date().toISOString().slice(0, 10);
+                return s.timestamp && s.timestamp.startsWith(today);
+            }
+            if (salesDateFilter === 'week') {
+                const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).getTime();
+                return (s.timestampMillis || new Date(s.timestamp).getTime()) >= weekAgo;
+            }
+            if (salesDateFilter === 'month') {
+                const currentMonth = new Date().toISOString().slice(0, 7);
+                return s.timestamp && s.timestamp.startsWith(currentMonth);
+            }
+
+            return true;
+        });
+    }, [sales, salesSearch, salesPaymentFilter, salesDateFilter]);
+
+    // Financial KPI Metrics
+    const kpiMetrics = useMemo(() => {
+        let totalItems = items.length;
+        let totalStockUnits = 0;
+        let totalStockValue = 0;
+        let lowStockCount = 0;
+
+        items.forEach(it => {
+            const st = Number(it.stock) || 0;
+            totalStockUnits += st;
+            totalStockValue += st * (Number(it.costPrice) || Number(it.sellingPrice) || 0);
+            if (st <= (it.lowStockThreshold || 5)) {
+                lowStockCount++;
+            }
+        });
+
+        // Today's Sales
+        const todayStr = new Date().toISOString().slice(0, 10);
+        let todayRevenue = 0;
         let totalRevenue = 0;
-        let totalCost = 0;
         let totalCash = 0;
         let totalLedger = 0;
-        let totalItemsSold = 0;
 
         sales.forEach(s => {
-            totalRevenue += Number(s.finalAmount) || 0;
-            if (s.paymentMode === 'cash') totalCash += Number(s.finalAmount) || 0;
-            if (s.paymentMode === 'fee_ledger') totalLedger += Number(s.finalAmount) || 0;
-
-            (s.items || []).forEach(it => {
-                totalItemsSold += Number(it.quantity) || 0;
-                totalCost += (Number(it.costPrice) || 0) * (Number(it.quantity) || 0);
-            });
+            const amt = Number(s.finalAmount) || 0;
+            totalRevenue += amt;
+            if (s.paymentMode === 'cash') totalCash += amt;
+            if (s.paymentMode === 'fee_ledger') totalLedger += amt;
+            if (s.timestamp && s.timestamp.startsWith(todayStr)) {
+                todayRevenue += amt;
+            }
         });
 
         return {
+            totalItems,
+            totalStockUnits,
+            totalStockValue,
+            lowStockCount,
+            todayRevenue,
             totalRevenue,
-            totalCost,
-            netProfit: Math.max(0, totalRevenue - totalCost),
             totalCash,
             totalLedger,
-            totalItemsSold,
-            totalOrders: sales.length
+            totalSalesCount: sales.length
         };
-    }, [sales]);
+    }, [items, sales]);
 
     // Template financial stats
     const templateTotals = useMemo(() => {
@@ -1354,940 +1702,907 @@ const Store = () => {
         };
     }, [templateDraftItems, templateBundlePrice]);
 
+    // -------------------------------------------------------------
+    // RENDER UI
+    // -------------------------------------------------------------
     return (
-        <div style={{ padding: '0.5rem', maxWidth: '1600px', margin: '0 auto' }}>
-            {/* Top Page Header */}
-            <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '1.5rem',
-                flexWrap: 'wrap',
-                gap: '1rem'
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-                    <div style={{
-                        width: '48px',
-                        height: '48px',
-                        borderRadius: '14px',
-                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        boxShadow: '0 8px 16px -4px rgba(16, 185, 129, 0.4)'
-                    }}>
-                        <ShoppingBag color="white" size={26} />
-                    </div>
-                    <div>
-                        <h1 style={{ fontSize: '1.65rem', fontWeight: '800', color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
-                            Store & Inventory Management
-                        </h1>
-                        <p style={{ color: '#64748b', fontSize: '0.86rem', margin: 0 }}>
-                            Point of Sale (POS), Books, Stationery, School Uniforms & Fee Ledger Integration
-                        </p>
-                    </div>
-                </div>
-
-                {/* Quick Action Buttons */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <button
-                        onClick={() => handleOpenTemplateModal('Class 1')}
-                        className="btn hover-lift"
-                        style={{
-                            background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                            color: 'white',
-                            padding: '0.65rem 1.25rem',
-                            borderRadius: '10px',
-                            fontWeight: '700',
-                            fontSize: '0.88rem',
-                            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.4)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.45rem',
-                            border: 'none',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        <Sparkles size={18} /> Load Class Templates
-                    </button>
-                    <button
-                        onClick={() => handleOpenItemModal()}
-                        className="btn"
-                        style={{
-                            background: '#4f46e5',
-                            color: 'white',
-                            padding: '0.65rem 1.25rem',
-                            borderRadius: '10px',
-                            fontWeight: '600',
-                            fontSize: '0.88rem',
-                            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
-                        }}
-                    >
-                        <Plus size={18} /> Add New Item
-                    </button>
-                    <button
-                        onClick={() => setBundleModalOpen(true)}
-                        className="btn"
-                        style={{
-                            background: '#0f172a',
-                            color: 'white',
-                            padding: '0.65rem 1.25rem',
-                            borderRadius: '10px',
-                            fontWeight: '600',
-                            fontSize: '0.88rem'
-                        }}
-                    >
-                        <Package size={18} /> Create Class Bundle
-                    </button>
-                </div>
-            </div>
-
-            {/* Navigation Tabs Header */}
-            <div style={{
-                display: 'flex',
-                gap: '0.5rem',
-                borderBottom: '2px solid #e2e8f0',
-                marginBottom: '1.5rem',
-                overflowX: 'auto',
-                paddingBottom: '0.25rem'
-            }}>
-                {[
-                    { id: 'pos', label: 'Point of Sale (POS Billing)', icon: ShoppingBag, badge: cart.length > 0 ? cart.length : null },
-                    { id: 'books_stationery', label: 'Books & Stationery', icon: BookOpen, count: items.filter(i => i.category === 'book' || i.category === 'stationery').length },
-                    { id: 'uniform', label: 'School Uniform Store', icon: Shirt, count: items.filter(i => i.category === 'uniform').length },
-                    { id: 'bundles', label: 'Class Packages & Sets', icon: Package, count: bundles.length },
-                    { id: 'sales', label: 'Sales Ledger & Reports', icon: BarChart3, count: sales.length }
-                ].map(tab => (
-                    <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            padding: '0.75rem 1.25rem',
-                            border: 'none',
-                            background: 'transparent',
-                            color: activeTab === tab.id ? '#4f46e5' : '#64748b',
-                            fontWeight: activeTab === tab.id ? '700' : '600',
-                            fontSize: '0.92rem',
-                            cursor: 'pointer',
-                            borderBottom: activeTab === tab.id ? '3px solid #4f46e5' : '3px solid transparent',
-                            marginBottom: '-2px',
-                            transition: 'all 0.2s ease',
-                            whiteSpace: 'nowrap'
-                        }}
-                    >
-                        <tab.icon size={18} />
-                        <span>{tab.label}</span>
-                        {tab.badge && (
-                            <span style={{
-                                background: '#ef4444',
-                                color: 'white',
-                                fontSize: '0.7rem',
-                                padding: '0.15rem 0.5rem',
-                                borderRadius: '9999px',
-                                fontWeight: '700'
-                            }}>
-                                {tab.badge}
-                            </span>
-                        )}
-                        {tab.count !== undefined && !tab.badge && (
-                            <span style={{
-                                background: activeTab === tab.id ? '#e0e7ff' : '#f1f5f9',
-                                color: activeTab === tab.id ? '#4338ca' : '#64748b',
-                                fontSize: '0.72rem',
-                                padding: '0.15rem 0.45rem',
-                                borderRadius: '6px',
-                                fontWeight: '600'
-                            }}>
-                                {tab.count}
-                            </span>
-                        )}
-                    </button>
-                ))}
-            </div>
-
-            {/* ========================================================================= */}
-            {/* TAB 1: POINT OF SALE (POS COUNTER) */}
-            {/* ========================================================================= */}
-            {activeTab === 'pos' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '1.5rem', alignItems: 'start' }}>
-                    {/* Left: Product Catalogue & Filters */}
-                    <div>
-                        {/* Search & Category Filter Bar */}
-                        <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                            <div style={{ flex: 1, position: 'relative', minWidth: '220px' }}>
-                                <Search size={18} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                                <input
-                                    type="text"
-                                    placeholder="Search by book name, uniform item, publisher, or SKU..."
-                                    value={posSearch}
-                                    onChange={(e) => setPosSearch(e.target.value)}
-                                    style={{
-                                        width: '100%',
-                                        padding: '0.65rem 1rem 0.65rem 2.4rem',
-                                        borderRadius: '8px',
-                                        border: '1px solid #cbd5e1',
-                                        fontSize: '0.88rem'
-                                    }}
-                                />
+        <div className="p-4 md:p-6 bg-slate-50 min-h-screen">
+            {/* ========================================================= */}
+            {/* TOP BAR: BRANDING, STATS & OFFLINE SENTINEL */}
+            {/* ========================================================= */}
+            <div className="bg-white rounded-2xl p-4 md:p-5 shadow-sm border border-slate-200/80 mb-6">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    {/* Left: Store Title & Info */}
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center text-white shadow-md shadow-indigo-200">
+                            <ShoppingBag className="w-6 h-6" />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h1 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight">
+                                    Store & Inventory Hub
+                                </h1>
+                                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    POS Terminal v5.2
+                                </span>
                             </div>
+                            <p className="text-xs md:text-sm text-slate-500 font-medium">
+                                Books, Stationery, Uniforms & 1-Click Fast Billing
+                            </p>
+                        </div>
+                    </div>
 
-                            {/* Class Filter Dropdown */}
-                            <select
-                                value={posClassFilter}
-                                onChange={(e) => setPosClassFilter(e.target.value)}
-                                style={{
-                                    padding: '0.65rem 1rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid #cbd5e1',
-                                    fontSize: '0.88rem',
-                                    background: 'white',
-                                    color: '#0f172a',
-                                    fontWeight: '500'
-                                }}
+                    {/* Right: Offline Sentinel & Actions */}
+                    <div className="flex flex-wrap items-center gap-2.5">
+                        {/* Network Status Badge */}
+                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                            isOnline
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
+                        }`}>
+                            {isOnline ? (
+                                <>
+                                    <Wifi className="w-4 h-4 text-emerald-600" />
+                                    <span>Cloud Online</span>
+                                </>
+                            ) : (
+                                <>
+                                    <WifiOff className="w-4 h-4 text-amber-600" />
+                                    <span>Offline Mode</span>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Pending Sync Indicator */}
+                        {pendingSyncCount > 0 && (
+                            <button
+                                onClick={triggerAutoSync}
+                                disabled={isSyncing || !isOnline}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-sm transition-all disabled:opacity-50"
+                                title="Click to sync pending transactions now"
                             >
-                                <option value="All">All Classes</option>
-                                {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
-
-                            {/* Category Filter Buttons */}
-                            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                                {[
-                                    { id: 'all', label: 'All Items' },
-                                    { id: 'book', label: '📚 Books' },
-                                    { id: 'uniform', label: '👔 Uniform' },
-                                    { id: 'stationery', label: '✏️ Stationery' }
-                                ].map(cat => (
-                                    <button
-                                        key={cat.id}
-                                        onClick={() => setPosCategoryFilter(cat.id)}
-                                        style={{
-                                            padding: '0.5rem 0.85rem',
-                                            borderRadius: '8px',
-                                            border: '1px solid',
-                                            borderColor: posCategoryFilter === cat.id ? '#4f46e5' : '#e2e8f0',
-                                            background: posCategoryFilter === cat.id ? '#4f46e5' : '#f8fafc',
-                                            color: posCategoryFilter === cat.id ? 'white' : '#475569',
-                                            fontSize: '0.8rem',
-                                            fontWeight: '600',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        {cat.label}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Class Bundles Quick Dispense Bar (If any exist) */}
-                        {filteredBundles.length > 0 && (
-                            <div style={{ marginBottom: '1.25rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.65rem' }}>
-                                    <Sparkles size={16} color="#4f46e5" />
-                                    <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: '#0f172a', margin: 0 }}>
-                                        1-Click Class Complete Sets & Bundles
-                                    </h3>
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '0.75rem' }}>
-                                    {filteredBundles.map(bundle => (
-                                        <div
-                                            key={bundle.id}
-                                            className="card"
-                                            style={{
-                                                padding: '0.85rem',
-                                                background: 'linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%)',
-                                                border: '1px solid #bbf7d0',
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center'
-                                            }}
-                                        >
-                                            <div>
-                                                <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669', textTransform: 'uppercase' }}>
-                                                    {bundle.targetClass}
-                                                </span>
-                                                <h4 style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', margin: '0.2rem 0' }}>
-                                                    {bundle.title}
-                                                </h4>
-                                                <p style={{ fontSize: '0.95rem', fontWeight: '800', color: '#047857', margin: 0 }}>
-                                                    PKR {bundle.bundlePrice}
-                                                </p>
-                                            </div>
-                                            <button
-                                                onClick={() => addToCart(bundle, true)}
-                                                className="btn"
-                                                style={{
-                                                    background: '#059669',
-                                                    color: 'white',
-                                                    padding: '0.45rem 0.75rem',
-                                                    borderRadius: '8px',
-                                                    fontSize: '0.8rem',
-                                                    fontWeight: '600'
-                                                }}
-                                            >
-                                                <Plus size={14} /> Add Set
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                                <CloudUpload className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                                <span>{isSyncing ? 'Syncing...' : `${pendingSyncCount} Pending Sync`}</span>
+                            </button>
                         )}
 
-                        {/* Product Items Grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-                            {filteredPosProducts.map(product => {
-                                const isOutOfStock = product.stock <= 0;
-                                const isLowStock = product.stock > 0 && product.stock <= (product.lowStockThreshold || 5);
-
-                                return (
-                                    <div
-                                        key={product.id}
-                                        className="card"
-                                        style={{
-                                            padding: '1rem',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            justifyContent: 'space-between',
-                                            opacity: isOutOfStock ? 0.6 : 1,
-                                            border: isLowStock ? '1px solid #fcd34d' : '1px solid #f1f5f9',
-                                            position: 'relative'
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                                                <span style={{
-                                                    fontSize: '0.68rem',
-                                                    padding: '0.2rem 0.5rem',
-                                                    borderRadius: '4px',
-                                                    background: product.category === 'book' ? '#e0e7ff' : product.category === 'uniform' ? '#fae8ff' : '#fef3c7',
-                                                    color: product.category === 'book' ? '#4338ca' : product.category === 'uniform' ? '#86198f' : '#b45309',
-                                                    fontWeight: '700',
-                                                    textTransform: 'uppercase'
-                                                }}>
-                                                    {product.category}
-                                                </span>
-                                                <span style={{
-                                                    fontSize: '0.72rem',
-                                                    fontWeight: '700',
-                                                    color: isOutOfStock ? '#ef4444' : isLowStock ? '#d97706' : '#10b981'
-                                                }}>
-                                                    {isOutOfStock ? 'Out of Stock' : `${product.stock} In Stock`}
-                                                </span>
-                                            </div>
-
-                                            <h4 style={{ fontSize: '0.95rem', fontWeight: '700', color: '#0f172a', marginBottom: '0.25rem', lineHeight: 1.3 }}>
-                                                {product.name}
-                                            </h4>
-
-                                            {product.size && (
-                                                <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '0 0 0.25rem 0' }}>
-                                                    Size: <strong style={{ color: '#0f172a' }}>{product.size}</strong> ({product.gender})
-                                                </p>
-                                            )}
-
-                                            {product.publisher && (
-                                                <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '0 0 0.25rem 0' }}>
-                                                    Pub: <strong style={{ color: '#0f172a' }}>{product.publisher}</strong>
-                                                </p>
-                                            )}
-
-                                            {product.targetClass && (
-                                                <p style={{ fontSize: '0.75rem', color: '#64748b', margin: 0 }}>
-                                                    Class: <strong style={{ color: '#0f172a' }}>{product.targetClass}</strong>
-                                                </p>
-                                            )}
-                                        </div>
-
-                                        <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                            <div>
-                                                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>Price</span>
-                                                <p style={{ fontSize: '1.05rem', fontWeight: '800', color: '#4f46e5', margin: 0 }}>
-                                                    PKR {product.sellingPrice}
-                                                </p>
-                                            </div>
-                                            <button
-                                                onClick={() => addToCart(product)}
-                                                disabled={isOutOfStock}
-                                                style={{
-                                                    background: isOutOfStock ? '#cbd5e1' : '#4f46e5',
-                                                    color: 'white',
-                                                    border: 'none',
-                                                    width: '36px',
-                                                    height: '36px',
-                                                    borderRadius: '8px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    cursor: isOutOfStock ? 'not-allowed' : 'pointer',
-                                                    transition: 'all 0.2s'
-                                                }}
-                                            >
-                                                <Plus size={18} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {filteredPosProducts.length === 0 && (
-                            <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
-                                <Package size={48} color="#cbd5e1" style={{ margin: '0 auto 1rem' }} />
-                                <h3 style={{ fontSize: '1.1rem', color: '#0f172a', marginBottom: '0.5rem' }}>No products match your search</h3>
-                                <p style={{ fontSize: '0.85rem', margin: 0 }}>Try adjusting your filters or click "Add New Item" to populate your store inventory.</p>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Right: Cart & Fast Checkout Panel */}
-                    <div className="card" style={{ padding: '1.25rem', position: 'sticky', top: '1rem', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <ShoppingBag size={20} color="#4f46e5" />
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                    POS Cart ({cart.reduce((a, b) => a + b.quantity, 0)})
-                                </h3>
-                            </div>
-                            {cart.length > 0 && (
-                                <button
-                                    onClick={clearCart}
-                                    style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.78rem', fontWeight: '600', cursor: 'pointer' }}
-                                >
-                                    Clear Cart
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Cart Items List */}
-                        <div style={{ maxHeight: '340px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1rem' }}>
-                            {cart.map((item, idx) => (
-                                <div
-                                    key={`${item.id}-${idx}`}
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        padding: '0.65rem',
-                                        background: '#f8fafc',
-                                        borderRadius: '8px',
-                                        border: '1px solid #e2e8f0'
-                                    }}
-                                >
-                                    <div style={{ flex: 1, paddingRight: '0.5rem' }}>
-                                        <h5 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#0f172a', margin: 0, lineHeight: 1.2 }}>
-                                            {item.name}
-                                        </h5>
-                                        <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                            PKR {item.price} each {item.size && `· ${item.size}`}
-                                        </span>
-                                    </div>
-
-                                    {/* Qty Counter */}
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        <button
-                                            onClick={() => updateCartQty(idx, item.quantity - 1)}
-                                            style={{ width: '24px', height: '24px', borderRadius: '4px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '700' }}
-                                        >
-                                            -
-                                        </button>
-                                        <span style={{ fontSize: '0.88rem', fontWeight: '700', minWidth: '20px', textAlign: 'center' }}>
-                                            {item.quantity}
-                                        </span>
-                                        <button
-                                            onClick={() => updateCartQty(idx, item.quantity + 1)}
-                                            style={{ width: '24px', height: '24px', borderRadius: '4px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontWeight: '700' }}
-                                        >
-                                            +
-                                        </button>
-                                        <button
-                                            onClick={() => removeFromCart(idx)}
-                                            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', marginLeft: '0.2rem' }}
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-
-                            {cart.length === 0 && (
-                                <div style={{ textAlign: 'center', padding: '2rem 1rem', color: '#94a3b8' }}>
-                                    <ShoppingBag size={36} color="#e2e8f0" style={{ margin: '0 auto 0.5rem' }} />
-                                    <p style={{ fontSize: '0.85rem', margin: 0 }}>Click products on the left to start billing.</p>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Order Summary Calculations */}
-                        <div style={{ borderTop: '2px dashed #e2e8f0', paddingTop: '0.85rem', marginBottom: '1rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem', color: '#64748b' }}>
-                                <span>Subtotal</span>
-                                <span>PKR {cartSubtotal}</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem', color: '#64748b' }}>
-                                <span>Discount (PKR)</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={discount}
-                                    onChange={(e) => setDiscount(Math.max(0, Number(e.target.value)))}
-                                    style={{ width: '80px', padding: '0.2rem 0.4rem', textAlign: 'right', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                />
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #e2e8f0', fontSize: '1.15rem', fontWeight: '800', color: '#0f172a' }}>
-                                <span>Net Total</span>
-                                <span style={{ color: '#10b981' }}>PKR {cartTotal}</span>
-                            </div>
-                        </div>
-
-                        {/* Checkout CTA Button */}
+                        {/* Pre-built Syllabus Loader */}
                         <button
-                            onClick={() => setCheckoutModalOpen(true)}
-                            disabled={cart.length === 0}
-                            className="btn"
-                            style={{
-                                width: '100%',
-                                background: cart.length === 0 ? '#cbd5e1' : 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
-                                color: 'white',
-                                padding: '0.85rem',
-                                borderRadius: '10px',
-                                fontWeight: '700',
-                                fontSize: '0.95rem',
-                                justifyContent: 'center',
-                                boxShadow: cart.length > 0 ? '0 4px 14px rgba(79, 70, 229, 0.4)' : 'none',
-                                cursor: cart.length === 0 ? 'not-allowed' : 'pointer'
-                            }}
+                            onClick={() => handleOpenTemplateModal('Class 1')}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 text-xs font-bold transition-all"
                         >
-                            Proceed to Checkout <ArrowRight size={18} />
+                            <Sparkles className="w-4 h-4 text-violet-600" />
+                            <span>Import Class Kit</span>
+                        </button>
+
+                        {/* Add Item Button */}
+                        <button
+                            onClick={() => handleOpenItemModal()}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm shadow-indigo-200 transition-all"
+                        >
+                            <Plus className="w-4 h-4" />
+                            <span>Add Item</span>
                         </button>
                     </div>
                 </div>
-            )}
+            </div>
 
-            {/* ========================================================================= */}
-            {/* TAB 2 & 3: INVENTORY TABLES (BOOKS & STATIONERY / UNIFORM) */}
-            {/* ========================================================================= */}
-            {(activeTab === 'books_stationery' || activeTab === 'uniform') && (
-                <div className="card" style={{ padding: '1.25rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '1rem' }}>
-                        <div>
-                            <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                {activeTab === 'uniform' ? '👔 School Uniform Inventory' : '📚 Books & Stationery Stock'}
-                            </h3>
-                            <p style={{ color: '#64748b', fontSize: '0.82rem', margin: 0 }}>
-                                Real-time stock counts, pricing, cost tracking, and reorder levels
-                            </p>
-                        </div>
-                        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
-                            <button
-                                onClick={() => handleOpenTemplateModal('Class 1')}
-                                className="btn hover-lift"
-                                style={{
-                                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                                    color: 'white',
-                                    padding: '0.55rem 1rem',
-                                    borderRadius: '8px',
-                                    fontWeight: '700',
-                                    fontSize: '0.82rem',
-                                    boxShadow: '0 3px 10px rgba(245, 158, 11, 0.35)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.35rem',
-                                    border: 'none',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                <Sparkles size={16} /> ⚡ Load Pre-made Templates
-                            </button>
-                            <button
-                                onClick={() => handleOpenItemModal()}
-                                className="btn"
-                                style={{ background: '#4f46e5', color: 'white', padding: '0.55rem 1rem', borderRadius: '8px', fontSize: '0.85rem' }}
-                            >
-                                <Plus size={16} /> Add {activeTab === 'uniform' ? 'Uniform Item' : 'Book / Stationery'}
-                            </button>
-                        </div>
-                    </div>
+            {/* ========================================================= */}
+            {/* MODERN NAVIGATION TABS */}
+            {/* ========================================================= */}
+            {/* MODERN NAVIGATION TABS */}
+            {/* ========================================================= */}
+            <div className="flex items-center gap-3 overflow-x-auto pb-2.5 mb-6 border-b border-slate-200">
+                {[
+                    { 
+                        id: 'pos', 
+                        label: 'POS Billing Counter', 
+                        icon: ShoppingBag, 
+                        badge: cart.length > 0 ? cart.length : null,
+                        activeBg: 'bg-indigo-600 text-white shadow-md shadow-indigo-500/25 border-indigo-600',
+                        inactiveBg: 'bg-indigo-50/60 text-indigo-900 hover:bg-indigo-100 border-indigo-200/80'
+                    },
+                    { 
+                        id: 'books_stationery', 
+                        label: 'Books & Syllabus', 
+                        icon: BookOpen, 
+                        count: items.filter(i => i.category === 'book').length,
+                        activeBg: 'bg-blue-600 text-white shadow-md shadow-blue-500/25 border-blue-600',
+                        inactiveBg: 'bg-blue-50/70 text-blue-900 hover:bg-blue-100 border-blue-200/80'
+                    },
+                    { 
+                        id: 'uniform', 
+                        label: 'Uniform Store', 
+                        icon: Shirt, 
+                        count: items.filter(i => i.category === 'uniform').length,
+                        activeBg: 'bg-purple-600 text-white shadow-md shadow-purple-500/25 border-purple-600',
+                        inactiveBg: 'bg-purple-50/70 text-purple-900 hover:bg-purple-100 border-purple-200/80'
+                    },
+                    { 
+                        id: 'bundles', 
+                        label: 'Class Sets & Bundles', 
+                        icon: Package, 
+                        count: bundles.length,
+                        activeBg: 'bg-emerald-600 text-white shadow-md shadow-emerald-500/25 border-emerald-600',
+                        inactiveBg: 'bg-emerald-50/70 text-emerald-900 hover:bg-emerald-100 border-emerald-200/80'
+                    },
+                    { 
+                        id: 'sales', 
+                        label: 'Sales Ledger & Reports', 
+                        icon: BarChart3, 
+                        count: sales.length,
+                        activeBg: 'bg-slate-900 text-white shadow-md shadow-slate-900/25 border-slate-900',
+                        inactiveBg: 'bg-slate-100 text-slate-800 hover:bg-slate-200 border-slate-200'
+                    }
+                ].map(tab => {
+                    const isActive = activeTab === tab.id;
+                    const Icon = tab.icon;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex items-center gap-2.5 px-5 py-3 rounded-2xl text-xs md:text-sm font-extrabold whitespace-nowrap transition-all duration-200 border ${
+                                isActive
+                                    ? `${tab.activeBg} scale-[1.02]`
+                                    : `${tab.inactiveBg}`
+                            }`}
+                        >
+                            <Icon className={`w-4.5 h-4.5 ${isActive ? 'text-white' : 'text-current opacity-80'}`} />
+                            <span>{tab.label}</span>
+                            {tab.badge && (
+                                <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] font-black bg-rose-500 text-white shadow-xs animate-pulse">
+                                    {tab.badge}
+                                </span>
+                            )}
+                            {tab.count !== undefined && !tab.badge && (
+                                <span className={`ml-1 px-2 py-0.5 rounded-lg text-[11px] font-black ${
+                                    isActive ? 'bg-black/25 text-white' : 'bg-white/80 text-slate-800 shadow-2xs'
+                                }`}>
+                                    {tab.count}
+                                </span>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
 
-                    {/* Inventory Table */}
-                    <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
-                            <thead>
-                                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0', color: '#64748b', textAlign: 'left' }}>
-                                    <th style={{ padding: '0.75rem 1rem' }}>Item Name</th>
-                                    <th style={{ padding: '0.75rem 1rem' }}>Category</th>
-                                    <th style={{ padding: '0.75rem 1rem' }}>Class / Target</th>
-                                    {activeTab === 'uniform' && <th style={{ padding: '0.75rem 1rem' }}>Size & Gender</th>}
-                                    {activeTab === 'books_stationery' && <th style={{ padding: '0.75rem 1rem' }}>Publisher</th>}
-                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Cost Price</th>
-                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Sale Price</th>
-                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>Stock In Hand</th>
-                                    <th style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredInventoryItems.map((item, index) => {
-                                    const isOut = item.stock <= 0;
-                                    const isLow = item.stock > 0 && item.stock <= (item.lowStockThreshold || 5);
+            {/* ========================================================= */}
+            {/* TAB 1: POINT OF SALE (POS COUNTER) */}
+            {/* ========================================================= */}
+            {activeTab === 'pos' && (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                    {/* Left: Catalog & Product Browser (8 Cols) */}
+                    <div className="lg:col-span-8 space-y-4">
+                        {/* Search & Category Filter Toolbar */}
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm space-y-3.5">
+                            <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                                {/* Search Bar */}
+                                <div className="relative flex-1 w-full">
+                                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search book, uniform, publisher, SKU barcode..."
+                                        value={posSearch}
+                                        onChange={(e) => setPosSearch(e.target.value)}
+                                        className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 focus:bg-white border border-slate-200 rounded-xl text-xs md:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                                    />
+                                    {posSearch && (
+                                        <button
+                                            onClick={() => setPosSearch('')}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Class Dropdown */}
+                                <select
+                                    value={posClassFilter}
+                                    onChange={(e) => setPosClassFilter(e.target.value)}
+                                    className="w-full sm:w-48 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs md:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                >
+                                    <option value="All">All Classes</option>
+                                    {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+
+                            {/* Solid Category Filter Buttons with Theme Colors and Larger Size */}
+                            <div className="flex items-center gap-2.5 overflow-x-auto pb-1 pt-0.5">
+                                {[
+                                    { 
+                                        id: 'all', 
+                                        label: 'All Items', 
+                                        icon: Package,
+                                        activeBg: 'bg-slate-900 text-white shadow-md shadow-slate-900/25 border-slate-900',
+                                        inactiveBg: 'bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-200'
+                                    },
+                                    { 
+                                        id: 'book', 
+                                        label: 'Books / Syllabus', 
+                                        icon: BookOpen,
+                                        activeBg: 'bg-blue-600 text-white shadow-md shadow-blue-500/25 border-blue-600',
+                                        inactiveBg: 'bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200'
+                                    },
+                                    { 
+                                        id: 'uniform', 
+                                        label: 'Uniforms', 
+                                        icon: Shirt,
+                                        activeBg: 'bg-purple-600 text-white shadow-md shadow-purple-500/25 border-purple-600',
+                                        inactiveBg: 'bg-purple-50 text-purple-700 hover:bg-purple-100 border-purple-200'
+                                    },
+                                    { 
+                                        id: 'stationery', 
+                                        label: 'Stationery', 
+                                        icon: Tag,
+                                        activeBg: 'bg-amber-500 text-white shadow-md shadow-amber-500/25 border-amber-500',
+                                        inactiveBg: 'bg-amber-50 text-amber-800 hover:bg-amber-100 border-amber-200'
+                                    }
+                                ].map(cat => {
+                                    const isSelected = posCategoryFilter === cat.id;
+                                    const CatIcon = cat.icon;
+                                    const count = cat.id === 'all' 
+                                        ? items.length 
+                                        : items.filter(i => i.category === cat.id).length;
 
                                     return (
-                                        <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', background: index % 2 === 0 ? 'white' : '#fafafa' }}>
-                                            <td style={{ padding: '0.85rem 1rem', fontWeight: '700', color: '#0f172a' }}>
-                                                {item.name}
-                                                {item.sku && <span style={{ display: 'block', fontSize: '0.7rem', color: '#94a3b8' }}>SKU: {item.sku}</span>}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem' }}>
-                                                <span style={{
-                                                    fontSize: '0.7rem',
-                                                    padding: '0.15rem 0.5rem',
-                                                    borderRadius: '4px',
-                                                    background: item.category === 'book' ? '#e0e7ff' : item.category === 'uniform' ? '#fae8ff' : '#fef3c7',
-                                                    color: item.category === 'book' ? '#4338ca' : item.category === 'uniform' ? '#86198f' : '#b45309',
-                                                    fontWeight: '700',
-                                                    textTransform: 'uppercase'
-                                                }}>
-                                                    {item.category}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', color: '#475569' }}>
-                                                {item.targetClass || 'All'}
-                                            </td>
-                                            {activeTab === 'uniform' && (
-                                                <td style={{ padding: '0.85rem 1rem', color: '#475569' }}>
-                                                    <span style={{ fontWeight: '600', color: '#0f172a' }}>{item.size || 'N/A'}</span> ({item.gender || 'Unisex'})
-                                                </td>
-                                            )}
-                                            {activeTab === 'books_stationery' && (
-                                                <td style={{ padding: '0.85rem 1rem', color: '#475569' }}>
-                                                    {item.publisher || '—'}
-                                                </td>
-                                            )}
-                                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', color: '#64748b' }}>
-                                                PKR {item.costPrice || 0}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: '700', color: '#10b981' }}>
-                                                PKR {item.sellingPrice || 0}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }}>
-                                                <span style={{
-                                                    padding: '0.2rem 0.6rem',
-                                                    borderRadius: '9999px',
-                                                    fontSize: '0.78rem',
-                                                    fontWeight: '700',
-                                                    background: isOut ? '#fee2e2' : isLow ? '#fef3c7' : '#dcfce7',
-                                                    color: isOut ? '#ef4444' : isLow ? '#b45309' : '#15803d'
-                                                }}>
-                                                    {item.stock} Units
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
-                                                    <button
-                                                        onClick={() => {
-                                                            setRestockItem(item);
-                                                            setRestockQuantity(10);
-                                                            setRestockModalOpen(true);
-                                                        }}
-                                                        title="Quick Restock"
-                                                        style={{ background: '#f1f5f9', border: 'none', padding: '0.35rem 0.6rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '700', color: '#047857' }}
-                                                    >
-                                                        + Stock
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleOpenItemModal(item)}
-                                                        title="Edit Item"
-                                                        style={{ background: '#f1f5f9', border: 'none', padding: '0.35rem', borderRadius: '6px', cursor: 'pointer', color: '#4f46e5' }}
-                                                    >
-                                                        <Edit size={15} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteItem(item)}
-                                                        title="Delete"
-                                                        style={{ background: '#fee2e2', border: 'none', padding: '0.35rem', borderRadius: '6px', cursor: 'pointer', color: '#ef4444' }}
-                                                    >
-                                                        <Trash2 size={15} />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
+                                        <button
+                                            key={cat.id}
+                                            onClick={() => setPosCategoryFilter(cat.id)}
+                                            className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs md:text-sm font-black whitespace-nowrap transition-all duration-150 border ${
+                                                isSelected
+                                                    ? `${cat.activeBg} scale-[1.03]`
+                                                    : `${cat.inactiveBg}`
+                                            }`}
+                                        >
+                                            <CatIcon className="w-4.5 h-4.5" />
+                                            <span>{cat.label}</span>
+                                            <span className={`ml-0.5 px-2 py-0.5 rounded-md text-[11px] font-black ${
+                                                isSelected 
+                                                    ? 'bg-black/20 text-white' 
+                                                    : 'bg-white text-slate-800 shadow-2xs'
+                                            }`}>
+                                                {count}
+                                            </span>
+                                        </button>
                                     );
                                 })}
-
-                                {filteredInventoryItems.length === 0 && (
-                                    <tr>
-                                        <td colSpan="8" style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
-                                            No items registered in this inventory category yet. Click "Add New Item" above.
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-
-            {/* ========================================================================= */}
-            {/* TAB 4: CLASS PACKAGES & BUNDLES */}
-            {/* ========================================================================= */}
-            {activeTab === 'bundles' && (
-                <div className="card" style={{ padding: '1.25rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-                        <div>
-                            <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                📦 Class Packages & Bundles
-                            </h3>
-                            <p style={{ color: '#64748b', fontSize: '0.82rem', margin: 0 }}>
-                                Pre-configured book sets and complete uniform packages for fast 1-click counter dispensing
-                            </p>
+                            </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
-                            <button
-                                onClick={() => handleOpenTemplateModal('Class 1')}
-                                className="btn hover-lift"
-                                style={{
-                                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                                    color: 'white',
-                                    padding: '0.55rem 1rem',
-                                    borderRadius: '8px',
-                                    fontWeight: '700',
-                                    fontSize: '0.82rem',
-                                    boxShadow: '0 3px 10px rgba(245, 158, 11, 0.35)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.35rem',
-                                    border: 'none',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                <Sparkles size={16} /> ⚡ Load Pre-made Class Templates
-                            </button>
-                            <button
-                                onClick={() => setBundleModalOpen(true)}
-                                className="btn"
-                                style={{ background: '#4f46e5', color: 'white', padding: '0.55rem 1rem', borderRadius: '8px', fontSize: '0.85rem' }}
-                            >
-                                <Plus size={16} /> Create Custom Bundle
-                            </button>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
-                        {bundles.map(bundle => (
-                            <div
-                                key={bundle.id}
-                                className="card"
-                                style={{
-                                    padding: '1.25rem',
-                                    border: '1px solid #e2e8f0',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    justifyContent: 'space-between',
-                                    background: '#ffffff'
-                                }}
-                            >
-                                <div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                        <span style={{
-                                            fontSize: '0.72rem',
-                                            padding: '0.2rem 0.5rem',
-                                            borderRadius: '6px',
-                                            background: '#dcfce7',
-                                            color: '#15803d',
-                                            fontWeight: '700',
-                                            textTransform: 'uppercase'
-                                        }}>
-                                            {bundle.targetClass}
-                                        </span>
-                                        <button
-                                            onClick={() => handleDeleteBundle(bundle)}
-                                            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
+                        {/* 1-Click Class Sets / Bundles Bar (Expandable) */}
+                        {filteredBundles.length > 0 && (
+                            <div className="bg-gradient-to-r from-indigo-50/90 via-purple-50/80 to-emerald-50/90 p-3.5 md:p-4 rounded-2xl border border-indigo-100 shadow-xs transition-all duration-300">
+                                <div 
+                                    onClick={() => setIsBundlesExpanded(!isBundlesExpanded)}
+                                    className="flex items-center justify-between cursor-pointer select-none gap-2"
+                                >
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                                            <Sparkles className="w-4 h-4" />
+                                        </div>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-indigo-950 font-black text-xs md:text-sm uppercase tracking-wider">
+                                                1-Click Class Complete Sets
+                                            </span>
+                                            <span className="text-[11px] font-extrabold text-indigo-700 bg-white px-2.5 py-0.5 rounded-full border border-indigo-200/80 shadow-2xs">
+                                                {filteredBundles.length} Sets Ready
+                                            </span>
+                                        </div>
                                     </div>
 
-                                    <h4 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: '0.5rem 0' }}>
-                                        {bundle.title}
-                                    </h4>
-
-                                    <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 1rem 0' }}>
-                                        Includes {bundle.selectedItemIds?.length || 0} pre-selected books/uniform items.
-                                    </p>
-                                </div>
-
-                                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <div>
-                                        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>Bundle Price</span>
-                                        <p style={{ fontSize: '1.15rem', fontWeight: '800', color: '#059669', margin: 0 }}>
-                                            PKR {bundle.bundlePrice}
-                                        </p>
-                                    </div>
+                                    {/* Expand / Collapse Toggle Button */}
                                     <button
-                                        onClick={() => {
-                                            addToCart(bundle, true);
-                                            setActiveTab('pos');
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setIsBundlesExpanded(!isBundlesExpanded);
                                         }}
-                                        className="btn"
-                                        style={{ background: '#059669', color: 'white', padding: '0.45rem 0.85rem', borderRadius: '8px', fontSize: '0.82rem', fontWeight: '700' }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 font-extrabold text-xs shadow-2xs transition-all hover:scale-105 shrink-0"
                                     >
-                                        <Plus size={14} /> Load to Cart
+                                        <span>{isBundlesExpanded ? 'Hide Sets' : 'View Sets'}</span>
+                                        {isBundlesExpanded ? (
+                                            <ChevronUp className="w-4 h-4 text-indigo-600 transition-transform" />
+                                        ) : (
+                                            <ChevronDown className="w-4 h-4 text-indigo-600 transition-transform" />
+                                        )}
                                     </button>
                                 </div>
-                            </div>
-                        ))}
 
-                        {bundles.length === 0 && (
-                            <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
-                                <Package size={48} color="#cbd5e1" style={{ margin: '0 auto 1rem' }} />
-                                <h4 style={{ color: '#0f172a', marginBottom: '0.5rem' }}>No Class Bundles Created Yet</h4>
-                                <p style={{ fontSize: '0.85rem' }}>Group your books and uniforms into bundles (e.g. "Class 5 Full Book Pack") for faster billing.</p>
+                                {/* Collapsible Grid of Bundles */}
+                                {isBundlesExpanded && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-3.5 mt-3 border-t border-indigo-100/90 animate-in fade-in duration-200">
+                                        {filteredBundles.map(bundle => (
+                                            <div
+                                                key={bundle.id}
+                                                className="bg-white p-3.5 rounded-2xl border border-indigo-200/80 shadow-xs hover:shadow-md hover:border-indigo-400 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group"
+                                            >
+                                                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500" />
+                                                <div>
+                                                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                                                        <span className="text-[10px] font-black uppercase text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200/60 tracking-wider">
+                                                            {bundle.targetClass || 'All Classes'} Set
+                                                        </span>
+                                                        <span className="text-[10px] font-bold text-slate-500">
+                                                            {bundle.selectedItemIds?.length || 0} Items
+                                                        </span>
+                                                    </div>
+                                                    <h4 className="font-extrabold text-xs text-slate-900 line-clamp-2 mt-1 leading-snug group-hover:text-indigo-600 transition-colors">
+                                                        {bundle.title}
+                                                    </h4>
+                                                </div>
+                                                <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-100">
+                                                    <div>
+                                                        <span className="text-[10px] uppercase font-bold text-slate-400 block -mb-0.5">Bundle</span>
+                                                        <span className="text-xs font-black text-emerald-600">
+                                                            PKR {bundle.bundlePrice}
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => addToCart(bundle, true)}
+                                                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs shadow-emerald-500/20 group-hover:scale-105 transition-all"
+                                                    >
+                                                        <Plus className="w-3.5 h-3.5" />
+                                                        <span>Add Set</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Product Cards Grid */}
+                        {filteredPosProducts.length === 0 ? (
+                            <div className="bg-white rounded-2xl p-12 text-center border border-slate-200">
+                                <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                                <h3 className="text-base font-bold text-slate-700">No products found</h3>
+                                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                                    Try adjusting your search query, class filter, or import standard class packages.
+                                </p>
+                                <button
+                                    onClick={() => handleOpenTemplateModal(posClassFilter !== 'All' ? posClassFilter : 'Class 1')}
+                                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold"
+                                >
+                                    <Sparkles className="w-4 h-4" />
+                                    <span>Import Class Package Template</span>
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3.5">
+                                {filteredPosProducts.map(product => {
+                                    const isOutOfStock = product.stock <= 0;
+                                    const isLowStock = product.stock > 0 && product.stock <= (product.lowStockThreshold || 5);
+
+                                    // Theme config based on product category
+                                    let theme = {
+                                        cardBg: 'bg-gradient-to-b from-blue-50/50 via-white to-indigo-50/20 border-blue-200/90 hover:border-blue-400',
+                                        accentBar: 'bg-gradient-to-r from-blue-500 to-indigo-600',
+                                        iconBg: 'bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-blue-500/25',
+                                        badgeBg: 'bg-blue-100/90 text-blue-800 border-blue-200/80',
+                                        badgeLabel: 'Book / Syllabus',
+                                        btnBg: 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/25',
+                                        IconComponent: BookOpen
+                                    };
+
+                                    if (product.category === 'uniform') {
+                                        theme = {
+                                            cardBg: 'bg-gradient-to-b from-purple-50/50 via-white to-fuchsia-50/20 border-purple-200/90 hover:border-purple-400',
+                                            accentBar: 'bg-gradient-to-r from-purple-500 to-pink-600',
+                                            iconBg: 'bg-gradient-to-tr from-purple-600 to-pink-600 text-white shadow-purple-500/25',
+                                            badgeBg: 'bg-purple-100/90 text-purple-800 border-purple-200/80',
+                                            badgeLabel: 'Uniform',
+                                            btnBg: 'bg-purple-600 hover:bg-purple-700 text-white shadow-purple-500/25',
+                                            IconComponent: Shirt
+                                        };
+                                    } else if (product.category === 'stationery') {
+                                        theme = {
+                                            cardBg: 'bg-gradient-to-b from-amber-50/50 via-white to-orange-50/20 border-amber-200/90 hover:border-amber-400',
+                                            accentBar: 'bg-gradient-to-r from-amber-500 to-orange-500',
+                                            iconBg: 'bg-gradient-to-tr from-amber-500 to-orange-500 text-white shadow-amber-500/25',
+                                            badgeBg: 'bg-amber-100/90 text-amber-800 border-amber-200/80',
+                                            badgeLabel: 'Stationery',
+                                            btnBg: 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-500/25',
+                                            IconComponent: Tag
+                                        };
+                                    } else if (product.category === 'bundle') {
+                                        theme = {
+                                            cardBg: 'bg-gradient-to-b from-emerald-50/50 via-white to-teal-50/20 border-emerald-200/90 hover:border-emerald-400',
+                                            accentBar: 'bg-gradient-to-r from-emerald-500 to-teal-600',
+                                            iconBg: 'bg-gradient-to-tr from-emerald-600 to-teal-600 text-white shadow-emerald-500/25',
+                                            badgeBg: 'bg-emerald-100/90 text-emerald-800 border-emerald-200/80',
+                                            badgeLabel: 'Bundle Set',
+                                            btnBg: 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/25',
+                                            IconComponent: Package
+                                        };
+                                    }
+
+                                    const TheIcon = theme.IconComponent;
+
+                                    return (
+                                        <div
+                                            key={product.id}
+                                            onClick={() => !isOutOfStock && addToCart(product, false)}
+                                            className={`rounded-2xl border transition-all duration-200 flex flex-col justify-between cursor-pointer select-none group relative overflow-hidden p-3.5 shadow-xs ${
+                                                isOutOfStock
+                                                    ? 'opacity-60 border-slate-200 bg-slate-50 cursor-not-allowed'
+                                                    : `${theme.cardBg} hover:-translate-y-0.5 hover:shadow-md`
+                                            }`}
+                                        >
+                                            {/* Solid Top Accent Bar */}
+                                            <div className={`absolute top-0 left-0 right-0 h-1.5 ${isOutOfStock ? 'bg-slate-300' : theme.accentBar}`} />
+
+                                            <div>
+                                                {/* Header: Solid Modern Category Icon + Badge + Stock status */}
+                                                <div className="flex items-start justify-between gap-2 mb-3">
+                                                    <div className="flex items-center gap-2.5">
+                                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold shadow-xs transition-transform duration-200 group-hover:scale-105 shrink-0 ${
+                                                            isOutOfStock ? 'bg-slate-200 text-slate-400' : theme.iconBg
+                                                        }`}>
+                                                            <TheIcon className="w-5 h-5" />
+                                                        </div>
+                                                        <div className="flex flex-col min-w-0">
+                                                            <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border w-fit ${theme.badgeBg}`}>
+                                                                {theme.badgeLabel}
+                                                            </span>
+                                                            {product.targetClass && (
+                                                                <span className="text-[10px] font-bold text-slate-500 mt-0.5 truncate">
+                                                                    {product.targetClass}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 ${
+                                                        isOutOfStock
+                                                            ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                                                            : isLowStock
+                                                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                                    }`}>
+                                                        {isOutOfStock ? 'Out of Stock' : `${product.stock} in stock`}
+                                                    </span>
+                                                </div>
+
+                                                {/* Product Title */}
+                                                <h4 className="font-extrabold text-xs md:text-sm text-slate-900 line-clamp-2 group-hover:text-indigo-600 transition-colors leading-snug">
+                                                    {product.name}
+                                                </h4>
+
+                                                {/* Meta Details (Publisher / Size / SKU) */}
+                                                <div className="mt-1.5 text-[11px] text-slate-500 font-medium line-clamp-1">
+                                                    {product.category === 'uniform'
+                                                        ? `${product.uniformType || 'Uniform'} ${product.size ? `• ${product.size}` : ''} ${product.gender ? `• ${product.gender}` : ''}`
+                                                        : (product.publisher || product.sku || 'Standard Edition')}
+                                                </div>
+                                            </div>
+
+                                            {/* Price & Action Button */}
+                                            <div className="flex items-center justify-between mt-3.5 pt-2.5 border-t border-slate-100/90">
+                                                <div>
+                                                    <span className="text-[10px] uppercase font-black text-slate-400 block -mb-0.5 tracking-wider">Price</span>
+                                                    <span className="text-sm font-black text-slate-900 tracking-tight">
+                                                        PKR {product.sellingPrice}
+                                                    </span>
+                                                </div>
+                                                <button
+                                                    disabled={isOutOfStock}
+                                                    className={`h-8 px-3 rounded-xl flex items-center justify-center gap-1 text-xs font-bold transition-all duration-150 shadow-xs ${
+                                                        isOutOfStock
+                                                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                                            : `${theme.btnBg} group-hover:scale-105 active:scale-95`
+                                                    }`}
+                                                >
+                                                    <Plus className="w-3.5 h-3.5" />
+                                                    <span>Add</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
+
+                    {/* Right: Sticky POS Register / Cart (4 Cols) */}
+                    <div className="lg:col-span-4 sticky top-4 space-y-4">
+                        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-lg shadow-slate-100 overflow-hidden flex flex-col">
+                            {/* Register Header */}
+                            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <ShoppingCart className="w-5 h-5 text-indigo-400" />
+                                    <span className="font-black text-sm tracking-tight">Active Register</span>
+                                </div>
+                                {cart.length > 0 && (
+                                    <button
+                                        onClick={clearCart}
+                                        className="text-xs text-rose-300 hover:text-rose-100 font-bold transition-colors"
+                                    >
+                                        Clear Cart
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Cart Items List */}
+                            <div className="p-4 max-h-[340px] overflow-y-auto divide-y divide-slate-100 space-y-2">
+                                {cart.length === 0 ? (
+                                    <div className="py-10 text-center text-slate-400">
+                                        <ShoppingCart className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                                        <p className="text-xs font-bold text-slate-600">Register is empty</p>
+                                        <p className="text-[11px] text-slate-400 mt-0.5">
+                                            Tap items from catalog or select a class kit
+                                        </p>
+                                    </div>
+                                ) : (
+                                    cart.map((cartItem, idx) => (
+                                        <div key={idx} className="pt-2 first:pt-0 flex items-center justify-between gap-2">
+                                            <div className="flex-1 min-w-0">
+                                                <h5 className="text-xs font-bold text-slate-900 truncate">
+                                                    {cartItem.name}
+                                                </h5>
+                                                <div className="text-[11px] text-slate-500">
+                                                    PKR {cartItem.price} {cartItem.size ? `• ${cartItem.size}` : ''}
+                                                </div>
+                                            </div>
+
+                                            {/* Quantity Stepper */}
+                                            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg">
+                                                <button
+                                                    onClick={() => updateCartQty(idx, cartItem.quantity - 1)}
+                                                    className="w-5 h-5 rounded bg-white hover:bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold shadow-2xs"
+                                                >
+                                                    <Minus className="w-3 h-3" />
+                                                </button>
+                                                <span className="w-6 text-center text-xs font-black text-slate-900">
+                                                    {cartItem.quantity}
+                                                </span>
+                                                <button
+                                                    onClick={() => updateCartQty(idx, cartItem.quantity + 1)}
+                                                    className="w-5 h-5 rounded bg-white hover:bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold shadow-2xs"
+                                                >
+                                                    <Plus className="w-3 h-3" />
+                                                </button>
+                                            </div>
+
+                                            <div className="text-right min-w-[65px]">
+                                                <div className="text-xs font-black text-slate-900">
+                                                    PKR {cartItem.price * cartItem.quantity}
+                                                </div>
+                                                <button
+                                                    onClick={() => removeFromCart(idx)}
+                                                    className="text-[10px] text-rose-500 hover:text-rose-700 font-bold"
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+
+                            {/* Cart Summary & Calculations */}
+                            {cart.length > 0 && (
+                                <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-3">
+                                    <div className="space-y-1.5 text-xs">
+                                        <div className="flex justify-between text-slate-600 font-medium">
+                                            <span>Subtotal ({cart.reduce((a, b) => a + b.quantity, 0)} items)</span>
+                                            <span className="font-bold text-slate-800">PKR {cartSubtotal}</span>
+                                        </div>
+
+                                        {/* Discount Input */}
+                                        <div className="flex items-center justify-between gap-2 pt-1">
+                                            <span className="text-slate-600 font-medium">Discount (PKR)</span>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={discount || ''}
+                                                placeholder="0"
+                                                onChange={(e) => setDiscount(Math.max(0, Number(e.target.value)))}
+                                                className="w-24 px-2 py-1 bg-white border border-slate-200 rounded-lg text-right text-xs font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                            />
+                                        </div>
+
+                                        <div className="flex justify-between items-baseline pt-2 border-t border-slate-200">
+                                            <span className="text-sm font-black text-slate-900">Net Total</span>
+                                            <span className="text-lg font-black text-emerald-600">PKR {cartTotal}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Checkout Trigger Button */}
+                                    <button
+                                        onClick={() => setCheckoutModalOpen(true)}
+                                        className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-sm shadow-md shadow-emerald-200 flex items-center justify-center gap-2 transition-all"
+                                    >
+                                        <CheckCircle className="w-4 h-4" />
+                                        <span>Proceed to Checkout</span>
+                                        <ArrowRight className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
             )}
 
-            {/* ========================================================================= */}
-            {/* TAB 5: SALES LEDGER & FINANCIAL AUDIT */}
-            {/* ========================================================================= */}
-            {activeTab === 'sales' && (
-                <div>
-                    {/* Summary Metrics Cards */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-                        <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #4f46e5' }}>
-                            <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Total Store Revenue</span>
-                            <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#0f172a', margin: '0.35rem 0' }}>
-                                PKR {salesMetrics.totalRevenue.toLocaleString()}
-                            </h3>
-                            <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>
-                                From {salesMetrics.totalOrders} total sales
-                            </span>
+            {/* ========================================================= */}
+            {/* TAB 2 & 3: INVENTORY MANAGER (BOOKS & UNIFORM) */}
+            {/* ========================================================= */}
+            {(activeTab === 'books_stationery' || activeTab === 'uniform') && (
+                <div className="space-y-6">
+                    {/* Top KPI Metric Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+                        {[
+                            {
+                                label: 'Total SKUs',
+                                value: `${filteredInventoryItems.length} Items`,
+                                subValue: 'Active Catalog',
+                                icon: Package,
+                                gradient: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
+                                shadow: 'rgba(99, 102, 241, 0.4)'
+                            },
+                            {
+                                label: 'Total Stock Units',
+                                value: `${filteredInventoryItems.reduce((acc, it) => acc + (Number(it.stock) || 0), 0)} Units`,
+                                subValue: 'In Inventory',
+                                icon: TrendingUp,
+                                gradient: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
+                                shadow: 'rgba(16, 185, 129, 0.4)'
+                            },
+                            {
+                                label: 'Stock Valuation',
+                                value: `PKR ${filteredInventoryItems.reduce((acc, it) => acc + ((Number(it.stock) || 0) * (Number(it.costPrice) || Number(it.sellingPrice) || 0)), 0).toLocaleString()}`,
+                                subValue: 'Asset Value',
+                                icon: DollarSign,
+                                gradient: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+                                shadow: 'rgba(139, 92, 246, 0.4)'
+                            },
+                            {
+                                label: 'Low Stock Warnings',
+                                value: `${filteredInventoryItems.filter(it => (Number(it.stock) || 0) <= (it.lowStockThreshold || 5)).length} SKUs`,
+                                subValue: 'Action Needed',
+                                icon: AlertTriangle,
+                                gradient: 'linear-gradient(135deg, #f43f5e 0%, #be123c 100%)',
+                                shadow: 'rgba(244, 63, 94, 0.4)'
+                            }
+                        ].map((stat, i) => {
+                            const Icon = stat.icon;
+                            return (
+                                <div
+                                    key={i}
+                                    className="rounded-2xl p-5 relative overflow-hidden transition-all duration-300 hover:-translate-y-1"
+                                    style={{
+                                        background: stat.gradient,
+                                        color: 'white',
+                                        boxShadow: `0 15px 25px -5px ${stat.shadow}`,
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        justifyContent: 'space-between',
+                                        minHeight: '140px'
+                                    }}
+                                >
+                                    {/* 2D Geometric Decorative Shape */}
+                                    <div
+                                        style={{
+                                            position: 'absolute',
+                                            top: '-15%',
+                                            right: '-10%',
+                                            width: '120px',
+                                            height: '120px',
+                                            background: 'rgba(255, 255, 255, 0.12)',
+                                            borderRadius: '30px',
+                                            transform: 'rotate(20deg)',
+                                            zIndex: 1
+                                        }}
+                                    />
+
+                                    <div className="flex items-center justify-between relative z-10">
+                                        <div
+                                            style={{
+                                                width: '46px',
+                                                height: '46px',
+                                                borderRadius: '14px',
+                                                background: 'rgba(255, 255, 255, 0.2)',
+                                                backdropFilter: 'blur(10px)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                border: '1px solid rgba(255, 255, 255, 0.3)'
+                                            }}
+                                        >
+                                            <Icon size={24} color="white" />
+                                        </div>
+                                        {stat.subValue && (
+                                            <span
+                                                style={{
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '700',
+                                                    background: 'rgba(255, 255, 255, 0.2)',
+                                                    padding: '3px 10px',
+                                                    borderRadius: '8px',
+                                                    backdropFilter: 'blur(6px)',
+                                                    border: '1px solid rgba(255, 255, 255, 0.25)'
+                                                }}
+                                            >
+                                                {stat.subValue}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div className="relative z-10 mt-3">
+                                        <p className="text-xs font-semibold text-white/85 uppercase tracking-wider mb-1">
+                                            {stat.label}
+                                        </p>
+                                        <h3 className="text-2xl md:text-3xl font-black text-white tracking-tight">
+                                            {stat.value}
+                                        </h3>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Filter & Search Bar */}
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col md:flex-row items-center justify-between gap-3">
+                        <div className="flex flex-1 items-center gap-3 w-full">
+                            <div className="relative flex-1">
+                                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                                <input
+                                    type="text"
+                                    placeholder="Search by title, publisher, uniform size, SKU barcode..."
+                                    value={invSearch}
+                                    onChange={(e) => setInvSearch(e.target.value)}
+                                    className="w-full pl-9 pr-3.5 py-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-xl text-xs md:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                />
+                            </div>
+
+                            <select
+                                value={invClassFilter}
+                                onChange={(e) => setInvClassFilter(e.target.value)}
+                                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs md:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                            >
+                                <option value="All">All Target Classes</option>
+                                {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
                         </div>
 
-                        <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #10b981' }}>
-                            <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Est. Net Profit</span>
-                            <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#10b981', margin: '0.35rem 0' }}>
-                                PKR {salesMetrics.netProfit.toLocaleString()}
-                            </h3>
-                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                (Revenue - Product Cost)
-                            </span>
-                        </div>
+                        <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                            <button
+                                onClick={() => setInvLowStockOnly(!invLowStockOnly)}
+                                className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                                    invLowStockOnly
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                                }`}
+                            >
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                                <span>Low Stock Only</span>
+                            </button>
 
-                        <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #06b6d4' }}>
-                            <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Cash Collected</span>
-                            <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#0891b2', margin: '0.35rem 0' }}>
-                                PKR {salesMetrics.totalCash.toLocaleString()}
-                            </h3>
-                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Immediate cash payments</span>
-                        </div>
-
-                        <div className="card" style={{ padding: '1.25rem', borderLeft: '4px solid #f59e0b' }}>
-                            <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Added to Fee Ledger</span>
-                            <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#d97706', margin: '0.35rem 0' }}>
-                                PKR {salesMetrics.totalLedger.toLocaleString()}
-                            </h3>
-                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>To be collected with monthly fees</span>
+                            <button
+                                onClick={() => handleOpenItemModal()}
+                                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm shadow-indigo-200 flex items-center gap-1.5"
+                            >
+                                <Plus className="w-4 h-4" />
+                                <span>New Item</span>
+                            </button>
                         </div>
                     </div>
 
-                    {/* Sales Log Table */}
-                    <div className="card" style={{ padding: '1.25rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '1rem' }}>
-                            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flex: 1, minWidth: '240px' }}>
-                                <div style={{ position: 'relative', flex: 1 }}>
-                                    <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
-                                    <input
-                                        type="text"
-                                        placeholder="Search receipt # or customer name..."
-                                        value={salesSearch}
-                                        onChange={(e) => setSalesSearch(e.target.value)}
-                                        style={{ width: '100%', padding: '0.55rem 0.75rem 0.55rem 2rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                    />
-                                </div>
-
-                                <select
-                                    value={salesPaymentFilter}
-                                    onChange={(e) => setSalesPaymentFilter(e.target.value)}
-                                    style={{ padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                >
-                                    <option value="all">All Payment Types</option>
-                                    <option value="cash">Cash Only</option>
-                                    <option value="fee_ledger">Fee Ledger Only</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                    {/* Modern Inventory Table */}
+                    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs border-collapse">
                                 <thead>
-                                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0', color: '#64748b', textAlign: 'left' }}>
-                                        <th style={{ padding: '0.75rem 1rem' }}>Receipt #</th>
-                                        <th style={{ padding: '0.75rem 1rem' }}>Date & Time</th>
-                                        <th style={{ padding: '0.75rem 1rem' }}>Customer / Student</th>
-                                        <th style={{ padding: '0.75rem 1rem' }}>Items Sold</th>
-                                        <th style={{ padding: '0.75rem 1rem' }}>Payment Mode</th>
-                                        <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Amount</th>
-                                        <th style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>Receipt</th>
+                                    <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 uppercase font-black tracking-wider text-[10px]">
+                                        <th className="py-3.5 px-4">Item Details</th>
+                                        <th className="py-3.5 px-4">Category & Class</th>
+                                        <th className="py-3.5 px-4">Cost Price</th>
+                                        <th className="py-3.5 px-4">Selling Price</th>
+                                        <th className="py-3.5 px-4">Margin</th>
+                                        <th className="py-3.5 px-4">Stock Status</th>
+                                        <th className="py-3.5 px-4 text-right">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody>
-                                    {filteredSales.map((sale, index) => (
-                                        <tr key={sale.id} style={{ borderBottom: '1px solid #f1f5f9', background: index % 2 === 0 ? 'white' : '#fafafa' }}>
-                                            <td style={{ padding: '0.85rem 1rem', fontWeight: '700', color: '#4f46e5' }}>
-                                                {sale.receiptNo}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', color: '#64748b', fontSize: '0.8rem' }}>
-                                                {sale.createdAtFormatted || '—'}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', color: '#0f172a', fontWeight: '600' }}>
-                                                {sale.customerName}
-                                                {sale.studentInfo && (
-                                                    <span style={{ display: 'block', fontSize: '0.72rem', color: '#64748b' }}>
-                                                        {sale.studentInfo.className} · Roll: {sale.studentInfo.rollNo}
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', color: '#475569' }}>
-                                                {(sale.items || []).map(it => `${it.name} (${it.quantity}x)`).join(', ')}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem' }}>
-                                                <span style={{
-                                                    fontSize: '0.72rem',
-                                                    padding: '0.2rem 0.55rem',
-                                                    borderRadius: '9999px',
-                                                    fontWeight: '700',
-                                                    background: sale.paymentMode === 'cash' ? '#dcfce7' : '#fef3c7',
-                                                    color: sale.paymentMode === 'cash' ? '#15803d' : '#b45309'
-                                                }}>
-                                                    {sale.paymentMode === 'cash' ? '💵 Cash Paid' : '📝 Added to Fee Ledger'}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: '800', color: '#0f172a' }}>
-                                                PKR {sale.finalAmount}
-                                            </td>
-                                            <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }}>
-                                                <button
-                                                    onClick={() => {
-                                                        setActiveReceipt(sale);
-                                                        setReceiptModalOpen(true);
-                                                    }}
-                                                    className="btn"
-                                                    style={{ background: '#f1f5f9', color: '#4f46e5', padding: '0.35rem 0.65rem', borderRadius: '6px', fontSize: '0.78rem' }}
-                                                >
-                                                    <Printer size={14} /> View
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-
-                                    {filteredSales.length === 0 && (
+                                <tbody className="divide-y divide-slate-100">
+                                    {filteredInventoryItems.length === 0 ? (
                                         <tr>
-                                            <td colSpan="7" style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>
-                                                No sales transactions found matching your criteria.
+                                            <td colSpan="7" className="py-12 text-center text-slate-400">
+                                                <Package className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                                                <p className="text-sm font-bold text-slate-600">No inventory records found</p>
+                                                <p className="text-xs text-slate-400 mt-1">Add items or adjust your search filter</p>
                                             </td>
                                         </tr>
+                                    ) : (
+                                        filteredInventoryItems.map((item) => {
+                                            const isLow = Number(item.stock) <= (item.lowStockThreshold || 5);
+                                            const cost = Number(item.costPrice) || 0;
+                                            const sell = Number(item.sellingPrice) || 0;
+                                            const margin = sell > 0 ? Math.round(((sell - cost) / sell) * 100) : 0;
+
+                                            return (
+                                                <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
+                                                    <td className="py-3.5 px-4">
+                                                        <div className="font-bold text-slate-900 text-xs md:text-sm">
+                                                            {item.name}
+                                                        </div>
+                                                        <div className="text-[11px] text-slate-400 mt-0.5">
+                                                            {item.sku ? `SKU: ${item.sku}` : ''} {item.publisher ? `• ${item.publisher}` : ''}
+                                                            {item.size ? `• Size: ${item.size}` : ''}
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-3.5 px-4">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-bold text-[10px]">
+                                                                {item.category}
+                                                            </span>
+                                                            <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-bold text-[10px]">
+                                                                {item.targetClass || 'General'}
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-3.5 px-4 font-bold text-slate-600">
+                                                        PKR {cost}
+                                                    </td>
+                                                    <td className="py-3.5 px-4 font-black text-slate-900">
+                                                        PKR {sell}
+                                                    </td>
+                                                    <td className="py-3.5 px-4">
+                                                        <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${
+                                                            margin >= 25 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'
+                                                        }`}>
+                                                            {margin}%
+                                                        </span>
+                                                    </td>
+                                                    <td className="py-3.5 px-4">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`px-2.5 py-1 rounded-lg font-black text-[11px] ${
+                                                                Number(item.stock) === 0
+                                                                    ? 'bg-rose-100 text-rose-700'
+                                                                    : isLow
+                                                                    ? 'bg-amber-100 text-amber-800'
+                                                                    : 'bg-emerald-100 text-emerald-800'
+                                                            }`}>
+                                                                {item.stock} in stock
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-3.5 px-4 text-right">
+                                                        <div className="flex items-center justify-end gap-1.5">
+                                                            {/* Quick Restock */}
+                                                            <button
+                                                                onClick={() => {
+                                                                    setRestockItem(item);
+                                                                    setRestockQuantity(10);
+                                                                    setRestockModalOpen(true);
+                                                                }}
+                                                                className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[11px] transition-colors"
+                                                                title="Quick restock"
+                                                            >
+                                                                + Restock
+                                                            </button>
+
+                                                            {/* Edit */}
+                                                            <button
+                                                                onClick={() => handleOpenItemModal(item)}
+                                                                className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors"
+                                                                title="Edit Item"
+                                                            >
+                                                                <Edit className="w-3.5 h-3.5" />
+                                                            </button>
+
+                                                            {/* Delete */}
+                                                            <button
+                                                                onClick={() => handleDeleteItem(item)}
+                                                                className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors"
+                                                                title="Delete Item"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
                                     )}
                                 </tbody>
                             </table>
@@ -2296,573 +2611,715 @@ const Store = () => {
                 </div>
             )}
 
-            {/* ========================================================================= */}
-            {/* CHECKOUT MODAL (CASH OR ADD TO STUDENT FEE LEDGER) */}
-            {/* ========================================================================= */}
+            {/* ========================================================= */}
+            {/* TAB 4: CLASS SETS & BUNDLES STUDIO */}
+            {/* ========================================================= */}
+            {activeTab === 'bundles' && (
+                <div className="space-y-6">
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+                        <div>
+                            <h2 className="text-lg font-black text-slate-900">Class Package Bundles</h2>
+                            <p className="text-xs text-slate-500">
+                                Pre-packaged kits for fast POS checkout during session admissions
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => handleOpenTemplateModal('Class 1')}
+                                className="px-3.5 py-2 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 text-xs font-bold"
+                            >
+                                <Sparkles className="w-3.5 h-3.5 inline mr-1" />
+                                Import Standard Kit
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setBundleFormData({ title: '', targetClass: 'Class 1', bundlePrice: 0, selectedItemIds: [] });
+                                    setBundleModalOpen(true);
+                                }}
+                                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm"
+                            >
+                                <Plus className="w-3.5 h-3.5 inline mr-1" />
+                                Custom Bundle
+                            </button>
+                        </div>
+                    </div>
+
+                    {bundles.length === 0 ? (
+                        <div className="bg-white rounded-2xl p-12 text-center border border-slate-200">
+                            <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                            <h3 className="text-base font-bold text-slate-700">No class bundles created yet</h3>
+                            <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                                Save time by importing ready-made academic packages (Books + Copies + Uniform) for all classes.
+                            </p>
+                            <button
+                                onClick={() => handleOpenTemplateModal('Class 1')}
+                                className="mt-4 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
+                            >
+                                Import Class 1 Template
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {bundles.map(bundle => {
+                                const includedItems = items.filter(it => (bundle.selectedItemIds || []).includes(it.id));
+                                const retailTotal = includedItems.reduce((acc, it) => acc + (Number(it.sellingPrice) || 0), 0);
+
+                                return (
+                                    <div key={bundle.id} className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-sm flex flex-col justify-between">
+                                        <div>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-black text-xs uppercase tracking-wider">
+                                                    {bundle.targetClass}
+                                                </span>
+                                                <button
+                                                    onClick={() => handleDeleteBundle(bundle)}
+                                                    className="text-slate-400 hover:text-rose-600 transition-colors"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+
+                                            <h3 className="font-bold text-sm text-slate-900 line-clamp-1 mt-1">
+                                                {bundle.title}
+                                            </h3>
+
+                                            <div className="mt-3 space-y-1 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                                <div className="text-[11px] font-bold text-slate-600 flex justify-between">
+                                                    <span>Included Items:</span>
+                                                    <span>{includedItems.length} SKUs</span>
+                                                </div>
+                                                <div className="text-[11px] text-slate-400 flex justify-between">
+                                                    <span>Retail Value:</span>
+                                                    <span>PKR {retailTotal}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
+                                            <div>
+                                                <span className="text-[10px] text-slate-400 uppercase font-bold block">Package Price</span>
+                                                <span className="text-base font-black text-emerald-600">PKR {bundle.bundlePrice}</span>
+                                            </div>
+
+                                            <button
+                                                onClick={() => {
+                                                    addToCart(bundle, true);
+                                                    setActiveTab('pos');
+                                                }}
+                                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm flex items-center gap-1"
+                                            >
+                                                <ShoppingCart className="w-3.5 h-3.5" />
+                                                <span>Sell Set</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ========================================================= */}
+            {/* TAB 5: SALES LEDGER & RECEIPTS */}
+            {/* ========================================================= */}
+            {activeTab === 'sales' && (
+                <div className="space-y-6">
+                    {/* Revenue Summary Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+                        {[
+                            {
+                                label: 'Total Store Revenue',
+                                value: `PKR ${kpiMetrics.totalRevenue.toLocaleString()}`,
+                                subValue: `${kpiMetrics.totalSalesCount} Completed Orders`,
+                                icon: ShoppingBag,
+                                gradient: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
+                                shadow: 'rgba(99, 102, 241, 0.4)'
+                            },
+                            {
+                                label: "Today's Sales",
+                                value: `PKR ${kpiMetrics.todayRevenue.toLocaleString()}`,
+                                subValue: 'Live Counter Total',
+                                icon: TrendingUp,
+                                gradient: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
+                                shadow: 'rgba(16, 185, 129, 0.4)'
+                            },
+                            {
+                                label: 'Cash Collected',
+                                value: `PKR ${kpiMetrics.totalCash.toLocaleString()}`,
+                                subValue: 'Direct Register',
+                                icon: DollarSign,
+                                gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%)',
+                                shadow: 'rgba(14, 165, 233, 0.4)'
+                            },
+                            {
+                                label: 'Student Fee Ledgers',
+                                value: `PKR ${kpiMetrics.totalLedger.toLocaleString()}`,
+                                subValue: 'Challan Monthly Charge',
+                                icon: Users,
+                                gradient: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+                                shadow: 'rgba(139, 92, 246, 0.4)'
+                            }
+                        ].map((stat, i) => {
+                            const Icon = stat.icon;
+                            return (
+                                <div
+                                    key={i}
+                                    className="rounded-2xl p-5 relative overflow-hidden transition-all duration-300 hover:-translate-y-1"
+                                    style={{
+                                        background: stat.gradient,
+                                        color: 'white',
+                                        boxShadow: `0 15px 25px -5px ${stat.shadow}`,
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        justifyContent: 'space-between',
+                                        minHeight: '140px'
+                                    }}
+                                >
+                                    {/* 2D Geometric Decorative Shape */}
+                                    <div
+                                        style={{
+                                            position: 'absolute',
+                                            top: '-15%',
+                                            right: '-10%',
+                                            width: '120px',
+                                            height: '120px',
+                                            background: 'rgba(255, 255, 255, 0.12)',
+                                            borderRadius: '30px',
+                                            transform: 'rotate(20deg)',
+                                            zIndex: 1
+                                        }}
+                                    />
+
+                                    <div className="flex items-center justify-between relative z-10">
+                                        <div
+                                            style={{
+                                                width: '46px',
+                                                height: '46px',
+                                                borderRadius: '14px',
+                                                background: 'rgba(255, 255, 255, 0.2)',
+                                                backdropFilter: 'blur(10px)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                border: '1px solid rgba(255, 255, 255, 0.3)'
+                                            }}
+                                        >
+                                            <Icon size={24} color="white" />
+                                        </div>
+                                        {stat.subValue && (
+                                            <span
+                                                style={{
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '700',
+                                                    background: 'rgba(255, 255, 255, 0.2)',
+                                                    padding: '3px 10px',
+                                                    borderRadius: '8px',
+                                                    backdropFilter: 'blur(6px)',
+                                                    border: '1px solid rgba(255, 255, 255, 0.25)'
+                                                }}
+                                            >
+                                                {stat.subValue}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div className="relative z-10 mt-3">
+                                        <p className="text-xs font-semibold text-white/85 uppercase tracking-wider mb-1">
+                                            {stat.label}
+                                        </p>
+                                        <h3 className="text-2xl md:text-3xl font-black text-white tracking-tight">
+                                            {stat.value}
+                                        </h3>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Sales Filter Bar */}
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col md:flex-row items-center justify-between gap-3">
+                        <div className="flex flex-1 items-center gap-3 w-full">
+                            <div className="relative flex-1">
+                                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                                <input
+                                    type="text"
+                                    placeholder="Search receipt #, customer name, student..."
+                                    value={salesSearch}
+                                    onChange={(e) => setSalesSearch(e.target.value)}
+                                    className="w-full pl-9 pr-3.5 py-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-xl text-xs md:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                />
+                            </div>
+
+                            {/* Date Filter */}
+                            <select
+                                value={salesDateFilter}
+                                onChange={(e) => setSalesDateFilter(e.target.value)}
+                                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs md:text-sm font-semibold text-slate-800 focus:outline-none"
+                            >
+                                <option value="all">All Dates</option>
+                                <option value="today">Today Only</option>
+                                <option value="week">Past 7 Days</option>
+                                <option value="month">This Month</option>
+                            </select>
+
+                            {/* Payment Filter */}
+                            <select
+                                value={salesPaymentFilter}
+                                onChange={(e) => setSalesPaymentFilter(e.target.value)}
+                                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs md:text-sm font-semibold text-slate-800 focus:outline-none"
+                            >
+                                <option value="all">All Payments</option>
+                                <option value="cash">Cash Only</option>
+                                <option value="fee_ledger">Fee Ledger Only</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Sales Audit Table */}
+                    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs border-collapse">
+                                <thead>
+                                    <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 uppercase font-black tracking-wider text-[10px]">
+                                        <th className="py-3.5 px-4">Receipt #</th>
+                                        <th className="py-3.5 px-4">Date & Time</th>
+                                        <th className="py-3.5 px-4">Customer / Student</th>
+                                        <th className="py-3.5 px-4">Items Count</th>
+                                        <th className="py-3.5 px-4">Payment Mode</th>
+                                        <th className="py-3.5 px-4">Net Total</th>
+                                        <th className="py-3.5 px-4 text-right">Receipt Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {filteredSales.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="7" className="py-12 text-center text-slate-400">
+                                                <BarChart3 className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                                                <p className="text-sm font-bold text-slate-600">No sales transactions found</p>
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        filteredSales.map((sale, idx) => (
+                                            <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
+                                                <td className="py-3.5 px-4 font-black text-slate-900 font-mono">
+                                                    {sale.receiptNo}
+                                                </td>
+                                                <td className="py-3.5 px-4 text-slate-600 font-medium">
+                                                    {sale.createdAtFormatted || (sale.timestamp ? new Date(sale.timestamp).toLocaleString() : 'Recent')}
+                                                </td>
+                                                <td className="py-3.5 px-4">
+                                                    <div className="font-bold text-slate-900">
+                                                        {sale.customerName || (sale.studentInfo?.name) || 'Walk-in'}
+                                                    </div>
+                                                    {sale.studentInfo && (
+                                                        <div className="text-[10px] text-indigo-600 font-semibold">
+                                                            {sale.studentInfo.className} (Roll #{sale.studentInfo.rollNo || 'N/A'})
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td className="py-3.5 px-4 font-bold text-slate-700">
+                                                    {(sale.items || []).reduce((a, b) => a + (Number(b.quantity) || 1), 0)} units
+                                                </td>
+                                                <td className="py-3.5 px-4">
+                                                    <span className={`px-2.5 py-1 rounded-md font-bold text-[10px] uppercase ${
+                                                        sale.paymentMode === 'fee_ledger'
+                                                            ? 'bg-purple-100 text-purple-800'
+                                                            : 'bg-emerald-100 text-emerald-800'
+                                                    }`}>
+                                                        {sale.paymentMode === 'fee_ledger' ? 'Fee Ledger' : 'Cash'}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3.5 px-4 font-black text-slate-900 text-sm">
+                                                    PKR {sale.finalAmount}
+                                                </td>
+                                                <td className="py-3.5 px-4 text-right">
+                                                    <div className="flex items-center justify-end gap-1.5">
+                                                        <button
+                                                            onClick={() => downloadReceiptPDF(sale)}
+                                                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+                                                            title="Download PDF Receipt"
+                                                        >
+                                                            <Download className="w-3.5 h-3.5" />
+                                                        </button>
+
+                                                        <button
+                                                            onClick={() => sendWhatsAppReceiptDirect(sale)}
+                                                            className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 font-bold text-xs transition-colors"
+                                                            title="Resend WhatsApp Receipt"
+                                                        >
+                                                            <MessageSquare className="w-3.5 h-3.5" />
+                                                        </button>
+
+                                                        <button
+                                                            onClick={() => {
+                                                                setActiveReceipt(sale);
+                                                                setReceiptModalOpen(true);
+                                                            }}
+                                                            className="p-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold text-xs transition-colors"
+                                                            title="View Slip"
+                                                        >
+                                                            <Eye className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ========================================================= */}
+            {/* MODAL 1: CHECKOUT & PAYMENT DIALOG */}
+            {/* ========================================================= */}
             {checkoutModalOpen && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.75)',
-                    backdropFilter: 'blur(6px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 10000,
-                    padding: '1rem'
-                }}>
-                    <div className="card" style={{
-                        background: '#ffffff',
-                        borderRadius: '16px',
-                        width: '100%',
-                        maxWidth: '560px',
-                        padding: '1.5rem',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                        maxHeight: '90vh',
-                        overflowY: 'auto'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
-                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <CreditCard size={20} color="#4f46e5" />
-                                Store Checkout & Payment
-                            </h3>
-                            <button onClick={() => setCheckoutModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' }}>
-                                <X size={16} />
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                            <div>
+                                <h3 className="text-lg font-black text-slate-900">Complete POS Checkout</h3>
+                                <p className="text-xs text-slate-500">Choose payment method and customer details</p>
+                            </div>
+                            <button
+                                onClick={() => setCheckoutModalOpen(false)}
+                                className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400"
+                            >
+                                <X className="w-5 h-5" />
                             </button>
                         </div>
 
-                        {/* Order Summary Ribbon */}
-                        <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <form onSubmit={handleCheckoutSubmit} className="mt-4 space-y-4">
+                            {/* Payment Mode Selector */}
                             <div>
-                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Total Payable Amount:</span>
-                                <h4 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#10b981', margin: 0 }}>PKR {cartTotal}</h4>
-                            </div>
-                            <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '600' }}>
-                                {cart.reduce((a, b) => a + b.quantity, 0)} Items in Cart
-                            </span>
-                        </div>
-
-                        {/* Payment Mode Selection */}
-                        <div style={{ marginBottom: '1.25rem' }}>
-                            <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#334155', marginBottom: '0.5rem' }}>
-                                Select Payment Method:
-                            </label>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setPaymentMode('cash')}
-                                    style={{
-                                        padding: '0.85rem',
-                                        borderRadius: '10px',
-                                        border: '2px solid',
-                                        borderColor: paymentMode === 'cash' ? '#10b981' : '#e2e8f0',
-                                        background: paymentMode === 'cash' ? '#f0fdf4' : 'white',
-                                        color: paymentMode === 'cash' ? '#047857' : '#64748b',
-                                        fontWeight: '700',
-                                        fontSize: '0.88rem',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        alignItems: 'center',
-                                        gap: '0.35rem'
-                                    }}
-                                >
-                                    <DollarSign size={22} />
-                                    <span>💵 Cash / Instant Paid</span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => setPaymentMode('fee_ledger')}
-                                    style={{
-                                        padding: '0.85rem',
-                                        borderRadius: '10px',
-                                        border: '2px solid',
-                                        borderColor: paymentMode === 'fee_ledger' ? '#4f46e5' : '#e2e8f0',
-                                        background: paymentMode === 'fee_ledger' ? '#eef2ff' : 'white',
-                                        color: paymentMode === 'fee_ledger' ? '#4338ca' : '#64748b',
-                                        fontWeight: '700',
-                                        fontSize: '0.88rem',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        alignItems: 'center',
-                                        gap: '0.35rem'
-                                    }}
-                                >
-                                    <FileText size={22} />
-                                    <span>📝 Add to Student Fee Ledger</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* If Mode is Fee Ledger: Pick Student */}
-                        {paymentMode === 'fee_ledger' && (
-                            <div style={{ background: '#faf5ff', padding: '1rem', borderRadius: '10px', border: '1px solid #e9d5ff', marginBottom: '1.25rem' }}>
-                                <h4 style={{ fontSize: '0.9rem', fontWeight: '800', color: '#6b21a8', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                    <Users size={16} /> Link to Student Account
-                                </h4>
-
-                                <div style={{ marginBottom: '0.75rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#475569', marginBottom: '0.25rem' }}>
-                                        1. Select Student's Class:
-                                    </label>
-                                    <select
-                                        value={selectedClassId}
-                                        onChange={(e) => setSelectedClassId(e.target.value)}
-                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                <label className="block text-xs font-bold text-slate-700 mb-1.5">Payment Method</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentMode('cash')}
+                                        className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                                            paymentMode === 'cash'
+                                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                                : 'bg-slate-50 text-slate-700 border-slate-200'
+                                        }`}
                                     >
-                                        <option value="">-- Choose Class --</option>
-                                        {classesList.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
+                                        <DollarSign className="w-4 h-4" />
+                                        <span>Cash / Walk-in</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentMode('fee_ledger')}
+                                        className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                                            paymentMode === 'fee_ledger'
+                                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                                : 'bg-slate-50 text-slate-700 border-slate-200'
+                                        }`}
+                                    >
+                                        <CreditCard className="w-4 h-4" />
+                                        <span>Student Fee Ledger</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Mode Specific Inputs */}
+                            {paymentMode === 'cash' ? (
+                                <div className="space-y-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Customer / Parent Name (Optional)</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. Muhammad Ali"
+                                            value={customerName}
+                                            onChange={(e) => setCustomerName(e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">WhatsApp Number (For instant slip)</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. 03001234567"
+                                            value={customerPhone}
+                                            onChange={(e) => setCustomerPhone(e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800"
+                                        />
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-3 bg-indigo-50/60 p-3.5 rounded-2xl border border-indigo-100">
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-indigo-900 mb-1">Select Student's Class</label>
+                                        <select
+                                            value={selectedClassId}
+                                            onChange={(e) => setSelectedClassId(e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-slate-800"
+                                            required
+                                        >
+                                            <option value="">-- Choose Class --</option>
+                                            {classesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+
+                                    {selectedClassId && (
+                                        <div>
+                                            <label className="block text-[11px] font-bold text-indigo-900 mb-1">Select Student</label>
+                                            <div className="relative mb-2">
+                                                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Search student name / roll no..."
+                                                    value={studentSearchQuery}
+                                                    onChange={(e) => setStudentSearchQuery(e.target.value)}
+                                                    className="w-full pl-8 pr-2.5 py-1.5 bg-white border border-indigo-200 rounded-lg text-xs"
+                                                />
+                                            </div>
+
+                                            <div className="max-h-36 overflow-y-auto space-y-1 bg-white p-2 rounded-xl border border-indigo-100">
+                                                {loadingStudents ? (
+                                                    <div className="py-4 text-center text-xs text-slate-400 font-medium">Loading students...</div>
+                                                ) : classStudents.filter(s => s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) || s.rollNo?.toString().includes(studentSearchQuery)).length === 0 ? (
+                                                    <div className="py-3 text-center text-xs text-slate-400 font-medium">No student matched</div>
+                                                ) : (
+                                                    classStudents
+                                                        .filter(s => s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) || s.rollNo?.toString().includes(studentSearchQuery))
+                                                        .map(st => (
+                                                            <div
+                                                                key={st.id}
+                                                                onClick={() => setSelectedStudent(st)}
+                                                                className={`p-2 rounded-lg cursor-pointer text-xs flex items-center justify-between transition-all ${
+                                                                    selectedStudent?.id === st.id
+                                                                        ? 'bg-indigo-600 text-white font-bold'
+                                                                        : 'hover:bg-slate-50 text-slate-700'
+                                                                }`}
+                                                            >
+                                                                <span>{st.name} (Roll #{st.rollNumber || st.rollNo || 'N/A'})</span>
+                                                                {selectedStudent?.id === st.id && <Check className="w-3.5 h-3.5" />}
+                                                            </div>
+                                                        ))
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Order Total Overview */}
+                            <div className="p-3 bg-slate-900 text-white rounded-xl flex items-center justify-between">
+                                <div>
+                                    <span className="text-[11px] text-slate-400 block font-bold">Total Amount to Charge</span>
+                                    <span className="text-lg font-black text-emerald-400">PKR {cartTotal}</span>
+                                </div>
+                                <div className="text-right text-[11px] text-slate-400">
+                                    <span>{cart.reduce((a, b) => a + b.quantity, 0)} items</span>
+                                </div>
+                            </div>
+
+                            {/* WhatsApp Option */}
+                            <label className="flex items-center gap-2 cursor-pointer pt-1">
+                                <input
+                                    type="checkbox"
+                                    checked={sendWhatsAppReceipt}
+                                    onChange={(e) => setSendWhatsAppReceipt(e.target.checked)}
+                                    className="rounded text-indigo-600"
+                                />
+                                <span className="text-xs font-semibold text-slate-700">Open WhatsApp Slip immediately after sale</span>
+                            </label>
+
+                            {/* Submit Button */}
+                            <button
+                                type="submit"
+                                disabled={isSubmittingOrder}
+                                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm shadow-md shadow-emerald-200 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                            >
+                                <CheckCircle className="w-4 h-4" />
+                                <span>{isSubmittingOrder ? 'Processing...' : 'Confirm & Generate Slip'}</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ========================================================= */}
+            {/* MODAL 2: RECEIPT VIEW & PRINT */}
+            {/* ========================================================= */}
+            {receiptModalOpen && activeReceipt && (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <h3 className="text-base font-black text-slate-900">Receipt Generated</h3>
+                            <button onClick={() => setReceiptModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Slip Design Box */}
+                        <div className="mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-200 font-mono text-xs space-y-3">
+                            <div className="text-center pb-2 border-b border-slate-200">
+                                <h4 className="font-black text-sm text-slate-900">{schoolInfo.name}</h4>
+                                <p className="text-[10px] text-slate-500">{schoolInfo.address || 'Store Department'}</p>
+                                <p className="text-[10px] text-slate-500">Phone: {schoolInfo.phone || 'N/A'}</p>
+                            </div>
+
+                            <div className="space-y-1 text-[11px]">
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">Receipt #:</span>
+                                    <span className="font-bold text-slate-900">{activeReceipt.receiptNo}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">Customer:</span>
+                                    <span className="font-bold text-slate-900">{activeReceipt.customerName}</span>
+                                </div>
+                                {activeReceipt.studentInfo && (
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-500">Student:</span>
+                                        <span className="font-bold text-indigo-600">{activeReceipt.studentInfo.className} (Roll: {activeReceipt.studentInfo.rollNo})</span>
+                                    </div>
+                                )}
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">Payment:</span>
+                                    <span className="font-bold text-slate-900 uppercase">{activeReceipt.paymentMode}</span>
+                                </div>
+                            </div>
+
+                            {/* Table */}
+                            <div className="pt-2 border-t border-slate-200 space-y-1">
+                                {(activeReceipt.items || []).map((it, idx) => (
+                                    <div key={idx} className="flex justify-between text-[11px]">
+                                        <span className="truncate pr-2">{it.quantity}x {it.name}</span>
+                                        <span className="font-bold">PKR {it.total}</span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="pt-2 border-t border-slate-200 space-y-1 text-[11px]">
+                                <div className="flex justify-between">
+                                    <span>Subtotal:</span>
+                                    <span>PKR {activeReceipt.subtotal}</span>
+                                </div>
+                                {activeReceipt.discount > 0 && (
+                                    <div className="flex justify-between text-rose-600">
+                                        <span>Discount:</span>
+                                        <span>- PKR {activeReceipt.discount}</span>
+                                    </div>
+                                )}
+                                <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-slate-300">
+                                    <span>Net Total:</span>
+                                    <span>PKR {activeReceipt.finalAmount}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="grid grid-cols-2 gap-2.5 mt-4">
+                            <button
+                                onClick={() => sendWhatsAppReceiptDirect(activeReceipt)}
+                                className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5"
+                            >
+                                <MessageSquare className="w-4 h-4" />
+                                <span>WhatsApp Slip</span>
+                            </button>
+
+                            <button
+                                onClick={() => downloadReceiptPDF(activeReceipt)}
+                                className="py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1.5"
+                            >
+                                <Download className="w-4 h-4" />
+                                <span>Download PDF</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ========================================================= */}
+            {/* MODAL 3: ADD / EDIT INVENTORY ITEM */}
+            {/* ========================================================= */}
+            {itemModalOpen && (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <h3 className="text-base font-black text-slate-900">
+                                {editingItem ? 'Edit Store Item' : 'Add New Store Item'}
+                            </h3>
+                            <button onClick={() => setItemModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSaveItem} className="mt-4 space-y-3 text-xs">
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Item Title / Name *</label>
+                                <input
+                                    type="text"
+                                    placeholder="e.g. Oxford Progressive English 1"
+                                    value={itemFormData.name}
+                                    onChange={(e) => setItemFormData({ ...itemFormData, name: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
+                                    required
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2.5">
+                                <div>
+                                    <label className="block font-bold text-slate-700 mb-1">Category</label>
+                                    <select
+                                        value={itemFormData.category}
+                                        onChange={(e) => setItemFormData({ ...itemFormData, category: e.target.value })}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium"
+                                    >
+                                        <option value="book">📚 Book</option>
+                                        <option value="uniform">👔 Uniform</option>
+                                        <option value="stationery">✏️ Stationery / Item</option>
                                     </select>
                                 </div>
 
-                                {selectedClassId && (
+                                <div>
+                                    <label className="block font-bold text-slate-700 mb-1">Target Class</label>
+                                    <select
+                                        value={itemFormData.targetClass}
+                                        onChange={(e) => setItemFormData({ ...itemFormData, targetClass: e.target.value })}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium"
+                                    >
+                                        {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Category Specific Fields */}
+                            {itemFormData.category === 'uniform' ? (
+                                <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#475569', marginBottom: '0.25rem' }}>
-                                            2. Select Student (Search by Name or Roll No):
-                                        </label>
-                                        <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                                            {classStudents.map(st => {
-                                                const isSel = selectedStudent?.id === st.id;
-                                                return (
-                                                    <div
-                                                        key={st.id}
-                                                        onClick={() => {
-                                                            setSelectedStudent(st);
-                                                            setCustomerName(st.name || '');
-                                                            const phone = st.fatherPhone || st.phone || st.whatsapp || st.contactNumber || st.emergencyContact || '';
-                                                            if (phone) setCustomerPhone(phone);
-                                                        }}
-                                                        style={{
-                                                            padding: '0.5rem 0.75rem',
-                                                            borderRadius: '6px',
-                                                            border: isSel ? '2px solid #6b21a8' : '1px solid #e2e8f0',
-                                                            background: isSel ? '#f3e8ff' : 'white',
-                                                            cursor: 'pointer',
-                                                            display: 'flex',
-                                                            justifyContent: 'space-between',
-                                                            alignItems: 'center'
-                                                        }}
-                                                    >
-                                                        <div>
-                                                            <strong style={{ fontSize: '0.85rem', color: '#0f172a' }}>{st.name}</strong>
-                                                            <span style={{ fontSize: '0.72rem', color: '#64748b', display: 'block' }}>
-                                                                Roll #{st.rollNumber || st.rollNo || 'N/A'} · Father: {st.fatherName || 'N/A'}
-                                                            </span>
-                                                        </div>
-                                                        <div style={{ textAlign: 'right' }}>
-                                                            <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Pending Dues:</span>
-                                                            <span style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#ef4444' }}>
-                                                                PKR {st.remaining || 0}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-
-                                            {classStudents.length === 0 && !loadingStudents && (
-                                                <p style={{ fontSize: '0.8rem', color: '#94a3b8', textAlign: 'center', padding: '1rem' }}>
-                                                    No students enrolled in this class.
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {selectedStudent && (
-                                    <div style={{ marginTop: '0.75rem', padding: '0.65rem', background: '#ecfdf5', borderRadius: '6px', border: '1px solid #a7f3d0' }}>
-                                        <p style={{ fontSize: '0.78rem', color: '#065f46', margin: 0 }}>
-                                            ✓ <strong>PKR {cartTotal}</strong> will be added to <strong>{selectedStudent.name}'s</strong> fee invoice ledger automatically.
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Customer Details for Cash Walk-in */}
-                        {paymentMode === 'cash' && (
-                            <div style={{ marginBottom: '1.25rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#475569', marginBottom: '0.25rem' }}>
-                                    Customer / Parent Name (Optional):
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="e.g. Walk-in Parent / Student Name"
-                                    value={customerName}
-                                    onChange={(e) => setCustomerName(e.target.value)}
-                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                                />
-                            </div>
-                        )}
-
-                        {/* WhatsApp Digital Slip Box */}
-                        <div style={{
-                            background: sendWhatsAppReceipt ? '#f0fdf4' : '#f8fafc',
-                            border: sendWhatsAppReceipt ? '1.5px solid #86efac' : '1px solid #e2e8f0',
-                            borderRadius: '12px',
-                            padding: '0.85rem 1rem',
-                            marginBottom: '1.25rem',
-                            transition: 'all 0.2s ease'
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: sendWhatsAppReceipt ? '0.75rem' : '0' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                    <div style={{
-                                        width: '32px',
-                                        height: '32px',
-                                        borderRadius: '8px',
-                                        background: sendWhatsAppReceipt ? '#22c55e' : '#94a3b8',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        color: 'white',
-                                        boxShadow: sendWhatsAppReceipt ? '0 4px 10px rgba(34, 197, 94, 0.35)' : 'none'
-                                    }}>
-                                        <MessageSquare size={18} />
-                                    </div>
-                                    <div>
-                                        <strong style={{ fontSize: '0.86rem', color: sendWhatsAppReceipt ? '#14532d' : '#475569', display: 'block' }}>
-                                            Send Digital Receipt to WhatsApp
-                                        </strong>
-                                        <span style={{ fontSize: '0.72rem', color: sendWhatsAppReceipt ? '#15803d' : '#64748b' }}>
-                                            Auto-opens instant formatted store slip on parent's WhatsApp
-                                        </span>
-                                    </div>
-                                </div>
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={sendWhatsAppReceipt}
-                                        onChange={(e) => setSendWhatsAppReceipt(e.target.checked)}
-                                        style={{ width: '20px', height: '20px', cursor: 'pointer', accentColor: '#22c55e' }}
-                                    />
-                                </label>
-                            </div>
-
-                            {sendWhatsAppReceipt && (
-                                <div style={{ borderTop: '1px dashed #bbf7d0', paddingTop: '0.65rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#166534', marginBottom: '0.25rem' }}>
-                                        WhatsApp Mobile Number:
-                                    </label>
-                                    <div style={{ position: 'relative' }}>
-                                        <Phone size={15} color="#16a34a" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
-                                        <input
-                                            type="text"
-                                            placeholder="e.g. 03001234567 or 923001234567"
-                                            value={customerPhone}
-                                            onChange={(e) => setCustomerPhone(e.target.value)}
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.5rem 0.75rem 0.5rem 2rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid #86efac',
-                                                background: '#ffffff',
-                                                fontSize: '0.85rem',
-                                                fontWeight: '600',
-                                                color: '#0f172a'
-                                            }}
-                                        />
-                                    </div>
-                                    <span style={{ display: 'block', fontSize: '0.7rem', color: '#15803d', marginTop: '0.25rem' }}>
-                                        {customerPhone ? `✓ Will deliver to: +${formatWhatsAppNumber(customerPhone)}` : '⚠️ Please provide mobile number to receive digital receipt on WhatsApp'}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Submit Button */}
-                        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
-                            <button
-                                type="button"
-                                onClick={() => setCheckoutModalOpen(false)}
-                                style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '600', cursor: 'pointer' }}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleCheckoutSubmit}
-                                disabled={isSubmittingOrder}
-                                className="btn"
-                                style={{
-                                    flex: 2,
-                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                    color: 'white',
-                                    padding: '0.75rem',
-                                    borderRadius: '8px',
-                                    fontWeight: '700',
-                                    fontSize: '0.92rem',
-                                    justifyContent: 'center'
-                                }}
-                            >
-                                {isSubmittingOrder ? 'Processing...' : `Confirm & Print Receipt (PKR ${cartTotal})`}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ========================================================================= */}
-            {/* PRINTABLE RECEIPT MODAL */}
-            {/* ========================================================================= */}
-            {receiptModalOpen && activeReceipt && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    backdropFilter: 'blur(6px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 10000,
-                    padding: '1rem'
-                }}>
-                    <div className="card" style={{
-                        background: '#ffffff',
-                        borderRadius: '16px',
-                        width: '100%',
-                        maxWidth: '440px',
-                        padding: '1.5rem',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                        maxHeight: '90vh',
-                        overflowY: 'auto'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem' }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#10b981' }}>✓ Transaction Successful</span>
-                            <button onClick={() => setReceiptModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' }}>
-                                <X size={16} />
-                            </button>
-                        </div>
-
-                        {/* Thermal Receipt Body */}
-                        <div id="printable-slip" style={{
-                            background: '#fafafa',
-                            padding: '1.25rem',
-                            borderRadius: '8px',
-                            border: '1px solid #e2e8f0',
-                            fontFamily: 'monospace',
-                            fontSize: '0.82rem',
-                            color: '#0f172a'
-                        }}>
-                            <div style={{ textAlign: 'center', marginBottom: '0.75rem' }}>
-                                <h3 style={{ fontSize: '1rem', fontWeight: '800', margin: '0 0 0.2rem 0' }}>{schoolInfo.name}</h3>
-                                {schoolInfo.address && <p style={{ fontSize: '0.7rem', color: '#64748b', margin: 0 }}>{schoolInfo.address}</p>}
-                                {schoolInfo.phone && <p style={{ fontSize: '0.7rem', color: '#64748b', margin: 0 }}>Phone: {schoolInfo.phone}</p>}
-                                <div style={{ margin: '0.5rem 0', borderTop: '1px dashed #cbd5e1' }} />
-                                <strong style={{ fontSize: '0.85rem' }}>STORE POS RECEIPT</strong>
-                            </div>
-
-                            <div style={{ fontSize: '0.75rem', marginBottom: '0.75rem', lineHeight: 1.4 }}>
-                                <div><strong>Receipt #:</strong> {activeReceipt.receiptNo}</div>
-                                <div><strong>Date:</strong> {activeReceipt.createdAtFormatted || new Date().toLocaleString()}</div>
-                                <div><strong>Customer:</strong> {activeReceipt.customerName || 'Walk-in'}</div>
-                                {activeReceipt.studentInfo && (
-                                    <div><strong>Class:</strong> {activeReceipt.studentInfo.className} (Roll: {activeReceipt.studentInfo.rollNo})</div>
-                                )}
-                                <div><strong>Payment:</strong> <span style={{ color: activeReceipt.paymentMode === 'cash' ? '#15803d' : '#b45309', fontWeight: 'bold' }}>{activeReceipt.paymentMode === 'cash' ? 'PAID (CASH)' : 'ADDED TO FEE LEDGER'}</span></div>
-                            </div>
-
-                            <div style={{ borderTop: '1px dashed #cbd5e1', borderBottom: '1px dashed #cbd5e1', padding: '0.5rem 0', marginBottom: '0.5rem' }}>
-                                <table style={{ width: '100%', fontSize: '0.72rem' }}>
-                                    <thead>
-                                        <tr style={{ textAlign: 'left', fontWeight: 'bold' }}>
-                                            <th>Item</th>
-                                            <th style={{ textAlign: 'center' }}>Qty</th>
-                                            <th style={{ textAlign: 'right' }}>Price</th>
-                                            <th style={{ textAlign: 'right' }}>Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {(activeReceipt.items || []).map((it, i) => (
-                                            <tr key={i}>
-                                                <td style={{ padding: '0.15rem 0' }}>{it.name} {it.size && `(${it.size})`}</td>
-                                                <td style={{ textAlign: 'center' }}>{it.quantity}</td>
-                                                <td style={{ textAlign: 'right' }}>{it.price}</td>
-                                                <td style={{ textAlign: 'right' }}>{it.total}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            <div style={{ fontSize: '0.75rem', textAlign: 'right', lineHeight: 1.4 }}>
-                                <div>Subtotal: PKR {activeReceipt.subtotal}</div>
-                                {activeReceipt.discount > 0 && <div>Discount: - PKR {activeReceipt.discount}</div>}
-                                <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginTop: '0.2rem' }}>
-                                    TOTAL: PKR {activeReceipt.finalAmount}
-                                </div>
-                            </div>
-
-                            <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '0.65rem', color: '#64748b' }}>
-                                Thank you for your purchase!
-                            </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
-                            <button
-                                onClick={() => sendWhatsAppReceiptDirect(activeReceipt)}
-                                className="btn hover-lift"
-                                style={{
-                                    flex: '1 1 100%',
-                                    background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
-                                    color: 'white',
-                                    padding: '0.7rem',
-                                    borderRadius: '8px',
-                                    fontSize: '0.86rem',
-                                    fontWeight: '700',
-                                    justifyContent: 'center',
-                                    boxShadow: '0 4px 12px rgba(34, 197, 94, 0.35)',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.45rem'
-                                }}
-                            >
-                                <MessageSquare size={16} /> Send / Re-send to WhatsApp
-                            </button>
-                            <button
-                                onClick={() => downloadReceiptPDF(activeReceipt)}
-                                className="btn"
-                                style={{ flex: 1, background: '#4f46e5', color: 'white', padding: '0.65rem', borderRadius: '8px', fontSize: '0.85rem', justifyContent: 'center' }}
-                            >
-                                <Download size={16} /> Download PDF
-                            </button>
-                            <button
-                                onClick={() => window.print()}
-                                className="btn"
-                                style={{ flex: 1, background: '#0f172a', color: 'white', padding: '0.65rem', borderRadius: '8px', fontSize: '0.85rem', justifyContent: 'center' }}
-                            >
-                                <Printer size={16} /> Print Receipt
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ========================================================================= */}
-            {/* ADD / EDIT ITEM MODAL */}
-            {/* ========================================================================= */}
-            {itemModalOpen && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.75)',
-                    backdropFilter: 'blur(6px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 10000,
-                    padding: '1rem'
-                }}>
-                    <div className="card" style={{
-                        background: '#ffffff',
-                        borderRadius: '16px',
-                        width: '100%',
-                        maxWidth: '560px',
-                        padding: '1.5rem',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                        maxHeight: '90vh',
-                        overflowY: 'auto'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
-                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                {editingItem ? 'Edit Store Item' : 'Add New Item to Inventory'}
-                            </h3>
-                            <button onClick={() => setItemModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' }}>
-                                <X size={16} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleSaveItem}>
-                            {/* Category Picker */}
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                    Inventory Category:
-                                </label>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                                    {[
-                                        { id: 'book', label: '📚 Book' },
-                                        { id: 'uniform', label: '👔 Uniform' },
-                                        { id: 'stationery', label: '✏️ Stationery' }
-                                    ].map(cat => (
-                                        <button
-                                            key={cat.id}
-                                            type="button"
-                                            onClick={() => setItemFormData({ ...itemFormData, category: cat.id })}
-                                            style={{
-                                                padding: '0.6rem',
-                                                borderRadius: '8px',
-                                                border: '2px solid',
-                                                borderColor: itemFormData.category === cat.id ? '#4f46e5' : '#e2e8f0',
-                                                background: itemFormData.category === cat.id ? '#eef2ff' : 'white',
-                                                color: itemFormData.category === cat.id ? '#4338ca' : '#64748b',
-                                                fontWeight: '700',
-                                                fontSize: '0.82rem',
-                                                cursor: 'pointer'
-                                            }}
+                                        <label className="block font-bold text-slate-600 mb-1 text-[10px]">Uniform Type</label>
+                                        <select
+                                            value={itemFormData.uniformType}
+                                            onChange={(e) => setItemFormData({ ...itemFormData, uniformType: e.target.value })}
+                                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
                                         >
-                                            {cat.label}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
+                                            {UNIFORM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                        </select>
+                                    </div>
 
-                            {/* Item Name */}
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                    Item Name / Title *:
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder={itemFormData.category === 'uniform' ? 'e.g. Boys Summer Polo Shirt' : 'e.g. Oxford Progressive English Book 5'}
-                                    value={itemFormData.name}
-                                    onChange={(e) => setItemFormData({ ...itemFormData, name: e.target.value })}
-                                    required
-                                    style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.88rem' }}
-                                />
-                            </div>
-
-                            {/* Class Target */}
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                    Target Class:
-                                </label>
-                                <select
-                                    value={itemFormData.targetClass}
-                                    onChange={(e) => setItemFormData({ ...itemFormData, targetClass: e.target.value })}
-                                    style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.88rem' }}
-                                >
-                                    {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                            </div>
-
-                            {/* Dynamic Fields for Uniform */}
-                            {itemFormData.category === 'uniform' && (
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem', background: '#faf5ff', padding: '0.85rem', borderRadius: '8px', border: '1px solid #f3e8ff' }}>
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#6b21a8', marginBottom: '0.25rem' }}>
-                                            Size:
-                                        </label>
+                                        <label className="block font-bold text-slate-600 mb-1 text-[10px]">Size</label>
                                         <select
                                             value={itemFormData.size}
                                             onChange={(e) => setItemFormData({ ...itemFormData, size: e.target.value })}
-                                            style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
                                         >
                                             {UNIFORM_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
                                         </select>
                                     </div>
+
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#6b21a8', marginBottom: '0.25rem' }}>
-                                            Gender:
-                                        </label>
+                                        <label className="block font-bold text-slate-600 mb-1 text-[10px]">Gender</label>
                                         <select
                                             value={itemFormData.gender}
                                             onChange={(e) => setItemFormData({ ...itemFormData, gender: e.target.value })}
-                                            style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
                                         >
                                             <option value="Unisex">Unisex</option>
                                             <option value="Boys">Boys</option>
@@ -2870,659 +3327,209 @@ const Store = () => {
                                         </select>
                                     </div>
                                 </div>
-                            )}
-
-                            {/* Dynamic Fields for Books */}
-                            {(itemFormData.category === 'book' || itemFormData.category === 'stationery') && (
-                                <div style={{ marginBottom: '1rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                        Publisher / Brand:
-                                    </label>
+                            ) : (
+                                <div>
+                                    <label className="block font-bold text-slate-700 mb-1">Publisher / Brand</label>
                                     <input
                                         type="text"
-                                        placeholder="e.g. Oxford University Press, PTB, Afaq"
+                                        placeholder="e.g. Oxford University Press / PTB"
                                         value={itemFormData.publisher}
                                         onChange={(e) => setItemFormData({ ...itemFormData, publisher: e.target.value })}
-                                        style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.88rem' }}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
                                     />
                                 </div>
                             )}
 
-                            {/* Pricing & Stock Row */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                            {/* Pricing & Stock Grid */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
-                                        Cost Price (PKR):
-                                    </label>
+                                    <label className="block font-bold text-slate-700 mb-1">Cost (PKR)</label>
                                     <input
                                         type="number"
                                         min="0"
                                         value={itemFormData.costPrice}
-                                        onChange={(e) => setItemFormData({ ...itemFormData, costPrice: Number(e.target.value) })}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                        onChange={(e) => setItemFormData({ ...itemFormData, costPrice: e.target.value })}
+                                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
                                     />
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
-                                        Selling Price (PKR) *:
-                                    </label>
+                                    <label className="block font-bold text-slate-700 mb-1">Selling (PKR)</label>
                                     <input
                                         type="number"
                                         min="0"
                                         value={itemFormData.sellingPrice}
-                                        onChange={(e) => setItemFormData({ ...itemFormData, sellingPrice: Number(e.target.value) })}
-                                        required
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '700', color: '#10b981' }}
+                                        onChange={(e) => setItemFormData({ ...itemFormData, sellingPrice: e.target.value })}
+                                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-emerald-600"
                                     />
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
-                                        Current Stock:
-                                    </label>
+                                    <label className="block font-bold text-slate-700 mb-1">Stock Qty</label>
                                     <input
                                         type="number"
                                         min="0"
                                         value={itemFormData.stock}
-                                        onChange={(e) => setItemFormData({ ...itemFormData, stock: Number(e.target.value) })}
-                                        style={{ width: '100%', padding: '0.55rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                                        onChange={(e) => setItemFormData({ ...itemFormData, stock: e.target.value })}
+                                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block font-bold text-slate-700 mb-1">Low Alert Qty</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={itemFormData.lowStockThreshold}
+                                        onChange={(e) => setItemFormData({ ...itemFormData, lowStockThreshold: e.target.value })}
+                                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-rose-600"
                                     />
                                 </div>
                             </div>
 
-                            {/* Submit */}
-                            <div style={{ display: 'flex', gap: '0.75rem' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setItemModalOpen(false)}
-                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '600', cursor: 'pointer' }}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="btn"
-                                    style={{ flex: 2, background: '#4f46e5', color: 'white', padding: '0.75rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
-                                >
-                                    {editingItem ? 'Update Item' : 'Save to Inventory'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* ========================================================================= */}
-            {/* QUICK RESTOCK MODAL */}
-            {/* ========================================================================= */}
-            {restockModalOpen && restockItem && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.75)',
-                    backdropFilter: 'blur(6px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 10000,
-                    padding: '1rem'
-                }}>
-                    <div className="card" style={{ background: 'white', borderRadius: '14px', width: '100%', maxWidth: '400px', padding: '1.5rem' }}>
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#0f172a', margin: '0 0 0.5rem 0' }}>
-                            Restock: {restockItem.name}
-                        </h3>
-                        <p style={{ fontSize: '0.82rem', color: '#64748b', margin: '0 0 1rem 0' }}>
-                            Current stock: <strong>{restockItem.stock} units</strong>
-                        </p>
-
-                        <form onSubmit={handleRestockSubmit}>
-                            <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                Add Quantity:
-                            </label>
-                            <input
-                                type="number"
-                                min="1"
-                                value={restockQuantity}
-                                onChange={(e) => setRestockQuantity(Number(e.target.value))}
-                                required
-                                style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '1rem', fontWeight: '700', marginBottom: '1rem' }}
-                            />
-
-                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
-                                {[10, 25, 50, 100].map(qty => (
-                                    <button
-                                        key={qty}
-                                        type="button"
-                                        onClick={() => setRestockQuantity(qty)}
-                                        style={{ flex: 1, padding: '0.4rem', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', fontSize: '0.78rem', fontWeight: '600', cursor: 'pointer' }}
-                                    >
-                                        +{qty}
-                                    </button>
-                                ))}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setRestockModalOpen(false)}
-                                    style={{ flex: 1, padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="btn"
-                                    style={{ flex: 2, background: '#059669', color: 'white', padding: '0.65rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
-                                >
-                                    Add to Stock
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* ========================================================================= */}
-            {/* CREATE CLASS BUNDLE MODAL */}
-            {/* ========================================================================= */}
-            {bundleModalOpen && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.75)',
-                    backdropFilter: 'blur(6px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 10000,
-                    padding: '1rem'
-                }}>
-                    <div className="card" style={{
-                        background: '#ffffff',
-                        borderRadius: '16px',
-                        width: '100%',
-                        maxWidth: '560px',
-                        padding: '1.5rem',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                        maxHeight: '90vh',
-                        overflowY: 'auto'
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
-                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                Create Class Package / Bundle
-                            </h3>
-                            <button onClick={() => setBundleModalOpen(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' }}>
-                                <X size={16} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleSaveBundle}>
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                    Bundle Title *:
-                                </label>
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">SKU / Barcode Code (Optional)</label>
                                 <input
                                     type="text"
-                                    placeholder="e.g. Class 5 Complete Book Set + Uniform"
-                                    value={bundleFormData.title}
-                                    onChange={(e) => setBundleFormData({ ...bundleFormData, title: e.target.value })}
-                                    required
-                                    style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.88rem' }}
+                                    placeholder="e.g. SKU-CLS1-ENG-01"
+                                    value={itemFormData.sku}
+                                    onChange={(e) => setItemFormData({ ...itemFormData, sku: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono"
                                 />
                             </div>
 
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                        Target Class:
-                                    </label>
-                                    <select
-                                        value={bundleFormData.targetClass}
-                                        onChange={(e) => setBundleFormData({ ...bundleFormData, targetClass: e.target.value })}
-                                        style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.88rem' }}
-                                    >
-                                        {CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                        Package Price (PKR) *:
-                                    </label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        placeholder="e.g. 4500"
-                                        value={bundleFormData.bundlePrice}
-                                        onChange={(e) => setBundleFormData({ ...bundleFormData, bundlePrice: Number(e.target.value) })}
-                                        required
-                                        style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.88rem', fontWeight: '700', color: '#059669' }}
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Select Items to Include */}
-                            <div style={{ marginBottom: '1.25rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                    Select Items Included in this Package:
-                                </label>
-                                <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                    {items.map(item => {
-                                        const isSelected = bundleFormData.selectedItemIds.includes(item.id);
-                                        return (
-                                            <label
-                                                key={item.id}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.5rem',
-                                                    padding: '0.35rem 0.5rem',
-                                                    borderRadius: '4px',
-                                                    background: isSelected ? '#f0fdf4' : 'transparent',
-                                                    cursor: 'pointer',
-                                                    fontSize: '0.82rem'
-                                                }}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    onChange={(e) => {
-                                                        const updated = e.target.checked
-                                                            ? [...bundleFormData.selectedItemIds, item.id]
-                                                            : bundleFormData.selectedItemIds.filter(id => id !== item.id);
-                                                        setBundleFormData({ ...bundleFormData, selectedItemIds: updated });
-                                                    }}
-                                                />
-                                                <span style={{ flex: 1 }}>{item.name} {item.size && `(${item.size})`}</span>
-                                                <strong style={{ color: '#64748b' }}>PKR {item.sellingPrice}</strong>
-                                            </label>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '0.75rem' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setBundleModalOpen(false)}
-                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="btn"
-                                    style={{ flex: 2, background: '#4f46e5', color: 'white', padding: '0.75rem', borderRadius: '8px', fontWeight: '700', justifyContent: 'center' }}
-                                >
-                                    Create Package
-                                </button>
-                            </div>
+                            <button
+                                type="submit"
+                                className="w-full py-3 mt-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-200 transition-all"
+                            >
+                                {editingItem ? 'Save Changes' : 'Add to Inventory'}
+                            </button>
                         </form>
                     </div>
                 </div>
             )}
 
-            {/* ========================================================================= */}
-            {/* PRE-BUILT CLASS KIT TEMPLATES MODAL */}
-            {/* ========================================================================= */}
+            {/* ========================================================= */}
+            {/* MODAL 4: QUICK RESTOCK DIALOG */}
+            {/* ========================================================= */}
+            {restockModalOpen && restockItem && (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-100">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <h3 className="text-sm font-black text-slate-900">Quick Restock</h3>
+                            <button onClick={() => setRestockModalOpen(false)} className="p-1 text-slate-400">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleRestockSubmit} className="mt-3 space-y-3 text-xs">
+                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                <span className="font-bold text-slate-800 block text-xs">{restockItem.name}</span>
+                                <span className="text-[11px] text-slate-500">Current Stock: {restockItem.stock} units</span>
+                            </div>
+
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Units to Add</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={restockQuantity}
+                                    onChange={(e) => setRestockQuantity(e.target.value)}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900"
+                                    required
+                                />
+                            </div>
+
+                            <button
+                                type="submit"
+                                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm"
+                            >
+                                Confirm Restock (+{restockQuantity} Units)
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ========================================================= */}
+            {/* MODAL 5: 1-CLICK CLASS TEMPLATE LOADER */}
+            {/* ========================================================= */}
             {templateModalOpen && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.82)',
-                    backdropFilter: 'blur(8px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 10000,
-                    padding: '1rem'
-                }}>
-                    <div className="card" style={{
-                        background: '#ffffff',
-                        borderRadius: '20px',
-                        width: '100%',
-                        maxWidth: '960px',
-                        padding: '1.75rem',
-                        boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.35)',
-                        maxHeight: '92vh',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        overflow: 'hidden'
-                    }}>
-                        {/* Modal Header */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #e2e8f0', paddingBottom: '1rem', marginBottom: '1rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                <div style={{
-                                    width: '44px',
-                                    height: '44px',
-                                    borderRadius: '12px',
-                                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    boxShadow: '0 6px 14px rgba(245, 158, 11, 0.35)'
-                                }}>
-                                    <Sparkles color="white" size={24} />
-                                </div>
-                                <div>
-                                    <h2 style={{ fontSize: '1.3rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                        Pre-Configured Class Kit Templates
-                                    </h2>
-                                    <p style={{ color: '#64748b', fontSize: '0.82rem', margin: '0.2rem 0 0 0' }}>
-                                        Complete standard Book sets, Uniforms & Stationery for every class. Customize prices or titles and import in 1 click!
-                                    </p>
-                                </div>
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div>
+                                <h3 className="text-base font-black text-slate-900">1-Click Syllabus & Kit Loader</h3>
+                                <p className="text-xs text-slate-500">Load standard books, copies, and uniform for session start</p>
                             </div>
-                            <button
-                                onClick={() => setTemplateModalOpen(false)}
-                                style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                            >
-                                <X size={18} color="#64748b" />
+                            <button onClick={() => setTemplateModalOpen(false)} className="p-1 text-slate-400">
+                                <X className="w-5 h-5" />
                             </button>
                         </div>
 
-                        {/* Class Selector Scrollbar */}
-                        <div style={{ marginBottom: '1rem' }}>
-                            <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: '700', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
-                                1. Select Target Class:
-                            </label>
-                            <div style={{ display: 'flex', gap: '0.4rem', overflowX: 'auto', paddingBottom: '0.4rem' }}>
-                                {Object.keys(STANDARD_CLASS_TEMPLATES).map(cls => {
-                                    const isSelected = selectedTemplateClass === cls;
-                                    return (
-                                        <button
-                                            key={cls}
-                                            type="button"
-                                            onClick={() => handleSelectTemplateClass(cls)}
-                                            style={{
-                                                padding: '0.45rem 0.9rem',
-                                                borderRadius: '10px',
-                                                border: isSelected ? '2px solid #4f46e5' : '1px solid #cbd5e1',
-                                                background: isSelected ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : '#f8fafc',
-                                                color: isSelected ? 'white' : '#334155',
-                                                fontWeight: isSelected ? '700' : '600',
-                                                fontSize: '0.82rem',
-                                                cursor: 'pointer',
-                                                whiteSpace: 'nowrap',
-                                                transition: 'all 0.2s ease',
-                                                boxShadow: isSelected ? '0 4px 10px rgba(79, 70, 229, 0.3)' : 'none'
-                                            }}
-                                        >
-                                            {cls}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* Category Filters & Bulk Toggle */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.6rem 0.85rem', borderRadius: '10px', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            <div style={{ display: 'flex', gap: '0.35rem' }}>
-                                {[
-                                    { id: 'all', label: 'All Items' },
-                                    { id: 'book', label: '📚 Books' },
-                                    { id: 'uniform', label: '👔 Uniforms' },
-                                    { id: 'stationery', label: '✏️ Stationery' }
-                                ].map(cat => (
-                                    <button
-                                        key={cat.id}
-                                        type="button"
-                                        onClick={() => setTemplateFilterCategory(cat.id)}
-                                        style={{
-                                            padding: '0.3rem 0.65rem',
-                                            borderRadius: '6px',
-                                            border: 'none',
-                                            background: templateFilterCategory === cat.id ? '#0f172a' : 'transparent',
-                                            color: templateFilterCategory === cat.id ? 'white' : '#64748b',
-                                            fontWeight: '600',
-                                            fontSize: '0.78rem',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        {cat.label}
-                                    </button>
-                                ))}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        {/* Class Selector Carousel */}
+                        <div className="mt-4 flex items-center gap-1.5 overflow-x-auto pb-2">
+                            {Object.keys(STANDARD_CLASS_TEMPLATES).map(cls => (
                                 <button
+                                    key={cls}
                                     type="button"
-                                    onClick={() => handleToggleAllDraftItems(true)}
-                                    style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '600', color: '#059669', cursor: 'pointer' }}
+                                    onClick={() => handleSelectTemplateClass(cls)}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                                        selectedTemplateClass === cls
+                                            ? 'bg-indigo-600 text-white shadow-sm'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                    }`}
                                 >
-                                    ✓ Select All
+                                    {cls}
                                 </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleToggleAllDraftItems(false)}
-                                    style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '600', color: '#e11d48', cursor: 'pointer' }}
+                            ))}
+                        </div>
+
+                        {/* Items Checklist */}
+                        <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1">
+                            {templateDraftItems.map((draft, idx) => (
+                                <div
+                                    key={idx}
+                                    onClick={() => handleToggleDraftItem(idx)}
+                                    className={`p-2.5 rounded-xl border cursor-pointer flex items-center justify-between text-xs transition-all ${
+                                        draft.selected
+                                            ? 'bg-indigo-50/70 border-indigo-200 text-slate-900 font-medium'
+                                            : 'bg-slate-50 border-slate-200 text-slate-400 opacity-60'
+                                    }`}
                                 >
-                                    ✕ Deselect All
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Scrollable Items Table / Cards */}
-                        <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '0.5rem', marginBottom: '1rem', background: '#fafbfc' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                                {templateDraftItems
-                                    .filter(item => templateFilterCategory === 'all' || item.category === templateFilterCategory)
-                                    .map((item, originalIndex) => {
-                                        const actualIndex = templateDraftItems.findIndex(it => it.tempId === item.tempId);
-                                        const isSelected = !!item.selected;
-
-                                        return (
-                                            <div
-                                                key={item.tempId || actualIndex}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.65rem',
-                                                    padding: '0.65rem 0.85rem',
-                                                    borderRadius: '10px',
-                                                    background: isSelected ? '#ffffff' : '#f1f5f9',
-                                                    border: isSelected ? '1px solid #cbd5e1' : '1px dashed #cbd5e1',
-                                                    opacity: isSelected ? 1 : 0.6,
-                                                    transition: 'all 0.15s ease'
-                                                }}
-                                            >
-                                                {/* Checkbox */}
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    onChange={() => handleToggleDraftItem(actualIndex)}
-                                                    style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#4f46e5' }}
-                                                />
-
-                                                {/* Category Badge */}
-                                                <span style={{
-                                                    padding: '0.25rem 0.5rem',
-                                                    borderRadius: '6px',
-                                                    fontSize: '0.72rem',
-                                                    fontWeight: '700',
-                                                    textTransform: 'uppercase',
-                                                    background: item.category === 'book' ? '#e0e7ff' : item.category === 'uniform' ? '#fae8ff' : '#fef3c7',
-                                                    color: item.category === 'book' ? '#4338ca' : item.category === 'uniform' ? '#86198f' : '#b45309',
-                                                    minWidth: '70px',
-                                                    textAlign: 'center'
-                                                }}>
-                                                    {item.category}
-                                                </span>
-
-                                                {/* Item Title Input */}
-                                                <div style={{ flex: 3 }}>
-                                                    <input
-                                                        type="text"
-                                                        value={item.name}
-                                                        onChange={(e) => handleUpdateDraftItemField(actualIndex, 'name', e.target.value)}
-                                                        placeholder="Item Name"
-                                                        style={{ width: '100%', padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', color: '#0f172a' }}
-                                                    />
-                                                </div>
-
-                                                {/* Details (Publisher or Uniform Size) */}
-                                                <div style={{ flex: 2 }}>
-                                                    {item.category === 'uniform' ? (
-                                                        <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                                            <input
-                                                                type="text"
-                                                                value={item.uniformType}
-                                                                onChange={(e) => handleUpdateDraftItemField(actualIndex, 'uniformType', e.target.value)}
-                                                                placeholder="Type"
-                                                                style={{ width: '55%', padding: '0.4rem 0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                            />
-                                                            <input
-                                                                type="text"
-                                                                value={item.size}
-                                                                onChange={(e) => handleUpdateDraftItemField(actualIndex, 'size', e.target.value)}
-                                                                placeholder="Size"
-                                                                style={{ width: '45%', padding: '0.4rem 0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                            />
-                                                        </div>
-                                                    ) : (
-                                                        <input
-                                                            type="text"
-                                                            value={item.publisher || ''}
-                                                            onChange={(e) => handleUpdateDraftItemField(actualIndex, 'publisher', e.target.value)}
-                                                            placeholder="Publisher / Details"
-                                                            style={{ width: '100%', padding: '0.4rem 0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
-                                                        />
-                                                    )}
-                                                </div>
-
-                                                {/* Cost Price */}
-                                                <div style={{ width: '90px' }}>
-                                                    <label style={{ display: 'block', fontSize: '0.68rem', color: '#64748b', fontWeight: '600' }}>Cost (PKR):</label>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        value={item.costPrice}
-                                                        onChange={(e) => handleUpdateDraftItemField(actualIndex, 'costPrice', Number(e.target.value))}
-                                                        style={{ width: '100%', padding: '0.35rem 0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', fontWeight: '600' }}
-                                                    />
-                                                </div>
-
-                                                {/* Selling Price */}
-                                                <div style={{ width: '95px' }}>
-                                                    <label style={{ display: 'block', fontSize: '0.68rem', color: '#059669', fontWeight: '700' }}>Price (PKR):</label>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        value={item.sellingPrice}
-                                                        onChange={(e) => handleUpdateDraftItemField(actualIndex, 'sellingPrice', Number(e.target.value))}
-                                                        style={{ width: '100%', padding: '0.35rem 0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', fontWeight: '700', color: '#059669' }}
-                                                    />
-                                                </div>
-
-                                                {/* Stock */}
-                                                <div style={{ width: '70px' }}>
-                                                    <label style={{ display: 'block', fontSize: '0.68rem', color: '#64748b', fontWeight: '600' }}>Stock:</label>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        value={item.stock}
-                                                        onChange={(e) => handleUpdateDraftItemField(actualIndex, 'stock', Number(e.target.value))}
-                                                        style={{ width: '100%', padding: '0.35rem 0.45rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem' }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                            </div>
-                        </div>
-
-                        {/* Bundle Configuration & Financial Summary */}
-                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '0.85rem 1rem', marginBottom: '1rem' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', alignItems: 'center' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
-                                        Class Bundle Title:
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={templateBundleTitle}
-                                        onChange={(e) => setTemplateBundleTitle(e.target.value)}
-                                        placeholder="Bundle Title"
-                                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600' }}
-                                    />
-                                </div>
-
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
-                                        Bundle Discounted Package Price (PKR):
-                                    </label>
-                                    <input
-                                        type="number"
-                                        value={templateBundlePrice}
-                                        onChange={(e) => setTemplateBundlePrice(Number(e.target.value))}
-                                        placeholder="Package Price"
-                                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '800', color: '#059669' }}
-                                    />
-                                </div>
-
-                                <div style={{ textAlign: 'right' }}>
-                                    <div style={{ fontSize: '0.76rem', color: '#64748b' }}>
-                                        Selected: <strong>{templateTotals.count} items</strong> | Total Value: <strong>PKR {templateTotals.totalSelling}</strong>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={draft.selected}
+                                            onChange={() => {}}
+                                            className="rounded text-indigo-600"
+                                        />
+                                        <div>
+                                            <span className="font-bold">{draft.name}</span>
+                                            <span className="text-[10px] text-slate-500 block">
+                                                {draft.category} {draft.size ? `• ${draft.size}` : ''}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div style={{ fontSize: '0.84rem', fontWeight: '700', color: '#059669', marginTop: '0.2rem' }}>
-                                        Estimated Profit: +PKR {templateTotals.estProfit} per bundle
-                                    </div>
+                                    <span className="font-black text-emerald-600">PKR {draft.sellingPrice}</span>
                                 </div>
-                            </div>
+                            ))}
                         </div>
 
-                        {/* Action Buttons */}
-                        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {/* Import Summary & Button */}
+                        <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
+                            <div>
+                                <span className="text-xs font-bold text-slate-700">
+                                    {templateTotals.count} items selected
+                                </span>
+                                <span className="text-xs text-slate-400 block">
+                                    Package Total: PKR {templateTotals.totalSelling}
+                                </span>
+                            </div>
+
                             <button
-                                type="button"
-                                onClick={() => handleSelectTemplateClass(selectedTemplateClass)}
-                                style={{ padding: '0.65rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '600', fontSize: '0.82rem', cursor: 'pointer' }}
-                            >
-                                🔄 Reset to Defaults
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setTemplateModalOpen(false)}
-                                style={{ padding: '0.65rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '600', fontSize: '0.82rem', cursor: 'pointer' }}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                disabled={isImportingTemplate}
-                                onClick={() => handleImportTemplateKit(false)}
-                                style={{
-                                    padding: '0.65rem 1.25rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid #cbd5e1',
-                                    background: '#f1f5f9',
-                                    color: '#0f172a',
-                                    fontWeight: '700',
-                                    fontSize: '0.84rem',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                📦 Import Items Only
-                            </button>
-                            <button
-                                type="button"
-                                disabled={isImportingTemplate}
                                 onClick={() => handleImportTemplateKit(true)}
-                                className="btn hover-lift"
-                                style={{
-                                    padding: '0.65rem 1.5rem',
-                                    borderRadius: '8px',
-                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                    color: 'white',
-                                    fontWeight: '800',
-                                    fontSize: '0.88rem',
-                                    boxShadow: '0 4px 14px rgba(16, 185, 129, 0.4)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.45rem',
-                                    border: 'none',
-                                    cursor: 'pointer'
-                                }}
+                                disabled={isImportingTemplate}
+                                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-200 transition-all disabled:opacity-50"
                             >
-                                {isImportingTemplate ? 'Importing...' : '⚡ 1-Click Import & Create Class Bundle'}
+                                {isImportingTemplate ? 'Loading Template...' : `Import Kit & Create ${selectedTemplateClass} Bundle`}
                             </button>
                         </div>
                     </div>

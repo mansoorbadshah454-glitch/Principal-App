@@ -573,8 +573,27 @@ const ClassCollection = () => {
         const student = students.find(s => s.id === studentId);
         if (!student) return;
 
-        const updatedActions = (student.individualActions || []).map(action => {
-            if (action.id === actionId) {
+        // Merge individualActions with any legacy storeCharges
+        const baseActions = [...(student.individualActions || [])];
+        if (student.storeCharges && student.storeCharges.length > 0) {
+            student.storeCharges.forEach(sc => {
+                const legacyId = `store_${sc.receiptNo || ''}`;
+                if (!baseActions.some(a => a.id === legacyId || a.id === sc.receiptNo || a.receiptNo === sc.receiptNo)) {
+                    baseActions.push({
+                        id: legacyId,
+                        name: sc.title || `Store Purchase (${sc.receiptNo})`,
+                        amount: Number(sc.amount) || 0,
+                        status: sc.status || 'unpaid',
+                        date: sc.date || new Date().toISOString(),
+                        type: 'store_inventory',
+                        receiptNo: sc.receiptNo
+                    });
+                }
+            });
+        }
+
+        const updatedActions = baseActions.map(action => {
+            if (action.id === actionId || action.receiptNo === actionId) {
                 return { ...action, status: newStatus };
             }
             return action;
@@ -600,7 +619,8 @@ const ClassCollection = () => {
         const student = students.find(s => s.id === studentId);
         if (!student) return;
 
-        const updatedActions = (student.individualActions || []).filter(action => action.id !== actionId);
+        const baseActions = [...(student.individualActions || [])];
+        const updatedActions = baseActions.filter(action => action.id !== actionId && action.receiptNo !== actionId);
 
         try {
             await updateDoc(studentRef, { individualActions: updatedActions });
@@ -1195,51 +1215,97 @@ const ClassCollection = () => {
                                     </div>
                                 )}
 
-                                {/* 3. Individual Actions Control */}
-                                {student.individualActions && student.individualActions.length > 0 && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                        {student.individualActions.map(action => (
-                                            <div key={action.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.75rem', borderRadius: '8px' }}>
-                                                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#ec4899' }}>{action.name}</span>
-                                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Rs {action.amount}</span>
-                                                </div>
+                                {/* 3. Individual Actions & Store Ledger Charges */}
+                                {(() => {
+                                    const studentActions = (() => {
+                                        const list = [...(student.individualActions || [])];
+                                        if (student.storeCharges && student.storeCharges.length > 0) {
+                                            student.storeCharges.forEach(sc => {
+                                                const legacyId = `store_${sc.receiptNo || ''}`;
+                                                if (!list.some(a => a.id === legacyId || a.id === sc.receiptNo || a.receiptNo === sc.receiptNo)) {
+                                                    list.push({
+                                                        id: legacyId,
+                                                        name: sc.title || `Store: Books & Uniform (${sc.receiptNo || 'POS'})`,
+                                                        amount: Number(sc.amount) || 0,
+                                                        status: sc.status || 'unpaid',
+                                                        date: sc.date || new Date().toISOString(),
+                                                        type: 'store_inventory',
+                                                        receiptNo: sc.receiptNo
+                                                    });
+                                                }
+                                            });
+                                        }
+                                        return list;
+                                    })();
 
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    {action.status === 'paid' ? (
-                                                        <button
-                                                            onClick={() => toggleIndividualAction(student.id, action.id, 'unpaid')}
-                                                            style={{
-                                                                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                                                padding: '0.4rem 0.75rem', borderRadius: '8px', border: 'none',
-                                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem'
-                                                            }}
-                                                        >
-                                                            <CheckCircle size={14} /> Paid
-                                                        </button>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => toggleIndividualAction(student.id, action.id, 'paid')}
-                                                            style={{
-                                                                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                                                padding: '0.4rem 0.75rem', borderRadius: '8px', border: '1px solid #16a34a',
-                                                                background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem'
-                                                            }}
-                                                        >
-                                                            <CheckCircle size={14} /> Mark Paid
-                                                        </button>
-                                                    )}
-                                                    <button 
-                                                        onClick={() => deleteIndividualAction(student.id, action.id)}
-                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem', display: 'flex' }}
+                                    if (studentActions.length === 0) return null;
+
+                                    return (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                            {studentActions.map(action => {
+                                                const isStore = action.type === 'store_inventory' || action.id?.startsWith('store_');
+                                                return (
+                                                    <div
+                                                        key={action.id}
+                                                        style={{
+                                                            display: 'flex',
+                                                            justifyContent: 'space-between',
+                                                            alignItems: 'center',
+                                                            background: isStore ? '#f5f3ff' : '#f8fafc',
+                                                            padding: '0.75rem',
+                                                            borderRadius: '8px',
+                                                            border: isStore ? '1px solid #ddd6fe' : '1px solid #e2e8f0'
+                                                        }}
                                                     >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
+                                                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                {isStore && <span style={{ fontSize: '0.75rem' }}>🛍️</span>}
+                                                                <span style={{ fontSize: '0.8rem', fontWeight: '700', color: isStore ? '#6d28d9' : '#ec4899' }}>
+                                                                    {action.name}
+                                                                </span>
+                                                            </div>
+                                                            <span style={{ fontSize: '0.7rem', color: isStore ? '#7c3aed' : 'var(--text-secondary)', fontWeight: '600' }}>
+                                                                Rs {action.amount} {action.status === 'unpaid' ? '• Pending' : '• Paid'}
+                                                            </span>
+                                                        </div>
+
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                            {action.status === 'paid' ? (
+                                                                <button
+                                                                    onClick={() => toggleIndividualAction(student.id, action.id, 'unpaid')}
+                                                                    style={{
+                                                                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                                                        padding: '0.4rem 0.75rem', borderRadius: '8px', border: 'none',
+                                                                        background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem'
+                                                                    }}
+                                                                >
+                                                                    <CheckCircle size={14} /> Paid
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => toggleIndividualAction(student.id, action.id, 'paid')}
+                                                                    style={{
+                                                                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                                                        padding: '0.4rem 0.75rem', borderRadius: '8px', border: '1px solid #16a34a',
+                                                                        background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem'
+                                                                    }}
+                                                                >
+                                                                    <CheckCircle size={14} /> Mark Paid
+                                                                </button>
+                                                            )}
+                                                            <button 
+                                                                onClick={() => deleteIndividualAction(student.id, action.id)}
+                                                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem', display: 'flex' }}
+                                                            >
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         );
                     })}
