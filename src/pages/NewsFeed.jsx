@@ -15,6 +15,7 @@ import {
 import { getDocFast } from '../utils/cacheUtils';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import CachedImage from '../components/CachedImage';
+import { compressImage } from '../utils/imageCompressor';
 
 const BACKGROUND_GRADIENTS = [
     { id: 0, colors: [], name: 'Default' },
@@ -346,8 +347,10 @@ const NewsFeed = () => {
             let mediaUrls = [];
             if (postMedia.length > 0) {
                 mediaUrls = await Promise.all(postMedia.map(async (file) => {
-                    const storageRef = ref(storage, `schools/${schoolId}/posts/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`);
-                    await uploadBytes(storageRef, file);
+                    const compressedFile = await compressImage(file);
+                    const safeName = (compressedFile.name || file.name).replace(/[^a-zA-Z0-9.\-_]/g, '');
+                    const storageRef = ref(storage, `schools/${schoolId}/posts/${Date.now()}_${safeName}`);
+                    await uploadBytes(storageRef, compressedFile);
                     const url = await getDownloadURL(storageRef);
                     return {
                         url,

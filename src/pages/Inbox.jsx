@@ -11,6 +11,7 @@ import {
 import { Search, Send, ArrowLeft, MoreVertical, Phone, Video, MessageSquare, Clock, Check, CheckCheck, Paperclip, Plus } from 'lucide-react';
 import './Inbox.css'; // We will create this or use inline styles
 import CachedImage from '../components/CachedImage';
+import { compressImage } from '../utils/imageCompressor';
 
 const Inbox = () => {
     const [schoolId, setSchoolId] = useState(null);
@@ -457,9 +458,11 @@ const Inbox = () => {
         setIsSending(true);
         setSelectedFileForUpload(null); // Close modal
         try {
-            const path = `schools/${schoolId}/messages/attachments/${Date.now()}_${file.name}`;
+            const compressedFile = await compressImage(file);
+            const safeName = (compressedFile.name || file.name).replace(/[^a-zA-Z0-9.\-_]/g, '');
+            const path = `schools/${schoolId}/messages/attachments/${Date.now()}_${safeName}`;
             const fileRef = storageRef(storage, path);
-            await uploadBytes(fileRef, file);
+            await uploadBytes(fileRef, compressedFile);
             const url = await getDownloadURL(fileRef);
 
             const isGroup = selectedTeacher.id === 'all_teachers';

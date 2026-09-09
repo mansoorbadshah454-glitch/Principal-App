@@ -16,6 +16,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
 import PayrollDashboard from '../components/PayrollDashboard';
+import OnlineSubmissionsDashboard from '../components/OnlineSubmissionsDashboard';
 import { db, auth, storage } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
@@ -3575,6 +3576,250 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const [isGeneratingFinancesPDF, setIsGeneratingFinancesPDF] = useState(false);
     const [localSchoolInfo, setLocalSchoolInfo] = useState(schoolInfo || { name: 'School Report', logo: '' });
 
+    // 4.1 Live Online Payment Submissions & Alert Engine
+    const [onlineSubmissions, setOnlineSubmissions] = useState([]);
+    const [loadingOnlineSubmissions, setLoadingOnlineSubmissions] = useState(true);
+    const [reviewModalSub, setReviewModalSub] = useState(null);
+    const [reuploadModalSub, setReuploadModalSub] = useState(null);
+    const [reuploadReason, setReuploadReason] = useState('');
+    const [onlinePaymentAlert, setOnlinePaymentAlert] = useState(null);
+    const [processingOnlineId, setProcessingOnlineId] = useState(null);
+    const prevSubmissionsCountRef = useRef(null);
+
+    const playOnlinePaymentChime = () => {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            const ctx = new AudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+            osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.12); // E5
+            osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.25); // G5
+            gain.gain.setValueAtTime(0.25, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.45);
+        } catch (e) {
+            console.warn("Audio chime error:", e);
+        }
+    };
+
+    // Live Submissions Listener
+    useEffect(() => {
+        if (!schoolId) return;
+        const subsRef = collection(db, `schools/${schoolId}/paymentSubmissions`);
+        const qSubs = query(subsRef);
+
+        const unsub = onSnapshot(qSubs, (snapshot) => {
+            const list = [];
+            snapshot.forEach(d => {
+                list.push({ id: d.id, ...d.data() });
+            });
+            list.sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
+
+            const pendingList = list.filter(s => (s.status || 'pending') === 'pending');
+
+            // Trigger chime & alert if new pending submission arrived
+            if (prevSubmissionsCountRef.current !== null && pendingList.length > prevSubmissionsCountRef.current) {
+                playOnlinePaymentChime();
+                const latest = pendingList[0];
+                if (latest) {
+                    setOnlinePaymentAlert(latest);
+                }
+            }
+            prevSubmissionsCountRef.current = pendingList.length;
+
+            setOnlineSubmissions(list);
+            setLoadingOnlineSubmissions(false);
+        }, (err) => {
+            console.warn("Error fetching online submissions for DailyWorkflow:", err);
+            setLoadingOnlineSubmissions(false);
+        });
+
+        return () => unsub();
+    }, [schoolId]);
+
+    // Handle Approve Online Payment Submission
+    const handleApproveOnlineSubmission = async (sub) => {
+        if (!window.confirm(`Approve fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.studentName} (${sub.className})?`)) {
+            return;
+        }
+
+        setProcessingOnlineId(sub.id);
+        try {
+            const now = new Date();
+            const dateString = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+            const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            const receiptNo = sub.transactionId ? `ONL-${sub.transactionId}` : `ONL-${Date.now().toString().slice(-6)}`;
+            const finalAmount = Number(sub.amount) || 0;
+
+            const transactionRecord = {
+                receiptNo,
+                isFamilyCombined: false,
+                familyStudents: [],
+                studentId: sub.studentId,
+                studentName: sub.studentName,
+                rollNo: sub.rollNo || 'N/A',
+                classId: sub.classId,
+                className: sub.className || 'Class',
+                fatherName: sub.parentName || 'Parent / Guardian',
+                fatherPhone: sub.parentPhone || '',
+                items: [
+                    { name: `Online Fee Payment (${sub.month || 'Current Month'})`, amount: finalAmount }
+                ],
+                baseFee: finalAmount,
+                actionsFee: 0,
+                fineAmount: 0,
+                discount: 0,
+                totalPaid: finalAmount,
+                paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                proofUrl: sub.proofUrl || null,
+                remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Payment Approved',
+                dueDate: null,
+                timestamp: new Date(),
+                dateString,
+                timeString,
+                collectedBy: 'Online Portal'
+            };
+
+            // 1. Instant Optimistic State Update for Today's Recent Fee Collections Log
+            setRecentTransactions(prev => [transactionRecord, ...prev.filter(t => t.receiptNo !== receiptNo)]);
+
+            // 2. Update Student Doc
+            if (sub.classId && sub.studentId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${sub.classId}/students`, sub.studentId);
+                await setDoc(classStudentRef, {
+                    monthlyFeeStatus: 'paid',
+                    monthlyFeeDate: now.toISOString(),
+                    lastPaymentMode: sub.paymentMethod || 'Online Transfer',
+                    lastPaymentAmount: finalAmount,
+                    lastReceiptNo: receiptNo,
+                    lastPaymentProofUrl: sub.proofUrl || null,
+                    pendingPaymentSubmission: {
+                        status: 'approved',
+                        approvedAt: now.toISOString()
+                    }
+                }, { merge: true });
+            }
+
+            // 3. Update Master Student Doc
+            if (sub.studentId) {
+                try {
+                    const masterStudentRef = doc(db, `schools/${schoolId}/students`, sub.studentId);
+                    await setDoc(masterStudentRef, {
+                        monthlyFeeStatus: 'paid',
+                        monthlyFeeDate: now.toISOString(),
+                        lastPaymentMode: sub.paymentMethod || 'Online Transfer',
+                        lastPaymentAmount: finalAmount,
+                        lastReceiptNo: receiptNo,
+                        lastPaymentProofUrl: sub.proofUrl || null,
+                        pendingPaymentSubmission: {
+                            status: 'approved',
+                            approvedAt: now.toISOString()
+                        }
+                    }, { merge: true });
+                } catch (_) {}
+            }
+
+            // 4. Update Submission Doc Status
+            const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
+            await updateDoc(subRef, {
+                status: 'approved',
+                approvedAt: now.toISOString()
+            });
+
+            // 5. Add to feeTransactions collection
+            const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+            await setDoc(txDocRef, {
+                ...transactionRecord,
+                id: receiptNo,
+                timestamp: serverTimestamp()
+            }, { merge: true });
+
+            // 6. Download receipt PDF or preview
+            downloadOfficialReceiptPDF(transactionRecord, localSchoolInfo);
+            setReceiptData(transactionRecord);
+            setReceiptModalOpen(true);
+            setReviewModalSub(null);
+
+        } catch (err) {
+            console.error("Error approving online submission:", err);
+            alert("Failed to approve payment: " + err.message);
+        } finally {
+            setProcessingOnlineId(null);
+        }
+    };
+
+    // Handle Request Re-upload
+    const confirmRequestReupload = async () => {
+        if (!reuploadModalSub) return;
+        setProcessingOnlineId(reuploadModalSub.id);
+        try {
+            const nowIso = new Date().toISOString();
+            const message = reuploadReason.trim() || 'Payment proof is unclear or incomplete. Please re-upload a clear screenshot.';
+
+            const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, reuploadModalSub.id);
+            await updateDoc(subRef, {
+                status: 'needs_reupload',
+                requestedAt: nowIso,
+                reuploadNote: message
+            });
+
+            if (reuploadModalSub.classId && reuploadModalSub.studentId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${reuploadModalSub.classId}/students`, reuploadModalSub.studentId);
+                await updateDoc(classStudentRef, {
+                    'pendingPaymentSubmission.status': 'needs_reupload',
+                    'pendingPaymentSubmission.message': message
+                });
+            }
+
+            setReuploadModalSub(null);
+            setReuploadReason('');
+            setReviewModalSub(null);
+        } catch (err) {
+            console.error("Error requesting re-upload:", err);
+            alert("Failed to request re-upload: " + err.message);
+        } finally {
+            setProcessingOnlineId(null);
+        }
+    };
+
+    // Handle Reject Online Submission
+    const handleRejectOnlineSubmission = async (sub) => {
+        const reason = window.prompt(`Enter reason for rejecting ${sub.studentName}'s payment:`, 'Incorrect amount or unverifiable transaction.');
+        if (reason === null) return; // cancelled
+
+        setProcessingOnlineId(sub.id);
+        try {
+            const nowIso = new Date().toISOString();
+
+            const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
+            await updateDoc(subRef, {
+                status: 'rejected',
+                rejectedAt: nowIso,
+                rejectReason: reason.trim() || 'Payment proof could not be verified.'
+            });
+
+            if (sub.classId && sub.studentId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${sub.classId}/students`, sub.studentId);
+                await updateDoc(classStudentRef, {
+                    pendingPaymentSubmission: null
+                });
+            }
+
+            setReviewModalSub(null);
+        } catch (err) {
+            console.error("Error rejecting submission:", err);
+            alert("Failed to reject submission: " + err.message);
+        } finally {
+            setProcessingOnlineId(null);
+        }
+    };
+
     // 5. Daily Mode: 'fee_submission' (default) or 'income_expense'
     const [activeDailyMode, setActiveDailyMode] = useState('fee_submission');
 
@@ -5481,6 +5726,71 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+            {/* Real-time Online Payment Audio/Visual Alert Banner */}
+            {onlinePaymentAlert && (
+                <div style={{
+                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                    borderRadius: '14px',
+                    padding: '1rem 1.35rem',
+                    color: '#ffffff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    boxShadow: '0 10px 25px -5px rgba(2, 132, 199, 0.4)',
+                    border: '1.5px solid #7dd3fc',
+                    gap: '1rem',
+                    flexWrap: 'wrap',
+                    animation: 'fadeInDown 0.3s ease-out'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                        <div style={{
+                            width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(255,255,255,0.2)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                            <Smartphone size={22} color="#ffffff" />
+                        </div>
+                        <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '800', background: '#38bdf8', color: '#082f49', padding: '2px 8px', borderRadius: '10px' }}>
+                                    NEW ONLINE PAYMENT RECEIVED
+                                </span>
+                                <span style={{ fontSize: '0.75rem', color: '#e0f2fe' }}>Just now</span>
+                            </div>
+                            <div style={{ fontSize: '0.95rem', fontWeight: '800', marginTop: '2px' }}>
+                                {onlinePaymentAlert.studentName} ({onlinePaymentAlert.className}) paid Rs. {Number(onlinePaymentAlert.amount || 0).toLocaleString()} via {onlinePaymentAlert.paymentMethod || 'Online'}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                        <button
+                            onClick={() => {
+                                setReviewModalSub(onlinePaymentAlert);
+                                setOnlinePaymentAlert(null);
+                            }}
+                            style={{
+                                padding: '0.5rem 1.1rem', borderRadius: '8px', border: 'none',
+                                background: '#ffffff', color: '#0369a1', fontWeight: '800', fontSize: '0.85rem',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
+                            }}
+                        >
+                            <Eye size={15} /> Review & Approve
+                        </button>
+                        <button
+                            onClick={() => setOnlinePaymentAlert(null)}
+                            style={{
+                                background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '8px',
+                                color: '#ffffff', padding: '0.5rem', cursor: 'pointer', display: 'flex', alignItems: 'center'
+                            }}
+                            title="Dismiss alert"
+                        >
+                            <X size={18} />
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Top Full-Width Prominent Summary Card: LIVE TODAY'S SUMMARY Collections Overview */}
             <div className="card animate-fade-in-up" style={{
                 background: '#ffffff',
@@ -5757,160 +6067,148 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         </div>
                     </div>
 
-                    {/* Pillar 2: Animated SVG Circular Donut Chart */}
-                    <div style={{
-                        background: '#ffffff',
-                        borderRadius: '14px',
-                        padding: '1.25rem',
-                        border: '1px solid #e2e8f0',
-                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        position: 'relative'
-                    }}>
-                        <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                <PieChart size={17} color="#0078d4" /> Payment Channels Split
-                            </span>
-                            <span style={{ fontSize: '0.72rem', fontWeight: '700', padding: '2px 7px', borderRadius: '6px', background: '#f1f5f9', color: '#475569' }}>
-                                360&deg; Distribution
-                            </span>
-                        </div>
+                    {/* Pillar 2: Live Online Payment Verifications & Approvals Card */}
+                    {(() => {
+                        const pendingOnlineList = onlineSubmissions.filter(s => (s.status || 'pending') === 'pending');
+                        const approvedOnlineToday = onlineSubmissions.filter(s => s.status === 'approved').length;
 
-                        {/* Circular Donut Gauge Container */}
-                        <div style={{ position: 'relative', width: '180px', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0.5rem 0' }}>
-                            {/* SVG Donut Ring */}
-                            {(() => {
-                                const radius = 54;
-                                const circumference = 2 * Math.PI * radius; // ~339.29
-                                const hasData = todayMetrics.totalAmount > 0;
-                                const cashLen = hasData ? (todayMetrics.cashPct / 100) * circumference : 0;
-                                const bankLen = hasData ? (todayMetrics.bankPct / 100) * circumference : 0;
-                                const onlineLen = hasData ? (todayMetrics.onlinePct / 100) * circumference : 0;
-
-                                return (
-                                    <svg width="180" height="180" viewBox="0 0 140 140" style={{ transform: 'rotate(-90deg)' }}>
-                                        {/* Background Track Ring */}
-                                        <circle
-                                            cx="70"
-                                            cy="70"
-                                            r={radius}
-                                            fill="transparent"
-                                            stroke="#f1f5f9"
-                                            strokeWidth="13"
-                                        />
-
-                                        {hasData ? (
-                                            <>
-                                                {/* Cash Segment (Emerald) */}
-                                                {todayMetrics.cashPct > 0 && (
-                                                    <circle
-                                                        cx="70"
-                                                        cy="70"
-                                                        r={radius}
-                                                        fill="transparent"
-                                                        stroke="#10b981"
-                                                        strokeWidth="13"
-                                                        strokeDasharray={`${cashLen} ${circumference - cashLen}`}
-                                                        strokeDashoffset="0"
-                                                        strokeLinecap={todayMetrics.cashPct < 100 ? "round" : "butt"}
-                                                        style={{ transition: 'stroke-dasharray 1s cubic-bezier(0.4, 0, 0.2, 1)' }}
-                                                    />
-                                                )}
-
-                                                {/* Bank Segment (Royal Blue) */}
-                                                {todayMetrics.bankPct > 0 && (
-                                                    <circle
-                                                        cx="70"
-                                                        cy="70"
-                                                        r={radius}
-                                                        fill="transparent"
-                                                        stroke="#3b82f6"
-                                                        strokeWidth="13"
-                                                        strokeDasharray={`${bankLen} ${circumference - bankLen}`}
-                                                        strokeDashoffset={`-${cashLen}`}
-                                                        strokeLinecap={todayMetrics.bankPct < 100 ? "round" : "butt"}
-                                                        style={{ transition: 'stroke-dasharray 1s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 1s' }}
-                                                    />
-                                                )}
-
-                                                {/* Online Segment (Purple) */}
-                                                {todayMetrics.onlinePct > 0 && (
-                                                    <circle
-                                                        cx="70"
-                                                        cy="70"
-                                                        r={radius}
-                                                        fill="transparent"
-                                                        stroke="#a855f7"
-                                                        strokeWidth="13"
-                                                        strokeDasharray={`${onlineLen} ${circumference - onlineLen}`}
-                                                        strokeDashoffset={`-${cashLen + bankLen}`}
-                                                        strokeLinecap={todayMetrics.onlinePct < 100 ? "round" : "butt"}
-                                                        style={{ transition: 'stroke-dasharray 1s cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 1s' }}
-                                                    />
-                                                )}
-                                            </>
-                                        ) : (
-                                            <circle
-                                                cx="70"
-                                                cy="70"
-                                                r={radius}
-                                                fill="transparent"
-                                                stroke="#cbd5e1"
-                                                strokeWidth="13"
-                                                strokeDasharray="4 4"
-                                            />
-                                        )}
-                                    </svg>
-                                );
-                            })()}
-
-                            {/* Center Donut Core Hub */}
+                        return (
                             <div style={{
-                                position: 'absolute',
-                                width: '102px',
-                                height: '102px',
-                                borderRadius: '50%',
                                 background: '#ffffff',
+                                borderRadius: '14px',
+                                padding: '1.25rem',
                                 border: '1px solid #e2e8f0',
-                                boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                                boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
                                 display: 'flex',
                                 flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                textAlign: 'center',
-                                padding: '4px'
+                                justifyContent: 'space-between',
+                                position: 'relative',
+                                minHeight: '270px'
                             }}>
-                                <span style={{ fontSize: '0.62rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                    Total Today
-                                </span>
-                                <span style={{ fontSize: '1.05rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
-                                    {todayMetrics.totalAmount >= 1000 ? `${(todayMetrics.totalAmount / 1000).toFixed(todayMetrics.totalAmount % 1000 === 0 ? 0 : 1)}k` : `Rs ${todayMetrics.totalAmount}`}
-                                </span>
-                                <span style={{ fontSize: '0.62rem', fontWeight: '800', color: '#059669', background: '#ecfdf5', padding: '1px 6px', borderRadius: '6px', marginTop: '2px', border: '1px solid #a7f3d0' }}>
-                                    {todayMetrics.totalCount} Slips
-                                </span>
-                            </div>
-                        </div>
+                                {/* Card Header */}
+                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                                    <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <Smartphone size={17} color="#0078d4" /> Online Approvals
+                                    </span>
+                                    {pendingOnlineList.length > 0 ? (
+                                        <span style={{
+                                            fontSize: '0.72rem', fontWeight: '800', padding: '2px 8px', borderRadius: '12px',
+                                            background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a',
+                                            display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                        }}>
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f59e0b' }} className="animate-pulse" />
+                                            {pendingOnlineList.length} Pending
+                                        </span>
+                                    ) : (
+                                        <span style={{
+                                            fontSize: '0.72rem', fontWeight: '700', padding: '2px 8px', borderRadius: '12px',
+                                            background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0'
+                                        }}>
+                                            All Reconciled ✓
+                                        </span>
+                                    )}
+                                </div>
 
-                        {/* Circular Donut Legend Chips */}
-                        <div style={{ width: '100%', display: 'flex', justifyContent: 'space-around', alignItems: 'center', gap: '0.35rem', paddingTop: '0.5rem', borderTop: '1px solid #f1f5f9' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }} />
-                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Cash {todayMetrics.cashPct}%</span>
+                                {/* Content: Pending Submissions List or Empty State */}
+                                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '180px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    {loadingOnlineSubmissions ? (
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', fontSize: '0.8rem' }}>
+                                            <Loader2 size={16} className="animate-spin" style={{ marginRight: '6px' }} /> Loading submissions...
+                                        </div>
+                                    ) : pendingOnlineList.length === 0 ? (
+                                        <div style={{
+                                            height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                            justifyContent: 'center', textAlign: 'center', padding: '1rem', background: '#f8fafc',
+                                            borderRadius: '10px', border: '1px dashed #e2e8f0'
+                                        }}>
+                                            <CheckCircle2 size={24} color="#10b981" style={{ marginBottom: '4px' }} />
+                                            <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155' }}>No Pending Submissions</span>
+                                            <span style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
+                                                Online payments submitted from Parent App appear here instantly.
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        pendingOnlineList.map((sub) => {
+                                            const isEasyPaisa = (sub.paymentMethod || '').toLowerCase().includes('easypaisa');
+                                            const isJazzCash = (sub.paymentMethod || '').toLowerCase().includes('jazzcash');
+                                            const methodBg = isEasyPaisa ? '#dcfce7' : isJazzCash ? '#fee2e2' : '#f3e8ff';
+                                            const methodColor = isEasyPaisa ? '#15803d' : isJazzCash ? '#b91c1c' : '#7e22ce';
+
+                                            return (
+                                                <div key={sub.id} style={{
+                                                    background: '#f8fafc', padding: '0.5rem 0.65rem', borderRadius: '10px',
+                                                    border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center',
+                                                    justifyContent: 'space-between', gap: '0.5rem'
+                                                }}>
+                                                    {/* Left: Thumbnail & Student Info */}
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                                                        {sub.proofUrl ? (
+                                                            <div
+                                                                onClick={() => setProofModal({ isOpen: true, url: sub.proofUrl, title: `${sub.studentName}'s Payment Slip` })}
+                                                                style={{
+                                                                    width: '34px', height: '34px', borderRadius: '6px', overflow: 'hidden',
+                                                                    border: '1px solid #cbd5e1', cursor: 'pointer', flexShrink: 0
+                                                                }}
+                                                                title="Click to view slip"
+                                                            >
+                                                                <img src={sub.proofUrl} alt="Slip" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                            </div>
+                                                        ) : (
+                                                            <div style={{ width: '34px', height: '34px', borderRadius: '6px', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                                <ImageIcon size={16} color="#64748b" />
+                                                            </div>
+                                                        )}
+
+                                                        <div style={{ minWidth: 0 }}>
+                                                            <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                                {sub.studentName}
+                                                            </div>
+                                                            <div style={{ fontSize: '0.68rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <span>{sub.className}</span>
+                                                                <span>&bull;</span>
+                                                                <span style={{ fontWeight: '700', color: '#0f172a' }}>Rs {Number(sub.amount || 0).toLocaleString()}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Right: Method Badge & Review Action */}
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
+                                                        <span style={{
+                                                            fontSize: '0.65rem', fontWeight: '800', padding: '2px 5px',
+                                                            borderRadius: '5px', background: methodBg, color: methodColor
+                                                        }}>
+                                                            {isEasyPaisa ? 'EP' : isJazzCash ? 'JC' : 'Bank'}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => setReviewModalSub(sub)}
+                                                            style={{
+                                                                padding: '3px 8px', borderRadius: '6px', border: 'none',
+                                                                background: '#0078d4', color: 'white', fontSize: '0.72rem',
+                                                                fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px'
+                                                            }}
+                                                            title="Review, Approve, or Reject"
+                                                        >
+                                                            <Eye size={12} /> Review
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+
+                                {/* Card Footer: Quick Stats */}
+                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid #f1f5f9', fontSize: '0.72rem', color: '#64748b' }}>
+                                    <span style={{ fontWeight: '600' }}>
+                                        Online Approved Today: <strong style={{ color: '#16a34a' }}>{approvedOnlineToday}</strong>
+                                    </span>
+                                    <span style={{ color: '#0078d4', fontWeight: '700', cursor: 'pointer' }} onClick={() => setActiveTab && setActiveTab('onlineSubmissions')}>
+                                        Full History &rarr;
+                                    </span>
+                                </div>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }} />
-                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Bank {todayMetrics.bankPct}%</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#a855f7' }} />
-                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Online {todayMetrics.onlinePct}%</span>
-                            </div>
-                        </div>
-                    </div>
+                        );
+                    })()}
 
                     {/* Pillar 3: Animated Channel Breakdown & Mini Progress Bar Graphs */}
                     <div style={{
@@ -8392,6 +8690,304 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 proofUrl={proofModal.url}
                 title={proofModal.title}
             />
+
+            {/* Online Payment Detailed Review Modal */}
+            {reviewModalSub && (
+                <div 
+                    onClick={() => setReviewModalSub(null)}
+                    style={{
+                        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', zIndex: 10000, padding: '1rem'
+                    }}
+                >
+                    <div 
+                        onClick={(e) => e.stopPropagation()}
+                        className="card animate-fade-in-up"
+                        style={{
+                            background: '#ffffff', borderRadius: '16px', maxWidth: '720px', width: '100%',
+                            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)', overflow: 'hidden',
+                            border: '1px solid #cbd5e1', maxHeight: '90vh', display: 'flex', flexDirection: 'column'
+                        }}
+                    >
+                        {/* Modal Header */}
+                        <div style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            padding: '1.25rem 1.5rem', borderBottom: '1px solid #e2e8f0', background: '#f8fafc'
+                        }}>
+                            <div>
+                                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <Smartphone size={20} color="#0078d4" />
+                                    Review Online Payment Submission
+                                </h3>
+                                <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                                    Submitted {reviewModalSub.submittedAt ? new Date(reviewModalSub.submittedAt).toLocaleString() : 'Recently'}
+                                </span>
+                            </div>
+                            <button
+                                onClick={() => setReviewModalSub(null)}
+                                style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b' }}
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div style={{ padding: '1.5rem', overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                            {/* Left: Student & Transaction Info */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {/* Student Info Box */}
+                                <div style={{ background: '#f0f9ff', padding: '1rem', borderRadius: '12px', border: '1px solid #bae6fd' }}>
+                                    <div style={{ fontSize: '0.72rem', fontWeight: '800', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>
+                                        Student Details
+                                    </div>
+                                    <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a' }}>
+                                        {reviewModalSub.studentName}
+                                    </div>
+                                    <div style={{ fontSize: '0.85rem', color: '#334155', marginTop: '2px' }}>
+                                        {reviewModalSub.className} • Roll No: <strong>{reviewModalSub.rollNo || 'N/A'}</strong>
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px' }}>
+                                        Parent: {reviewModalSub.parentName || 'Parent'} ({reviewModalSub.parentPhone || '—'})
+                                    </div>
+                                </div>
+
+                                {/* Payment Breakdown Box */}
+                                <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                    <div style={{ fontSize: '0.72rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+                                        Payment Verification
+                                    </div>
+
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                        <span style={{ fontSize: '0.82rem', color: '#64748b' }}>Amount Claimed:</span>
+                                        <strong style={{ fontSize: '1.25rem', color: '#16a34a', fontWeight: '900' }}>
+                                            Rs. {Number(reviewModalSub.amount || 0).toLocaleString()}
+                                        </strong>
+                                    </div>
+
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                        <span style={{ fontSize: '0.82rem', color: '#64748b' }}>Payment Mode:</span>
+                                        <span style={{
+                                            fontSize: '0.75rem', fontWeight: '800', padding: '2px 8px', borderRadius: '6px',
+                                            background: (reviewModalSub.paymentMethod || '').toLowerCase().includes('easypaisa') ? '#dcfce7' : (reviewModalSub.paymentMethod || '').toLowerCase().includes('jazzcash') ? '#fee2e2' : '#f3e8ff',
+                                            color: (reviewModalSub.paymentMethod || '').toLowerCase().includes('easypaisa') ? '#15803d' : (reviewModalSub.paymentMethod || '').toLowerCase().includes('jazzcash') ? '#b91c1c' : '#7e22ce'
+                                        }}>
+                                            {reviewModalSub.paymentMethod || 'Online Transfer'}
+                                        </span>
+                                    </div>
+
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                        <span style={{ fontSize: '0.82rem', color: '#64748b' }}>Transaction ID:</span>
+                                        <code style={{ fontSize: '0.82rem', fontWeight: '700', color: '#0f172a', background: '#e2e8f0', padding: '2px 6px', borderRadius: '4px' }}>
+                                            {reviewModalSub.transactionId || 'Not Provided'}
+                                        </code>
+                                    </div>
+
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ fontSize: '0.82rem', color: '#64748b' }}>Target Month:</span>
+                                        <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#0f172a' }}>
+                                            {reviewModalSub.month || 'Current Month'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Right: Payment Receipt Image Preview */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>Uploaded Receipt Slip</span>
+                                    {reviewModalSub.proofUrl && (
+                                        <a
+                                            href={reviewModalSub.proofUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#0078d4', fontSize: '0.75rem', fontWeight: '700', textDecoration: 'none' }}
+                                        >
+                                            <ExternalLink size={13} /> Full Size
+                                        </a>
+                                    )}
+                                </div>
+
+                                <div style={{
+                                    height: '240px', background: '#0f172a', borderRadius: '12px',
+                                    overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    border: '1px solid #cbd5e1', position: 'relative'
+                                }}>
+                                    {reviewModalSub.proofUrl ? (
+                                        <img
+                                            src={reviewModalSub.proofUrl}
+                                            alt="Proof Screenshot"
+                                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                        />
+                                    ) : (
+                                        <div style={{ textAlign: 'center', color: '#94a3b8' }}>
+                                            <ImageIcon size={32} style={{ margin: '0 auto 6px' }} />
+                                            <p style={{ fontSize: '0.8rem', margin: 0 }}>No image uploaded</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer Actions: Approve / Re-upload / Reject */}
+                        <div style={{
+                            padding: '1.25rem 1.5rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem'
+                        }}>
+                            <button
+                                onClick={() => setReviewModalSub(null)}
+                                style={{
+                                    padding: '0.65rem 1.25rem', borderRadius: '10px', border: '1px solid #cbd5e1',
+                                    background: '#ffffff', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer'
+                                }}
+                            >
+                                Close
+                            </button>
+
+                            <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                <button
+                                    onClick={() => handleRejectOnlineSubmission(reviewModalSub)}
+                                    disabled={processingOnlineId === reviewModalSub.id}
+                                    style={{
+                                        padding: '0.65rem 1.1rem', borderRadius: '10px', border: '1px solid #fecaca',
+                                        background: '#fef2f2', color: '#dc2626', fontWeight: '700', fontSize: '0.85rem',
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem'
+                                    }}
+                                >
+                                    <X size={15} /> Reject
+                                </button>
+
+                                <button
+                                    onClick={() => {
+                                        setReuploadModalSub(reviewModalSub);
+                                        setReuploadReason('');
+                                    }}
+                                    disabled={processingOnlineId === reviewModalSub.id}
+                                    style={{
+                                        padding: '0.65rem 1.1rem', borderRadius: '10px', border: '1.5px solid #fde68a',
+                                        background: '#fffbeb', color: '#b45309', fontWeight: '700', fontSize: '0.85rem',
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem'
+                                    }}
+                                >
+                                    <RotateCcw size={15} /> Request Re-upload
+                                </button>
+
+                                <button
+                                    onClick={() => handleApproveOnlineSubmission(reviewModalSub)}
+                                    disabled={processingOnlineId === reviewModalSub.id}
+                                    style={{
+                                        padding: '0.65rem 1.5rem', borderRadius: '10px', border: 'none',
+                                        background: '#16a34a', color: '#ffffff', fontWeight: '800', fontSize: '0.85rem',
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                        boxShadow: '0 4px 12px rgba(22, 163, 74, 0.35)'
+                                    }}
+                                >
+                                    {processingOnlineId === reviewModalSub.id ? (
+                                        <Loader2 size={16} className="animate-spin" />
+                                    ) : (
+                                        <Check size={16} />
+                                    )}
+                                    <span>Approve & Mark Paid</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Re-upload Request Reason Modal */}
+            {reuploadModalSub && (
+                <div
+                    onClick={() => setReuploadModalSub(null)}
+                    style={{
+                        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', zIndex: 10001, padding: '1rem'
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="card animate-fade-in-up"
+                        style={{
+                            background: '#ffffff', borderRadius: '16px', maxWidth: '480px', width: '100%',
+                            padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)', border: '1px solid #cbd5e1'
+                        }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#fffbeb', color: '#d97706', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <RotateCcw size={18} />
+                            </div>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '800', color: '#92400e' }}>
+                                Request Receipt Re-upload
+                            </h3>
+                        </div>
+
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '1rem' }}>
+                            Notify the parent of <strong>{reuploadModalSub.studentName}</strong> to re-upload a clear receipt slip:
+                        </p>
+
+                        {/* Quick Reason Chips */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.85rem' }}>
+                            {[
+                                'Receipt slip screenshot is blurry / illegible',
+                                'Transaction ID (TRX) is missing or cropped',
+                                'Amount does not match the monthly tuition fee',
+                                'Previous month receipt was uploaded by mistake'
+                            ].map((preset, idx) => (
+                                <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => setReuploadReason(preset)}
+                                    style={{
+                                        fontSize: '0.72rem', padding: '3px 8px', borderRadius: '6px',
+                                        border: '1px solid #e2e8f0', background: '#f8fafc', color: '#334155',
+                                        cursor: 'pointer', textAlign: 'left'
+                                    }}
+                                >
+                                    + {preset}
+                                </button>
+                            ))}
+                        </div>
+
+                        <textarea
+                            rows={3}
+                            placeholder="Enter specific instructions or reason for parent..."
+                            value={reuploadReason}
+                            onChange={(e) => setReuploadReason(e.target.value)}
+                            style={{
+                                width: '100%', padding: '0.75rem', borderRadius: '10px',
+                                border: '1.5px solid #cbd5e1', fontSize: '0.85rem', outline: 'none',
+                                boxSizing: 'border-box', marginBottom: '1.25rem', fontFamily: 'inherit'
+                            }}
+                        />
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem' }}>
+                            <button
+                                onClick={() => setReuploadModalSub(null)}
+                                style={{
+                                    padding: '0.55rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1',
+                                    background: '#ffffff', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmRequestReupload}
+                                disabled={processingOnlineId === reuploadModalSub.id}
+                                style={{
+                                    padding: '0.55rem 1.25rem', borderRadius: '8px', border: 'none',
+                                    background: '#d97706', color: '#ffffff', fontWeight: '800', fontSize: '0.85rem',
+                                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                    boxShadow: '0 4px 10px rgba(217, 119, 6, 0.3)'
+                                }}
+                            >
+                                {processingOnlineId === reuploadModalSub.id ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
+                                <span>Send Request</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -8680,6 +9276,21 @@ const Collections = () => {
         loading: true
     });
 
+    const [pendingOnlineCount, setPendingOnlineCount] = useState(0);
+
+    useEffect(() => {
+        if (!schoolId) return;
+        const qSubs = query(collection(db, `schools/${schoolId}/paymentSubmissions`));
+        const unsub = onSnapshot(qSubs, (snap) => {
+            let pCount = 0;
+            snap.forEach(d => {
+                if ((d.data().status || 'pending') === 'pending') pCount++;
+            });
+            setPendingOnlineCount(pCount);
+        }, (err) => console.error("Error listening to online submissions count:", err));
+        return () => unsub();
+    }, [schoolId]);
+
     useEffect(() => {
         if (loading || !schoolId || classes.length === 0) {
             console.log("[Collections] Waiting for initialization - School:", schoolId, "Classes count:", classes.length);
@@ -8912,6 +9523,28 @@ const Collections = () => {
                 >
                     Payroll
                 </button>
+                <button
+                    onClick={() => setActiveTab('onlineSubmissions')}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                        color: activeTab === 'onlineSubmissions' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'onlineSubmissions' ? '3px solid var(--primary)' : '3px solid transparent',
+                        transition: 'all 0.2s',
+                        borderRadius: '0',
+                        display: 'flex', alignItems: 'center', gap: '0.5rem'
+                    }}
+                >
+                    <span>Online Submissions</span>
+                    {pendingOnlineCount > 0 && (
+                        <span style={{
+                            background: '#f59e0b', color: 'white', fontSize: '0.75rem',
+                            padding: '2px 8px', borderRadius: '12px', fontWeight: '800'
+                        }}>
+                            {pendingOnlineCount}
+                        </span>
+                    )}
+                </button>
             </div>
 
             {/* Tab Content */}
@@ -9020,6 +9653,10 @@ const Collections = () => {
 
             {activeTab === 'payroll' && (
                 <PayrollDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
+            )}
+
+            {activeTab === 'onlineSubmissions' && (
+                <OnlineSubmissionsDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
             )}
 
             <ActionModal

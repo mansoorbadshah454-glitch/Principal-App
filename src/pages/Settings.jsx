@@ -8,6 +8,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
 import UploadSyllabusTab from '../components/UploadSyllabusTab';
 import CachedImage from '../components/CachedImage';
+import { compressImage } from '../utils/imageCompressor';
 
 const Settings = () => {
     const [loading, setLoading] = useState(false);
@@ -258,8 +259,10 @@ const Settings = () => {
             let imageUrl = schoolData.profileImage;
 
             if (imageFile) {
-                const storageRef = ref(storage, `schools/${currentSchoolId}/profile_${Date.now()}`);
-                await uploadBytes(storageRef, imageFile);
+                const compressedImage = await compressImage(imageFile, { maxDimension: 800, quality: 0.8 });
+                const safeExt = compressedImage.type === 'image/webp' ? '.webp' : '.jpg';
+                const storageRef = ref(storage, `schools/${currentSchoolId}/profile_${Date.now()}${safeExt}`);
+                await uploadBytes(storageRef, compressedImage);
                 imageUrl = await getDownloadURL(storageRef);
             }
 
@@ -636,10 +639,10 @@ const Settings = () => {
                                         </button>
                                         
                                         <div>
-                                            <label style={labelStyle}>Bank Name</label>
+                                            <label style={labelStyle}>Bank / Wallet Method</label>
                                             <input
                                                 type="text" value={acc.bankName} onChange={(e) => {handleBankChange(index, 'bankName', e.target.value); setErrors({...errors, [`bank_${index}`]: null});}}
-                                                placeholder="e.g. Chase Bank" style={inputStyle()}
+                                                placeholder="e.g. EasyPaisa, JazzCash, Meezan Bank, HBL" style={inputStyle()}
                                             />
                                         </div>
                                         <div>

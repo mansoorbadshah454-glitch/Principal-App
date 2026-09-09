@@ -3,6 +3,7 @@ import { db, storage } from '../firebase';
 import { collection, getDocs, writeBatch, doc, serverTimestamp, increment, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Upload, FileUp, FileDown, CheckCircle, AlertCircle, Loader2, Users, ImageIcon, ArrowRight, SkipForward, XCircle } from 'lucide-react';
+import { compressImage } from '../utils/imageCompressor';
 
 const BulkUploadCard = ({ schoolId }) => {
     const [loading, setLoading] = useState(false);
@@ -253,8 +254,10 @@ const BulkUploadCard = ({ schoolId }) => {
             
             for (let i = 0; i < matchedImages.length; i++) {
                 const { student, file } = matchedImages[i];
-                const storageRef = ref(storage, `schools/${schoolId}/profile_images/students/${student.id}_${Date.now()}`);
-                await uploadBytes(storageRef, file);
+                const compressedFile = await compressImage(file, { maxDimension: 600, quality: 0.8 });
+                const safeExt = compressedFile.type === 'image/webp' ? '.webp' : '.jpg';
+                const storageRef = ref(storage, `schools/${schoolId}/profile_images/students/${student.id}_${Date.now()}${safeExt}`);
+                await uploadBytes(storageRef, compressedFile);
                 const downloadURL = await getDownloadURL(storageRef);
 
                 const classStudentRef = doc(db, 'schools', schoolId, 'classes', selectedClass, 'students', student.id);
