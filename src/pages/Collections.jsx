@@ -3635,6 +3635,61 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
             setOnlineSubmissions(list);
             setLoadingOnlineSubmissions(false);
+
+            // Auto-heal: Ensure all approved online submissions are synchronized into feeTransactions
+            const approvedList = list.filter(s => s.status === 'approved');
+            if (approvedList.length > 0) {
+                approvedList.forEach(async (sub) => {
+                    const receiptNo = sub.receiptNo || (sub.transactionId ? `ONL-${sub.transactionId}` : `ONL-${sub.id.slice(-6)}`);
+                    try {
+                        const txRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+                        const txSnap = await getDoc(txRef);
+                        if (!txSnap.exists()) {
+                            const approvedDate = sub.approvedAt ? new Date(sub.approvedAt) : (sub.submittedAt ? new Date(sub.submittedAt) : new Date());
+                            const dateString = approvedDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+                            const timeString = approvedDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                            const finalAmount = Number(sub.amount) || 0;
+
+                            const transactionRecord = {
+                                receiptNo,
+                                isFamilyCombined: false,
+                                familyStudents: [],
+                                studentId: sub.studentId || '',
+                                studentName: sub.studentName || 'Student',
+                                rollNo: sub.rollNo || 'N/A',
+                                classId: sub.classId || '',
+                                className: sub.className || 'Class',
+                                fatherName: sub.parentName || 'Parent / Guardian',
+                                fatherPhone: sub.parentPhone || '',
+                                items: [
+                                    { name: `Online Fee Payment (${sub.month || 'Current Month'})`, amount: finalAmount }
+                                ],
+                                baseFee: finalAmount,
+                                actionsFee: 0,
+                                fineAmount: 0,
+                                discount: 0,
+                                totalPaid: finalAmount,
+                                paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                                proofUrl: sub.proofUrl || null,
+                                remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Payment Approved',
+                                dueDate: null,
+                                timestamp: approvedDate,
+                                dateString,
+                                timeString,
+                                collectedBy: 'Online Portal'
+                            };
+
+                            await setDoc(txRef, {
+                                ...transactionRecord,
+                                id: receiptNo,
+                                timestamp: serverTimestamp()
+                            }, { merge: true });
+                        }
+                    } catch (e) {
+                        console.warn("Backfill online transaction error:", e);
+                    }
+                });
+            }
         }, (err) => {
             console.warn("Error fetching online submissions for DailyWorkflow:", err);
             setLoadingOnlineSubmissions(false);
@@ -5793,11 +5848,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
             {/* Top Full-Width Prominent Summary Card: LIVE TODAY'S SUMMARY Collections Overview */}
             <div className="card animate-fade-in-up" style={{
-                background: '#ffffff',
+                background: '#f1f5f9',
                 borderRadius: '16px',
                 padding: '1.6rem 1.85rem',
                 border: '1px solid #e2e8f0',
-                boxShadow: '0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.04)',
+                boxShadow: '0 4px 14px -2px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.03)',
                 position: 'relative',
                 overflow: 'hidden'
             }}>
@@ -5809,7 +5864,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     flexWrap: 'wrap',
                     gap: '1rem',
                     marginBottom: '1.35rem',
-                    borderBottom: '1px solid #f1f5f9',
+                    borderBottom: '1px solid #e2e8f0',
                     paddingBottom: '1rem'
                 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
@@ -5921,7 +5976,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             fontSize: '0.825rem',
                             color: '#334155',
                             fontWeight: '700',
-                            background: '#f8fafc',
+                            background: '#ffffff',
                             padding: '0.35rem 0.8rem',
                             borderRadius: '8px',
                             border: '1px solid #e2e8f0'
@@ -6032,10 +6087,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                         {/* Digital vs Cash Velocity Mini Metric Card */}
                         <div style={{
-                            background: '#f8fafc',
+                            background: '#ffffff',
                             borderRadius: '12px',
                             padding: '0.85rem 1rem',
                             border: '1px solid #e2e8f0',
+                            boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between'
@@ -6067,42 +6123,84 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         </div>
                     </div>
 
-                    {/* Pillar 2: Live Online Payment Verifications & Approvals Card */}
+                    {/* Pillar 2: Live Online Payment Verifications & Approvals Card (Matching Royal Blue Theme) */}
                     {(() => {
                         const pendingOnlineList = onlineSubmissions.filter(s => (s.status || 'pending') === 'pending');
                         const approvedOnlineToday = onlineSubmissions.filter(s => s.status === 'approved').length;
 
                         return (
                             <div style={{
-                                background: '#ffffff',
+                                background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
                                 borderRadius: '14px',
                                 padding: '1.25rem',
-                                border: '1px solid #e2e8f0',
-                                boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                                border: '1px solid rgba(0, 120, 212, 0.3)',
+                                boxShadow: '0 4px 14px -2px rgba(0, 120, 212, 0.28)',
                                 display: 'flex',
                                 flexDirection: 'column',
                                 justifyContent: 'space-between',
                                 position: 'relative',
-                                minHeight: '270px'
+                                minHeight: '270px',
+                                overflow: 'hidden',
+                                color: '#ffffff'
                             }}>
+                                {/* Decorative Online Transaction Background Watermark */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '-20px',
+                                    right: '-20px',
+                                    width: '110px',
+                                    height: '110px',
+                                    background: 'radial-gradient(circle, rgba(56, 189, 248, 0.3) 0%, rgba(0, 120, 212, 0) 70%)',
+                                    borderRadius: '50%',
+                                    pointerEvents: 'none',
+                                    zIndex: 0
+                                }} />
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '12px',
+                                    right: '16px',
+                                    opacity: 0.12,
+                                    transform: 'rotate(15deg)',
+                                    pointerEvents: 'none',
+                                    zIndex: 0
+                                }}>
+                                    <Smartphone size={75} color="#ffffff" />
+                                </div>
+
                                 {/* Card Header */}
-                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
-                                    <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        <Smartphone size={17} color="#0078d4" /> Online Approvals
-                                    </span>
+                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', position: 'relative', zIndex: 1 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                        <div style={{
+                                            width: '28px',
+                                            height: '28px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(255, 255, 255, 0.2)',
+                                            backdropFilter: 'blur(6px)',
+                                            border: '1px solid rgba(255, 255, 255, 0.3)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            color: '#ffffff'
+                                        }}>
+                                            <Smartphone size={15} />
+                                        </div>
+                                        <span style={{ fontSize: '0.875rem', fontWeight: '800', color: '#ffffff', letterSpacing: '-0.01em' }}>
+                                            Online Approvals
+                                        </span>
+                                    </div>
                                     {pendingOnlineList.length > 0 ? (
                                         <span style={{
-                                            fontSize: '0.72rem', fontWeight: '800', padding: '2px 8px', borderRadius: '12px',
-                                            background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a',
-                                            display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                            fontSize: '0.72rem', fontWeight: '800', padding: '2px 9px', borderRadius: '12px',
+                                            background: 'rgba(245, 158, 11, 0.25)', color: '#fef08a', border: '1px solid rgba(251, 191, 36, 0.6)',
+                                            display: 'inline-flex', alignItems: 'center', gap: '5px'
                                         }}>
-                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f59e0b' }} className="animate-pulse" />
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#fbbf24' }} className="animate-pulse" />
                                             {pendingOnlineList.length} Pending
                                         </span>
                                     ) : (
                                         <span style={{
-                                            fontSize: '0.72rem', fontWeight: '700', padding: '2px 8px', borderRadius: '12px',
-                                            background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0'
+                                            fontSize: '0.72rem', fontWeight: '800', padding: '2px 9px', borderRadius: '12px',
+                                            background: 'rgba(255, 255, 255, 0.2)', color: '#ffffff', border: '1px solid rgba(255, 255, 255, 0.35)'
                                         }}>
                                             All Reconciled ✓
                                         </span>
@@ -6110,22 +6208,37 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 </div>
 
                                 {/* Content: Pending Submissions List or Empty State */}
-                                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '180px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '180px', display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative', zIndex: 1 }}>
                                     {loadingOnlineSubmissions ? (
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', fontSize: '0.8rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#bae6fd', fontSize: '0.8rem' }}>
                                             <Loader2 size={16} className="animate-spin" style={{ marginRight: '6px' }} /> Loading submissions...
                                         </div>
                                     ) : pendingOnlineList.length === 0 ? (
                                         <div style={{
                                             height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                                            justifyContent: 'center', textAlign: 'center', padding: '1rem', background: '#f8fafc',
-                                            borderRadius: '10px', border: '1px dashed #e2e8f0'
+                                            justifyContent: 'center', textAlign: 'center', padding: '1.25rem 1rem',
+                                            background: 'rgba(255, 255, 255, 0.08)', backdropFilter: 'blur(10px)',
+                                            borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)'
                                         }}>
-                                            <CheckCircle2 size={24} color="#10b981" style={{ marginBottom: '4px' }} />
-                                            <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155' }}>No Pending Submissions</span>
-                                            <span style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
+                                            <CheckCircle2 size={26} color="#67e8f9" style={{ marginBottom: '4px' }} />
+                                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#ffffff' }}>No Pending Submissions</span>
+                                            <span style={{ fontSize: '0.72rem', color: '#bae6fd', marginTop: '2px', lineHeight: 1.3 }}>
                                                 Online payments submitted from Parent App appear here instantly.
                                             </span>
+                                            <div style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                marginTop: '8px',
+                                                padding: '2px 8px',
+                                                borderRadius: '12px',
+                                                background: 'rgba(255, 255, 255, 0.12)',
+                                                fontSize: '0.65rem',
+                                                color: '#e0f2fe',
+                                                fontWeight: '700'
+                                            }}>
+                                                <Zap size={11} color="#38bdf8" /> Auto-Synced Gateway
+                                            </div>
                                         </div>
                                     ) : (
                                         pendingOnlineList.map((sub) => {
@@ -6136,9 +6249,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                                             return (
                                                 <div key={sub.id} style={{
-                                                    background: '#f8fafc', padding: '0.5rem 0.65rem', borderRadius: '10px',
-                                                    border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center',
-                                                    justifyContent: 'space-between', gap: '0.5rem'
+                                                    background: 'rgba(255, 255, 255, 0.12)',
+                                                    backdropFilter: 'blur(8px)',
+                                                    padding: '0.55rem 0.7rem',
+                                                    borderRadius: '10px',
+                                                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    gap: '0.5rem'
                                                 }}>
                                                     {/* Left: Thumbnail & Student Info */}
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
@@ -6147,26 +6266,26 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 onClick={() => setProofModal({ isOpen: true, url: sub.proofUrl, title: `${sub.studentName}'s Payment Slip` })}
                                                                 style={{
                                                                     width: '34px', height: '34px', borderRadius: '6px', overflow: 'hidden',
-                                                                    border: '1px solid #cbd5e1', cursor: 'pointer', flexShrink: 0
+                                                                    border: '1px solid rgba(255, 255, 255, 0.35)', cursor: 'pointer', flexShrink: 0
                                                                 }}
                                                                 title="Click to view slip"
                                                             >
                                                                 <img src={sub.proofUrl} alt="Slip" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                                             </div>
                                                         ) : (
-                                                            <div style={{ width: '34px', height: '34px', borderRadius: '6px', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                                                <ImageIcon size={16} color="#64748b" />
+                                                            <div style={{ width: '34px', height: '34px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                                <ImageIcon size={16} color="#e0f2fe" />
                                                             </div>
                                                         )}
 
                                                         <div style={{ minWidth: 0 }}>
-                                                            <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                            <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                                                 {sub.studentName}
                                                             </div>
-                                                            <div style={{ fontSize: '0.68rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            <div style={{ fontSize: '0.68rem', color: '#bae6fd', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                                 <span>{sub.className}</span>
                                                                 <span>&bull;</span>
-                                                                <span style={{ fontWeight: '700', color: '#0f172a' }}>Rs {Number(sub.amount || 0).toLocaleString()}</span>
+                                                                <span style={{ fontWeight: '800', color: '#ffffff' }}>Rs {Number(sub.amount || 0).toLocaleString()}</span>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -6182,9 +6301,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                         <button
                                                             onClick={() => setReviewModalSub(sub)}
                                                             style={{
-                                                                padding: '3px 8px', borderRadius: '6px', border: 'none',
-                                                                background: '#0078d4', color: 'white', fontSize: '0.72rem',
-                                                                fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px'
+                                                                padding: '4px 9px', borderRadius: '6px', border: 'none',
+                                                                background: '#ffffff', color: '#0078d4', fontSize: '0.72rem',
+                                                                fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px',
+                                                                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.2)'
                                                             }}
                                                             title="Review, Approve, or Reject"
                                                         >
@@ -6198,11 +6318,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 </div>
 
                                 {/* Card Footer: Quick Stats */}
-                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid #f1f5f9', fontSize: '0.72rem', color: '#64748b' }}>
+                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.18)', fontSize: '0.72rem', color: '#e0f2fe', position: 'relative', zIndex: 1 }}>
                                     <span style={{ fontWeight: '600' }}>
-                                        Online Approved Today: <strong style={{ color: '#16a34a' }}>{approvedOnlineToday}</strong>
+                                        Online Approved Today: <strong style={{ color: '#ffffff' }}>{approvedOnlineToday}</strong>
                                     </span>
-                                    <span style={{ color: '#0078d4', fontWeight: '700', cursor: 'pointer' }} onClick={() => setActiveTab && setActiveTab('onlineSubmissions')}>
+                                    <span style={{ color: '#ffffff', fontWeight: '700', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab && setActiveTab('onlineSubmissions')}>
                                         Full History &rarr;
                                     </span>
                                 </div>
@@ -6345,7 +6465,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 <div style={{
                     marginTop: '1.25rem',
                     paddingTop: '1.15rem',
-                    borderTop: '1px solid #f1f5f9'
+                    borderTop: '1px solid #e2e8f0'
                 }}>
                     <div style={{
                         display: 'flex',
@@ -6362,7 +6482,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.01em' }}>
                                 Daily Income & Expenses Breakdown
                             </span>
-                            <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '1px 8px', borderRadius: '12px' }}>
+                            <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#64748b', background: '#ffffff', border: '1px solid #e2e8f0', padding: '1px 8px', borderRadius: '12px' }}>
                                 Today's Ledger
                             </span>
                         </div>
@@ -9485,6 +9605,28 @@ const Collections = () => {
                     Daily Workflow
                 </button>
                 <button
+                    onClick={() => setActiveTab('onlineSubmissions')}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                        color: activeTab === 'onlineSubmissions' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'onlineSubmissions' ? '3px solid var(--primary)' : '3px solid transparent',
+                        transition: 'all 0.2s',
+                        borderRadius: '0',
+                        display: 'flex', alignItems: 'center', gap: '0.5rem'
+                    }}
+                >
+                    <span>Online Submissions</span>
+                    {pendingOnlineCount > 0 && (
+                        <span style={{
+                            background: '#f59e0b', color: 'white', fontSize: '0.75rem',
+                            padding: '2px 8px', borderRadius: '12px', fontWeight: '800'
+                        }}>
+                            {pendingOnlineCount}
+                        </span>
+                    )}
+                </button>
+                <button
                     onClick={() => setActiveTab('collections')}
                     style={{
                         background: 'none', border: 'none', cursor: 'pointer',
@@ -9522,28 +9664,6 @@ const Collections = () => {
                     }}
                 >
                     Payroll
-                </button>
-                <button
-                    onClick={() => setActiveTab('onlineSubmissions')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'onlineSubmissions' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'onlineSubmissions' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0',
-                        display: 'flex', alignItems: 'center', gap: '0.5rem'
-                    }}
-                >
-                    <span>Online Submissions</span>
-                    {pendingOnlineCount > 0 && (
-                        <span style={{
-                            background: '#f59e0b', color: 'white', fontSize: '0.75rem',
-                            padding: '2px 8px', borderRadius: '12px', fontWeight: '800'
-                        }}>
-                            {pendingOnlineCount}
-                        </span>
-                    )}
                 </button>
             </div>
 

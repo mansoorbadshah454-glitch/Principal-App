@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { db, storage } from '../firebase';
 import { 
-    collection, onSnapshot, query, doc, updateDoc, setDoc, orderBy 
+    collection, onSnapshot, query, doc, updateDoc, setDoc, orderBy, serverTimestamp 
 } from 'firebase/firestore';
 
 const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
@@ -47,14 +47,47 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
 
     // Handle Approve
     const handleApprove = async (sub) => {
-        if (!window.confirm(`Approve fee payment of Rs. ${sub.amount} for ${sub.studentName} (${sub.className})?`)) {
+        if (!window.confirm(`Approve fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.studentName} (${sub.className})?`)) {
             return;
         }
 
         setProcessingId(sub.id);
         try {
-            const nowIso = new Date().toISOString();
+            const now = new Date();
+            const nowIso = now.toISOString();
+            const dateString = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+            const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
             const receiptNo = sub.transactionId ? `ONL-${sub.transactionId}` : `ONL-${Date.now().toString().slice(-6)}`;
+            const finalAmount = Number(sub.amount) || 0;
+
+            const transactionRecord = {
+                receiptNo,
+                isFamilyCombined: false,
+                familyStudents: [],
+                studentId: sub.studentId,
+                studentName: sub.studentName,
+                rollNo: sub.rollNo || 'N/A',
+                classId: sub.classId,
+                className: sub.className || 'Class',
+                fatherName: sub.parentName || 'Parent / Guardian',
+                fatherPhone: sub.parentPhone || '',
+                items: [
+                    { name: `Online Fee Payment (${sub.month || 'Current Month'})`, amount: finalAmount }
+                ],
+                baseFee: finalAmount,
+                actionsFee: 0,
+                fineAmount: 0,
+                discount: 0,
+                totalPaid: finalAmount,
+                paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                proofUrl: sub.proofUrl || null,
+                remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Payment Approved',
+                dueDate: null,
+                timestamp: serverTimestamp(),
+                dateString,
+                timeString,
+                collectedBy: 'Online Portal'
+            };
 
             // 1. Update Student in Class Subcollection
             if (sub.classId && sub.studentId) {
@@ -63,7 +96,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                     monthlyFeeStatus: 'paid',
                     monthlyFeeDate: nowIso,
                     lastPaymentMode: sub.paymentMethod || 'Online Transfer',
-                    lastPaymentAmount: sub.amount || 0,
+                    lastPaymentAmount: finalAmount,
                     lastReceiptNo: receiptNo,
                     lastPaymentProofUrl: sub.proofUrl || null,
                     pendingPaymentSubmission: {
@@ -81,7 +114,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                         monthlyFeeStatus: 'paid',
                         monthlyFeeDate: nowIso,
                         lastPaymentMode: sub.paymentMethod || 'Online Transfer',
-                        lastPaymentAmount: sub.amount || 0,
+                        lastPaymentAmount: finalAmount,
                         lastReceiptNo: receiptNo,
                         lastPaymentProofUrl: sub.proofUrl || null,
                         pendingPaymentSubmission: {
@@ -96,8 +129,17 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
             const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
             await updateDoc(subRef, {
                 status: 'approved',
-                approvedAt: nowIso
+                approvedAt: nowIso,
+                receiptNo
             });
+
+            // 4. Create Transaction Record in feeTransactions (Essential for Today's Collections Log & Metrics)
+            const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+            await setDoc(txDocRef, {
+                ...transactionRecord,
+                id: receiptNo,
+                timestamp: serverTimestamp()
+            }, { merge: true });
 
         } catch (err) {
             console.error("Error approving submission:", err);
@@ -174,48 +216,132 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
         return { label: method || 'Bank Transfer', bg: '#f3e8ff', color: '#7e22ce', border: '#d8b4fe' };
     };
 
+    // Overview Cards Stats (Matching Main Dashboard Theme)
+    const overviewCards = [
+        {
+            label: 'Pending Verifications',
+            value: pendingCount.toLocaleString(),
+            icon: Clock,
+            gradient: 'linear-gradient(135deg, #f59e0b 0%, #b45309 100%)',
+            shadow: 'rgba(245, 158, 11, 0.4)',
+            showTag: pendingCount > 0,
+            tagText: 'Needs Review',
+            onClick: () => setFilterStatus('pending')
+        },
+        {
+            label: 'Approved Submissions',
+            value: approvedCount.toLocaleString(),
+            icon: CheckCircle2,
+            gradient: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
+            shadow: 'rgba(16, 185, 129, 0.4)',
+            showTag: false,
+            onClick: () => setFilterStatus('approved')
+        },
+        {
+            label: 'Rejected Submissions',
+            value: rejectedCount.toLocaleString(),
+            icon: XCircle,
+            gradient: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
+            shadow: 'rgba(239, 68, 68, 0.4)',
+            showTag: false,
+            onClick: () => setFilterStatus('rejected')
+        },
+        {
+            label: 'Online Fee Collected',
+            value: `Rs. ${totalCollectedOnline.toLocaleString()}`,
+            icon: Landmark,
+            gradient: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
+            shadow: 'rgba(99, 102, 241, 0.4)',
+            showTag: false,
+            onClick: () => setFilterStatus('all')
+        }
+    ];
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {/* Top Metric Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                <div style={{
-                    padding: '1.25rem', borderRadius: '16px', background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-                    border: '1px solid #fde68a', display: 'flex', flexDirection: 'column', gap: '0.5rem'
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: '#fef3c7', color: '#b45309' }}>
-                            <Clock size={20} />
-                        </div>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#92400e' }}>Pending Verifications</span>
-                    </div>
-                    <span style={{ fontSize: '1.8rem', fontWeight: '800', color: '#78350f' }}>{pendingCount}</span>
-                </div>
+            {/* Top Metric Overview Cards (Compact Design) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.85rem' }}>
+                {overviewCards.map((stat, i) => (
+                    <div
+                        key={i}
+                        className="card"
+                        onClick={stat.onClick}
+                        style={{
+                            padding: '1rem 1.15rem',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            border: 'none',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.65rem',
+                            background: stat.gradient,
+                            color: 'white',
+                            boxShadow: `0 10px 15px -3px ${stat.shadow}`,
+                            transition: 'all 0.2s ease',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {/* 2D Geometric Pattern (Square) */}
+                        <div style={{
+                            position: 'absolute',
+                            top: '-20%',
+                            right: '-10%',
+                            width: '85px',
+                            height: '85px',
+                            background: 'rgba(255, 255, 255, 0.12)',
+                            borderRadius: '24px',
+                            transform: 'rotate(20deg)',
+                            zIndex: 1
+                        }} />
 
-                <div style={{
-                    padding: '1.25rem', borderRadius: '16px', background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                    border: '1px solid #bbf7d0', display: 'flex', flexDirection: 'column', gap: '0.5rem'
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: '#dcfce7', color: '#16a34a' }}>
-                            <CheckCircle2 size={20} />
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            position: 'relative',
+                            zIndex: 2
+                        }}>
+                            <div style={{
+                                width: '38px',
+                                height: '38px',
+                                borderRadius: '10px',
+                                background: 'rgba(255, 255, 255, 0.2)',
+                                backdropFilter: 'blur(8px)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                border: '1px solid rgba(255, 255, 255, 0.3)'
+                            }}>
+                                <stat.icon size={20} color="white" />
+                            </div>
+                            {stat.showTag && (
+                                <div style={{
+                                    padding: '0.2rem 0.55rem',
+                                    borderRadius: '8px',
+                                    background: 'rgba(255, 255, 255, 0.2)',
+                                    color: 'white',
+                                    fontSize: '0.7rem',
+                                    fontWeight: '700',
+                                    border: '1px solid rgba(255, 255, 255, 0.25)',
+                                    backdropFilter: 'blur(4px)'
+                                }}>
+                                    {stat.tagText || 'Live'}
+                                </div>
+                            )}
                         </div>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#166534' }}>Approved Submissions</span>
-                    </div>
-                    <span style={{ fontSize: '1.8rem', fontWeight: '800', color: '#14532d' }}>{approvedCount}</span>
-                </div>
 
-                <div style={{
-                    padding: '1.25rem', borderRadius: '16px', background: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)',
-                    border: '1px solid #e9d5ff', display: 'flex', flexDirection: 'column', gap: '0.5rem'
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: '#f3e8ff', color: '#9333ea' }}>
-                            <Landmark size={20} />
+                        <div style={{ position: 'relative', zIndex: 2 }}>
+                            <p style={{ fontSize: '0.8rem', fontWeight: '600', opacity: 0.9, marginBottom: '0.15rem', letterSpacing: '0.01em', color: 'white' }}>
+                                {stat.label}
+                            </p>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                                <h3 style={{ fontSize: '1.45rem', fontWeight: '800', letterSpacing: '-0.02em', color: 'white' }}>
+                                    {stat.value}
+                                </h3>
+                            </div>
                         </div>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#6b21a8' }}>Online Fee Collected</span>
                     </div>
-                    <span style={{ fontSize: '1.8rem', fontWeight: '800', color: '#581c87' }}>Rs. {totalCollectedOnline.toLocaleString()}</span>
-                </div>
+                ))}
             </div>
 
             {/* Filter and Search Bar */}
