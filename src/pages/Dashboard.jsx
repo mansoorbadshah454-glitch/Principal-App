@@ -1054,23 +1054,23 @@ const Dashboard = () => {
                 {/* Left Column Content (Now Full Width) */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
                     {/* Overview Stats */}
-                    <div className="stats-grid">
+                    <div className="stats-grid" style={{ gap: '1rem', marginBottom: '0' }}>
                         {overviewStats.map((stat, i) => (
                             <div
                                 key={i}
                                 className="card"
                                 onClick={() => stat.path && navigate(stat.path)}
                                 style={{
-                                    padding: '1.5rem',
+                                    padding: '1rem 1.15rem',
                                     position: 'relative',
                                     overflow: 'hidden',
                                     border: 'none',
                                     display: 'flex',
                                     flexDirection: 'column',
-                                    gap: '1.25rem',
+                                    gap: '0.75rem',
                                     background: stat.gradient,
                                     color: 'white',
-                                    boxShadow: `0 20px 25px -5px ${stat.shadow}`,
+                                    boxShadow: `0 10px 15px -3px ${stat.shadow}`,
                                     transition: 'all 0.3s ease',
                                     cursor: stat.path ? 'pointer' : 'default'
                                 }}
@@ -1080,10 +1080,10 @@ const Dashboard = () => {
                                     position: 'absolute',
                                     top: '-15%',
                                     right: '-10%',
-                                    width: '130px',
-                                    height: '130px',
+                                    width: '90px',
+                                    height: '90px',
                                     background: 'rgba(255, 255, 255, 0.12)',
-                                    borderRadius: '35px',
+                                    borderRadius: '24px',
                                     transform: 'rotate(20deg)',
                                     zIndex: 1
                                 }} />
@@ -1096,9 +1096,9 @@ const Dashboard = () => {
                                     zIndex: 2
                                 }}>
                                     <div style={{
-                                        width: '52px',
-                                        height: '52px',
-                                        borderRadius: '16px',
+                                        width: '40px',
+                                        height: '40px',
+                                        borderRadius: '12px',
                                         background: 'rgba(255, 255, 255, 0.2)',
                                         backdropFilter: 'blur(10px)',
                                         display: 'flex',
@@ -1106,15 +1106,15 @@ const Dashboard = () => {
                                         justifyContent: 'center',
                                         border: '1px solid rgba(255, 255, 255, 0.3)'
                                     }}>
-                                        <stat.icon size={28} color="white" />
+                                        <stat.icon size={20} color="white" />
                                     </div>
                                     {stat.showTag && (
                                         <div style={{
-                                            padding: '0.4rem 0.8rem',
-                                            borderRadius: '12px',
+                                            padding: '0.25rem 0.6rem',
+                                            borderRadius: '8px',
                                             background: 'rgba(255, 255, 255, 0.15)',
                                             color: 'white',
-                                            fontSize: '0.75rem',
+                                            fontSize: '0.7rem',
                                             fontWeight: '700',
                                             border: '1px solid rgba(255, 255, 255, 0.2)'
                                         }}>
@@ -1124,16 +1124,16 @@ const Dashboard = () => {
                                 </div>
 
                                 <div style={{ position: 'relative', zIndex: 2 }}>
-                                    <p style={{ fontSize: '0.9rem', fontWeight: '500', opacity: 0.9, marginBottom: '0.4rem', letterSpacing: '0.02em' }}>{stat.label}</p>
-                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
-                                        <h3 style={{ fontSize: '2.125rem', fontWeight: '800', letterSpacing: '-0.02em', color: 'white' }}>{stat.value}</h3>
+                                    <p style={{ fontSize: '0.8rem', fontWeight: '500', opacity: 0.9, marginBottom: '0.2rem', letterSpacing: '0.02em' }}>{stat.label}</p>
+                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                                        <h3 style={{ fontSize: '1.5rem', fontWeight: '800', letterSpacing: '-0.02em', color: 'white', margin: 0 }}>{stat.value}</h3>
                                         {stat.subValue && (
                                             <span style={{
-                                                fontSize: '0.85rem',
+                                                fontSize: '0.75rem',
                                                 fontWeight: '600',
                                                 background: 'rgba(255,255,255,0.2)',
-                                                padding: '2px 8px',
-                                                borderRadius: '6px',
+                                                padding: '2px 6px',
+                                                borderRadius: '5px',
                                                 backdropFilter: 'blur(4px)'
                                             }}>
                                                 {stat.subValue}
