@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon,
-    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus
+    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Lock
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
@@ -35,7 +35,7 @@ const NAV_GROUPS = [
         items: [
             { icon: Wallet, label: 'Fee Collections', path: '/collections', permission: 'canManageCollections' },
             { icon: ShoppingBag, label: 'Store & Inventory', path: '/store', permission: 'canManageStore' },
-            { icon: Bus, label: 'Transport & Fleet', path: '/transport', permission: 'canManageTransport', isNew: true }
+            { icon: Bus, label: 'Transport & Fleet', path: '/transport', permission: 'canManageTransport', module: 'transport' }
         ]
     },
     {
@@ -52,7 +52,7 @@ const NAV_GROUPS = [
         id: 'administration',
         label: 'Campus & Admin',
         items: [
-            { icon: Tv, label: 'Live Surveillance', path: '/surveillance', permission: 'canManageSurveillance' },
+            { icon: Tv, label: 'Live Surveillance', path: '/surveillance', permission: 'canManageSurveillance', module: 'surveillance' },
             { icon: Mail, label: 'Inbox', path: '/inbox', permission: 'canManageInbox' },
             { icon: SettingsIcon, label: 'Settings', path: '/settings', permission: 'canManageSettings' }
         ]
@@ -62,7 +62,7 @@ const NAV_GROUPS = [
 const Sidebar = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { hasAccess, isPrincipal } = useAuthPermissions();
+    const { hasAccess, isPrincipal, hasModule } = useAuthPermissions();
 
     const [openGroups, setOpenGroups] = useState({
         overview: true,
@@ -230,6 +230,7 @@ const Sidebar = () => {
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginTop: '0.2rem' }}>
                                     {accessibleItems.map((item) => {
                                         const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
+                                        const isModuleLocked = item.module && !hasModule(item.module);
                                         return (
                                             <a
                                                 key={item.path}
@@ -245,15 +246,15 @@ const Sidebar = () => {
                                                     alignItems: 'center',
                                                     gap: '0.75rem',
                                                     padding: '0.65rem 0.85rem',
-                                                    color: isActive ? '#ffffff' : '#94a3b8',
+                                                    color: isActive ? '#ffffff' : (isModuleLocked ? '#94a3b8' : '#cbd5e1'),
                                                     background: isActive
                                                         ? 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)'
-                                                        : 'rgba(15, 23, 42, 0.72)',
+                                                        : (isModuleLocked ? 'rgba(15, 23, 42, 0.55)' : 'rgba(15, 23, 42, 0.72)'),
                                                     backdropFilter: 'blur(16px)',
                                                     WebkitBackdropFilter: 'blur(16px)',
                                                     border: isActive
                                                         ? '1px solid rgba(99, 102, 241, 0.5)'
-                                                        : '1px solid rgba(255, 255, 255, 0.05)',
+                                                        : (isModuleLocked ? '1px dashed rgba(245, 158, 11, 0.25)' : '1px solid rgba(255, 255, 255, 0.05)'),
                                                     textDecoration: 'none',
                                                     borderRadius: '10px',
                                                     fontWeight: isActive ? '600' : '500',
@@ -261,28 +262,46 @@ const Sidebar = () => {
                                                     boxShadow: isActive
                                                         ? '0 4px 12px rgba(79, 70, 229, 0.35)'
                                                         : '0 2px 6px rgba(0, 0, 0, 0.15)',
-                                                    transition: 'all 0.2s ease'
+                                                    transition: 'all 0.2s ease',
+                                                    position: 'relative'
                                                 }}
                                                 onMouseEnter={(e) => {
                                                     if (!isActive) {
                                                         e.currentTarget.style.background = 'rgba(30, 41, 59, 0.88)';
                                                         e.currentTarget.style.color = '#ffffff';
-                                                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';
+                                                        e.currentTarget.style.borderColor = isModuleLocked ? 'rgba(245, 158, 11, 0.5)' : 'rgba(255, 255, 255, 0.12)';
                                                         e.currentTarget.style.transform = 'translateX(3px)';
                                                     }
                                                 }}
                                                 onMouseLeave={(e) => {
                                                     if (!isActive) {
-                                                        e.currentTarget.style.background = 'rgba(15, 23, 42, 0.72)';
-                                                        e.currentTarget.style.color = '#94a3b8';
-                                                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+                                                        e.currentTarget.style.background = isModuleLocked ? 'rgba(15, 23, 42, 0.55)' : 'rgba(15, 23, 42, 0.72)';
+                                                        e.currentTarget.style.color = isModuleLocked ? '#94a3b8' : '#cbd5e1';
+                                                        e.currentTarget.style.borderColor = isModuleLocked ? 'rgba(245, 158, 11, 0.25)' : 'rgba(255, 255, 255, 0.05)';
                                                         e.currentTarget.style.transform = 'translateX(0)';
                                                     }
                                                 }}
                                             >
-                                                <item.icon size={18} color={isActive ? '#ffffff' : '#818cf8'} />
+                                                <item.icon size={18} color={isActive ? '#ffffff' : (isModuleLocked ? '#f59e0b' : '#818cf8')} />
                                                 <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>
-                                                {item.isNew && (
+                                                {isModuleLocked ? (
+                                                    <span style={{
+                                                        fontSize: '0.62rem',
+                                                        padding: '0.15rem 0.45rem',
+                                                        borderRadius: '6px',
+                                                        background: 'rgba(245, 158, 11, 0.15)',
+                                                        color: '#fbbf24',
+                                                        border: '1px solid rgba(245, 158, 11, 0.35)',
+                                                        fontWeight: '800',
+                                                        letterSpacing: '0.04em',
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '3px'
+                                                    }}>
+                                                        <Lock size={10} />
+                                                        PREMIUM
+                                                    </span>
+                                                ) : item.isNew && (
                                                     <span style={{
                                                         fontSize: '0.62rem',
                                                         padding: '0.15rem 0.45rem',

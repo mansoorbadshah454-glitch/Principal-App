@@ -17,6 +17,7 @@ export const AuthPermissionsProvider = ({ children }) => {
 
     const [userProfile, setUserProfile] = useState(null);
     const [permissions, setPermissions] = useState({});
+    const [schoolData, setSchoolData] = useState(null);
     const [loading, setLoading] = useState(true);
 
     const schoolId = sessionData?.schoolId;
@@ -36,6 +37,27 @@ export const AuthPermissionsProvider = ({ children }) => {
         window.addEventListener('storage', handleStorageChange);
         return () => window.removeEventListener('storage', handleStorageChange);
     }, []);
+
+    // Listen to School document for SaaS Subscription package & modules
+    useEffect(() => {
+        if (!schoolId) {
+            setSchoolData(null);
+            return;
+        }
+
+        const schoolDocRef = doc(db, 'schools', schoolId);
+        const unsub = onSnapshot(schoolDocRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setSchoolData(docSnap.data());
+            } else {
+                setSchoolData(null);
+            }
+        }, (err) => {
+            console.warn("School doc listener error:", err);
+        });
+
+        return () => unsub();
+    }, [schoolId]);
 
     useEffect(() => {
         if (!schoolId || !uid) {
@@ -83,6 +105,20 @@ export const AuthPermissionsProvider = ({ children }) => {
         return checkPermission(role, permissions, permKey);
     };
 
+    const schoolPackage = schoolData?.package || 'standard';
+    const schoolModules = schoolData?.modules || {
+        transport: schoolPackage === 'premium',
+        surveillance: schoolPackage === 'premium',
+        paperGenerator: schoolPackage === 'premium',
+        store: schoolPackage === 'premium',
+    };
+
+    const hasModule = (moduleKey) => {
+        if (!moduleKey) return true;
+        if (schoolPackage === 'premium') return true;
+        return schoolModules[moduleKey] === true;
+    };
+
     const isPrincipal = (() => {
         const nr = (role || '').toLowerCase().replace(/[-_ ]/g, '');
         return nr === 'principal' || nr === 'superadmin';
@@ -96,7 +132,11 @@ export const AuthPermissionsProvider = ({ children }) => {
         hasAccess,
         isPrincipal,
         loading,
-        userProfile: userProfile || sessionData
+        userProfile: userProfile || sessionData,
+        schoolData,
+        schoolPackage,
+        schoolModules,
+        hasModule
     };
 
     return (

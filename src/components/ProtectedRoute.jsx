@@ -2,9 +2,10 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, ArrowLeft, Lock } from 'lucide-react';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
+import PremiumUpgradePrompt from './PremiumUpgradePrompt';
 
-const ProtectedRoute = ({ children, requiredPermission, pageName = 'this page' }) => {
-    const { hasAccess, isPrincipal, loading } = useAuthPermissions();
+const ProtectedRoute = ({ children, requiredPermission, requiredModule, pageName = 'this page' }) => {
+    const { hasAccess, isPrincipal, hasModule, loading } = useAuthPermissions();
     const navigate = useNavigate();
 
     if (loading) {
@@ -15,7 +16,12 @@ const ProtectedRoute = ({ children, requiredPermission, pageName = 'this page' }
         );
     }
 
-    // Full access for principal or if user has the specific permission
+    // 1. Check SaaS Subscription Module Gating
+    if (requiredModule && !hasModule(requiredModule)) {
+        return <PremiumUpgradePrompt moduleKey={requiredModule} moduleName={pageName} />;
+    }
+
+    // 2. Full access for principal or if user has the specific permission
     if (isPrincipal || hasAccess(requiredPermission)) {
         return children;
     }

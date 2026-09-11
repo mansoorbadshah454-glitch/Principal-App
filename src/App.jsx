@@ -147,7 +147,7 @@ function App() {
                 </ProtectedRoute>
               } />
               <Route path="transport" element={
-                <ProtectedRoute requiredPermission="canManageTransport" pageName="Transport & Fleet">
+                <ProtectedRoute requiredPermission="canManageTransport" requiredModule="transport" pageName="Transport & Fleet">
                   <Transport />
                 </ProtectedRoute>
               } />
@@ -182,7 +182,7 @@ function App() {
                 </ProtectedRoute>
               } />
               <Route path="surveillance" element={
-                <ProtectedRoute requiredPermission="canManageSurveillance" pageName="Live Surveillance">
+                <ProtectedRoute requiredPermission="canManageSurveillance" requiredModule="surveillance" pageName="Live Surveillance">
                   <LiveSurveillance />
                 </ProtectedRoute>
               } />
