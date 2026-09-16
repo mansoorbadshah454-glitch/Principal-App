@@ -5398,6 +5398,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const items = [];
         let baseFee = 0;
         let actionsFee = 0;
+        let storeFee = 0;
 
         const tuition = Number(st.tuitionFee) || 0;
         let prevCount = Number(st.previousMonthsUnpaidCount) || Number(st.unpaidMonthsCount) || 0;
@@ -5410,7 +5411,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             items.push({
                 name: `Previous Overdue Tuition (${prevCount} Mos)`,
                 amount: prevArrears,
-                isArrears: true
+                isArrears: true,
+                category: 'arrears'
             });
         }
 
@@ -5418,25 +5420,37 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             st.feeStructure.forEach(item => {
                 const amt = Number(item.amount) || 0;
                 if (amt > 0) {
-                    items.push({ name: item.name || 'Fee Item', amount: amt });
+                    items.push({ name: item.name || 'Fee Item', amount: amt, isTuition: true, category: 'tuition' });
                     baseFee += amt;
                 }
             });
         } else {
             const transport = Number(st.transportFee) || 0;
             const other = Number(st.otherFees) || 0;
-            if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition });
-            if (transport > 0) items.push({ name: 'Transport Fee', amount: transport });
-            if (other > 0) items.push({ name: 'Other Fees', amount: other });
+            if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition, isTuition: true, category: 'tuition' });
+            if (transport > 0) items.push({ name: 'Transport Fee', amount: transport, isTuition: true, category: 'tuition' });
+            if (other > 0) items.push({ name: 'Other Fees', amount: other, isTuition: true, category: 'tuition' });
             baseFee = tuition + transport + other;
         }
 
+        // Store charges & Individual Actions
         const pendingActions = (st.individualActions || []).filter(a => a.status === 'unpaid');
         pendingActions.forEach(action => {
             const amt = Number(action.amount) || 0;
             if (amt > 0) {
-                items.push({ name: `Action: ${action.name || action.title}`, amount: amt });
-                actionsFee += amt;
+                const isStore = action.type === 'store_inventory' || (action.id && String(action.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(action.name || action.title || '');
+                if (isStore) {
+                    storeFee += amt;
+                } else {
+                    actionsFee += amt;
+                }
+                items.push({ 
+                    name: action.name || action.title, 
+                    amount: amt,
+                    isStore,
+                    isAction: !isStore,
+                    category: isStore ? 'store' : 'action'
+                });
             }
         });
 
@@ -5447,20 +5461,21 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 if (!isPaid) {
                     const amt = Number(currentAction.amount) || 0;
                     if (amt > 0) {
-                        items.push({ name: `Global: ${currentAction.name}`, amount: amt });
+                        items.push({ name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
                         actionsFee += amt;
                     }
                 }
             }
         }
 
-        const totalDue = baseFee + actionsFee + prevArrears;
+        const totalDue = baseFee + actionsFee + storeFee + prevArrears;
         const isPaid = st.monthlyFeeStatus === 'paid';
 
         return {
             items,
             baseFee,
             actionsFee,
+            storeFee,
             previousMonthsCount: prevCount,
             previousMonthsArrears: prevArrears,
             totalDue,
@@ -5478,6 +5493,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
         let combinedBaseFee = 0;
         let combinedActionsFee = 0;
+        let combinedStoreFee = 0;
         let combinedPreviousArrears = 0;
         let totalPreviousMonthsCount = 0;
         const studentsBreakdown = [];
@@ -5487,6 +5503,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const items = [];
             let stBaseFee = 0;
             let stActionsFee = 0;
+            let stStoreFee = 0;
 
             const tuition = Number(st.tuitionFee) || 0;
             let prevCount = Number(st.previousMonthsUnpaidCount) || Number(st.unpaidMonthsCount) || 0;
@@ -5499,7 +5516,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 items.push({
                     name: `Previous Overdue Tuition (${prevCount} Mos)`,
                     amount: prevArrears,
-                    isArrears: true
+                    isArrears: true,
+                    category: 'arrears'
                 });
                 combinedPreviousArrears += prevArrears;
                 totalPreviousMonthsCount += prevCount;
@@ -5509,26 +5527,37 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 st.feeStructure.forEach(item => {
                     const amt = Number(item.amount) || 0;
                     if (amt > 0) {
-                        items.push({ name: item.name || 'Fee Item', amount: amt });
+                        items.push({ name: item.name || 'Fee Item', amount: amt, isTuition: true, category: 'tuition' });
                         stBaseFee += amt;
                     }
                 });
             } else {
                 const transport = Number(st.transportFee) || 0;
                 const other = Number(st.otherFees) || 0;
-                if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition });
-                if (transport > 0) items.push({ name: 'Transport Fee', amount: transport });
-                if (other > 0) items.push({ name: 'Other Fees', amount: other });
+                if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition, isTuition: true, category: 'tuition' });
+                if (transport > 0) items.push({ name: 'Transport Fee', amount: transport, isTuition: true, category: 'tuition' });
+                if (other > 0) items.push({ name: 'Other Fees', amount: other, isTuition: true, category: 'tuition' });
                 stBaseFee = tuition + transport + other;
             }
 
-            // Individual Actions
+            // Individual Actions & Store items
             const pendingActions = (st.individualActions || []).filter(a => a.status === 'unpaid');
             pendingActions.forEach(action => {
                 const amt = Number(action.amount) || 0;
                 if (amt > 0) {
-                    items.push({ name: `Action: ${action.name || action.title}`, amount: amt });
-                    stActionsFee += amt;
+                    const isStore = action.type === 'store_inventory' || (action.id && String(action.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(action.name || action.title || '');
+                    if (isStore) {
+                        stStoreFee += amt;
+                    } else {
+                        stActionsFee += amt;
+                    }
+                    items.push({ 
+                        name: action.name || action.title, 
+                        amount: amt,
+                        isStore,
+                        isAction: !isStore,
+                        category: isStore ? 'store' : 'action'
+                    });
                 }
             });
 
@@ -5540,16 +5569,17 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     if (!isPaid) {
                         const amt = Number(currentAction.amount) || 0;
                         if (amt > 0) {
-                            items.push({ name: `Global: ${currentAction.name}`, amount: amt });
+                            items.push({ name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
                             stActionsFee += amt;
                         }
                     }
                 }
             }
 
-            const stTotal = stBaseFee + stActionsFee + prevArrears;
+            const stTotal = stBaseFee + stActionsFee + stStoreFee + prevArrears;
             combinedBaseFee += stBaseFee;
             combinedActionsFee += stActionsFee;
+            combinedStoreFee += stStoreFee;
 
             studentsBreakdown.push({
                 studentId: st.id,
@@ -5560,6 +5590,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 items,
                 baseFee: stBaseFee,
                 actionsFee: stActionsFee,
+                storeFee: stStoreFee,
                 previousMonthsCount: prevCount,
                 previousMonthsArrears: prevArrears,
                 subtotal: stTotal,
@@ -5576,7 +5607,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             });
         });
 
-        const calculatedTotal = combinedBaseFee + combinedActionsFee + combinedPreviousArrears;
+        const calculatedTotal = combinedBaseFee + combinedActionsFee + combinedStoreFee + combinedPreviousArrears;
         const totalDueWithFine = calculatedTotal + Number(fineAmount || 0);
         const allPaid = effectiveList.every(s => s.monthlyFeeStatus === 'paid');
 
@@ -5587,6 +5618,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             items: allItems,
             baseFee: combinedBaseFee,
             actionsFee: combinedActionsFee,
+            storeFee: combinedStoreFee,
             previousMonthsCount: totalPreviousMonthsCount,
             previousMonthsArrears: combinedPreviousArrears,
             calculatedTotal,
@@ -5987,793 +6019,327 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     </div>
                 </div>
 
-                {/* 3 Pillars Visual Interactive Grid: Metrics + Circular Gauge + Channel Bar Charts */}
+                {/* 3 Modern Dashboard Widgets (Paper Generator Style) */}
                 <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))',
-                    gap: '1.25rem'
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                    gap: '1rem',
+                    marginBottom: '1.25rem'
                 }}>
-                    {/* Pillar 1: Primary Highlight Revenue & Slips Cards */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
-                        {/* Total Collected Card */}
-                        <div style={{
-                            background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
-                            borderRadius: '14px',
-                            padding: '1.25rem 1.4rem',
-                            color: '#ffffff',
-                            border: '1px solid rgba(5, 150, 105, 0.3)',
-                            boxShadow: '0 4px 14px -2px rgba(5, 150, 105, 0.28)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between'
-                        }}>
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#d1fae5' }}>
-                                        Total Collected Today
-                                    </span>
-                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(255,255,255,0.2)', padding: '1px 6px', borderRadius: '8px', color: '#ffffff' }}>
-                                        Live
-                                    </span>
-                                </div>
-                                <h2 style={{ margin: '0.35rem 0 0', fontSize: '2rem', fontWeight: '900', letterSpacing: '-0.03em', lineHeight: 1.1, color: '#ffffff' }}>
-                                    Rs {todayMetrics.totalAmount.toLocaleString()}
-                                </h2>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', marginTop: '0.4rem', color: '#a7f3d0', fontWeight: '600' }}>
-                                    <TrendingUp size={14} color="#6ee7b7" />
-                                    <span>Real-time instant sum across all channels</span>
-                                </div>
-                            </div>
-                            <div style={{
-                                width: '52px',
-                                height: '52px',
-                                borderRadius: '12px',
-                                background: 'rgba(255,255,255,0.18)',
-                                backdropFilter: 'blur(6px)',
-                                border: '1px solid rgba(255,255,255,0.25)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: '#ffffff'
-                            }}>
-                                <Wallet size={26} />
-                            </div>
-                        </div>
-
-                        {/* Total Slips Issued Card */}
-                        <div style={{
-                            background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
-                            borderRadius: '14px',
-                            padding: '1.25rem 1.4rem',
-                            color: '#ffffff',
-                            border: '1px solid rgba(0, 120, 212, 0.3)',
-                            boxShadow: '0 4px 14px -2px rgba(0, 120, 212, 0.28)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between'
-                        }}>
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#e0f2fe' }}>
-                                        Fee Slips Issued
-                                    </span>
-                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(255,255,255,0.2)', padding: '1px 6px', borderRadius: '8px', color: '#ffffff' }}>
-                                        Verified
-                                    </span>
-                                </div>
-                                <h2 style={{ margin: '0.35rem 0 0', fontSize: '2rem', fontWeight: '900', letterSpacing: '-0.03em', lineHeight: 1.1, color: '#ffffff' }}>
-                                    {todayMetrics.totalCount} <span style={{ fontSize: '1.15rem', fontWeight: '700', opacity: 0.95 }}>Slips</span>
-                                </h2>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', marginTop: '0.4rem', color: '#bae6fd', fontWeight: '600' }}>
-                                    <Printer size={14} color="#93c5fd" />
-                                    <span>Recorded in ledger & printable vouchers</span>
-                                </div>
-                            </div>
-                            <div style={{
-                                width: '52px',
-                                height: '52px',
-                                borderRadius: '12px',
-                                background: 'rgba(255,255,255,0.18)',
-                                backdropFilter: 'blur(6px)',
-                                border: '1px solid rgba(255,255,255,0.25)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: '#ffffff'
-                            }}>
-                                <FileText size={26} />
-                            </div>
-                        </div>
-
-                        {/* Digital vs Cash Velocity Mini Metric Card */}
-                        <div style={{
-                            background: '#ffffff',
-                            borderRadius: '12px',
-                            padding: '0.85rem 1rem',
-                            border: '1px solid #e2e8f0',
-                            boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between'
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#f5f3ff', color: '#7c3aed', border: '1px solid #e9d5ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <Zap size={17} />
-                                </div>
-                                <div>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block' }}>
-                                        Digital vs Cash Ratio
-                                    </span>
-                                    <span style={{ fontSize: '0.85rem', fontWeight: '900', color: '#0f172a' }}>
-                                        {todayMetrics.bankPct + todayMetrics.onlinePct}% Digital &bull; {todayMetrics.cashPct}% Cash
-                                    </span>
-                                </div>
-                            </div>
-                            <span style={{
-                                fontSize: '0.7rem',
-                                fontWeight: '800',
-                                padding: '2px 8px',
-                                borderRadius: '6px',
-                                background: todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? '#f3e8ff' : '#ecfdf5',
-                                color: todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? '#6b21a8' : '#047857',
-                                border: `1px solid ${todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? '#d8b4fe' : '#a7f3d0'}`
-                            }}>
-                                {todayMetrics.bankPct + todayMetrics.onlinePct >= 50 ? 'Digital Heavy' : 'Cash Primary'}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* Pillar 2: Live Online Payment Verifications & Approvals Card (Matching Royal Blue Theme) */}
-                    {(() => {
-                        const pendingOnlineList = onlineSubmissions.filter(s => (s.status || 'pending') === 'pending');
-                        const approvedOnlineToday = onlineSubmissions.filter(s => s.status === 'approved').length;
-
-                        return (
-                            <div style={{
-                                background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
-                                borderRadius: '14px',
-                                padding: '1.25rem',
-                                border: '1px solid rgba(0, 120, 212, 0.3)',
-                                boxShadow: '0 4px 14px -2px rgba(0, 120, 212, 0.28)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                justifyContent: 'space-between',
-                                position: 'relative',
-                                minHeight: '270px',
-                                overflow: 'hidden',
-                                color: '#ffffff'
-                            }}>
-                                {/* Decorative Online Transaction Background Watermark */}
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '-20px',
-                                    right: '-20px',
-                                    width: '110px',
-                                    height: '110px',
-                                    background: 'radial-gradient(circle, rgba(56, 189, 248, 0.3) 0%, rgba(0, 120, 212, 0) 70%)',
-                                    borderRadius: '50%',
-                                    pointerEvents: 'none',
-                                    zIndex: 0
-                                }} />
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '12px',
-                                    right: '16px',
-                                    opacity: 0.12,
-                                    transform: 'rotate(15deg)',
-                                    pointerEvents: 'none',
-                                    zIndex: 0
-                                }}>
-                                    <Smartphone size={75} color="#ffffff" />
-                                </div>
-
-                                {/* Card Header */}
-                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', position: 'relative', zIndex: 1 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                        <div style={{
-                                            width: '28px',
-                                            height: '28px',
-                                            borderRadius: '8px',
-                                            background: 'rgba(255, 255, 255, 0.2)',
-                                            backdropFilter: 'blur(6px)',
-                                            border: '1px solid rgba(255, 255, 255, 0.3)',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            color: '#ffffff'
-                                        }}>
-                                            <Smartphone size={15} />
-                                        </div>
-                                        <span style={{ fontSize: '0.875rem', fontWeight: '800', color: '#ffffff', letterSpacing: '-0.01em' }}>
-                                            Online Approvals
-                                        </span>
-                                    </div>
-                                    {pendingOnlineList.length > 0 ? (
-                                        <span style={{
-                                            fontSize: '0.72rem', fontWeight: '800', padding: '2px 9px', borderRadius: '12px',
-                                            background: 'rgba(245, 158, 11, 0.25)', color: '#fef08a', border: '1px solid rgba(251, 191, 36, 0.6)',
-                                            display: 'inline-flex', alignItems: 'center', gap: '5px'
-                                        }}>
-                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#fbbf24' }} className="animate-pulse" />
-                                            {pendingOnlineList.length} Pending
-                                        </span>
-                                    ) : (
-                                        <span style={{
-                                            fontSize: '0.72rem', fontWeight: '800', padding: '2px 9px', borderRadius: '12px',
-                                            background: 'rgba(255, 255, 255, 0.2)', color: '#ffffff', border: '1px solid rgba(255, 255, 255, 0.35)'
-                                        }}>
-                                            All Reconciled ✓
-                                        </span>
-                                    )}
-                                </div>
-
-                                {/* Content: Pending Submissions List or Empty State */}
-                                <div style={{ flex: 1, overflowY: 'auto', maxHeight: '180px', display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative', zIndex: 1 }}>
-                                    {loadingOnlineSubmissions ? (
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#bae6fd', fontSize: '0.8rem' }}>
-                                            <Loader2 size={16} className="animate-spin" style={{ marginRight: '6px' }} /> Loading submissions...
-                                        </div>
-                                    ) : pendingOnlineList.length === 0 ? (
-                                        <div style={{
-                                            height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center',
-                                            justifyContent: 'center', textAlign: 'center', padding: '1.25rem 1rem',
-                                            background: 'rgba(255, 255, 255, 0.08)', backdropFilter: 'blur(10px)',
-                                            borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)'
-                                        }}>
-                                            <CheckCircle2 size={26} color="#67e8f9" style={{ marginBottom: '4px' }} />
-                                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#ffffff' }}>No Pending Submissions</span>
-                                            <span style={{ fontSize: '0.72rem', color: '#bae6fd', marginTop: '2px', lineHeight: 1.3 }}>
-                                                Online payments submitted from Parent App appear here instantly.
-                                            </span>
-                                            <div style={{
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '4px',
-                                                marginTop: '8px',
-                                                padding: '2px 8px',
-                                                borderRadius: '12px',
-                                                background: 'rgba(255, 255, 255, 0.12)',
-                                                fontSize: '0.65rem',
-                                                color: '#e0f2fe',
-                                                fontWeight: '700'
-                                            }}>
-                                                <Zap size={11} color="#38bdf8" /> Auto-Synced Gateway
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        pendingOnlineList.map((sub) => {
-                                            const isEasyPaisa = (sub.paymentMethod || '').toLowerCase().includes('easypaisa');
-                                            const isJazzCash = (sub.paymentMethod || '').toLowerCase().includes('jazzcash');
-                                            const methodBg = isEasyPaisa ? '#dcfce7' : isJazzCash ? '#fee2e2' : '#f3e8ff';
-                                            const methodColor = isEasyPaisa ? '#15803d' : isJazzCash ? '#b91c1c' : '#7e22ce';
-
-                                            return (
-                                                <div key={sub.id} style={{
-                                                    background: 'rgba(255, 255, 255, 0.12)',
-                                                    backdropFilter: 'blur(8px)',
-                                                    padding: '0.55rem 0.7rem',
-                                                    borderRadius: '10px',
-                                                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'space-between',
-                                                    gap: '0.5rem'
-                                                }}>
-                                                    {/* Left: Thumbnail & Student Info */}
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
-                                                        {sub.proofUrl ? (
-                                                            <div
-                                                                onClick={() => setProofModal({ isOpen: true, url: sub.proofUrl, title: `${sub.studentName}'s Payment Slip` })}
-                                                                style={{
-                                                                    width: '34px', height: '34px', borderRadius: '6px', overflow: 'hidden',
-                                                                    border: '1px solid rgba(255, 255, 255, 0.35)', cursor: 'pointer', flexShrink: 0
-                                                                }}
-                                                                title="Click to view slip"
-                                                            >
-                                                                <img src={sub.proofUrl} alt="Slip" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                            </div>
-                                                        ) : (
-                                                            <div style={{ width: '34px', height: '34px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                                                <ImageIcon size={16} color="#e0f2fe" />
-                                                            </div>
-                                                        )}
-
-                                                        <div style={{ minWidth: 0 }}>
-                                                            <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                                {sub.studentName}
-                                                            </div>
-                                                            <div style={{ fontSize: '0.68rem', color: '#bae6fd', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                <span>{sub.className}</span>
-                                                                <span>&bull;</span>
-                                                                <span style={{ fontWeight: '800', color: '#ffffff' }}>Rs {Number(sub.amount || 0).toLocaleString()}</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Right: Method Badge & Review Action */}
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
-                                                        <span style={{
-                                                            fontSize: '0.65rem', fontWeight: '800', padding: '2px 5px',
-                                                            borderRadius: '5px', background: methodBg, color: methodColor
-                                                        }}>
-                                                            {isEasyPaisa ? 'EP' : isJazzCash ? 'JC' : 'Bank'}
-                                                        </span>
-                                                        <button
-                                                            onClick={() => setReviewModalSub(sub)}
-                                                            style={{
-                                                                padding: '4px 9px', borderRadius: '6px', border: 'none',
-                                                                background: '#ffffff', color: '#0078d4', fontSize: '0.72rem',
-                                                                fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px',
-                                                                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.2)'
-                                                            }}
-                                                            title="Review, Approve, or Reject"
-                                                        >
-                                                            <Eye size={12} /> Review
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })
-                                    )}
-                                </div>
-
-                                {/* Card Footer: Quick Stats */}
-                                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.18)', fontSize: '0.72rem', color: '#e0f2fe', position: 'relative', zIndex: 1 }}>
-                                    <span style={{ fontWeight: '600' }}>
-                                        Online Approved Today: <strong style={{ color: '#ffffff' }}>{approvedOnlineToday}</strong>
-                                    </span>
-                                    <span style={{ color: '#ffffff', fontWeight: '700', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setActiveTab && setActiveTab('onlineSubmissions')}>
-                                        Full History &rarr;
-                                    </span>
-                                </div>
-                            </div>
-                        );
-                    })()}
-
-                    {/* Pillar 3: Animated Channel Breakdown & Mini Progress Bar Graphs */}
+                    {/* Widget 1: Live Daily Cashflow & Surplus (Emerald Theme with Glass Shine) */}
                     <div style={{
-                        background: '#ffffff',
+                        background: 'linear-gradient(135deg, #10b981 0%, #047857 100%)',
                         borderRadius: '14px',
-                        padding: '1.25rem 1.35rem',
-                        border: '1px solid #e2e8f0',
-                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                        padding: '1.25rem 1.4rem',
+                        color: '#ffffff',
+                        border: '1.5px solid rgba(255, 255, 255, 0.38)',
+                        boxShadow: '0 10px 22px -3px rgba(16, 185, 129, 0.45), inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 2px 0 rgba(0, 0, 0, 0.15)',
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
-                        gap: '0.75rem'
+                        position: 'relative',
+                        overflow: 'hidden'
                     }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                <BarChart3 size={17} color="#0078d4" /> Live Channel Analytics
-                            </span>
-                            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '2px 8px', borderRadius: '6px' }}>
-                                Interactive Bars
-                            </span>
-                        </div>
-
-                        {/* Channel 1: Cash in Hand Bar */}
+                        {/* Top Edge Glass Sheen Reflection */}
                         <div style={{
-                            background: '#f0fdf4',
-                            borderRadius: '10px',
-                            padding: '0.7rem 0.85rem',
-                            border: '1px solid #bbf7d0'
-                        }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                    <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <Wallet size={13} />
-                                    </div>
-                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#14532d' }}>Cash</span>
-                                    <span style={{ fontSize: '0.7rem', color: '#166534', fontWeight: '600' }}>({todayMetrics.cashCount} Slips)</span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <strong style={{ fontSize: '0.9rem', fontWeight: '900', color: '#14532d' }}>
-                                        Rs {todayMetrics.cashAmount.toLocaleString()}
-                                    </strong>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '1px 6px', borderRadius: '6px', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
-                                        {todayMetrics.cashPct}%
-                                    </span>
-                                </div>
-                            </div>
-                            {/* Animated Mini Progress Bar */}
-                            <div style={{ height: '7px', width: '100%', background: '#dcfce7', borderRadius: '6px', overflow: 'hidden' }}>
-                                <div style={{
-                                    height: '100%',
-                                    width: `${todayMetrics.cashPct}%`,
-                                    background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
-                                    borderRadius: '6px',
-                                    transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
-                                }} />
-                            </div>
-                        </div>
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: '42%',
+                            background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0) 100%)',
+                            pointerEvents: 'none',
+                            zIndex: 1,
+                            borderTopLeftRadius: 'inherit',
+                            borderTopRightRadius: 'inherit'
+                        }} />
 
-                        {/* Channel 2: Bank Transfer Bar */}
+                        {/* 2D Geometric Pattern (Square) */}
                         <div style={{
-                            background: '#eff6ff',
-                            borderRadius: '10px',
-                            padding: '0.7rem 0.85rem',
-                            border: '1px solid #bfdbfe'
-                        }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                    <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#dbeafe', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <Landmark size={13} />
-                                    </div>
-                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#1e3a8a' }}>Bank Deposit</span>
-                                    <span style={{ fontSize: '0.7rem', color: '#1e40af', fontWeight: '600' }}>({todayMetrics.bankCount} Slips)</span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <strong style={{ fontSize: '0.9rem', fontWeight: '900', color: '#1e3a8a' }}>
-                                        Rs {todayMetrics.bankAmount.toLocaleString()}
-                                    </strong>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '1px 6px', borderRadius: '6px', background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
-                                        {todayMetrics.bankPct}%
-                                    </span>
-                                </div>
-                            </div>
-                            {/* Animated Mini Progress Bar */}
-                            <div style={{ height: '7px', width: '100%', background: '#dbeafe', borderRadius: '6px', overflow: 'hidden' }}>
-                                <div style={{
-                                    height: '100%',
-                                    width: `${todayMetrics.bankPct}%`,
-                                    background: 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 100%)',
-                                    borderRadius: '6px',
-                                    transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
-                                }} />
-                            </div>
-                        </div>
-
-                        {/* Channel 3: Online / EasyPaisa / JazzCash Bar */}
-                        <div style={{
-                            background: '#faf5ff',
-                            borderRadius: '10px',
-                            padding: '0.7rem 0.85rem',
-                            border: '1px solid #e9d5ff'
-                        }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                    <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#f3e8ff', color: '#9333ea', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <Smartphone size={13} />
-                                    </div>
-                                    <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#581c87' }}>Online Wallets</span>
-                                    <span style={{ fontSize: '0.7rem', color: '#6b21a8', fontWeight: '600' }}>({todayMetrics.onlineCount} Slips)</span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <strong style={{ fontSize: '0.9rem', fontWeight: '900', color: '#581c87' }}>
-                                        Rs {todayMetrics.onlineAmount.toLocaleString()}
-                                    </strong>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: '800', padding: '1px 6px', borderRadius: '6px', background: '#f3e8ff', color: '#7e22ce', border: '1px solid #d8b4fe' }}>
-                                        {todayMetrics.onlinePct}%
-                                    </span>
-                                </div>
-                            </div>
-                            {/* Animated Mini Progress Bar */}
-                            <div style={{ height: '7px', width: '100%', background: '#f3e8ff', borderRadius: '6px', overflow: 'hidden' }}>
-                                <div style={{
-                                    height: '100%',
-                                    width: `${todayMetrics.onlinePct}%`,
-                                    background: 'linear-gradient(90deg, #a855f7 0%, #7e22ce 100%)',
-                                    borderRadius: '6px',
-                                    transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
-                                }} />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Dedicated Income & Expenses Breakdown Row inside Collections Overview */}
-                <div style={{
-                    marginTop: '1.25rem',
-                    paddingTop: '1.15rem',
-                    borderTop: '1px solid #e2e8f0'
-                }}>
-                    <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '0.85rem',
-                        flexWrap: 'wrap',
-                        gap: '0.5rem'
-                    }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <div style={{ width: '26px', height: '26px', borderRadius: '7px', background: '#f0fdf4', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #bbf7d0' }}>
-                                <TrendingUp size={15} />
-                            </div>
-                            <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.01em' }}>
-                                Daily Income & Expenses Breakdown
+                            position: 'absolute',
+                            top: '-15%',
+                            right: '-10%',
+                            width: '95px',
+                            height: '95px',
+                            background: 'rgba(255, 255, 255, 0.14)',
+                            borderRadius: '24px',
+                            transform: 'rotate(20deg)',
+                            zIndex: 1,
+                            pointerEvents: 'none'
+                        }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', position: 'relative', zIndex: 2 }}>
+                            <span style={{ fontSize: '0.86rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#f0fdf4', textShadow: '0 1px 3px rgba(0,0,0,0.15)' }}>
+                                Today's Total Collections
                             </span>
-                            <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#64748b', background: '#ffffff', border: '1px solid #e2e8f0', padding: '1px 8px', borderRadius: '12px' }}>
-                                Today's Ledger
+                            <span style={{ fontSize: '0.76rem', fontWeight: '800', background: 'rgba(255,255,255,0.25)', padding: '3px 10px', borderRadius: '10px', color: '#ffffff', display: 'flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,0.35)', backdropFilter: 'blur(4px)', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}>
+                                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#6ee7b7' }} className="animate-pulse" /> Live Pulse
                             </span>
                         </div>
-
-                        <button
-                            onClick={() => {
-                                setActiveDailyMode('income_expense');
-                                setRightCardTab('finances_breakdown');
-                            }}
-                            style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '0.35rem',
-                                background: 'transparent',
-                                border: 'none',
-                                color: '#0078d4',
-                                fontSize: '0.78rem',
-                                fontWeight: '700',
-                                cursor: 'pointer',
-                                padding: '4px 8px',
-                                borderRadius: '6px'
-                            }}
-                        >
-                            <span>Manage / View Details</span>
-                            <ArrowRight size={14} />
-                        </button>
-                    </div>
-
-                    <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-                        gap: '0.9rem'
-                    }}>
-                        {/* 1. Today Total Income Card */}
-                        <div 
-                            onClick={() => {
-                                setActiveDailyMode('income_expense');
-                                setRightCardTab('finances_breakdown');
-                            }}
-                            style={{
-                                background: '#f0fdf4',
-                                border: '1px solid #bbf7d0',
-                                borderRadius: '12px',
-                                padding: '0.9rem 1.1rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                boxShadow: '0 1px 3px rgba(16, 185, 129, 0.06)',
-                                cursor: 'pointer',
-                                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
-                            }}
-                        >
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
-                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                        Today's Incomes
-                                    </span>
-                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', color: '#15803d', background: '#dcfce7', padding: '1px 6px', borderRadius: '6px', border: '1px solid #86efac' }}>
-                                        {todayFinancialSummary.incomeCount} {todayFinancialSummary.incomeCount === 1 ? 'Entry' : 'Entries'}
-                                    </span>
-                                </div>
-                                <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: '900', color: '#14532d', letterSpacing: '-0.02em' }}>
-                                    Rs {todayFinancialSummary.totalIncomes.toLocaleString()}
-                                </h3>
-                                <span style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: '600' }}>
-                                    Receipts & other collections
-                                </span>
-                            </div>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '10px',
-                                background: '#dcfce7',
-                                color: '#16a34a',
-                                border: '1px solid #86efac',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}>
-                                <ArrowUpRight size={20} />
-                            </div>
-                        </div>
-
-                        {/* 2. Today Total Expenses Card */}
-                        <div 
-                            onClick={() => {
-                                setActiveDailyMode('income_expense');
-                                setRightCardTab('finances_breakdown');
-                            }}
-                            style={{
-                                background: '#fef2f2',
-                                border: '1px solid #fecaca',
-                                borderRadius: '12px',
-                                padding: '0.9rem 1.1rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                boxShadow: '0 1px 3px rgba(239, 68, 68, 0.06)',
-                                cursor: 'pointer',
-                                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
-                            }}
-                        >
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
-                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#991b1b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                        Today's Expenses
-                                    </span>
-                                    <span style={{ fontSize: '0.65rem', fontWeight: '800', color: '#b91c1c', background: '#fee2e2', padding: '1px 6px', borderRadius: '6px', border: '1px solid #fca5a5' }}>
-                                        {todayFinancialSummary.expenseCount} {todayFinancialSummary.expenseCount === 1 ? 'Entry' : 'Entries'}
-                                    </span>
-                                </div>
-                                <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: '900', color: '#7f1d1d', letterSpacing: '-0.02em' }}>
-                                    Rs {todayFinancialSummary.totalExpenses.toLocaleString()}
-                                </h3>
-                                <span style={{ fontSize: '0.7rem', color: '#b91c1c', fontWeight: '600' }}>
-                                    Daily bills, maintenance & supplies
-                                </span>
-                            </div>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '10px',
-                                background: '#fee2e2',
-                                color: '#dc2626',
-                                border: '1px solid #fca5a5',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}>
-                                <ArrowDownRight size={20} />
-                            </div>
-                        </div>
-
-                        {/* 3. Today Net Surplus / Deficit Card */}
-                        <div 
-                            onClick={() => {
-                                setActiveDailyMode('income_expense');
-                                setRightCardTab('finances_breakdown');
-                            }}
-                            style={{
-                                background: todayFinancialSummary.netBalance >= 0 ? '#f0fdf4' : '#fff1f2',
-                                border: `1px solid ${todayFinancialSummary.netBalance >= 0 ? '#bbf7d0' : '#fecdd3'}`,
-                                borderRadius: '12px',
-                                padding: '0.9rem 1.1rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
-                                cursor: 'pointer',
-                                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
-                            }}
-                        >
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
-                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', color: todayFinancialSummary.netBalance >= 0 ? '#166534' : '#9f1239', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                        Net Daily Balance
-                                    </span>
-                                    <span style={{
-                                        fontSize: '0.65rem',
-                                        fontWeight: '800',
-                                        color: todayFinancialSummary.netBalance >= 0 ? '#15803d' : '#be123c',
-                                        background: todayFinancialSummary.netBalance >= 0 ? '#dcfce7' : '#ffe4e6',
-                                        padding: '1px 6px',
-                                        borderRadius: '6px',
-                                        border: `1px solid ${todayFinancialSummary.netBalance >= 0 ? '#86efac' : '#fda4af'}`
-                                    }}>
-                                        {todayFinancialSummary.netBalance >= 0 ? 'Surplus' : 'Deficit'}
-                                    </span>
-                                </div>
-                                <h3 style={{
-                                    margin: 0,
-                                    fontSize: '1.35rem',
-                                    fontWeight: '900',
-                                    color: todayFinancialSummary.netBalance >= 0 ? '#14532d' : '#881337',
-                                    letterSpacing: '-0.02em'
+                        <div style={{ position: 'relative', zIndex: 2 }}>
+                            <h2 style={{ margin: 0, fontSize: '2.15rem', fontWeight: '900', letterSpacing: '-0.02em', lineHeight: 1.1, color: '#ffffff', textShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                                Rs {todayMetrics.totalAmount.toLocaleString()}
+                            </h2>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.6rem', flexWrap: 'wrap', fontSize: '0.84rem', color: '#f0fdf4' }}>
+                                <span>In: <strong style={{ fontWeight: '800', color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>Rs {todayFinancialSummary.totalIncomes.toLocaleString()}</strong></span>
+                                <span style={{ opacity: 0.7 }}>&bull;</span>
+                                <span>Out: <strong style={{ fontWeight: '800', color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>Rs {todayFinancialSummary.totalExpenses.toLocaleString()}</strong></span>
+                                <span style={{
+                                    marginLeft: 'auto',
+                                    fontWeight: '800',
+                                    fontSize: '0.8rem',
+                                    background: todayFinancialSummary.netBalance >= 0 ? 'rgba(255,255,255,0.28)' : 'rgba(239, 68, 68, 0.45)',
+                                    color: '#ffffff',
+                                    padding: '2px 9px',
+                                    borderRadius: '7px',
+                                    border: '1px solid rgba(255,255,255,0.35)',
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
                                 }}>
-                                    {todayFinancialSummary.netBalance < 0 ? `- Rs ${Math.abs(todayFinancialSummary.netBalance).toLocaleString()}` : `Rs ${todayFinancialSummary.netBalance.toLocaleString()}`}
-                                </h3>
-                                <span style={{ fontSize: '0.7rem', color: todayFinancialSummary.netBalance >= 0 ? '#15803d' : '#9f1239', fontWeight: '600' }}>
-                                    {todayFinancialSummary.netBalance >= 0 ? 'Positive net cashflow today' : 'Expenses exceed income today'}
+                                    {todayFinancialSummary.netBalance >= 0 ? '+' : ''}Rs {todayFinancialSummary.netBalance.toLocaleString()} Net
                                 </span>
-                            </div>
-                            <div style={{
-                                width: '40px',
-                                height: '40px',
-                                borderRadius: '10px',
-                                background: todayFinancialSummary.netBalance >= 0 ? '#dcfce7' : '#ffe4e6',
-                                color: todayFinancialSummary.netBalance >= 0 ? '#16a34a' : '#e11d48',
-                                border: `1px solid ${todayFinancialSummary.netBalance >= 0 ? '#86efac' : '#fda4af'}`,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}>
-                                <Activity size={20} />
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
 
-            {/* Side-by-Side 2 Cards Layout */}
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
-                gap: '1.5rem',
-                alignItems: 'start'
-            }}>
-                {/* Left Card: Daily Fee Submission Counter (Student Selector) */}
-                <div className="card" style={{
-                    background: '#ffffff',
-                    borderRadius: '14px',
-                    padding: '1.5rem',
-                    border: '1px solid #e2e8f0',
-                    boxShadow: '0 2px 8px -2px rgba(0,0,0,0.04)'
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.15rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.85rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                            <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: activeDailyMode === 'fee_submission' ? '#eff6ff' : '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: activeDailyMode === 'fee_submission' ? '#0078d4' : '#16a34a' }}>
-                                {activeDailyMode === 'fee_submission' ? <Wallet size={20} /> : <TrendingUp size={20} />}
-                            </div>
+                    {/* Widget 2: Payment Channels Breakdown (Dashboard Orange Theme with Glass Shine) */}
+                    <div style={{
+                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)',
+                        borderRadius: '14px',
+                        padding: '1.25rem 1.4rem',
+                        border: '1.5px solid rgba(255, 255, 255, 0.38)',
+                        boxShadow: '0 10px 22px -3px rgba(245, 158, 11, 0.45), inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 2px 0 rgba(0, 0, 0, 0.15)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        gap: '0.65rem',
+                        position: 'relative',
+                        overflow: 'hidden',
+                        color: '#ffffff'
+                    }}>
+                        {/* Top Edge Glass Sheen Reflection */}
+                        <div style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: '42%',
+                            background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0) 100%)',
+                            pointerEvents: 'none',
+                            zIndex: 1,
+                            borderTopLeftRadius: 'inherit',
+                            borderTopRightRadius: 'inherit'
+                        }} />
+
+                        {/* 2D Geometric Pattern (Square) */}
+                        <div style={{
+                            position: 'absolute',
+                            top: '-15%',
+                            right: '-10%',
+                            width: '95px',
+                            height: '95px',
+                            background: 'rgba(255, 255, 255, 0.14)',
+                            borderRadius: '24px',
+                            transform: 'rotate(20deg)',
+                            zIndex: 1,
+                            pointerEvents: 'none'
+                        }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 2 }}>
+                            <span style={{ fontSize: '0.92rem', fontWeight: '800', color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.45rem', textShadow: '0 1px 3px rgba(0,0,0,0.15)' }}>
+                                <BarChart3 size={17} color="#fffbeb" /> Payment Channels Mix
+                            </span>
+                            <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#ffffff', background: 'rgba(255, 255, 255, 0.25)', padding: '3px 10px', borderRadius: '7px', border: '1px solid rgba(255, 255, 255, 0.35)', backdropFilter: 'blur(6px)', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}>
+                                {todayMetrics.totalCount} Slips Issued
+                            </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative', zIndex: 2 }}>
+                            {/* Cash */}
                             <div>
-                                <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                    {activeDailyMode === 'fee_submission' ? 'Daily Fee Submission Counter' : 'Income & Expenses Entry'}
-                                </h3>
-                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                    {activeDailyMode === 'fee_submission' ? 'Select student & calculate instant fee receipt' : 'Add payments received & manual expenses'}
-                                </span>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', fontWeight: '700', marginBottom: '3px' }}>
+                                    <span style={{ color: '#ffffff', display: 'flex', alignItems: 'center', gap: '4px', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>💵 Cash ({todayMetrics.cashCount})</span>
+                                    <span style={{ color: '#ffffff', fontWeight: '800', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>Rs {todayMetrics.cashAmount.toLocaleString()} ({todayMetrics.cashPct}%)</span>
+                                </div>
+                                <div style={{ height: '6px', width: '100%', background: 'rgba(255, 255, 255, 0.25)', borderRadius: '4px', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${todayMetrics.cashPct}%`, background: '#4ade80', borderRadius: '4px', boxShadow: '0 0 8px rgba(74, 222, 128, 0.5)' }} />
+                                </div>
+                            </div>
+                            {/* Bank */}
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', fontWeight: '700', marginBottom: '3px' }}>
+                                    <span style={{ color: '#ffffff', display: 'flex', alignItems: 'center', gap: '4px', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>🏛️ Bank ({todayMetrics.bankCount})</span>
+                                    <span style={{ color: '#ffffff', fontWeight: '800', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>Rs {todayMetrics.bankAmount.toLocaleString()} ({todayMetrics.bankPct}%)</span>
+                                </div>
+                                <div style={{ height: '6px', width: '100%', background: 'rgba(255, 255, 255, 0.25)', borderRadius: '4px', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${todayMetrics.bankPct}%`, background: '#67e8f9', borderRadius: '4px', boxShadow: '0 0 8px rgba(103, 232, 249, 0.5)' }} />
+                                </div>
+                            </div>
+                            {/* Online */}
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', fontWeight: '700', marginBottom: '3px' }}>
+                                    <span style={{ color: '#ffffff', display: 'flex', alignItems: 'center', gap: '4px', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>📱 Online / Wallets ({todayMetrics.onlineCount})</span>
+                                    <span style={{ color: '#ffffff', fontWeight: '800', textShadow: '0 1px 2px rgba(0,0,0,0.12)' }}>Rs {todayMetrics.onlineAmount.toLocaleString()} ({todayMetrics.onlinePct}%)</span>
+                                </div>
+                                <div style={{ height: '6px', width: '100%', background: 'rgba(255, 255, 255, 0.25)', borderRadius: '4px', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${todayMetrics.onlinePct}%`, background: '#fef08a', borderRadius: '4px', boxShadow: '0 0 8px rgba(254, 240, 138, 0.5)' }} />
+                                </div>
                             </div>
                         </div>
+                    </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                            {/* Mode Switcher Buttons */}
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setActiveDailyMode('fee_submission');
-                                        setRightCardTab('fee_slips');
-                                    }}
-                                    style={{
-                                        padding: '7px 15px',
-                                        borderRadius: '9px',
-                                        border: activeDailyMode === 'fee_submission' ? '1.5px solid #0078d4' : '1.5px solid #bae6fd',
-                                        background: activeDailyMode === 'fee_submission' 
-                                            ? 'linear-gradient(135deg, #0078d4 0%, #0284c7 100%)' 
-                                            : '#f0f7ff',
-                                        color: activeDailyMode === 'fee_submission' ? '#ffffff' : '#0369a1',
-                                        fontWeight: '700',
-                                        fontSize: '0.82rem',
-                                        cursor: 'pointer',
-                                        boxShadow: activeDailyMode === 'fee_submission' 
-                                            ? '0 3px 10px rgba(0, 120, 212, 0.35)' 
-                                            : '0 1px 2px rgba(0, 120, 212, 0.08)',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '6px',
-                                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                                    }}
-                                >
-                                    <Wallet size={15} color={activeDailyMode === 'fee_submission' ? '#ffffff' : '#0078d4'} /> Fee Submission
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setActiveDailyMode('income_expense');
-                                        setRightCardTab('finances_breakdown');
-                                    }}
-                                    style={{
-                                        padding: '7px 15px',
-                                        borderRadius: '9px',
-                                        border: activeDailyMode === 'income_expense' ? '1.5px solid #16a34a' : '1.5px solid #bbf7d0',
-                                        background: activeDailyMode === 'income_expense' 
-                                            ? 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)' 
-                                            : '#f0fdf4',
-                                        color: activeDailyMode === 'income_expense' ? '#ffffff' : '#15803d',
-                                        fontWeight: '700',
-                                        fontSize: '0.82rem',
-                                        cursor: 'pointer',
-                                        boxShadow: activeDailyMode === 'income_expense' 
-                                            ? '0 3px 10px rgba(22, 163, 74, 0.35)' 
-                                            : '0 1px 2px rgba(22, 163, 74, 0.08)',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '6px',
-                                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                                    }}
-                                >
-                                    <TrendingUp size={15} color={activeDailyMode === 'income_expense' ? '#ffffff' : '#16a34a'} /> Income & Expenses Breakdown
-                                </button>
+                    {/* Widget 3: Tactile Studio Mode Switcher (Dashboard Indigo Theme with Glass Shine) */}
+                    <div style={{
+                        background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
+                        borderRadius: '14px',
+                        padding: '1.25rem 1.4rem',
+                        border: '1.5px solid rgba(255, 255, 255, 0.38)',
+                        boxShadow: '0 10px 22px -3px rgba(99, 102, 241, 0.45), inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 2px 0 rgba(0, 0, 0, 0.15)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        gap: '0.65rem',
+                        position: 'relative',
+                        overflow: 'hidden',
+                        color: '#ffffff'
+                    }}>
+                        {/* Top Edge Glass Sheen Reflection */}
+                        <div style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: '42%',
+                            background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0) 100%)',
+                            pointerEvents: 'none',
+                            zIndex: 1,
+                            borderTopLeftRadius: 'inherit',
+                            borderTopRightRadius: 'inherit'
+                        }} />
+
+                        {/* 2D Geometric Pattern (Square) */}
+                        <div style={{
+                            position: 'absolute',
+                            top: '-15%',
+                            right: '-10%',
+                            width: '95px',
+                            height: '95px',
+                            background: 'rgba(255, 255, 255, 0.14)',
+                            borderRadius: '24px',
+                            transform: 'rotate(20deg)',
+                            zIndex: 1,
+                            pointerEvents: 'none'
+                        }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 2 }}>
+                            <span style={{ fontSize: '0.92rem', fontWeight: '800', color: '#ffffff', display: 'flex', alignItems: 'center', gap: '0.45rem', textShadow: '0 1px 3px rgba(0,0,0,0.15)' }}>
+                                <Zap size={17} color="#e0e7ff" /> Workstation Mode
+                            </span>
+                            <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#e0e7ff', opacity: 0.95 }}>
+                                Click to toggle
+                            </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', position: 'relative', zIndex: 2 }}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setActiveDailyMode('fee_submission');
+                                    setRightCardTab('fee_slips');
+                                }}
+                                style={{
+                                    padding: '0.65rem 0.85rem',
+                                    borderRadius: '10px',
+                                    border: activeDailyMode === 'fee_submission' ? 'none' : '1.5px solid rgba(255, 255, 255, 0.35)',
+                                    background: activeDailyMode === 'fee_submission' ? '#ffffff' : 'rgba(255, 255, 255, 0.18)',
+                                    color: activeDailyMode === 'fee_submission' ? '#4338ca' : '#ffffff',
+                                    fontWeight: '800',
+                                    fontSize: '0.86rem',
+                                    cursor: 'pointer',
+                                    boxShadow: activeDailyMode === 'fee_submission' ? '0 4px 14px rgba(0, 0, 0, 0.22)' : 'none',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px',
+                                    transition: 'all 0.18s ease',
+                                    backdropFilter: 'blur(4px)'
+                                }}
+                            >
+                                <Wallet size={16} /> Fee Cashier
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setActiveDailyMode('income_expense');
+                                    setRightCardTab('finances_breakdown');
+                                }}
+                                style={{
+                                    padding: '0.65rem 0.85rem',
+                                    borderRadius: '10px',
+                                    border: activeDailyMode === 'income_expense' ? 'none' : '1.5px solid rgba(255, 255, 255, 0.35)',
+                                    background: activeDailyMode === 'income_expense' ? '#ffffff' : 'rgba(255, 255, 255, 0.18)',
+                                    color: activeDailyMode === 'income_expense' ? '#4338ca' : '#ffffff',
+                                    fontWeight: '800',
+                                    fontSize: '0.86rem',
+                                    cursor: 'pointer',
+                                    boxShadow: activeDailyMode === 'income_expense' ? '0 4px 14px rgba(0, 0, 0, 0.22)' : 'none',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px',
+                                    transition: 'all 0.18s ease',
+                                    backdropFilter: 'blur(4px)'
+                                }}
+                            >
+                                <TrendingUp size={16} /> Daily Ledger
+                            </button>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: '#e0e7ff', position: 'relative', zIndex: 2 }}>
+                            <span style={{ fontWeight: '600' }}>Today's active session</span>
+                            <span
+                                style={{
+                                    fontWeight: '800',
+                                    fontSize: '0.8rem',
+                                    color: '#ffffff',
+                                    background: 'rgba(255,255,255,0.25)',
+                                    padding: '3px 10px',
+                                    borderRadius: '7px',
+                                    border: '1px solid rgba(255,255,255,0.35)',
+                                    cursor: 'pointer',
+                                    backdropFilter: 'blur(4px)',
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
+                                }}
+                                onClick={handleDownloadDailyReport}
+                            >
+                                📄 Daily PDF Report
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Side-by-Side 2 Cards Studio Layout */}
+                <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+                    gap: '1.25rem',
+                    alignItems: 'start'
+                }}>
+                    {/* LEFT PANEL: Smart Cashier Counter */}
+                    <div className="card" style={{
+                        background: '#ffffff',
+                        borderRadius: '14px',
+                        padding: '1.4rem',
+                        border: '1px solid #e2e8f0',
+                        boxShadow: '0 2px 8px -2px rgba(0,0,0,0.04)'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <div style={{ width: '34px', height: '34px', borderRadius: '9px', background: activeDailyMode === 'fee_submission' ? '#eff6ff' : '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: activeDailyMode === 'fee_submission' ? '#0078d4' : '#16a34a' }}>
+                                    {activeDailyMode === 'fee_submission' ? <Wallet size={18} /> : <TrendingUp size={18} />}
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                        {activeDailyMode === 'fee_submission' ? 'Fee Cashier Counter' : 'Income & Expense Book'}
+                                    </h3>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                        {activeDailyMode === 'fee_submission' ? 'Quick student lookup & instant receipt' : 'Add manual daily income & bills'}
+                                    </span>
+                                </div>
                             </div>
-
                             {activeDailyMode === 'fee_submission' && selectedStudent && (
                                 <button
                                     type="button"
@@ -6792,941 +6358,426 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         cursor: 'pointer'
                                     }}
                                 >
-                                    <X size={13} /> Clear
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    {activeDailyMode === 'income_expense' ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                            {/* Add Payments Received Form */}
-                            <div style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '12px', border: '1px solid #bbf7d0' }}>
-                                <h4 style={{ fontSize: '0.95rem', fontWeight: '800', marginBottom: '0.85rem', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <ArrowUpRight size={17} color="#16a34a" /> Add Payments Received
-                                </h4>
-                                <div style={{ marginBottom: '0.75rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Income Title</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="e.g. Canteen Rent, Prospectus Sale" 
-                                        value={newIncome.name}
-                                        onChange={e => setNewIncome({...newIncome, name: e.target.value})}
-                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-                                <div style={{ marginBottom: '0.75rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Amount (Rs)</label>
-                                    <input 
-                                        type="number" 
-                                        placeholder="e.g. 5000" 
-                                        value={newIncome.amount}
-                                        onChange={e => setNewIncome({...newIncome, amount: e.target.value})}
-                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-                                <div style={{ marginBottom: '0.85rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Remarks / Notes (Optional)</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="e.g. Paid in cash by vendor, Cheque #1234, memo..." 
-                                        value={newIncome.remarks || ''}
-                                        onChange={e => setNewIncome({...newIncome, remarks: e.target.value})}
-                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-
-                                {/* Income Proof Upload Box */}
-                                <div style={{
-                                    padding: '0.65rem 0.85rem',
-                                    borderRadius: '8px',
-                                    background: '#ffffff',
-                                    border: '1px dashed #16a34a',
-                                    marginBottom: '1rem'
-                                }}>
-                                    <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: '800', color: '#166534', marginBottom: '0.3rem' }}>
-                                        Attach Payment Proof / Receipt Slip (Optional)
-                                    </label>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={handleIncomeProofChange}
-                                            style={{ fontSize: '0.78rem', color: '#475569' }}
-                                        />
-                                        {incomeProofPreview && (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                <img src={incomeProofPreview} alt="Income Proof" style={{ width: '34px', height: '34px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #86efac' }} />
-                                                <button
-                                                    type="button"
-                                                    onClick={handleRemoveIncomeProof}
-                                                    style={{ padding: '2px 6px', borderRadius: '4px', background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '0.7rem', fontWeight: '700', cursor: 'pointer' }}
-                                                >
-                                                    Remove
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <button 
-                                    type="button"
-                                    onClick={() => handleAddFinance('one-time', 'incomes', newIncome, setIsSavingIncome, setNewIncome, incomeProofFile, handleRemoveIncomeProof)}
-                                    disabled={isSavingIncome || !newIncome.name || !newIncome.amount}
-                                    style={{
-                                        width: '100%',
-                                        padding: '0.65rem 1rem',
-                                        borderRadius: '8px',
-                                        background: isSavingIncome || !newIncome.name || !newIncome.amount ? '#86efac' : '#16a34a',
-                                        border: 'none',
-                                        color: '#ffffff',
-                                        fontWeight: '700',
-                                        fontSize: '0.85rem',
-                                        cursor: isSavingIncome || !newIncome.name || !newIncome.amount ? 'not-allowed' : 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: '0.45rem',
-                                        boxShadow: '0 2px 6px rgba(22, 163, 74, 0.2)'
-                                    }}
-                                >
-                                    {isSavingIncome ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                                    <span>{isSavingIncome ? 'Saving...' : 'Save'}</span>
-                                </button>
-                            </div>
-
-                            {/* Add Manual Expense Form */}
-                            <div style={{ background: '#fef2f2', padding: '1.25rem', borderRadius: '12px', border: '1px solid #fecaca' }}>
-                                <h4 style={{ fontSize: '0.95rem', fontWeight: '800', marginBottom: '0.85rem', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <ArrowDownRight size={17} color="#dc2626" /> Add Manual Expense
-                                </h4>
-                                <div style={{ marginBottom: '0.75rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Expense Title</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="e.g. Electricity Bill, Chalk & Stationery" 
-                                        value={newExpense.name}
-                                        onChange={e => setNewExpense({...newExpense, name: e.target.value})}
-                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-                                <div style={{ marginBottom: '0.75rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Amount (Rs)</label>
-                                    <input 
-                                        type="number" 
-                                        placeholder="e.g. 15000" 
-                                        value={newExpense.amount}
-                                        onChange={e => setNewExpense({...newExpense, amount: e.target.value})}
-                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-                                <div style={{ marginBottom: '0.85rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', marginBottom: '0.3rem', color: '#334155' }}>Remarks / Notes (Optional)</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="e.g. Paid to electric utility, bill #9872, voucher memo..." 
-                                        value={newExpense.remarks || ''}
-                                        onChange={e => setNewExpense({...newExpense, remarks: e.target.value})}
-                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
-                                    />
-                                </div>
-
-                                {/* Expense Proof Upload Box */}
-                                <div style={{
-                                    padding: '0.65rem 0.85rem',
-                                    borderRadius: '8px',
-                                    background: '#ffffff',
-                                    border: '1px dashed #dc2626',
-                                    marginBottom: '1rem'
-                                }}>
-                                    <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: '800', color: '#991b1b', marginBottom: '0.3rem' }}>
-                                        Attach Expense Bill / Receipt Slip (Optional)
-                                    </label>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={handleExpenseProofChange}
-                                            style={{ fontSize: '0.78rem', color: '#475569' }}
-                                        />
-                                        {expenseProofPreview && (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                <img src={expenseProofPreview} alt="Expense Proof" style={{ width: '34px', height: '34px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #fca5a5' }} />
-                                                <button
-                                                    type="button"
-                                                    onClick={handleRemoveExpenseProof}
-                                                    style={{ padding: '2px 6px', borderRadius: '4px', background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '0.7rem', fontWeight: '700', cursor: 'pointer' }}
-                                                >
-                                                    Remove
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <button 
-                                    type="button"
-                                    onClick={() => handleAddFinance('one-time', 'expenses', newExpense, setIsSavingExpense, setNewExpense, expenseProofFile, handleRemoveExpenseProof)}
-                                    disabled={isSavingExpense || !newExpense.name || !newExpense.amount}
-                                    style={{
-                                        width: '100%',
-                                        padding: '0.65rem 1rem',
-                                        borderRadius: '8px',
-                                        background: isSavingExpense || !newExpense.name || !newExpense.amount ? '#fca5a5' : '#dc2626',
-                                        border: 'none',
-                                        color: '#ffffff',
-                                        fontWeight: '700',
-                                        fontSize: '0.85rem',
-                                        cursor: isSavingExpense || !newExpense.name || !newExpense.amount ? 'not-allowed' : 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: '0.45rem',
-                                        boxShadow: '0 2px 6px rgba(220, 38, 38, 0.2)'
-                                    }}
-                                >
-                                    {isSavingExpense ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                                    <span>{isSavingExpense ? 'Saving...' : 'Save'}</span>
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <>
-                            {/* Active Selected Student Notification Banner */}
-                    {selectedStudent && (
-                        <div style={{
-                            padding: '0.75rem 1rem',
-                            background: '#f0f9ff',
-                            border: '1px solid #bae6fd',
-                            borderRadius: '8px',
-                            marginBottom: '1rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between'
-                        }}>
-                            <div>
-                                <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0369a1' }}>
-                                    Active Selection: {selectedStudent.name}
-                                </div>
-                                <div style={{ fontSize: '0.75rem', color: '#0284c7' }}>
-                                    Class: {selectedStudent.className} | Roll: {selectedStudent.rollNo || 'N/A'}
-                                </div>
-                            </div>
-                            <span style={{
-                                fontSize: '0.7rem',
-                                fontWeight: '700',
-                                padding: '2px 8px',
-                                borderRadius: '4px',
-                                background: feeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
-                                color: feeCalculation?.isPaid ? '#15803d' : '#b91c1c'
-                            }}>
-                                {feeCalculation?.isPaid ? 'Paid' : 'Payment Due'}
-                            </span>
-                        </div>
-                    )}
-
-                    {/* Instant Student Search Bar */}
-                    <div style={{ position: 'relative', width: '100%', marginBottom: '1rem' }}>
-                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                            Quick Student Search
-                        </label>
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            padding: '0.65rem 0.85rem',
-                            borderRadius: '8px',
-                            background: '#f8fafc',
-                            border: '1px solid #cbd5e1',
-                            transition: 'all 0.2s'
-                        }}>
-                            <Search size={16} color="#64748b" />
-                            <input
-                                type="text"
-                                placeholder="Type Name, Roll No, or Father..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                onFocus={() => {
-                                    if (searchQuery.trim().length > 0) setShowSearchDropdown(true);
-                                }}
-                                style={{
-                                    border: 'none',
-                                    outline: 'none',
-                                    background: 'transparent',
-                                    width: '100%',
-                                    fontSize: '0.875rem',
-                                    color: '#0f172a',
-                                    fontWeight: '500'
-                                }}
-                            />
-                            {searchQuery && (
-                                <button
-                                    type="button"
-                                    onClick={() => { setSearchQuery(''); setShowSearchDropdown(false); }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}
-                                >
-                                    <X size={15} />
+                                    <X size={13} /> Reset
                                 </button>
                             )}
                         </div>
 
-                        {/* Search Suggestions Dropdown */}
-                        {showSearchDropdown && searchResults.length > 0 && (
-                            <div style={{
-                                position: 'absolute',
-                                top: '105%',
-                                left: 0,
-                                right: 0,
-                                background: '#ffffff',
-                                borderRadius: '8px',
-                                boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)',
-                                border: '1px solid #cbd5e1',
-                                zIndex: 50,
-                                maxHeight: '240px',
-                                overflowY: 'auto'
-                            }}>
-                                {searchResults.map(st => (
-                                    <div
-                                        key={st.id}
-                                        onClick={() => handleSelectStudent(st)}
-                                        style={{
-                                            padding: '0.65rem 0.85rem',
-                                            borderBottom: '1px solid #f1f5f9',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'space-between',
-                                            transition: 'background 0.15s'
-                                        }}
-                                        onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                    >
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                            <div style={{
-                                                width: '28px',
-                                                height: '28px',
-                                                borderRadius: '50%',
-                                                background: '#e0f2fe',
-                                                color: '#0369a1',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                fontWeight: '700',
-                                                fontSize: '0.75rem'
-                                            }}>
-                                                {st.name?.slice(0, 2).toUpperCase() || 'ST'}
-                                            </div>
-                                            <div>
-                                                <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.85rem' }}>{st.name}</div>
-                                                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                                                    {st.className} | Roll: {st.rollNo || 'N/A'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <span style={{
-                                            fontSize: '0.7rem',
-                                            fontWeight: '700',
-                                            padding: '2px 6px',
-                                            borderRadius: '4px',
-                                            background: st.monthlyFeeStatus === 'paid' ? '#dcfce7' : '#fee2e2',
-                                            color: st.monthlyFeeStatus === 'paid' ? '#15803d' : '#b91c1c'
-                                        }}>
-                                            {st.monthlyFeeStatus === 'paid' ? 'Paid' : 'Unpaid'}
-                                        </span>
+                        {activeDailyMode === 'income_expense' ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {/* Income Form */}
+                                <div style={{ background: '#f0fdf4', padding: '1rem 1.15rem', borderRadius: '12px', border: '1px solid #bbf7d0' }}>
+                                    <h4 style={{ fontSize: '0.9rem', fontWeight: '800', marginBottom: '0.75rem', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <ArrowUpRight size={16} color="#16a34a" /> Add Payment Received (Income)
+                                    </h4>
+                                    <div style={{ marginBottom: '0.65rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '0.25rem', color: '#334155' }}>Income Description</label>
+                                        <input 
+                                            type="text" 
+                                            placeholder="e.g. Canteen Rent, Prospectus Sale" 
+                                            value={newIncome.name}
+                                            onChange={e => setNewIncome({...newIncome, name: e.target.value})}
+                                            style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
+                                        />
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Divider */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: '#94a3b8', fontSize: '0.75rem', fontWeight: '700' }}>
-                        <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
-                        <span>OR CHOOSE MANUALLY</span>
-                        <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
-                    </div>
-
-                    {/* Class Dropdown */}
-                    <div style={{ marginBottom: '1rem' }}>
-                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                            Class
-                        </label>
-                        <select
-                            value={selectedClassId}
-                            onChange={(e) => {
-                                setSelectedClassId(e.target.value);
-                                setSelectedStudentId('');
-                                setSelectedStudent(null);
-                            }}
-                            style={{
-                                width: '100%',
-                                padding: '0.65rem 0.85rem',
-                                borderRadius: '8px',
-                                border: '1px solid #cbd5e1',
-                                outline: 'none',
-                                background: '#ffffff',
-                                fontWeight: '600',
-                                color: '#0f172a',
-                                fontSize: '0.9rem'
-                            }}
-                        >
-                            <option value="">-- Choose Class --</option>
-                            {classes.map(c => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    {/* Student Dropdown */}
-                    <div style={{ marginBottom: '0.5rem' }}>
-                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                            Student Name
-                        </label>
-                        <select
-                            value={selectedStudentId}
-                            onChange={(e) => {
-                                const stId = e.target.value;
-                                setSelectedStudentId(stId);
-                                const stObj = classStudents.find(s => s.id === stId);
-                                setSelectedStudent(stObj || null);
-                            }}
-                            disabled={!selectedClassId || loadingClassStudents}
-                            style={{
-                                width: '100%',
-                                padding: '0.65rem 0.85rem',
-                                borderRadius: '8px',
-                                border: '1px solid #cbd5e1',
-                                outline: 'none',
-                                background: !selectedClassId ? '#f1f5f9' : '#ffffff',
-                                fontWeight: '600',
-                                color: !selectedClassId ? '#94a3b8' : '#0f172a',
-                                fontSize: '0.9rem',
-                                cursor: !selectedClassId ? 'not-allowed' : 'pointer'
-                            }}
-                        >
-                            <option value="">-- Choose Student --</option>
-                            {classStudents.map(s => (
-                                <option key={s.id} value={s.id}>
-                                    {s.name} (Roll: {s.rollNo || 'N/A'}) {s.monthlyFeeStatus === 'paid' ? '✓ Paid' : '✗ Unpaid'}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                </>
-            )}
-        </div>
-
-        {/* Right Card: Either Fee Assessment Form OR Today's Recent Fee Collections Log / Breakdown */}
-        {selectedStudent && activeDailyMode === 'fee_submission' ? (
-            <div className="card animate-fade-in-up" style={{
-                background: '#ffffff',
-                borderRadius: '14px',
-                padding: '0',
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 4px 16px -2px rgba(0,0,0,0.06)',
-                overflow: 'hidden',
-                position: 'relative'
-            }}>
-                {/* 2-Panel Swiping Slider Container */}
-                <div style={{
-                    display: 'flex',
-                    width: '200%',
-                    transform: assessmentViewMode === 'history' ? 'translateX(-50%)' : 'translateX(0%)',
-                    transition: 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)',
-                    alignItems: 'flex-start'
-                }}>
-                    {/* PANEL 1: Fee Assessment & Collection Form */}
-                    <div style={{ width: '50%', padding: '1.5rem', boxSizing: 'border-box' }}>
-                        {/* Header with Active Child Details */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-                            <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                        Fee Assessment & Collection
-                                    </h3>
-                                    {detectedSiblings.length > 1 && (
-                                        <span style={{ fontSize: '0.7rem', fontWeight: '800', background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '12px', border: '1px solid #bae6fd' }}>
-                                            Child {activeSiblingIndex + 1} of {detectedSiblings.length}
-                                        </span>
-                                    )}
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
-                                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                                        Student: <strong style={{ color: '#0078d4' }}>{activeChild?.name || selectedStudent.name}</strong> ({activeChild?.className || selectedStudent.className || 'Class'}) • Roll: <strong>{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}</strong>
-                                    </span>
-                                    {dueInfo.dueDay && (
-                                        <span style={{
-                                            fontSize: '0.75rem',
-                                            fontWeight: '700',
-                                            padding: '2px 8px',
-                                            borderRadius: '6px',
-                                            background: dueInfo.isOverdue ? '#fef2f2' : '#f0f9ff',
-                                            color: dueInfo.isOverdue ? '#dc2626' : '#0284c7',
-                                            border: `1px solid ${dueInfo.isOverdue ? '#fca5a5' : '#bae6fd'}`
-                                        }}>
-                                            📅 Due Date: {dueInfo.dueDay}th of month {dueInfo.isOverdue ? `(Overdue by ${dueInfo.daysLate}d)` : '(On Time)'}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-                                {/* History & Reliability Swipe Button */}
-                                <button
-                                    type="button"
-                                    onClick={() => setAssessmentViewMode('history')}
-                                    style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '0.45rem',
-                                        padding: '0.45rem 0.85rem',
-                                        borderRadius: '8px',
-                                        background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-                                        border: '1.5px solid #93c5fd',
-                                        color: '#1d4ed8',
-                                        fontWeight: '700',
-                                        fontSize: '0.78rem',
-                                        cursor: 'pointer',
-                                        boxShadow: '0 2px 5px rgba(37, 99, 235, 0.12)',
-                                        transition: 'all 0.2s ease'
-                                    }}
-                                    onMouseEnter={(e) => { e.currentTarget.style.background = '#dbeafe'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'; e.currentTarget.style.transform = 'translateY(0)'; }}
-                                    title="View full calendar-wise payment history, receipt slips, and on-time score for this student"
-                                >
-                                    <Sparkles size={14} color="#2563eb" />
-                                    <span>History & Score</span>
-                                    {studentReliabilityData && (
-                                        <span style={{
-                                            fontSize: '0.7rem',
-                                            fontWeight: '800',
-                                            padding: '1px 6px',
-                                            borderRadius: '12px',
-                                            background: studentReliabilityData.badgeBg,
-                                            color: studentReliabilityData.badgeColor,
-                                            border: `1px solid ${studentReliabilityData.badgeBorder}`
-                                        }}>
-                                            {studentReliabilityData.score}%
-                                        </span>
-                                    )}
-                                    <ChevronRight size={14} color="#1d4ed8" />
-                                </button>
-
-                                <span style={{
-                                    fontSize: '0.75rem',
-                                    fontWeight: '700',
-                                    padding: '4px 10px',
-                                    borderRadius: '6px',
-                                    background: activeChildFeeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
-                                    color: activeChildFeeCalculation?.isPaid ? '#15803d' : '#b91c1c'
-                                }}>
-                                    {activeChildFeeCalculation?.isPaid ? 'Already Paid' : 'Payment Due'}
-                                </span>
-                            </div>
-                        </div>
-
-                        {/* STEP 1: SIBLING TABS / STEPPER BAR (When Family Detected) */}
-                        {detectedSiblings.length > 1 && (
-                            <div style={{
-                                background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-                                borderRadius: '12px',
-                                padding: '0.85rem 1rem',
-                                border: '1.5px solid #7dd3fc',
-                                marginBottom: '1.25rem',
-                                boxShadow: '0 2px 8px rgba(2, 132, 199, 0.08)'
-                            }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.4rem' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                        <Users size={17} color="#0284c7" />
-                                        <strong style={{ fontSize: '0.88rem', color: '#0369a1' }}>
-                                            Family / Sibling Group ({detectedSiblings.length} Children)
-                                        </strong>
-                                        <span style={{ fontSize: '0.7rem', color: '#0284c7', background: '#ffffff', padding: '1px 8px', borderRadius: '10px', border: '1px solid #bae6fd' }}>
-                                            Step-by-Step Assessment
-                                        </span>
+                                    <div style={{ marginBottom: '0.65rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '0.25rem', color: '#334155' }}>Amount (Rs)</label>
+                                        <input 
+                                            type="number" 
+                                            placeholder="e.g. 5000" 
+                                            value={newIncome.amount}
+                                            onChange={e => setNewIncome({...newIncome, amount: e.target.value})}
+                                            style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
+                                        />
                                     </div>
-                                    <div style={{ display: 'flex', gap: '0.4rem' }}>
-                                        <button
-                                            type="button"
-                                            onClick={() => setSelectedSiblingIds(detectedSiblings.map(s => s.id))}
-                                            style={{ fontSize: '0.72rem', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#0284c7', color: '#ffffff', border: 'none', cursor: 'pointer' }}
-                                        >
-                                            Select All ({detectedSiblings.length})
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setSelectedSiblingIds([activeChild.id])}
-                                            style={{ fontSize: '0.72rem', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#ffffff', color: '#0369a1', border: '1px solid #bae6fd', cursor: 'pointer' }}
-                                        >
-                                            Only {activeChild.name.split(' ')[0]}
-                                        </button>
+                                    <div style={{ marginBottom: '0.75rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '0.25rem', color: '#334155' }}>Remarks (Optional)</label>
+                                        <input 
+                                            type="text" 
+                                            placeholder="e.g. Cheque #1234, cash memo..." 
+                                            value={newIncome.remarks || ''}
+                                            onChange={e => setNewIncome({...newIncome, remarks: e.target.value})}
+                                            style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
+                                        />
                                     </div>
-                                </div>
-
-                                {/* Horizontal Scrollable / Wrap Sibling Stepper Tabs */}
-                                <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
-                                    {detectedSiblings.map((sib, sIdx) => {
-                                        const isChecked = selectedSiblingIds.includes(sib.id);
-                                        const isActiveTab = (activeChild?.id || selectedStudent.id) === sib.id;
-                                        const isCurrentPaid = sib.monthlyFeeStatus === 'paid';
-                                        return (
-                                            <div
-                                                key={sib.id}
-                                                onClick={() => setActiveSiblingId(sib.id)}
-                                                style={{
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.55rem',
-                                                    padding: '0.55rem 0.85rem',
-                                                    borderRadius: '10px',
-                                                    background: isActiveTab ? '#ffffff' : isChecked ? '#f8fafc' : '#f1f5f9',
-                                                    border: isActiveTab ? '2px solid #0284c7' : isChecked ? '1.5px solid #cbd5e1' : '1px dashed #cbd5e1',
-                                                    cursor: 'pointer',
-                                                    boxShadow: isActiveTab ? '0 4px 10px rgba(2, 132, 199, 0.2)' : 'none',
-                                                    transform: isActiveTab ? 'scale(1.02)' : 'scale(1)',
-                                                    transition: 'all 0.18s ease'
-                                                }}
-                                            >
-                                                {/* Checkbox (Clicking toggles inclusion without changing tab) */}
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        toggleSiblingSelection(sib.id);
-                                                    }}
-                                                    style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                                                    title={isChecked ? 'Included in combined family receipt (Click to uncheck)' : 'Excluded (Click to include)'}
-                                                >
-                                                    {isChecked ? <CheckSquare size={17} color="#0284c7" /> : <Square size={17} color="#94a3b8" />}
-                                                </button>
-
-                                                <div>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                                        <span style={{ fontSize: '0.68rem', fontWeight: '800', background: isActiveTab ? '#0284c7' : '#e2e8f0', color: isActiveTab ? '#ffffff' : '#475569', padding: '1px 5px', borderRadius: '4px' }}>
-                                                            {sIdx + 1}
-                                                        </span>
-                                                        <strong style={{ fontSize: '0.82rem', color: isActiveTab ? '#0284c7' : isChecked ? '#0f172a' : '#64748b' }}>
-                                                            {sib.name}
-                                                        </strong>
-                                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                                                            ({sib.className || 'Class'})
-                                                        </span>
-                                                    </div>
-                                                    <div style={{ fontSize: '0.68rem', color: isCurrentPaid ? '#16a34a' : '#b45309', fontWeight: '700', marginTop: '2px' }}>
-                                                        {isCurrentPaid ? '✓ Paid' : `Due: Rs ${Number(sib.tuitionFee || 0).toLocaleString()}`}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* STEP 2: ACTIVE CHILD'S PREVIOUS PENDING ARREARS BANNER */}
-                        {activeChildFeeCalculation?.previousMonthsCount > 0 ? (
-                            <div style={{
-                                marginBottom: '1.25rem',
-                                padding: '1rem',
-                                background: '#fef2f2',
-                                border: '1.5px solid #fca5a5',
-                                borderRadius: '10px',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '0.6rem'
-                            }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <span style={{ fontSize: '1.2rem' }}>⚠️</span>
-                                        <div>
-                                            <strong style={{ color: '#b91c1c', fontSize: '0.92rem', display: 'block' }}>
-                                                Previous Pending Fee for {activeChild?.name}: {activeChildFeeCalculation.previousMonthsCount} {activeChildFeeCalculation.previousMonthsCount === 1 ? 'Month' : 'Months'} Unpaid Arrears (Rs {Number(activeChildFeeCalculation.previousMonthsArrears).toLocaleString()})
-                                            </strong>
-                                            <span style={{ fontSize: '0.75rem', color: '#991b1b' }}>
-                                                Past overdue tuition recorded. Total due for this child: <strong>Rs {Number(activeChildFeeCalculation.totalDue).toLocaleString()}</strong>
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', background: '#fee2e2', color: '#991b1b', padding: '3px 8px', borderRadius: '6px', border: '1px solid #fecaca' }}>
-                                        {activeChildFeeCalculation.previousMonthsCount} Mos Overdue
-                                    </span>
-                                </div>
-                                {/* Quick Pay Selectors for Active Child */}
-                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '4px' }}>
-                                    <button
+                                    <button 
                                         type="button"
-                                        onClick={() => setReceivedAmount(String(feeCalculation.totalDue))}
+                                        onClick={() => handleAddFinance('one-time', 'incomes', newIncome, setIsSavingIncome, setNewIncome, incomeProofFile, handleRemoveIncomeProof)}
+                                        disabled={isSavingIncome || !newIncome.name || !newIncome.amount}
                                         style={{
-                                            padding: '0.45rem 0.85rem',
-                                            borderRadius: '6px',
-                                            background: '#b91c1c',
+                                            width: '100%',
+                                            padding: '0.6rem 1rem',
+                                            borderRadius: '8px',
+                                            background: isSavingIncome || !newIncome.name || !newIncome.amount ? '#86efac' : '#16a34a',
+                                            border: 'none',
                                             color: '#ffffff',
                                             fontWeight: '700',
-                                            fontSize: '0.75rem',
+                                            fontSize: '0.82rem',
+                                            cursor: isSavingIncome || !newIncome.name || !newIncome.amount ? 'not-allowed' : 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '0.4rem',
+                                            boxShadow: '0 2px 6px rgba(22, 163, 74, 0.2)'
+                                        }}
+                                    >
+                                        {isSavingIncome ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                                        <span>{isSavingIncome ? 'Saving...' : 'Record Income'}</span>
+                                    </button>
+                                </div>
+
+                                {/* Expense Form */}
+                                <div style={{ background: '#fef2f2', padding: '1rem 1.15rem', borderRadius: '12px', border: '1px solid #fecaca' }}>
+                                    <h4 style={{ fontSize: '0.9rem', fontWeight: '800', marginBottom: '0.75rem', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <ArrowDownRight size={16} color="#dc2626" /> Add Daily Expense
+                                    </h4>
+                                    <div style={{ marginBottom: '0.65rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '0.25rem', color: '#334155' }}>Expense Title</label>
+                                        <input 
+                                            type="text" 
+                                            placeholder="e.g. Electricity Bill, Stationery Purchase" 
+                                            value={newExpense.name}
+                                            onChange={e => setNewExpense({...newExpense, name: e.target.value})}
+                                            style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
+                                        />
+                                    </div>
+                                    <div style={{ marginBottom: '0.65rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '0.25rem', color: '#334155' }}>Amount (Rs)</label>
+                                        <input 
+                                            type="number" 
+                                            placeholder="e.g. 15000" 
+                                            value={newExpense.amount}
+                                            onChange={e => setNewExpense({...newExpense, amount: e.target.value})}
+                                            style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
+                                        />
+                                    </div>
+                                    <div style={{ marginBottom: '0.75rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '0.25rem', color: '#334155' }}>Remarks (Optional)</label>
+                                        <input 
+                                            type="text" 
+                                            placeholder="e.g. Bill #9872, Paid to Vendor..." 
+                                            value={newExpense.remarks || ''}
+                                            onChange={e => setNewExpense({...newExpense, remarks: e.target.value})}
+                                            style={{ width: '100%', padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', background: '#ffffff', boxSizing: 'border-box' }}
+                                        />
+                                    </div>
+                                    <button 
+                                        type="button"
+                                        onClick={() => handleAddFinance('one-time', 'expenses', newExpense, setIsSavingExpense, setNewExpense, expenseProofFile, handleRemoveExpenseProof)}
+                                        disabled={isSavingExpense || !newExpense.name || !newExpense.amount}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem 1rem',
+                                            borderRadius: '8px',
+                                            background: isSavingExpense || !newExpense.name || !newExpense.amount ? '#fca5a5' : '#dc2626',
                                             border: 'none',
-                                            cursor: 'pointer',
-                                            boxShadow: '0 2px 4px rgba(185,28,28,0.2)'
-                                        }}
-                                    >
-                                        💰 Full Family Pay (Total: Rs {Number(feeCalculation.totalDue).toLocaleString()})
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setReceivedAmount(String(activeChildFeeCalculation.totalDue))}
-                                        style={{
-                                            padding: '0.45rem 0.85rem',
-                                            borderRadius: '6px',
-                                            background: '#ffffff',
-                                            color: '#334155',
+                                            color: '#ffffff',
                                             fontWeight: '700',
-                                            fontSize: '0.75rem',
-                                            border: '1px solid #cbd5e1',
-                                            cursor: 'pointer'
+                                            fontSize: '0.82rem',
+                                            cursor: isSavingExpense || !newExpense.name || !newExpense.amount ? 'not-allowed' : 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '0.4rem',
+                                            boxShadow: '0 2px 6px rgba(220, 38, 38, 0.2)'
                                         }}
                                     >
-                                        💵 This Child's Dues Only (Rs {Number(activeChildFeeCalculation.totalDue).toLocaleString()})
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setReceivedAmount(String(activeChildFeeCalculation.baseFee))}
-                                        style={{
-                                            padding: '0.45rem 0.85rem',
-                                            borderRadius: '6px',
-                                            background: '#ffffff',
-                                            color: '#334155',
-                                            fontWeight: '700',
-                                            fontSize: '0.75rem',
-                                            border: '1px solid #cbd5e1',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        📅 Current Month Only (Rs {Number(activeChildFeeCalculation.baseFee).toLocaleString()})
+                                        {isSavingExpense ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                                        <span>{isSavingExpense ? 'Saving...' : 'Record Expense'}</span>
                                     </button>
                                 </div>
                             </div>
                         ) : (
-                            <div style={{
-                                marginBottom: '1.15rem',
-                                padding: '0.65rem 0.9rem',
-                                background: '#f0fdf4',
-                                border: '1px solid #bbf7d0',
-                                borderRadius: '8px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                flexWrap: 'wrap',
-                                gap: '0.5rem'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <CheckCircle size={15} color="#16a34a" />
-                                    <span style={{ fontSize: '0.78rem', color: '#166534', fontWeight: '700' }}>
-                                        No Previous Pending Arrears for {activeChild?.name?.split(' ')[0]}. All prior months cleared.
-                                    </span>
-                                </div>
-                                <span style={{ fontSize: '0.7rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', padding: '1px 6px', borderRadius: '4px' }}>
-                                    100% Up To Date
-                                </span>
-                            </div>
-                        )}
+                            <>
+                                {/* Instant Search Bar */}
+                                <div style={{ position: 'relative', width: '100%', marginBottom: '0.85rem' }}>
+                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#334155', marginBottom: '0.3rem' }}>
+                                        🔍 Quick Student Search (Name, Roll No, Father)
+                                    </label>
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        padding: '0.55rem 0.8rem',
+                                        borderRadius: '9px',
+                                        background: '#f8fafc',
+                                        border: '1.5px solid #cbd5e1',
+                                        transition: 'all 0.2s'
+                                    }}>
+                                        <Search size={15} color="#64748b" />
+                                        <input
+                                            type="text"
+                                            placeholder="Type Name, Roll #, or Father name..."
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            onFocus={() => {
+                                                if (searchQuery.trim().length > 0) setShowSearchDropdown(true);
+                                            }}
+                                            style={{
+                                                border: 'none',
+                                                outline: 'none',
+                                                background: 'transparent',
+                                                width: '100%',
+                                                fontSize: '0.85rem',
+                                                color: '#0f172a',
+                                                fontWeight: '600'
+                                            }}
+                                        />
+                                        {searchQuery && (
+                                            <button
+                                                type="button"
+                                                onClick={() => { setSearchQuery(''); setShowSearchDropdown(false); }}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        )}
+                                    </div>
 
-                        {/* STEP 3: ACTIVE CHILD'S ITEMIZED DUES BREAKDOWN TABLE */}
-                        <div style={{ marginBottom: '1.5rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-                                <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', margin: 0, textTransform: 'uppercase' }}>
-                                    Itemized Dues for {activeChild?.name} ({activeChild?.className || 'Class'})
-                                </h4>
-                                <span style={{ fontSize: '0.75rem', color: '#0078d4', fontWeight: '700' }}>
-                                    Child Subtotal: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
-                                </span>
-                            </div>
-                            <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                                    <thead>
-                                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                                            <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Fee Component</th>
-                                            <th style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '700', color: '#334155' }}>Amount</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {activeChildFeeCalculation?.items.map((item, i) => (
-                                            <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: item.isArrears ? '#fff5f5' : 'transparent' }}>
-                                                <td style={{ padding: '0.6rem 1rem', color: item.isArrears ? '#b91c1c' : '#1e293b', fontWeight: item.isArrears ? '700' : '500' }}>
-                                                    {item.isArrears ? `⚠️ ${item.name}` : item.name}
-                                                </td>
-                                                <td style={{ padding: '0.6rem 1rem', textAlign: 'right', fontWeight: '600', color: item.isArrears ? '#b91c1c' : '#0f172a' }}>
-                                                    Rs {Number(item.amount).toLocaleString()}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                        <tr style={{ background: '#f0fdf4', borderTop: '2px solid #cbd5e1' }}>
-                                            <td style={{ padding: '0.65rem 1rem', fontWeight: '800', color: '#166534', fontSize: '0.9rem' }}>
-                                                {activeChild?.name.split(' ')[0]}'s Total Due
-                                            </td>
-                                            <td style={{ padding: '0.65rem 1rem', textAlign: 'right', fontWeight: '800', color: '#166534', fontSize: '1rem' }}>
-                                                Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        {/* STEP NAVIGATION BUTTONS (When Family Detected) */}
-                        {detectedSiblings.length > 1 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid #e2e8f0', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                {activeSiblingIndex > 0 ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveSiblingId(detectedSiblings[activeSiblingIndex - 1].id)}
-                                        style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '0.35rem',
-                                            padding: '0.45rem 0.85rem',
-                                            borderRadius: '6px',
+                                    {/* Autocomplete Dropdown */}
+                                    {showSearchDropdown && searchResults.length > 0 && (
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '105%',
+                                            left: 0,
+                                            right: 0,
                                             background: '#ffffff',
+                                            borderRadius: '10px',
+                                            boxShadow: '0 10px 25px -5px rgba(0,0,0,0.18)',
                                             border: '1px solid #cbd5e1',
-                                            color: '#334155',
-                                            fontWeight: '700',
-                                            fontSize: '0.78rem',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        <ChevronLeft size={15} />
-                                        <span>Previous: {detectedSiblings[activeSiblingIndex - 1].name}</span>
-                                    </button>
-                                ) : <div />}
+                                            zIndex: 50,
+                                            maxHeight: '240px',
+                                            overflowY: 'auto'
+                                        }}>
+                                            {searchResults.map(st => (
+                                                <div
+                                                    key={st.id}
+                                                    onClick={() => handleSelectStudent(st)}
+                                                    style={{
+                                                        padding: '0.6rem 0.8rem',
+                                                        borderBottom: '1px solid #f1f5f9',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'space-between',
+                                                        transition: 'background 0.15s'
+                                                    }}
+                                                    onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                                                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                                >
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+                                                        <div style={{
+                                                            width: '28px',
+                                                            height: '28px',
+                                                            borderRadius: '50%',
+                                                            background: '#e0f2fe',
+                                                            color: '#0369a1',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            fontWeight: '800',
+                                                            fontSize: '0.72rem'
+                                                        }}>
+                                                            {st.name?.slice(0, 2).toUpperCase() || 'ST'}
+                                                        </div>
+                                                        <div>
+                                                            <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.82rem' }}>{st.name}</div>
+                                                            <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                                                {st.className} | Roll: {st.rollNo || 'N/A'} • {st.parentDetails?.fatherName || st.fatherName || 'Parent'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <span style={{
+                                                        fontSize: '0.68rem',
+                                                        fontWeight: '800',
+                                                        padding: '2px 7px',
+                                                        borderRadius: '6px',
+                                                        background: st.monthlyFeeStatus === 'paid' ? '#dcfce7' : '#fee2e2',
+                                                        color: st.monthlyFeeStatus === 'paid' ? '#15803d' : '#b91c1c'
+                                                    }}>
+                                                        {st.monthlyFeeStatus === 'paid' ? 'Paid' : 'Unpaid'}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
 
-                                <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#0369a1' }}>
-                                    Child {activeSiblingIndex + 1} of {detectedSiblings.length}
-                                </span>
+                                {/* Class & Student Selectors */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '0.85rem' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
+                                            Class
+                                        </label>
+                                        <select
+                                            value={selectedClassId}
+                                            onChange={(e) => {
+                                                setSelectedClassId(e.target.value);
+                                                setSelectedStudentId('');
+                                                setSelectedStudent(null);
+                                            }}
+                                            style={{
+                                                width: '100%',
+                                                padding: '0.55rem 0.75rem',
+                                                borderRadius: '8px',
+                                                border: '1px solid #cbd5e1',
+                                                outline: 'none',
+                                                background: '#ffffff',
+                                                fontWeight: '600',
+                                                color: '#0f172a',
+                                                fontSize: '0.82rem'
+                                            }}
+                                        >
+                                            <option value="">-- Choose Class --</option>
+                                            {classes.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
+                                            Student
+                                        </label>
+                                        <select
+                                            value={selectedStudentId}
+                                            onChange={(e) => {
+                                                const stId = e.target.value;
+                                                setSelectedStudentId(stId);
+                                                const stObj = classStudents.find(s => s.id === stId);
+                                                setSelectedStudent(stObj || null);
+                                            }}
+                                            disabled={!selectedClassId || loadingClassStudents}
+                                            style={{
+                                                width: '100%',
+                                                padding: '0.55rem 0.75rem',
+                                                borderRadius: '8px',
+                                                border: '1px solid #cbd5e1',
+                                                outline: 'none',
+                                                background: !selectedClassId ? '#f1f5f9' : '#ffffff',
+                                                fontWeight: '600',
+                                                color: !selectedClassId ? '#94a3b8' : '#0f172a',
+                                                fontSize: '0.82rem',
+                                                cursor: !selectedClassId ? 'not-allowed' : 'pointer'
+                                            }}
+                                        >
+                                            <option value="">-- Choose Student --</option>
+                                            {classStudents.map(s => (
+                                                <option key={s.id} value={s.id}>
+                                                    {s.name} ({s.rollNo ? `Roll ${s.rollNo}` : 'No Roll'}) {s.monthlyFeeStatus === 'paid' ? '✓' : '✗'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
 
-                                {activeSiblingIndex < detectedSiblings.length - 1 ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveSiblingId(detectedSiblings[activeSiblingIndex + 1].id)}
-                                        style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '0.35rem',
-                                            padding: '0.45rem 0.85rem',
-                                            borderRadius: '6px',
-                                            background: '#0284c7',
-                                            border: 'none',
-                                            color: '#ffffff',
-                                            fontWeight: '700',
-                                            fontSize: '0.78rem',
-                                            cursor: 'pointer',
-                                            boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)'
-                                        }}
-                                    >
-                                        <span>Next: {detectedSiblings[activeSiblingIndex + 1].name}</span>
-                                        <ChevronRight size={15} />
-                                    </button>
-                                ) : (
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#16a34a', background: '#dcfce7', padding: '3px 8px', borderRadius: '6px' }}>
-                                        ✓ All Children Reviewed
-                                    </span>
-                                )}
-                            </div>
-                        )}
-
-                        {/* STEP 4: PAYMENT INPUT & FINAL SUBMISSION SECTION */}
-                        <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '1.5rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.4rem' }}>
-                                <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569', margin: 0, textTransform: 'uppercase' }}>
-                                    Payment Submission Details
-                                </h4>
-                                {feeCalculation?.isMultiFamily && (
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', background: '#e0f2fe', padding: '2px 8px', borderRadius: '4px' }}>
-                                        Combined Total: Rs {Number(feeCalculation.totalDue).toLocaleString()} ({feeCalculation.activeSiblingsCount} Children)
-                                    </span>
-                                )}
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-                                {/* Payment Mode */}
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                {/* Tactile Payment Mode Chips */}
+                                <div style={{ marginBottom: '1rem' }}>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#334155', marginBottom: '0.35rem' }}>
                                         Payment Method
                                     </label>
-                                    <select
-                                        value={paymentMode}
-                                        onChange={(e) => setPaymentMode(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '0.6rem 0.75rem',
-                                            borderRadius: '6px',
-                                            border: '1px solid #cbd5e1',
-                                            outline: 'none',
-                                            background: '#ffffff',
-                                            fontWeight: '600',
-                                            color: '#0f172a',
-                                            fontSize: '0.85rem'
-                                        }}
-                                    >
-                                        <option value="Cash">Cash at Counter</option>
-                                        <option value="Bank Transfer">Bank Transfer / Deposit</option>
-                                        <option value="Online / EasyPaisa">EasyPaisa / JazzCash</option>
-                                        <option value="Cheque">Cheque</option>
-                                    </select>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.4rem' }}>
+                                        {[
+                                            { id: 'Cash', label: 'Cash', icon: '💵', color: '#16a34a', bg: '#f0fdf4', border: '#86efac' },
+                                            { id: 'Bank Transfer', label: 'Bank', icon: '🏛️', color: '#2563eb', bg: '#eff6ff', border: '#93c5fd' },
+                                            { id: 'EasyPaisa', label: 'EasyPaisa', icon: '📱', color: '#059669', bg: '#ecfdf5', border: '#6ee7b7' },
+                                            { id: 'JazzCash', label: 'JazzCash', icon: '💳', color: '#dc2626', bg: '#fef2f2', border: '#fca5a5' }
+                                        ].map((m) => (
+                                            <button
+                                                key={m.id}
+                                                type="button"
+                                                onClick={() => setPaymentMode(m.id)}
+                                                style={{
+                                                    padding: '0.45rem 0.2rem',
+                                                    borderRadius: '8px',
+                                                    border: paymentMode === m.id ? `1.5px solid ${m.color}` : '1px solid #e2e8f0',
+                                                    background: paymentMode === m.id ? m.bg : '#ffffff',
+                                                    color: paymentMode === m.id ? m.color : '#475569',
+                                                    fontWeight: '700',
+                                                    fontSize: '0.72rem',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '2px',
+                                                    boxShadow: paymentMode === m.id ? `0 2px 6px ${m.color}22` : 'none',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                <span>{m.icon}</span>
+                                                <span>{m.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
 
-                                {/* Late Fine / Penalty */}
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#b45309', marginBottom: '0.35rem' }}>
-                                        Late Fine / Penalty (Rs)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        value={fineAmount}
-                                        onChange={(e) => setFineAmount(e.target.value)}
-                                        min="0"
-                                        placeholder="0"
-                                        title="Auto-filled from settings if overdue. Principal can manually change or waive."
-                                        style={{
-                                            width: '100%',
-                                            padding: '0.6rem 0.75rem',
-                                            borderRadius: '6px',
-                                            border: Number(fineAmount) > 0 ? '1px solid #f59e0b' : '1px solid #cbd5e1',
-                                            outline: 'none',
-                                            background: Number(fineAmount) > 0 ? '#fffdf5' : '#ffffff',
-                                            fontWeight: '700',
-                                            color: Number(fineAmount) > 0 ? '#b45309' : '#0f172a',
-                                            fontSize: '0.85rem'
-                                        }}
-                                    />
+                                {/* Financial Inputs (Fine, Concession, Amount) */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '0.85rem' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.73rem', fontWeight: '700', color: Number(fineAmount) > 0 ? '#b45309' : '#475569', marginBottom: '0.2rem' }}>
+                                            Late Fine / Penalty (Rs)
+                                        </label>
+                                        <input
+                                            type="number"
+                                            value={fineAmount}
+                                            onChange={(e) => setFineAmount(e.target.value)}
+                                            min="0"
+                                            placeholder="0"
+                                            style={{
+                                                width: '100%',
+                                                padding: '0.5rem 0.7rem',
+                                                borderRadius: '8px',
+                                                border: Number(fineAmount) > 0 ? '1.5px solid #f59e0b' : '1px solid #cbd5e1',
+                                                outline: 'none',
+                                                background: Number(fineAmount) > 0 ? '#fffbeb' : '#ffffff',
+                                                fontWeight: '700',
+                                                color: Number(fineAmount) > 0 ? '#b45309' : '#0f172a',
+                                                fontSize: '0.85rem',
+                                                boxSizing: 'border-box'
+                                            }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.73rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
+                                            Concession / Discount (Rs)
+                                        </label>
+                                        <input
+                                            type="number"
+                                            value={discountAmount}
+                                            onChange={(e) => setDiscountAmount(e.target.value)}
+                                            min="0"
+                                            placeholder="0"
+                                            style={{
+                                                width: '100%',
+                                                padding: '0.5rem 0.7rem',
+                                                borderRadius: '8px',
+                                                border: '1px solid #cbd5e1',
+                                                outline: 'none',
+                                                background: '#ffffff',
+                                                fontWeight: '700',
+                                                color: '#0f172a',
+                                                fontSize: '0.85rem',
+                                                boxSizing: 'border-box'
+                                            }}
+                                        />
+                                    </div>
                                 </div>
 
-                                {/* Discount / Concession */}
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                        Concession / Discount (Rs)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        value={discountAmount}
-                                        onChange={(e) => setDiscountAmount(e.target.value)}
-                                        min="0"
-                                        placeholder="0"
-                                        style={{
-                                            width: '100%',
-                                            padding: '0.6rem 0.75rem',
-                                            borderRadius: '6px',
-                                            border: '1px solid #cbd5e1',
-                                            outline: 'none',
-                                            background: '#ffffff',
-                                            fontWeight: '600',
-                                            color: '#0f172a',
-                                            fontSize: '0.85rem'
-                                        }}
-                                    />
-                                </div>
-
-                                {/* Received Amount */}
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#16a34a', marginBottom: '0.35rem' }}>
-                                        Received Amount (Rs)
-                                    </label>
+                                {/* Received Amount & Live Total */}
+                                <div style={{
+                                    background: '#f0fdf4',
+                                    border: '1.5px solid #86efac',
+                                    borderRadius: '10px',
+                                    padding: '0.75rem 0.9rem',
+                                    marginBottom: '0.85rem'
+                                }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                        <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#166534' }}>
+                                            Received Amount (Rs)
+                                        </label>
+                                        <span style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: '700' }}>
+                                            Auto-Calculated Total
+                                        </span>
+                                    </div>
                                     <input
                                         type="number"
                                         value={receivedAmount}
@@ -7734,1074 +6785,758 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         min="0"
                                         style={{
                                             width: '100%',
-                                            padding: '0.6rem 0.75rem',
-                                            borderRadius: '6px',
+                                            padding: '0.55rem 0.75rem',
+                                            borderRadius: '8px',
                                             border: '1px solid #16a34a',
                                             outline: 'none',
-                                            background: '#f0fdf4',
-                                            fontWeight: '700',
-                                            color: '#16a34a',
-                                            fontSize: '0.95rem'
+                                            background: '#ffffff',
+                                            fontWeight: '900',
+                                            color: '#166534',
+                                            fontSize: '1.2rem',
+                                            boxSizing: 'border-box'
                                         }}
                                     />
                                 </div>
-                            </div>
 
-                            {/* Remarks / Memo */}
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                    Remarks / Notes (Optional)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={remarks}
-                                    onChange={(e) => setRemarks(e.target.value)}
-                                    placeholder="e.g. Paid in full by Father, Cheque #98212, Online ref ID..."
-                                    style={{
-                                        width: '100%',
-                                        padding: '0.6rem 0.75rem',
-                                        borderRadius: '6px',
-                                        border: '1px solid #cbd5e1',
-                                        outline: 'none',
-                                        background: '#ffffff',
-                                        fontSize: '0.85rem'
-                                    }}
-                                />
-                            </div>
-
-                            {/* Conditional Proof Upload Box for Online / Bank Transfer */}
-                            {paymentMode !== 'Cash' && (
-                                <div style={{
-                                    padding: '0.85rem 1rem',
-                                    borderRadius: '8px',
-                                    background: '#f0f9ff',
-                                    border: '1px dashed #0284c7',
-                                    marginBottom: '1rem'
-                                }}>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '800', color: '#0369a1', marginBottom: '0.35rem' }}>
-                                        Attach Bank / Payment Receipt Slip (Optional)
-                                    </label>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={handleProofChange}
-                                            style={{ fontSize: '0.8rem', color: '#475569' }}
-                                        />
-                                        {proofPreview && (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                <img src={proofPreview} alt="Proof" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #bae6fd' }} />
-                                                <button
-                                                    type="button"
-                                                    onClick={handleRemoveProof}
-                                                    style={{
-                                                        padding: '2px 6px',
-                                                        borderRadius: '4px',
-                                                        background: '#fee2e2',
-                                                        border: '1px solid #fca5a5',
-                                                        color: '#b91c1c',
-                                                        fontSize: '0.7rem',
-                                                        fontWeight: '700',
-                                                        cursor: 'pointer'
-                                                    }}
-                                                >
-                                                    Remove
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
+                                {/* Remarks & Proof Box */}
+                                <div style={{ marginBottom: '1rem' }}>
+                                    <input
+                                        type="text"
+                                        value={remarks}
+                                        onChange={(e) => setRemarks(e.target.value)}
+                                        placeholder="Remarks / Note (Optional, e.g. Paid in full by Father)..."
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.5rem 0.7rem',
+                                            borderRadius: '8px',
+                                            border: '1px solid #cbd5e1',
+                                            outline: 'none',
+                                            background: '#ffffff',
+                                            fontSize: '0.8rem',
+                                            boxSizing: 'border-box'
+                                        }}
+                                    />
                                 </div>
-                            )}
 
-                            {/* Submit Buttons */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                                {paymentMode !== 'Cash' && (
+                                    <div style={{
+                                        padding: '0.65rem 0.8rem',
+                                        borderRadius: '8px',
+                                        background: '#eff6ff',
+                                        border: '1px dashed #93c5fd',
+                                        marginBottom: '1rem'
+                                    }}>
+                                        <label style={{ display: 'block', fontSize: '0.73rem', fontWeight: '800', color: '#1e40af', marginBottom: '0.25rem' }}>
+                                            Attach Bank Slip / Screenshot Proof
+                                        </label>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={handleProofChange}
+                                                style={{ fontSize: '0.75rem', color: '#475569' }}
+                                            />
+                                            {proofPreview && (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                    <img src={proofPreview} alt="Proof" style={{ width: '30px', height: '30px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #93c5fd' }} />
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleRemoveProof}
+                                                        style={{ padding: '2px 5px', borderRadius: '4px', background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '0.68rem', fontWeight: '700', cursor: 'pointer' }}
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Big Submit Button */}
                                 <button
                                     type="button"
                                     onClick={handleSubmitFee}
-                                    disabled={isSubmitting}
+                                    disabled={isSubmitting || !selectedStudent}
                                     style={{
                                         width: '100%',
                                         padding: '0.75rem',
-                                        borderRadius: '8px',
-                                        background: '#0078d4',
+                                        borderRadius: '10px',
+                                        background: !selectedStudent ? '#cbd5e1' : 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
                                         border: 'none',
                                         color: '#ffffff',
                                         fontWeight: '800',
-                                        fontSize: '0.95rem',
-                                        cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                        fontSize: '0.92rem',
+                                        cursor: isSubmitting || !selectedStudent ? 'not-allowed' : 'pointer',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         gap: '0.5rem',
-                                        boxShadow: '0 2px 4px rgba(0, 120, 212, 0.25)',
-                                        transition: 'all 0.15s ease'
+                                        boxShadow: !selectedStudent ? 'none' : '0 4px 12px rgba(0, 120, 212, 0.35)',
+                                        transition: 'all 0.18s ease'
                                     }}
-                                    onMouseEnter={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0067b8'; }}
-                                    onMouseLeave={(e) => { if (!isSubmitting) e.currentTarget.style.background = '#0078d4'; }}
                                 >
                                     {isSubmitting ? (
                                         <>
-                                            <Loader2 size={18} className="animate-spin" /> Processing Payment & Uploading...
+                                            <Loader2 size={16} className="animate-spin" /> Recording Payment...
                                         </>
                                     ) : (
                                         <>
-                                            <Printer size={18} />
+                                            <Printer size={16} />
                                             <span>
                                                 {feeCalculation?.isMultiFamily
-                                                    ? `Submit All (${feeCalculation.activeSiblingsCount}) Family Fees & Print Combined Voucher (Rs ${Number(receivedAmount).toLocaleString()})`
-                                                    : 'Submit Fee & Print Receipt Slip'
+                                                    ? `Submit (${feeCalculation.activeSiblingsCount}) Family Slip (Rs ${Number(receivedAmount).toLocaleString()})`
+                                                    : `Submit Fee & Print Receipt (Rs ${Number(receivedAmount).toLocaleString()})`
                                                 }
                                             </span>
                                         </>
                                     )}
                                 </button>
-                            </div>
-                        </div>
+                            </>
+                        )}
                     </div>
 
-                    {/* PANEL 2: History & Reliability Score Dashboard (Swiped View) */}
-                    <div style={{ width: '50%', padding: '1.5rem', boxSizing: 'border-box' }}>
-                        {/* Header with Back Navigation */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setAssessmentViewMode('assessment')}
-                                    style={{
-                                        display: 'inline-flex',
+                    {/* RIGHT PANEL: Smart Student & Family Hub (Or Today's Transactions Ledger) */}
+                    {selectedStudent && activeDailyMode === 'fee_submission' ? (
+                        <div className="card" style={{
+                            background: '#ffffff',
+                            borderRadius: '14px',
+                            padding: '1.4rem',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 4px 16px -2px rgba(0,0,0,0.06)'
+                        }}>
+                            {/* Student Profile Header */}
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                borderBottom: '1px solid #f1f5f9',
+                                paddingBottom: '0.85rem',
+                                marginBottom: '1rem',
+                                flexWrap: 'wrap',
+                                gap: '0.6rem'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                    <div style={{
+                                        width: '42px',
+                                        height: '42px',
+                                        borderRadius: '12px',
+                                        background: 'linear-gradient(135deg, #0078d4 0%, #0284c7 100%)',
+                                        color: '#ffffff',
+                                        display: 'flex',
                                         alignItems: 'center',
-                                        gap: '0.35rem',
-                                        padding: '0.45rem 0.85rem',
-                                        borderRadius: '8px',
-                                        background: '#f8fafc',
-                                        border: '1.5px solid #cbd5e1',
-                                        color: '#334155',
-                                        fontWeight: '700',
-                                        fontSize: '0.8rem',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.15s ease'
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = '#f8fafc'}
-                                >
-                                    <ChevronLeft size={16} />
-                                    <span>Back to Assessment</span>
-                                </button>
-                                <div>
-                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        <Activity size={18} color="#0078d4" />
-                                        Payment History & Reliability
-                                    </h3>
-                                    <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                                        {selectedStudent.name} (Roll: {selectedStudent.rollNo || 'N/A'}) • {selectedStudent.className || 'Class'}
-                                    </span>
-                                </div>
-                            </div>
-
-                            {studentReliabilityData && (
-                                <span style={{
-                                    fontSize: '0.78rem',
-                                    fontWeight: '800',
-                                    padding: '4px 12px',
-                                    borderRadius: '20px',
-                                    background: studentReliabilityData.badgeBg,
-                                    color: studentReliabilityData.badgeColor,
-                                    border: `1.5px solid ${studentReliabilityData.badgeBorder}`,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.35rem'
-                                }}>
-                                    <Award size={14} />
-                                    {studentReliabilityData.badgeLabel} ({studentReliabilityData.score}%)
-                                </span>
-                            )}
-                        </div>
-
-                        {/* 1. Reliability Score Circle Gauge Card */}
-                        {studentReliabilityData && (
-                            <div style={{
-                                background: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 50%, #ede9fe 100%)',
-                                borderRadius: '14px',
-                                padding: '1.25rem 1.5rem',
-                                border: '1.5px solid #d8b4fe',
-                                marginBottom: '1.5rem',
-                                boxShadow: '0 4px 12px rgba(168, 85, 247, 0.08)'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                        <Award size={18} color="#7e22ce" />
-                                        <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#581c87' }}>
-                                            Parent Fee Paying Reliability Score
-                                        </span>
+                                        justifyContent: 'center',
+                                        fontWeight: '800',
+                                        fontSize: '0.95rem',
+                                        boxShadow: '0 3px 8px rgba(0, 120, 212, 0.25)'
+                                    }}>
+                                        {activeChild?.name?.slice(0, 2).toUpperCase() || 'ST'}
                                     </div>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#7e22ce', background: '#ffffff', padding: '2px 8px', borderRadius: '12px', border: '1px solid #e9d5ff' }}>
-                                        Formula: Promptness & Clearing Speed
-                                    </span>
-                                </div>
-
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
-                                    {/* Circular Progress Gauge SVG */}
-                                    <div style={{ position: 'relative', width: '96px', height: '96px', flexShrink: 0 }}>
-                                        <svg width="96" height="96" viewBox="0 0 96 96" style={{ transform: 'rotate(-90deg)' }}>
-                                            {/* Background Track Ring */}
-                                            <circle
-                                                cx="48"
-                                                cy="48"
-                                                r="40"
-                                                fill="transparent"
-                                                stroke="#e9d5ff"
-                                                strokeWidth="9"
-                                            />
-                                            {/* Animated Value Ring */}
-                                            <circle
-                                                cx="48"
-                                                cy="48"
-                                                r="40"
-                                                fill="transparent"
-                                                stroke={studentReliabilityData.badgeColor}
-                                                strokeWidth="9"
-                                                strokeDasharray="251.32"
-                                                strokeDashoffset={251.32 * (1 - (studentReliabilityData.score / 100))}
-                                                strokeLinecap="round"
-                                                style={{ transition: 'stroke-dashoffset 1s ease-in-out' }}
-                                            />
-                                        </svg>
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: 0,
-                                            left: 0,
-                                            right: 0,
-                                            bottom: 0,
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            textAlign: 'center'
-                                        }}>
-                                            <span style={{ fontSize: '1.35rem', fontWeight: '900', color: '#581c87', lineHeight: 1 }}>
-                                                {studentReliabilityData.score}%
-                                            </span>
-                                            <span style={{ fontSize: '0.62rem', fontWeight: '700', color: '#7e22ce', textTransform: 'uppercase', marginTop: '2px' }}>
-                                                Reliability
+                                    <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                                                {activeChild?.name || selectedStudent.name}
+                                            </h3>
+                                            <span style={{
+                                                fontSize: '0.68rem',
+                                                fontWeight: '800',
+                                                padding: '2px 7px',
+                                                borderRadius: '6px',
+                                                background: activeChildFeeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
+                                                color: activeChildFeeCalculation?.isPaid ? '#15803d' : '#b91c1c',
+                                                border: `1px solid ${activeChildFeeCalculation?.isPaid ? '#86efac' : '#fca5a5'}`
+                                            }}>
+                                                {activeChildFeeCalculation?.isPaid ? '✓ Paid' : '⚠️ Due'}
                                             </span>
                                         </div>
-                                    </div>
-
-                                    {/* Details Column */}
-                                    <div style={{ flex: 1, minWidth: '220px' }}>
-                                        <div style={{ fontSize: '0.85rem', color: '#4c1d95', fontWeight: '600', marginBottom: '0.6rem', lineHeight: 1.4 }}>
-                                            {studentReliabilityData.message}
-                                        </div>
-
-                                        {/* Mini Performance Chips */}
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.5rem' }}>
-                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
-                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>On-Time Rate</span>
-                                                <strong style={{ fontSize: '0.85rem', color: '#581c87', fontWeight: '800' }}>{studentReliabilityData.onTimeRate}%</strong>
-                                            </div>
-                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
-                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>Avg Payment Day</span>
-                                                <strong style={{ fontSize: '0.85rem', color: '#581c87', fontWeight: '800' }}>Day {studentReliabilityData.avgDay}th</strong>
-                                            </div>
-                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
-                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>Paid Cleared</span>
-                                                <strong style={{ fontSize: '0.85rem', color: '#581c87', fontWeight: '800' }}>{studentReliabilityData.totalPaidMonths}/12 Mos</strong>
-                                            </div>
-                                            <div style={{ background: '#ffffff', padding: '0.4rem 0.6rem', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
-                                                <span style={{ display: 'block', fontSize: '0.65rem', color: '#6b21a8', fontWeight: '600' }}>Overdue Arrears</span>
-                                                <strong style={{ fontSize: '0.85rem', color: studentReliabilityData.prevUnpaidCount > 0 ? '#b91c1c' : '#16a34a', fontWeight: '800' }}>
-                                                    {studentReliabilityData.prevUnpaidCount === 0 ? 'Zero Arrears' : `${studentReliabilityData.prevUnpaidCount} Mos` }
-                                                </strong>
-                                            </div>
+                                        <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
+                                            {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'} &bull; Father: <strong>{activeChild?.parentDetails?.fatherName || activeChild?.fatherName || selectedStudent.fatherName || 'Parent'}</strong>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
 
-                        {/* 2. 12-Month Calendar Wise History */}
-                        <div style={{ marginBottom: '1.5rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                    <CalendarDays size={16} color="#0078d4" />
-                                    <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: '800', color: '#0f172a' }}>
-                                        Fee Calendar 2026 (Monthly Dues & Payment Status)
-                                    </h4>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.7rem', fontWeight: '700' }}>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#15803d' }}>
-                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#16a34a' }} /> Paid
-                                    </span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#b45309' }}>
-                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }} /> Pending
-                                    </span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#b91c1c' }}>
-                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }} /> Overdue
-                                    </span>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#64748b' }}>
-                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#cbd5e1' }} /> Upcoming
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* 12-Month Grid */}
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
-                                gap: '0.65rem'
-                            }}>
-                                {studentReliabilityData?.monthlyHistory.map((m) => {
-                                    let cardBg = '#f8fafc';
-                                    let cardBorder = '#e2e8f0';
-                                    let badgeColor = '#64748b';
-                                    let statusText = 'Upcoming';
-                                    let statusIcon = <Clock size={13} />;
-
-                                    if (m.status === 'paid') {
-                                        cardBg = '#f0fdf4';
-                                        cardBorder = '#86efac';
-                                        badgeColor = '#16a34a';
-                                        statusText = 'Paid';
-                                        statusIcon = <Check size={13} />;
-                                    } else if (m.status === 'pending') {
-                                        cardBg = '#fffbeb';
-                                        cardBorder = '#fcd34d';
-                                        badgeColor = '#d97706';
-                                        statusText = 'Pending';
-                                        statusIcon = <Clock size={13} />;
-                                    } else if (m.status === 'overdue') {
-                                        cardBg = '#fef2f2';
-                                        cardBorder = '#fca5a5';
-                                        badgeColor = '#dc2626';
-                                        statusText = 'Overdue';
-                                        statusIcon = <AlertTriangle size={13} />;
-                                    }
-
-                                    return (
-                                        <div
-                                            key={m.monthNum}
-                                            style={{
-                                                background: cardBg,
-                                                border: `1.5px solid ${cardBorder}`,
-                                                borderRadius: '10px',
-                                                padding: '0.65rem 0.75rem',
-                                                display: 'flex',
-                                                flexDirection: 'column',
-                                                justifyContent: 'space-between',
-                                                minHeight: '82px',
-                                                boxShadow: m.status === 'paid' ? '0 1px 3px rgba(22, 163, 74, 0.08)' : 'none',
-                                                transition: 'all 0.15s ease'
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    {/* Direct WhatsApp Action */}
+                                    {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const phone = activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone;
+                                                const text = `Assalam-o-Alaikum, this is regarding ${activeChild.name}'s fee dues for ${schoolInfo.name || 'School'}. Current payable amount is Rs ${Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}.`;
+                                                let clean = phone.toString().replace(/[^0-9]/g, '');
+                                                if (clean.startsWith('0092')) clean = clean.slice(2);
+                                                else if (clean.startsWith('03')) clean = '92' + clean.slice(1);
+                                                window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
                                             }}
+                                            style={{
+                                                padding: '5px 10px',
+                                                borderRadius: '7px',
+                                                background: '#f0fdf4',
+                                                border: '1px solid #86efac',
+                                                color: '#15803d',
+                                                fontWeight: '700',
+                                                fontSize: '0.73rem',
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title="Message parent on WhatsApp"
                                         >
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                                <strong style={{ fontSize: '0.85rem', color: '#0f172a', fontWeight: '800' }}>
-                                                    {m.monthName}
-                                                </strong>
-                                                <span style={{
-                                                    fontSize: '0.65rem',
-                                                    fontWeight: '800',
-                                                    color: badgeColor,
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '2px'
-                                                }}>
-                                                    {statusIcon}
-                                                    {statusText}
-                                                </span>
-                                            </div>
+                                            💬 WhatsApp
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => setAssessmentViewMode(assessmentViewMode === 'history' ? 'assessment' : 'history')}
+                                        style={{
+                                            padding: '5px 10px',
+                                            borderRadius: '7px',
+                                            background: '#eff6ff',
+                                            border: '1px solid #93c5fd',
+                                            color: '#0078d4',
+                                            fontWeight: '700',
+                                            fontSize: '0.73rem',
+                                            cursor: 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}
+                                    >
+                                        <Sparkles size={13} /> {assessmentViewMode === 'history' ? 'View Dues' : 'Reliability'}
+                                    </button>
+                                </div>
+                            </div>
 
-                                            <div>
-                                                <div style={{ fontSize: '0.78rem', fontWeight: '800', color: '#1e293b' }}>
-                                                    Rs {m.amount ? Number(m.amount).toLocaleString() : '—'}
+                            {/* SIBLING RADAR & MULTI-CHILD SELECTOR CHIPS */}
+                            {detectedSiblings.length > 1 && (
+                                <div style={{
+                                    background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                                    borderRadius: '12px',
+                                    padding: '0.75rem 0.9rem',
+                                    border: '1.5px solid #7dd3fc',
+                                    marginBottom: '1rem'
+                                }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <Users size={15} color="#0284c7" />
+                                            <strong style={{ fontSize: '0.82rem', color: '#0369a1' }}>
+                                                Family Sibling Hub ({detectedSiblings.length} Children)
+                                            </strong>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedSiblingIds(detectedSiblings.map(s => s.id))}
+                                                style={{ fontSize: '0.7rem', fontWeight: '700', padding: '2px 7px', borderRadius: '5px', background: '#0284c7', color: '#ffffff', border: 'none', cursor: 'pointer' }}
+                                            >
+                                                Select All ({detectedSiblings.length})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedSiblingIds([activeChild.id])}
+                                                style={{ fontSize: '0.7rem', fontWeight: '700', padding: '2px 7px', borderRadius: '5px', background: '#ffffff', color: '#0369a1', border: '1px solid #bae6fd', cursor: 'pointer' }}
+                                            >
+                                                Only {activeChild.name.split(' ')[0]}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Horizontal Interactive Sibling Cards */}
+                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                        {detectedSiblings.map((sib, sIdx) => {
+                                            const isChecked = selectedSiblingIds.includes(sib.id);
+                                            const isActiveTab = (activeChild?.id || selectedStudent.id) === sib.id;
+                                            const isCurrentPaid = sib.monthlyFeeStatus === 'paid';
+                                            return (
+                                                <div
+                                                    key={sib.id}
+                                                    onClick={() => setActiveSiblingId(sib.id)}
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.45rem',
+                                                        padding: '0.45rem 0.75rem',
+                                                        borderRadius: '9px',
+                                                        background: isActiveTab ? '#ffffff' : isChecked ? '#f8fafc' : '#f1f5f9',
+                                                        border: isActiveTab ? '2px solid #0284c7' : isChecked ? '1px solid #94a3b8' : '1px dashed #cbd5e1',
+                                                        cursor: 'pointer',
+                                                        boxShadow: isActiveTab ? '0 3px 8px rgba(2, 132, 199, 0.2)' : 'none',
+                                                        transition: 'all 0.15s ease'
+                                                    }}
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            toggleSiblingSelection(sib.id);
+                                                        }}
+                                                        style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                                        title={isChecked ? 'Included in combined family slip' : 'Excluded from family slip'}
+                                                    >
+                                                        {isChecked ? <CheckSquare size={16} color="#0284c7" /> : <Square size={16} color="#94a3b8" />}
+                                                    </button>
+                                                    <div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                            <strong style={{ fontSize: '0.78rem', color: isActiveTab ? '#0284c7' : '#0f172a' }}>
+                                                                {sib.name}
+                                                            </strong>
+                                                            <span style={{ fontSize: '0.68rem', color: '#64748b' }}>({sib.className})</span>
+                                                        </div>
+                                                        <div style={{ fontSize: '0.68rem', fontWeight: '700', color: isCurrentPaid ? '#16a34a' : '#b91c1c' }}>
+                                                            {isCurrentPaid ? '✓ Paid' : `Due: Rs ${Number(sib.tuitionFee || 0).toLocaleString()}`}
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                {m.paymentDateStr ? (
-                                                    <div style={{ fontSize: '0.68rem', color: '#15803d', fontWeight: '700', marginTop: '2px' }}>
-                                                        📅 {m.paymentDateStr}
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ASSESSMENT VIEW: ITEMIZED DUES (Arrears + Store + Tuition + Actions) */}
+                            {assessmentViewMode === 'assessment' ? (
+                                <div>
+                                    {/* Itemized Dues Cards */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginBottom: '1rem' }}>
+                                        {/* 1. Tuition Fee */}
+                                        <div style={{
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            padding: '0.65rem 0.85rem',
+                                            borderRadius: '9px',
+                                            background: '#f8fafc',
+                                            border: '1px solid #e2e8f0'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                <span style={{ fontSize: '1rem' }}>🎓</span>
+                                                <div>
+                                                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#1e293b', display: 'block' }}>
+                                                        Monthly Tuition Fee ({activeChild?.name?.split(' ')[0]})
+                                                    </span>
+                                                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Regular monthly academic fee</span>
+                                                </div>
+                                            </div>
+                                            <strong style={{ fontSize: '0.88rem', color: '#0f172a' }}>
+                                                Rs {Number(activeChildFeeCalculation?.baseFee || 0).toLocaleString()}
+                                            </strong>
+                                        </div>
+
+                                        {/* 2. Previous Overdue Arrears (If Any) */}
+                                        {activeChildFeeCalculation?.previousMonthsCount > 0 && (
+                                            <div style={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                padding: '0.65rem 0.85rem',
+                                                borderRadius: '9px',
+                                                background: '#fef2f2',
+                                                border: '1.5px solid #fca5a5'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                    <span style={{ fontSize: '1rem' }}>⏳</span>
+                                                    <div>
+                                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            Previous Overdue Arrears
+                                                            <span style={{ fontSize: '0.65rem', background: '#fee2e2', color: '#b91c1c', padding: '1px 6px', borderRadius: '4px', border: '1px solid #f87171' }}>
+                                                                {activeChildFeeCalculation.previousMonthsCount} {activeChildFeeCalculation.previousMonthsCount === 1 ? 'Month' : 'Months'}
+                                                            </span>
+                                                        </span>
+                                                        <span style={{ fontSize: '0.68rem', color: '#b91c1c' }}>Pending past balance unpaid</span>
                                                     </div>
-                                                ) : m.status === 'overdue' ? (
-                                                    <div style={{ fontSize: '0.68rem', color: '#b91c1c', fontWeight: '700', marginTop: '2px' }}>
-                                                        ⚠️ Overdue Unpaid
+                                                </div>
+                                                <strong style={{ fontSize: '0.92rem', color: '#b91c1c' }}>
+                                                    Rs {Number(activeChildFeeCalculation.previousMonthsArrears).toLocaleString()}
+                                                </strong>
+                                            </div>
+                                        )}
+
+                                        {/* 3. Store Dues / Uniform / Books (If Any) */}
+                                        {activeChildFeeCalculation?.storeFee > 0 && (
+                                            <div style={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                padding: '0.65rem 0.85rem',
+                                                borderRadius: '9px',
+                                                background: '#faf5ff',
+                                                border: '1.5px solid #d8b4fe'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                    <span style={{ fontSize: '1rem' }}>🛍️</span>
+                                                    <div>
+                                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#6b21a8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            Store / Uniform / Books Dues
+                                                            <span style={{ fontSize: '0.65rem', background: '#f3e8ff', color: '#7e22ce', padding: '1px 6px', borderRadius: '4px', border: '1px solid #c084fc' }}>
+                                                                Store Ledger
+                                                            </span>
+                                                        </span>
+                                                        <span style={{ fontSize: '0.68rem', color: '#7e22ce' }}>Inventory items charged to fee ledger</span>
                                                     </div>
-                                                ) : m.status === 'pending' ? (
-                                                    <div style={{ fontSize: '0.68rem', color: '#b45309', fontWeight: '700', marginTop: '2px' }}>
-                                                        Due: {dueInfo.dueDay}th {m.monthName}
+                                                </div>
+                                                <strong style={{ fontSize: '0.92rem', color: '#6b21a8' }}>
+                                                    Rs {Number(activeChildFeeCalculation.storeFee).toLocaleString()}
+                                                </strong>
+                                            </div>
+                                        )}
+
+                                        {/* 4. Active Monthly Actions (If Any) */}
+                                        {activeChildFeeCalculation?.actionsFee > 0 && (
+                                            <div style={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                padding: '0.65rem 0.85rem',
+                                                borderRadius: '9px',
+                                                background: '#fffbeb',
+                                                border: '1px solid #fcd34d'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                    <span style={{ fontSize: '1rem' }}>⚡</span>
+                                                    <div>
+                                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#92400e' }}>
+                                                            Monthly School Actions & Exam Charges
+                                                        </span>
+                                                        <span style={{ fontSize: '0.68rem', color: '#b45309' }}>Assigned special event dues</span>
                                                     </div>
-                                                ) : (
-                                                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px' }}>
-                                                        Scheduled
-                                                    </div>
-                                                )}
+                                                </div>
+                                                <strong style={{ fontSize: '0.92rem', color: '#92400e' }}>
+                                                    Rs {Number(activeChildFeeCalculation.actionsFee).toLocaleString()}
+                                                </strong>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Subtotal Banner */}
+                                    <div style={{
+                                        background: '#f0fdf4',
+                                        border: '1.5px solid #86efac',
+                                        borderRadius: '10px',
+                                        padding: '0.75rem 1rem',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        marginBottom: '1rem'
+                                    }}>
+                                        <div>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#166534', display: 'block' }}>
+                                                {feeCalculation?.isMultiFamily ? `Combined Total (${feeCalculation.activeSiblingsCount} Siblings)` : `${activeChild?.name}'s Total Dues`}
+                                            </span>
+                                            <span style={{ fontSize: '0.68rem', color: '#15803d' }}>
+                                                Tuition + Arrears + Store + Actions
+                                            </span>
+                                        </div>
+                                        <strong style={{ fontSize: '1.25rem', fontWeight: '900', color: '#166534' }}>
+                                            Rs {Number(feeCalculation?.totalDue || activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                        </strong>
+                                    </div>
+
+                                    {/* 12-Month Calendar Grid */}
+                                    <div style={{ marginBottom: '0.5rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.45rem' }}>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                <CalendarDays size={13} color="#0078d4" /> 2026 Monthly Status
+                                            </span>
+                                            <div style={{ display: 'flex', gap: '6px', fontSize: '0.65rem', fontWeight: '700' }}>
+                                                <span style={{ color: '#16a34a' }}>● Paid</span>
+                                                <span style={{ color: '#f59e0b' }}>● Due</span>
+                                                <span style={{ color: '#dc2626' }}>● Overdue</span>
                                             </div>
                                         </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.35rem' }}>
+                                            {studentReliabilityData?.monthlyHistory.map((m) => {
+                                                const bg = m.status === 'paid' ? '#f0fdf4' : m.status === 'overdue' ? '#fef2f2' : m.status === 'pending' ? '#fffbeb' : '#f8fafc';
+                                                const border = m.status === 'paid' ? '#86efac' : m.status === 'overdue' ? '#fca5a5' : m.status === 'pending' ? '#fcd34d' : '#e2e8f0';
+                                                const color = m.status === 'paid' ? '#15803d' : m.status === 'overdue' ? '#b91c1c' : m.status === 'pending' ? '#b45309' : '#94a3b8';
+                                                return (
+                                                    <div key={m.monthNum} style={{
+                                                        background: bg,
+                                                        border: `1px solid ${border}`,
+                                                        borderRadius: '6px',
+                                                        padding: '0.3rem 0.2rem',
+                                                        textAlign: 'center'
+                                                    }}>
+                                                        <div style={{ fontSize: '0.68rem', fontWeight: '800', color }}>{m.monthName}</div>
+                                                        <div style={{ fontSize: '0.62rem', fontWeight: '700', color, marginTop: '1px' }}>
+                                                            {m.status === 'paid' ? 'Paid ✓' : m.status === 'overdue' ? 'Overdue' : m.status === 'pending' ? 'Due' : '—'}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                /* RELIABILITY SCORE & PAST RECEIPTS VIEW */
+                                <div>
+                                    <div style={{
+                                        background: studentReliabilityData?.badgeBg || '#f0f9ff',
+                                        border: `1.5px solid ${studentReliabilityData?.badgeBorder || '#93c5fd'}`,
+                                        borderRadius: '10px',
+                                        padding: '0.85rem 1rem',
+                                        marginBottom: '1rem',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center'
+                                    }}>
+                                        <div>
+                                            <span style={{ fontSize: '0.72rem', fontWeight: '800', color: studentReliabilityData?.badgeColor || '#0369a1', textTransform: 'uppercase' }}>
+                                                Payment Reliability Score
+                                            </span>
+                                            <h4 style={{ margin: '2px 0 0', fontSize: '1.2rem', fontWeight: '900', color: studentReliabilityData?.badgeColor || '#0369a1' }}>
+                                                {studentReliabilityData?.badgeLabel || 'Good Standing'}
+                                            </h4>
+                                            <span style={{ fontSize: '0.7rem', color: '#475569' }}>
+                                                {studentReliabilityData?.onTimeRate}% On-Time Payment Record
+                                            </span>
+                                        </div>
+                                        <div style={{
+                                            fontSize: '1.6rem',
+                                            fontWeight: '900',
+                                            color: studentReliabilityData?.badgeColor || '#0078d4'
+                                        }}>
+                                            {studentReliabilityData?.score || 85}%
+                                        </div>
+                                    </div>
 
-                        {/* 3. Detailed Payment Receipts & History Table */}
-                        <div style={{ marginBottom: '1.25rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-                                <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>
-                                    Official Payment Slips & Vouchers Recorded ({studentHistoryTxs.length})
-                                </h4>
-                                {loadingStudentHistory && (
-                                    <span style={{ fontSize: '0.75rem', color: '#0078d4', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                                        <Loader2 size={13} className="animate-spin" /> Loading slips...
-                                    </span>
-                                )}
-                            </div>
-
-                            {studentHistoryTxs.length > 0 ? (
-                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-                                        <thead>
-                                            <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 2 }}>
-                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Receipt #</th>
-                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Payment Date</th>
-                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700', color: '#334155' }}>Mode</th>
-                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '700', color: '#334155' }}>Amount</th>
-                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'center', fontWeight: '700', color: '#334155' }}>Slip</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {studentHistoryTxs.map((tx, idx) => (
-                                                <tr key={tx.receiptNo || tx.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                    <td style={{ padding: '0.45rem 0.75rem', fontWeight: '700', color: '#0078d4' }}>
-                                                        {tx.receiptNo || tx.id}
-                                                    </td>
-                                                    <td style={{ padding: '0.45rem 0.75rem', color: '#334155' }}>
-                                                        {tx.dateString || (tx.timestamp?.seconds ? new Date(tx.timestamp.seconds * 1000).toLocaleDateString() : 'N/A')}
-                                                    </td>
-                                                    <td style={{ padding: '0.45rem 0.75rem', color: '#475569' }}>
-                                                        <span style={{ fontSize: '0.72rem', padding: '1px 6px', borderRadius: '4px', background: '#f1f5f9', border: '1px solid #cbd5e1', fontWeight: '600' }}>
-                                                            {tx.paymentMode || 'Cash'}
-                                                        </span>
-                                                    </td>
-                                                    <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>
-                                                        Rs {Number(tx.totalPaid || tx.amount || 0).toLocaleString()}
-                                                    </td>
-                                                    <td style={{ padding: '0.45rem 0.75rem', textAlign: 'center' }}>
+                                    <h5 style={{ fontSize: '0.78rem', fontWeight: '800', color: '#334155', margin: '0 0 0.4rem 0', textTransform: 'uppercase' }}>
+                                        Recorded Receipts ({studentHistoryTxs.length})
+                                    </h5>
+                                    <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                                        {studentHistoryTxs.length === 0 ? (
+                                            <div style={{ padding: '1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem' }}>
+                                                No receipts recorded yet for this student.
+                                            </div>
+                                        ) : (
+                                            studentHistoryTxs.map((tx) => (
+                                                <div key={tx.receiptNo || tx.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.75rem', borderBottom: '1px solid #f1f5f9' }}>
+                                                    <div>
+                                                        <strong style={{ fontSize: '0.75rem', color: '#0078d4' }}>{tx.receiptNo}</strong>
+                                                        <span style={{ fontSize: '0.68rem', color: '#64748b', marginLeft: '6px' }}>{tx.dateString || 'Today'} &bull; {tx.paymentMode || 'Cash'}</span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <strong style={{ fontSize: '0.78rem', color: '#16a34a' }}>Rs {Number(tx.totalPaid || 0).toLocaleString()}</strong>
                                                         <button
                                                             type="button"
                                                             onClick={() => {
                                                                 setReceiptData(tx);
                                                                 setReceiptModalOpen(true);
                                                             }}
-                                                            style={{
-                                                                padding: '2px 8px',
-                                                                borderRadius: '4px',
-                                                                background: '#eff6ff',
-                                                                border: '1px solid #bfdbfe',
-                                                                color: '#0078d4',
-                                                                fontWeight: '700',
-                                                                fontSize: '0.7rem',
-                                                                cursor: 'pointer',
-                                                                display: 'inline-flex',
-                                                                alignItems: 'center',
-                                                                gap: '3px'
-                                                            }}
+                                                            style={{ padding: '2px 6px', borderRadius: '4px', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#0078d4', fontSize: '0.68rem', fontWeight: '700', cursor: 'pointer' }}
                                                         >
-                                                            <Printer size={12} /> View Slip
+                                                            Slip
                                                         </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            ) : (
-                                <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', textAlign: 'center', color: '#64748b', fontSize: '0.8rem' }}>
-                                    No transaction slips logged yet for this student. Receipts generated upon fee submission will automatically appear here.
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </div>
-
-                        {/* Footer Action to Return */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                            <button
-                                type="button"
-                                onClick={() => setAssessmentViewMode('assessment')}
-                                style={{
-                                    padding: '0.65rem 1.25rem',
-                                    borderRadius: '8px',
-                                    background: '#0078d4',
-                                    border: 'none',
-                                    color: '#ffffff',
-                                    fontWeight: '700',
-                                    fontSize: '0.85rem',
-                                    cursor: 'pointer',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.4rem',
-                                    boxShadow: '0 2px 4px rgba(0, 120, 212, 0.2)'
-                                }}
-                            >
-                                <ChevronLeft size={16} />
-                                <span>Return to Fee Assessment & Submit Payment</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        ) : (
-            <div className="card" style={{
-                background: '#ffffff',
-                borderRadius: '14px',
-                padding: '1.5rem',
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
-            }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.15rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.85rem', flexWrap: 'wrap', gap: '0.6rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        {rightCardTab === 'fee_slips' ? (
-                            <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <Clock size={18} color="#0078d4" />
-                                Today's Recent Fee Collections Log
-                            </h3>
-                        ) : (
-                            <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <TrendingUp size={18} color="#16a34a" />
-                                Income & Expenses Breakdown
-                            </h3>
-                        )}
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                        {/* Tab Switcher for Right Card */}
-                        <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px', gap: '3px', border: '1px solid #e2e8f0' }}>
-                            <button
-                                type="button"
-                                onClick={() => setRightCardTab('fee_slips')}
-                                style={{
-                                    padding: '4px 10px',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    background: rightCardTab === 'fee_slips' ? '#ffffff' : 'transparent',
-                                    color: rightCardTab === 'fee_slips' ? '#0078d4' : '#64748b',
-                                    fontWeight: '700',
-                                    fontSize: '0.75rem',
-                                    cursor: 'pointer',
-                                    boxShadow: rightCardTab === 'fee_slips' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px'
-                                }}
-                            >
-                                <Clock size={13} /> Fee Slips ({recentTransactions.length})
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setRightCardTab('finances_breakdown')}
-                                style={{
-                                    padding: '4px 10px',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    background: rightCardTab === 'finances_breakdown' ? '#ffffff' : 'transparent',
-                                    color: rightCardTab === 'finances_breakdown' ? '#16a34a' : '#64748b',
-                                    fontWeight: '700',
-                                    fontSize: '0.75rem',
-                                    cursor: 'pointer',
-                                    boxShadow: rightCardTab === 'finances_breakdown' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px'
-                                }}
-                            >
-                                <TrendingUp size={13} /> Breakdown ({todayFinances.incomes.length} Inc / {todayFinances.expenses.length} Exp)
-                            </button>
-                        </div>
-
-                        {rightCardTab === 'fee_slips' ? (
-                            <button
-                                onClick={handleDownloadDailyReport}
-                                disabled={isGeneratingDailyPDF || todayTransactions.length === 0}
-                                style={{
-                                    padding: '0.35rem 0.85rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid #0078d4',
-                                    background: isGeneratingDailyPDF ? '#93c5fd' : '#0078d4',
-                                    color: '#ffffff',
-                                    fontWeight: '700',
-                                    fontSize: '0.78rem',
-                                    cursor: todayTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.4rem',
-                                    boxShadow: '0 2px 5px rgba(0, 120, 212, 0.25)',
-                                    transition: 'all 0.15s ease'
-                                }}
-                                title="Download customized official PDF report of today's fee collections"
-                            >
-                                {isGeneratingDailyPDF ? (
-                                    <>
-                                        <Loader2 size={13} className="animate-spin" />
-                                        <span>Generating...</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Download size={13} />
-                                        <span>Download Report</span>
-                                    </>
-                                )}
-                            </button>
-                        ) : (
-                            <button
-                                onClick={handleDownloadFinancesReport}
-                                disabled={isGeneratingFinancesPDF || (todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && !currentAction)}
-                                style={{
-                                    padding: '0.35rem 0.85rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid #16a34a',
-                                    background: isGeneratingFinancesPDF ? '#86efac' : '#16a34a',
-                                    color: '#ffffff',
-                                    fontWeight: '700',
-                                    fontSize: '0.78rem',
-                                    cursor: (todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && !currentAction) || isGeneratingFinancesPDF ? 'not-allowed' : 'pointer',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.4rem',
-                                    boxShadow: '0 2px 5px rgba(22, 163, 74, 0.25)',
-                                    transition: 'all 0.15s ease'
-                                }}
-                                title="Download customized official PDF report of Income & Expenses breakdown"
-                            >
-                                {isGeneratingFinancesPDF ? (
-                                    <>
-                                        <Loader2 size={13} className="animate-spin" />
-                                        <span>Generating...</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Download size={13} />
-                                        <span>Download Report</span>
-                                    </>
-                                )}
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {rightCardTab === 'fee_slips' ? (
-                    /* Existing Fee Slips Table */
-                    loadingTransactions ? (
-                        <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
-                            Loading transaction history...
-                        </div>
-                    ) : todayTransactions.length === 0 ? (
-                        <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
-                            <p style={{ margin: 0, fontWeight: '700', color: '#64748b' }}>No fee collections recorded today yet.</p>
-                            <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>All previous days' receipts remain safely archived in the Finances tab.</span>
-                        </div>
                     ) : (
-                        <div style={{ maxHeight: '360px', overflowY: 'auto' }} className="custom-scrollbar">
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                                <thead>
-                                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Slip #</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Student</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Class</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Amount</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Mode</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700', textAlign: 'right' }}>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {todayTransactions.map((tx) => (
-                                        <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#0078d4' }}>{tx.receiptNo}</td>
-                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600', color: '#0f172a' }}>{tx.studentName}</td>
-                                            <td style={{ padding: '0.5rem 0.75rem', color: '#475569' }}>{tx.className}</td>
-                                            <td style={{ padding: '0.6rem 0.75rem', fontWeight: '700', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
-                                            <td style={{ padding: '0.6rem 0.75rem' }}>
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                                    <span style={{ color: '#0f172a', fontWeight: '600' }}>{tx.paymentMode || 'Cash'}</span>
-                                                    {tx.proofUrl && (
-                                                        <button
-                                                            onClick={() => setProofModal({
-                                                                isOpen: true,
-                                                                url: tx.proofUrl,
-                                                                title: `${tx.studentName} (${tx.receiptNo}) - ${tx.paymentMode} Slip`
-                                                            })}
-                                                            style={{
-                                                                padding: '0.2rem 0.5rem',
-                                                                borderRadius: '4px',
-                                                                border: '1px solid #93c5fd',
-                                                                background: '#eff6ff',
-                                                                color: '#0078d4',
-                                                                fontWeight: '700',
-                                                                fontSize: '0.72rem',
-                                                                cursor: 'pointer',
-                                                                display: 'inline-flex',
-                                                                alignItems: 'center',
-                                                                gap: '4px',
-                                                                width: 'fit-content'
-                                                            }}
-                                                            title="View payment receipt / bank slip screenshot"
-                                                        >
-                                                            <ImageIcon size={12} /> View Screenshot
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
-                                                <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
-                                                    {tx.proofUrl && (
-                                                        <button
-                                                            onClick={() => setProofModal({
-                                                                isOpen: true,
-                                                                url: tx.proofUrl,
-                                                                title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
-                                                            })}
-                                                            style={{
-                                                                padding: '0.3rem 0.6rem',
-                                                                borderRadius: '6px',
-                                                                border: '1px solid #86efac',
-                                                                background: '#f0fdf4',
-                                                                color: '#15803d',
-                                                                fontWeight: '700',
-                                                                fontSize: '0.75rem',
-                                                                cursor: 'pointer',
-                                                                display: 'inline-flex',
-                                                                alignItems: 'center',
-                                                                gap: '4px'
-                                                            }}
-                                                            title="View attached bank deposit slip / screenshot"
-                                                        >
-                                                            <Eye size={13} /> Proof
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={() => {
-                                                            setReceiptData(tx);
-                                                            setReceiptModalOpen(true);
-                                                        }}
-                                                        style={{
-                                                            padding: '0.3rem 0.6rem',
-                                                            borderRadius: '6px',
-                                                            border: '1px solid #cbd5e1',
-                                                            background: '#ffffff',
-                                                            color: '#0f172a',
-                                                            fontWeight: '700',
-                                                            fontSize: '0.75rem',
-                                                            cursor: 'pointer',
-                                                            display: 'inline-flex',
-                                                            alignItems: 'center',
-                                                            gap: '4px'
-                                                        }}
-                                                        title="View & print official receipt slip"
-                                                    >
-                                                        <Printer size={13} /> Slip
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )
-                ) : (
-                    /* Income & Expenses Breakdown List */
-                    <div style={{ maxHeight: '360px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem' }} className="custom-scrollbar">
-                        {/* Global Action (If Active) */}
-                        {currentAction && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #dcfce7' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                    <div style={{ background: '#86efac', padding: '0.25rem', borderRadius: '50%' }}>
-                                        <ArrowUpRight size={15} color="#166534" />
-                                    </div>
-                                    <div>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '700', fontSize: '0.85rem', color: '#0f172a' }}>
-                                            {currentAction.name} <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem', background: '#e2e8f0', color: '#475569', borderRadius: '8px', textTransform: 'uppercase', fontWeight: '700' }}>Global Action</span>
-                                        </span>
-                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Active target fee collection</span>
-                                    </div>
+                        /* RIGHT PANEL WHEN NO STUDENT IS SELECTED OR IN INCOME/EXPENSE MODE: Today's Ledger */
+                        <div className="card" style={{
+                            background: '#ffffff',
+                            borderRadius: '14px',
+                            padding: '1.4rem',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    {rightCardTab === 'fee_slips' ? (
+                                        <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <Clock size={16} color="#0078d4" /> Today's Fee Collections Log
+                                        </h3>
+                                    ) : (
+                                        <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <TrendingUp size={16} color="#16a34a" /> Today's Income & Expenses
+                                        </h3>
+                                    )}
                                 </div>
-                                <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '0.9rem' }}>Rs {Number(currentAction.amount || 0).toLocaleString()}</span>
-                            </div>
-                        )}
 
-                        {/* Incomes List */}
-                        {todayFinances.incomes.map(inc => (
-                            <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #dcfce7' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                    <div style={{ background: '#86efac', padding: '0.25rem', borderRadius: '50%' }}>
-                                        <ArrowUpRight size={15} color="#166534" />
-                                    </div>
-                                    <div>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '700', fontSize: '0.85rem', color: '#0f172a' }}>
-                                            {inc.name}
-                                        </span>
-                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                                            {inc.remarks ? `Note: ${inc.remarks}` : 'Income Entry'}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                    {inc.proofUrl && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <div style={{ display: 'flex', background: '#f1f5f9', padding: '2px', borderRadius: '7px', border: '1px solid #e2e8f0' }}>
                                         <button
                                             type="button"
-                                            onClick={() => setProofModal({
-                                                isOpen: true,
-                                                url: inc.proofUrl,
-                                                title: `${inc.name} (Payment Proof)`
-                                            })}
+                                            onClick={() => setRightCardTab('fee_slips')}
                                             style={{
-                                                padding: '0.25rem 0.55rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid #86efac',
-                                                background: '#ffffff',
-                                                color: '#15803d',
+                                                padding: '3px 8px',
+                                                borderRadius: '5px',
+                                                border: 'none',
+                                                background: rightCardTab === 'fee_slips' ? '#ffffff' : 'transparent',
+                                                color: rightCardTab === 'fee_slips' ? '#0078d4' : '#64748b',
                                                 fontWeight: '700',
                                                 fontSize: '0.72rem',
-                                                cursor: 'pointer',
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '4px'
+                                                cursor: 'pointer'
                                             }}
-                                            title="View Payment Proof Slip"
                                         >
-                                            <Eye size={12} /> Proof
+                                            Slips ({recentTransactions.length})
                                         </button>
-                                    )}
-                                    <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '0.9rem' }}>Rs {Number(inc.amount).toLocaleString()}</span>
-                                </div>
-                            </div>
-                        ))}
-
-                        {/* Expenses List */}
-                        {todayFinances.expenses.map(exp => (
-                            <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#ffffff', borderRadius: '10px', border: '1px solid #fee2e2' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                    <div style={{ background: '#fca5a5', padding: '0.25rem', borderRadius: '50%' }}>
-                                        <ArrowDownRight size={15} color="#991b1b" />
-                                    </div>
-                                    <div>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '700', fontSize: '0.85rem', color: '#0f172a' }}>
-                                            {exp.name}
-                                        </span>
-                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                                            {exp.remarks ? `Note: ${exp.remarks}` : 'Expense Entry'}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                    {exp.proofUrl && (
                                         <button
                                             type="button"
-                                            onClick={() => setProofModal({
-                                                isOpen: true,
-                                                url: exp.proofUrl,
-                                                title: `${exp.name} (Expense Voucher / Bill)`
-                                            })}
+                                            onClick={() => setRightCardTab('finances_breakdown')}
                                             style={{
-                                                padding: '0.25rem 0.55rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid #fca5a5',
-                                                background: '#ffffff',
-                                                color: '#b91c1c',
+                                                padding: '3px 8px',
+                                                borderRadius: '5px',
+                                                border: 'none',
+                                                background: rightCardTab === 'finances_breakdown' ? '#ffffff' : 'transparent',
+                                                color: rightCardTab === 'finances_breakdown' ? '#16a34a' : '#64748b',
                                                 fontWeight: '700',
                                                 fontSize: '0.72rem',
-                                                cursor: 'pointer',
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '4px'
+                                                cursor: 'pointer'
                                             }}
-                                            title="View Expense Bill / Receipt"
                                         >
-                                            <Eye size={12} /> Proof
+                                            Ledger ({todayFinances.incomes.length + todayFinances.expenses.length})
                                         </button>
-                                    )}
-                                    <span style={{ fontWeight: '800', color: '#dc2626', fontSize: '0.9rem' }}>Rs {Number(exp.amount).toLocaleString()}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={rightCardTab === 'fee_slips' ? handleDownloadDailyReport : handleDownloadFinancesReport}
+                                        style={{
+                                            padding: '4px 9px',
+                                            borderRadius: '6px',
+                                            background: '#0078d4',
+                                            color: '#ffffff',
+                                            border: 'none',
+                                            fontWeight: '700',
+                                            fontSize: '0.72rem',
+                                            cursor: 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '3px'
+                                        }}
+                                    >
+                                        <Download size={12} /> PDF
+                                    </button>
                                 </div>
                             </div>
-                        ))}
 
-                        {todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && (
-                            <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
-                                <p style={{ margin: 0, fontWeight: '700', color: '#64748b' }}>No incomes or expenses recorded today yet.</p>
-                                <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>All previous days remain safely archived in the Finances tab.</span>
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-        )}
-    </div>
-
-    {/* When a student IS selected, also show Recent Fee Collections Log below the 2 columns */}
-    {selectedStudent && activeDailyMode === 'fee_submission' && (
-                <div className="card" style={{
-                    background: '#ffffff',
-                    borderRadius: '14px',
-                    padding: '1.5rem',
-                    border: '1px solid #e2e8f0',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.85rem', flexWrap: 'wrap', gap: '0.6rem' }}>
-                        <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <Clock size={18} color="#0078d4" />
-                            Today's Recent Fee Collections Log
-                        </h3>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0078d4', background: '#eff6ff', padding: '0.35rem 0.65rem', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
-                                {todayTransactions.length} Slips Recorded Today
-                            </span>
-                            <button
-                                onClick={handleDownloadDailyReport}
-                                disabled={isGeneratingDailyPDF || todayTransactions.length === 0}
-                                style={{
-                                    padding: '0.35rem 0.85rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid #0078d4',
-                                    background: isGeneratingDailyPDF ? '#93c5fd' : '#0078d4',
-                                    color: '#ffffff',
-                                    fontWeight: '700',
-                                    fontSize: '0.78rem',
-                                    cursor: todayTransactions.length === 0 || isGeneratingDailyPDF ? 'not-allowed' : 'pointer',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.4rem',
-                                    boxShadow: '0 2px 5px rgba(0, 120, 212, 0.25)',
-                                    transition: 'all 0.15s ease'
-                                }}
-                                title="Download customized official PDF report of today's collections"
-                            >
-                                {isGeneratingDailyPDF ? (
-                                    <>
-                                        <Loader2 size={13} className="animate-spin" />
-                                        <span>Generating...</span>
-                                    </>
+                            {rightCardTab === 'fee_slips' ? (
+                                loadingTransactions ? (
+                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem' }}>
+                                        Loading today's receipts...
+                                    </div>
+                                ) : todayTransactions.length === 0 ? (
+                                    <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.82rem', background: '#f8fafc', borderRadius: '8px' }}>
+                                        <p style={{ margin: 0, fontWeight: '700', color: '#64748b' }}>No fee collections recorded today yet.</p>
+                                        <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Select a student on the left to collect fee and issue an instant receipt.</span>
+                                    </div>
                                 ) : (
-                                    <>
-                                        <Download size={13} />
-                                        <span>Download Report</span>
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </div>
-
-                    {loadingTransactions ? (
-                        <div style={{ padding: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
-                            Loading transaction history...
-                        </div>
-                    ) : todayTransactions.length === 0 ? (
-                        <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', background: '#f8fafc', borderRadius: '8px' }}>
-                            No fee transactions recorded today yet.
-                        </div>
-                    ) : (
-                        <div style={{ maxHeight: '260px', overflowY: 'auto' }} className="custom-scrollbar">
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                                <thead>
-                                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Slip #</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Student</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Class</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Amount Paid</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Mode</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700' }}>Time</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', color: '#475569', fontWeight: '700', textAlign: 'right' }}>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {todayTransactions.map((tx) => (
-                                        <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#0078d4' }}>{tx.receiptNo}</td>
-                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600', color: '#0f172a' }}>{tx.studentName}</td>
-                                            <td style={{ padding: '0.5rem 0.75rem', color: '#475569' }}>{tx.className}</td>
-                                            <td style={{ padding: '0.6rem 0.75rem', fontWeight: '700', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
-                                            <td style={{ padding: '0.6rem 0.75rem' }}>
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                                    <span style={{ color: '#0f172a', fontWeight: '600' }}>{tx.paymentMode || 'Cash'}</span>
-                                                    {tx.proofUrl && (
-                                                        <button
-                                                            onClick={() => setProofModal({
-                                                                isOpen: true,
-                                                                url: tx.proofUrl,
-                                                                title: `${tx.studentName} (${tx.receiptNo}) - ${tx.paymentMode} Slip`
-                                                            })}
-                                                            style={{
-                                                                padding: '0.2rem 0.5rem',
-                                                                borderRadius: '4px',
-                                                                border: '1px solid #93c5fd',
-                                                                background: '#eff6ff',
-                                                                color: '#0078d4',
-                                                                fontWeight: '700',
-                                                                fontSize: '0.72rem',
-                                                                cursor: 'pointer',
-                                                                display: 'inline-flex',
-                                                                alignItems: 'center',
-                                                                gap: '4px',
-                                                                width: 'fit-content'
-                                                            }}
-                                                            title="View payment receipt / bank slip screenshot"
-                                                        >
-                                                            <ImageIcon size={12} /> View Screenshot
-                                                        </button>
-                                                    )}
+                                    <div style={{ maxHeight: '340px', overflowY: 'auto' }} className="custom-scrollbar">
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                                            <thead>
+                                                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
+                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Slip #</th>
+                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Student</th>
+                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Class</th>
+                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Amount</th>
+                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Mode</th>
+                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700', textAlign: 'right' }}>Slip</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {todayTransactions.map((tx) => (
+                                                    <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                        <td style={{ padding: '0.45rem 0.65rem', fontWeight: '700', color: '#0078d4' }}>{tx.receiptNo}</td>
+                                                        <td style={{ padding: '0.45rem 0.65rem', fontWeight: '600', color: '#0f172a' }}>{tx.studentName}</td>
+                                                        <td style={{ padding: '0.45rem 0.65rem', color: '#475569' }}>{tx.className}</td>
+                                                        <td style={{ padding: '0.45rem 0.65rem', fontWeight: '700', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
+                                                        <td style={{ padding: '0.45rem 0.65rem' }}>
+                                                            <span style={{ color: '#0f172a', fontWeight: '600', fontSize: '0.72rem' }}>{tx.paymentMode || 'Cash'}</span>
+                                                        </td>
+                                                        <td style={{ padding: '0.45rem 0.65rem', textAlign: 'right' }}>
+                                                            <div style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
+                                                                {tx.proofUrl && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setProofModal({
+                                                                            isOpen: true,
+                                                                            url: tx.proofUrl,
+                                                                            title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
+                                                                        })}
+                                                                        style={{
+                                                                            padding: '0.2rem 0.45rem',
+                                                                            borderRadius: '5px',
+                                                                            border: '1px solid #86efac',
+                                                                            background: '#f0fdf4',
+                                                                            color: '#15803d',
+                                                                            fontWeight: '700',
+                                                                            fontSize: '0.7rem',
+                                                                            cursor: 'pointer'
+                                                                        }}
+                                                                        title="View Proof"
+                                                                    >
+                                                                        <Eye size={11} />
+                                                                    </button>
+                                                                )}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setReceiptData(tx);
+                                                                        setReceiptModalOpen(true);
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '0.2rem 0.45rem',
+                                                                        borderRadius: '5px',
+                                                                        border: '1px solid #cbd5e1',
+                                                                        background: '#ffffff',
+                                                                        color: '#0f172a',
+                                                                        fontWeight: '700',
+                                                                        fontSize: '0.7rem',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '3px'
+                                                                    }}
+                                                                    title="Slip"
+                                                                >
+                                                                    <Printer size={11} /> Slip
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )
+                            ) : (
+                                /* Finances Breakdown (Incomes & Expenses) */
+                                <div style={{ maxHeight: '340px', overflowY: 'auto' }} className="custom-scrollbar">
+                                    {todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 ? (
+                                        <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.82rem' }}>
+                                            No additional income or expense vouchers recorded today.
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                            {todayFinances.incomes.map((inc) => (
+                                                <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0', fontSize: '0.8rem' }}>
+                                                    <div>
+                                                        <div style={{ fontWeight: '700', color: '#166534' }}>{inc.category || inc.title || 'Income'}</div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{inc.remarks || inc.note || 'Direct Revenue'}</div>
+                                                    </div>
+                                                    <span style={{ fontWeight: '800', color: '#16a34a' }}>+Rs {Number(inc.amount || 0).toLocaleString()}</span>
                                                 </div>
-                                            </td>
-                                            <td style={{ padding: '0.6rem 0.75rem', color: '#64748b' }}>{tx.timeString || tx.dateString}</td>
-                                            <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
-                                                <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
-                                                    {tx.proofUrl && (
-                                                        <button
-                                                            onClick={() => setProofModal({
-                                                                isOpen: true,
-                                                                url: tx.proofUrl,
-                                                                title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
-                                                            })}
-                                                            style={{
-                                                                padding: '0.3rem 0.6rem',
-                                                                borderRadius: '6px',
-                                                                border: '1px solid #86efac',
-                                                                background: '#f0fdf4',
-                                                                color: '#15803d',
-                                                                fontWeight: '700',
-                                                                fontSize: '0.75rem',
-                                                                cursor: 'pointer',
-                                                                display: 'inline-flex',
-                                                                alignItems: 'center',
-                                                                gap: '4px'
-                                                            }}
-                                                            title="View attached bank deposit slip / screenshot"
-                                                        >
-                                                            <Eye size={13} /> Proof
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={() => {
-                                                            setReceiptData(tx);
-                                                            setReceiptModalOpen(true);
-                                                        }}
-                                                        style={{
-                                                            padding: '0.3rem 0.6rem',
-                                                            borderRadius: '6px',
-                                                            border: '1px solid #cbd5e1',
-                                                            background: '#ffffff',
-                                                            color: '#0f172a',
-                                                            fontWeight: '700',
-                                                            fontSize: '0.75rem',
-                                                            cursor: 'pointer',
-                                                            display: 'inline-flex',
-                                                            alignItems: 'center',
-                                                            gap: '4px'
-                                                        }}
-                                                        title="View & print official receipt slip"
-                                                    >
-                                                        <Printer size={13} /> Slip
-                                                    </button>
+                                            ))}
+                                            {todayFinances.expenses.map((exp) => (
+                                                <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', fontSize: '0.8rem' }}>
+                                                    <div>
+                                                        <div style={{ fontWeight: '700', color: '#991b1b' }}>{exp.category || exp.title || 'Expense'}</div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{exp.remarks || exp.note || 'School Outflow'}</div>
+                                                    </div>
+                                                    <span style={{ fontWeight: '800', color: '#dc2626' }}>-Rs {Number(exp.amount || 0).toLocaleString()}</span>
                                                 </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
-            )}
+            </div>
 
             {/* Proof Lightbox Modal */}
             <PaymentProofModal

@@ -713,38 +713,47 @@ const Store = () => {
                         });
 
                         // Student Fee Ledger append
-                        if (saleData.paymentMode === 'fee_ledger' && saleData.studentInfo?.studentId && saleData.studentInfo?.classId) {
-                            const studentDocRef = doc(db, 'schools', schoolId, 'classes', saleData.studentInfo.classId, 'students', saleData.studentInfo.studentId);
-                            const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', saleData.studentInfo.studentId);
-
+                        if (saleData.paymentMode === 'fee_ledger' && saleData.studentInfo?.studentId) {
+                            const targetClassId = saleData.studentInfo.classId;
+                            const itemsSummary = (saleData.items || []).map(c => `${c.name}${c.size ? ` [${c.size}]` : ''}${c.quantity > 1 ? ` x${c.quantity}` : ''}`).join(', ');
                             const chargeRecord = {
                                 id: `store_${saleData.receiptNo}`,
-                                name: `Store/Uniform (${saleData.receiptNo})`,
+                                name: `Store: ${itemsSummary || 'Uniform / Books Store Kit'}`,
                                 amount: Number(saleData.finalAmount) || 0,
                                 status: 'unpaid',
                                 date: saleData.timestamp || new Date().toISOString(),
                                 type: 'store_inventory',
                                 receiptNo: saleData.receiptNo,
-                                itemsCount: (saleData.items || []).reduce((a, b) => a + (Number(b.quantity) || 1), 0)
+                                itemsCount: (saleData.items || []).reduce((a, b) => a + (Number(b.quantity) || 1), 0),
+                                items: (saleData.items || []).map(c => ({
+                                    id: c.id,
+                                    name: c.name,
+                                    price: c.price,
+                                    quantity: c.quantity,
+                                    size: c.size || ''
+                                }))
                             };
 
-                            batch.update(studentDocRef, {
-                                remaining: increment(saleData.finalAmount),
-                                storeCharges: arrayUnion(chargeRecord),
-                                individualActions: arrayUnion(chargeRecord),
-                                lastStorePurchase: {
-                                    receiptNo: saleData.receiptNo,
-                                    amount: saleData.finalAmount,
-                                    date: saleData.timestamp || new Date().toISOString()
-                                }
-                            });
-
-                            try {
-                                batch.update(masterStudentDocRef, {
+                            if (targetClassId) {
+                                const studentDocRef = doc(db, 'schools', schoolId, 'classes', targetClassId, 'students', saleData.studentInfo.studentId);
+                                batch.set(studentDocRef, {
                                     remaining: increment(saleData.finalAmount),
-                                    individualActions: arrayUnion(chargeRecord)
-                                });
-                            } catch (e) {}
+                                    storeCharges: arrayUnion(chargeRecord),
+                                    individualActions: arrayUnion(chargeRecord),
+                                    lastStorePurchase: {
+                                        receiptNo: saleData.receiptNo,
+                                        amount: saleData.finalAmount,
+                                        itemsSummary,
+                                        date: saleData.timestamp || new Date().toISOString()
+                                    }
+                                }, { merge: true });
+                            }
+
+                            const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', saleData.studentInfo.studentId);
+                            batch.set(masterStudentDocRef, {
+                                remaining: increment(saleData.finalAmount),
+                                individualActions: arrayUnion(chargeRecord)
+                            }, { merge: true });
                         }
 
                         await batch.commit();
@@ -1056,37 +1065,47 @@ const Store = () => {
                     });
 
                     if (paymentMode === 'fee_ledger' && selectedStudent) {
-                        const studentDocRef = doc(db, 'schools', schoolId, 'classes', selectedClassId, 'students', selectedStudent.id);
-                        const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', selectedStudent.id);
+                        const targetClassId = selectedClassId || selectedStudent.classId || selectedStudent.class;
+                        const itemsSummary = cart.map(c => `${c.name}${c.size ? ` [${c.size}]` : ''}${c.quantity > 1 ? ` x${c.quantity}` : ''}`).join(', ');
 
                         const chargeRecord = {
                             id: `store_${receiptNo}`,
-                            name: `Store/Uniform (${receiptNo})`,
+                            name: `Store: ${itemsSummary || 'Uniform / Books Store Kit'}`,
                             amount: Number(cartTotal) || 0,
                             status: 'unpaid',
                             date: now.toISOString(),
                             type: 'store_inventory',
                             receiptNo,
-                            itemsCount: cart.reduce((a, b) => a + b.quantity, 0)
+                            itemsCount: cart.reduce((a, b) => a + (Number(b.quantity) || 1), 0),
+                            items: cart.map(c => ({
+                                id: c.id,
+                                name: c.name,
+                                price: c.price,
+                                quantity: c.quantity,
+                                size: c.size || ''
+                            }))
                         };
 
-                        batch.update(studentDocRef, {
-                            remaining: increment(cartTotal),
-                            storeCharges: arrayUnion(chargeRecord),
-                            individualActions: arrayUnion(chargeRecord),
-                            lastStorePurchase: {
-                                receiptNo,
-                                amount: cartTotal,
-                                date: now.toISOString()
-                            }
-                        });
-
-                        try {
-                            batch.update(masterStudentDocRef, {
+                        if (targetClassId) {
+                            const studentDocRef = doc(db, 'schools', schoolId, 'classes', targetClassId, 'students', selectedStudent.id);
+                            batch.set(studentDocRef, {
                                 remaining: increment(cartTotal),
-                                individualActions: arrayUnion(chargeRecord)
-                            });
-                        } catch (e) {}
+                                storeCharges: arrayUnion(chargeRecord),
+                                individualActions: arrayUnion(chargeRecord),
+                                lastStorePurchase: {
+                                    receiptNo,
+                                    amount: cartTotal,
+                                    itemsSummary,
+                                    date: now.toISOString()
+                                }
+                            }, { merge: true });
+                        }
+
+                        const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', selectedStudent.id);
+                        batch.set(masterStudentDocRef, {
+                            remaining: increment(cartTotal),
+                            individualActions: arrayUnion(chargeRecord)
+                        }, { merge: true });
                     }
 
                     await batch.commit();
