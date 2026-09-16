@@ -91,6 +91,13 @@ export const PERMISSIONS_LIST = [
         category: 'Academic'
     },
     {
+        id: 'canManageSLC',
+        label: 'School Leaving (SLC)',
+        description: 'Issue official School Leaving Certificates and access 50-year digital archive vault',
+        path: '/school-leaving',
+        category: 'Academic'
+    },
+    {
         id: 'canManageSurveillance',
         label: 'Live Surveillance',
         description: 'View live camera surveillance and CCTV streams',
