@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
     FileCheck, Sparkles, Printer, RefreshCw, ChevronRight, 
     BookOpen, Layers, CheckSquare, Settings2, Sliders, 
     Trash2, Edit3, Plus, ArrowLeftRight, Check, Eye, EyeOff, 
     HelpCircle, Award, FileText, School, Download, AlertTriangle,
     Clock, Calendar, CheckCircle2, Copy, Shield, Bookmark, LayoutGrid, ListFilter,
-    Loader2, AlertCircle
+    Loader2, AlertCircle, ChevronDown, MoveUp, MoveDown, Type, AlignLeft,
+    FileSpreadsheet, Sparkle, X, Moon, Sun, ZoomIn, ZoomOut, File
 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
@@ -22,12 +23,11 @@ const COMPREHENSIVE_SUBJECTS = [
 ];
 
 const EXAM_PRESETS = [
-    { id: 'primary_worksheet', name: 'Primary School Worksheet (25 Marks)', badge: 'Class 1-5', totalMarks: 25, timeAllowed: '45 Minutes', mcqCount: 5, mcqMarksEach: 1, blankCount: 5, blankMarksEach: 1, tfCount: 5, tfMarksEach: 1, shortCount: 5, shortAttempt: 5, shortMarksEach: 2, longCount: 0, longAttempt: 0, longMarksEach: 0, showAnswerLines: true },
-    { id: 'primary_comprehensive', name: 'Primary Term Exam (50 Marks)', badge: 'Class 1-5', totalMarks: 50, timeAllowed: '1 Hour 30 Mins', mcqCount: 10, mcqMarksEach: 1, blankCount: 10, blankMarksEach: 1, tfCount: 5, tfMarksEach: 1, shortCount: 8, shortAttempt: 8, shortMarksEach: 2, longCount: 1, longAttempt: 1, longMarksEach: 5, showAnswerLines: true },
-    { id: 'monthly_test', name: 'Monthly Class Test (25 Marks)', badge: 'Class 6-10', totalMarks: 25, timeAllowed: '45 Minutes', mcqCount: 5, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 6, shortAttempt: 4, shortMarksEach: 2, longCount: 2, longAttempt: 1, longMarksEach: 6, showAnswerLines: false },
-    { id: 'mid_term', name: 'Mid Term Exam (50 Marks)', badge: 'Standard 50M', totalMarks: 50, timeAllowed: '1 Hour 30 Mins', mcqCount: 10, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 8, shortAttempt: 6, shortMarksEach: 3, longCount: 3, longAttempt: 2, longMarksEach: 6, showAnswerLines: false },
-    { id: 'final_board', name: 'Annual / Board Pattern (75 Marks)', badge: 'Board 75M', totalMarks: 75, timeAllowed: '3 Hours', mcqCount: 15, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 15, shortAttempt: 10, shortMarksEach: 2, longCount: 5, longAttempt: 3, longMarksEach: 8, showAnswerLines: false },
-    { id: 'grand_test', name: 'Grand Test / Pre-Board (100 Marks)', badge: 'Pre-Board 100M', totalMarks: 100, timeAllowed: '3 Hours', mcqCount: 20, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 18, shortAttempt: 12, shortMarksEach: 2, longCount: 6, longAttempt: 4, longMarksEach: 8, showAnswerLines: false }
+    { id: 'primary_worksheet', name: 'Primary School Worksheet (25 Marks)', badge: 'Class 1-5', totalMarks: 25, timeAllowed: '45 Minutes', mcqCount: 5, mcqMarksEach: 1, blankCount: 5, blankMarksEach: 1, tfCount: 5, tfMarksEach: 1, shortCount: 5, shortAttempt: 5, shortMarksEach: 2, longCount: 0, longAttempt: 0, longMarksEach: 0, showAnswerLines: true, defaultPages: 1 },
+    { id: 'monthly_test', name: 'Monthly Class Test (25 Marks)', badge: 'Class 6-10', totalMarks: 25, timeAllowed: '45 Minutes', mcqCount: 5, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 6, shortAttempt: 4, shortMarksEach: 2, longCount: 2, longAttempt: 1, longMarksEach: 6, showAnswerLines: false, defaultPages: 2 },
+    { id: 'mid_term', name: 'Mid Term Exam (50 Marks)', badge: 'Standard 50M', totalMarks: 50, timeAllowed: '1 Hour 30 Mins', mcqCount: 10, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 8, shortAttempt: 6, shortMarksEach: 3, longCount: 3, longAttempt: 2, longMarksEach: 6, showAnswerLines: false, defaultPages: 2 },
+    { id: 'final_board', name: 'Annual / Board Pattern (75 Marks)', badge: 'Board 75M', totalMarks: 75, timeAllowed: '3 Hours', mcqCount: 15, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 15, shortAttempt: 10, shortMarksEach: 2, longCount: 5, longAttempt: 3, longMarksEach: 8, showAnswerLines: false, defaultPages: 2 },
+    { id: 'grand_test', name: 'Grand Test / Pre-Board (100 Marks)', badge: 'Pre-Board 100M', totalMarks: 100, timeAllowed: '3 Hours', mcqCount: 20, mcqMarksEach: 1, blankCount: 0, blankMarksEach: 1, tfCount: 0, tfMarksEach: 1, shortCount: 18, shortAttempt: 12, shortMarksEach: 2, longCount: 6, longAttempt: 4, longMarksEach: 8, showAnswerLines: false, defaultPages: 3 }
 ];
 
 const PaperGenerator = () => {
@@ -52,10 +52,15 @@ const PaperGenerator = () => {
     const [loadingChapters, setLoadingChapters] = useState(false);
     const [selectedChapterIds, setSelectedChapterIds] = useState([]);
 
-    // --- STEP 1: PAPER SETTINGS STATE ---
-    const [activeSettingsTab, setActiveSettingsTab] = useState('syllabus'); // 'exam_info' | 'syllabus' | 'blueprint' | 'typesetting'
-    
-    // 1. Exam Header & Info
+    // UI Tab for Left Studio Sidebar
+    const [leftActiveTab, setLeftActiveTab] = useState('add_questions'); // 'add_questions' | 'blueprint' | 'chapters' | 'settings'
+
+    // Multi-Page Canvas Controls
+    const [pageCountMode, setPageCountMode] = useState(2); // 1 | 2 | 3 pages
+    const [activePageTab, setActivePageTab] = useState('all'); // 'all' | 1 | 2 | 3
+    const [canvasZoom, setCanvasZoom] = useState(100); // 75 | 90 | 100
+
+    // Exam Header & Metadata
     const [examTitle, setExamTitle] = useState('First Term Examination 2026');
     const [academicSession, setAcademicSession] = useState('2025-2026');
     const [campusName, setCampusName] = useState('Main Campus');
@@ -66,113 +71,50 @@ const PaperGenerator = () => {
     const [showWatermark, setShowWatermark] = useState(true);
     const [showSchoolLogo, setShowSchoolLogo] = useState(true);
 
-    // 2. Exam Blueprint & Preset
+    // Exam Blueprint & Preset
     const [selectedPreset, setSelectedPreset] = useState('mid_term');
-    const [mcqCount, setMcqCount] = useState(10);
     const [mcqMarksEach, setMcqMarksEach] = useState(1);
-
-    // Fill in the Blanks & True/False (Primary / Activity Style)
-    const [blankCount, setBlankCount] = useState(0);
     const [blankMarksEach, setBlankMarksEach] = useState(1);
-
-    const [tfCount, setTfCount] = useState(0);
     const [tfMarksEach, setTfMarksEach] = useState(1);
-
-    const [shortCount, setShortCount] = useState(8);
     const [shortAttempt, setShortAttempt] = useState(6);
     const [shortMarksEach, setShortMarksEach] = useState(3);
     const [showAnswerLines, setShowAnswerLines] = useState(false);
     const [answerLineCount, setAnswerLineCount] = useState(2);
-
-    const [longCount, setLongCount] = useState(3);
     const [longAttempt, setLongAttempt] = useState(2);
     const [longMarksEach, setLongMarksEach] = useState(6);
 
-    // 3. Typesetting & Language
-    const [languageMode, setLanguageMode] = useState('bilingual'); // 'english' | 'urdu' | 'bilingual'
+    // Typesetting & Layout
+    const [languageMode, setLanguageMode] = useState('bilingual');
     const [paperStyle, setPaperStyle] = useState('board_standard');
     const [fontSize, setFontSize] = useState('normal'); // 'compact' | 'normal' | 'large'
     const [mcqLayout, setMcqLayout] = useState('4_col'); // '2_col' | '4_col'
-    const [urduOptionFormat, setUrduOptionFormat] = useState('alif_bay'); // 'alif_bay' | 'abcd'
-    const [showAnswerKey, setShowAnswerKey] = useState(true);
+    const [urduOptionFormat, setUrduOptionFormat] = useState('alif_bay');
 
-    // Dynamic question pool aggregated strictly from selected chapters
-    const selectedChapterObjs = firestoreChapters.filter(c => selectedChapterIds.includes(c.id));
-    const allSelectedQuestions = selectedChapterObjs.flatMap(c => (c.questions || []));
+    // Live Paper State (Always Active on Canvas)
+    const [paperQuestions, setPaperQuestions] = useState({
+        mcqs: [],
+        blanks: [],
+        true_false: [],
+        shorts: [],
+        longs: []
+    });
 
-    const availableCounts = {
-        mcq: allSelectedQuestions.filter(q => q.type === 'mcq').length,
-        blank: allSelectedQuestions.filter(q => q.type === 'blank').length,
-        true_false: allSelectedQuestions.filter(q => q.type === 'true_false').length,
-        short: allSelectedQuestions.filter(q => q.type === 'short' || (!q.type && q.type !== 'mcq' && q.type !== 'long' && q.type !== 'blank' && q.type !== 'true_false')).length,
-        long: allSelectedQuestions.filter(q => q.type === 'long').length,
-        total: allSelectedQuestions.length
-    };
+    // Unassigned pool from syllabus for swapping & adding
+    const [availablePool, setAvailablePool] = useState({
+        mcqs: [],
+        blanks: [],
+        true_false: [],
+        shorts: [],
+        longs: []
+    });
 
-    // Auto-adjust default counts when availableCounts changes to prevent out-of-bound configurations
-    useEffect(() => {
-        if (availableCounts.mcq > 0) {
-            setMcqCount(prev => prev === 0 ? Math.min(10, availableCounts.mcq) : Math.min(prev, availableCounts.mcq));
-        } else {
-            setMcqCount(0);
-        }
-
-        if (availableCounts.blank > 0) {
-            setBlankCount(prev => prev === 0 ? Math.min(5, availableCounts.blank) : Math.min(prev, availableCounts.blank));
-        } else {
-            setBlankCount(0);
-        }
-
-        if (availableCounts.true_false > 0) {
-            setTfCount(prev => prev === 0 ? Math.min(5, availableCounts.true_false) : Math.min(prev, availableCounts.true_false));
-        } else {
-            setTfCount(0);
-        }
-
-        if (availableCounts.short > 0) {
-            setShortCount(prev => {
-                const target = prev === 0 ? Math.min(8, availableCounts.short) : Math.min(prev, availableCounts.short);
-                return target;
-            });
-            setShortAttempt(prev => {
-                const maxShort = Math.min(shortCount || 8, availableCounts.short);
-                return prev === 0 ? Math.min(6, maxShort) : Math.min(prev, maxShort);
-            });
-        } else {
-            setShortCount(0);
-            setShortAttempt(0);
-        }
-
-        if (availableCounts.long > 0) {
-            setLongCount(prev => {
-                const target = prev === 0 ? Math.min(3, availableCounts.long) : Math.min(prev, availableCounts.long);
-                return target;
-            });
-            setLongAttempt(prev => {
-                const maxLong = Math.min(longCount || 3, availableCounts.long);
-                return prev === 0 ? Math.min(2, maxLong) : Math.min(prev, maxLong);
-            });
-        } else {
-            setLongCount(0);
-            setLongAttempt(0);
-        }
-    }, [selectedChapterIds, firestoreChapters]);
-
-    // Calculated Blueprint Metrics
-    const totalMarks = (mcqCount * mcqMarksEach) + 
-                       (blankCount * blankMarksEach) + 
-                       (tfCount * tfMarksEach) + 
-                       (shortAttempt * shortMarksEach) + 
-                       (longAttempt * longMarksEach);
-
-    // --- STEP 2: GENERATED PAPER STATE ---
     const [isGenerating, setIsGenerating] = useState(false);
-    const [generatedPaper, setGeneratedPaper] = useState(null);
-    const [availablePool, setAvailablePool] = useState({ mcqs: [], blanks: [], true_false: [], shorts: [], longs: [] });
-    const [activeView, setActiveView] = useState('config'); // 'config' | 'preview'
     const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
-    const printRef = useRef(null);
+    // Editing modal state for editing any question
+    const [editingQuestion, setEditingQuestion] = useState(null); // { type, index, data }
+
+    const pagesContainerRef = useRef(null);
 
     // Helper: Extract Chapter Number
     const extractChapterNumber = (title) => {
@@ -181,25 +123,70 @@ const PaperGenerator = () => {
         return match ? parseInt(match[1] || match[0], 10) : 999;
     };
 
-    // Helper: Accurately detect if text is predominantly Urdu or English (prevents BiDi scramble for inline Arabic Durood)
+    // Helper: Accurately detect if text is Urdu/Arabic
     const isUrduText = (text, subject = '') => {
         if (!text) return false;
         const isUrduSubject = /^(urdu|islamiat|islamiyat|arabic|sindhi|pashto|tarjuma)/i.test((subject || '').trim());
-        
         const urduChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
         const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
 
-        // If text has significantly more Urdu characters than English/Latin characters
         if (urduChars > latinChars && urduChars > 3) return true;
-        
-        // If text has NO English characters and has Urdu/Arabic
         if (latinChars === 0 && urduChars > 0) return true;
-        
-        // If subject is specifically Urdu/Islamiat and has very few Latin characters
         if (isUrduSubject && latinChars < 5 && urduChars > 0) return true;
-
         return false;
     };
+
+    // Dynamic pool from currently selected chapters in Firestore
+    const selectedChapterObjs = useMemo(() => {
+        return firestoreChapters.filter(c => selectedChapterIds.includes(c.id));
+    }, [firestoreChapters, selectedChapterIds]);
+
+    const allSyllabusQuestions = useMemo(() => {
+        return selectedChapterObjs.flatMap(c => (c.questions || []).map(q => ({
+            ...q,
+            chapterId: c.id,
+            chapterTitle: c.title
+        })));
+    }, [selectedChapterObjs]);
+
+    const syllabusCounts = useMemo(() => {
+        return {
+            mcq: allSyllabusQuestions.filter(q => q.type === 'mcq').length,
+            blank: allSyllabusQuestions.filter(q => q.type === 'blank').length,
+            true_false: allSyllabusQuestions.filter(q => q.type === 'true_false').length,
+            short: allSyllabusQuestions.filter(q => q.type === 'short' || (!q.type && q.type !== 'mcq' && q.type !== 'long' && q.type !== 'blank' && q.type !== 'true_false')).length,
+            long: allSyllabusQuestions.filter(q => q.type === 'long').length,
+            total: allSyllabusQuestions.length
+        };
+    }, [allSyllabusQuestions]);
+
+    // Live Total Marks calculation based on actual questions currently placed on canvas
+    const actualShortAttempt = Math.min(shortAttempt, paperQuestions.shorts.length || 0);
+    const actualLongAttempt = Math.min(longAttempt, paperQuestions.longs.length || 0);
+
+    const totalMarks = useMemo(() => {
+        const mcqTotal = paperQuestions.mcqs.length * mcqMarksEach;
+        const blankTotal = paperQuestions.blanks.length * blankMarksEach;
+        const tfTotal = paperQuestions.true_false.length * tfMarksEach;
+        const shortTotal = (actualShortAttempt > 0 ? actualShortAttempt : paperQuestions.shorts.length) * shortMarksEach;
+        const longTotal = (actualLongAttempt > 0 ? actualLongAttempt : paperQuestions.longs.length) * longMarksEach;
+        return mcqTotal + blankTotal + tfTotal + shortTotal + longTotal;
+    }, [paperQuestions, mcqMarksEach, blankMarksEach, tfMarksEach, shortMarksEach, longMarksEach, actualShortAttempt, actualLongAttempt]);
+
+    // Ensure full-bleed zero padding on .main-content while on Paper Generator
+    useEffect(() => {
+        const mainEl = document.querySelector('.main-content');
+        if (mainEl) {
+            const prevPadding = mainEl.style.padding;
+            const prevBg = mainEl.style.backgroundColor;
+            mainEl.style.padding = '0px';
+            mainEl.style.backgroundColor = '#0b0f19';
+            return () => {
+                mainEl.style.padding = prevPadding;
+                mainEl.style.backgroundColor = prevBg;
+            };
+        }
+    }, []);
 
     // 1. Resolve School Details & Classes from Firestore
     useEffect(() => {
@@ -237,7 +224,7 @@ const PaperGenerator = () => {
                         }));
                     }
 
-                    // Fetch School's Classes
+                    // Fetch School Classes
                     const classesSnap = await getDocsFast(collection(db, 'schools', sId, 'classes'));
                     const list = classesSnap.docs.map(d => ({
                         id: d.id,
@@ -260,7 +247,7 @@ const PaperGenerator = () => {
         resolveSchool();
     }, []);
 
-    // 2. Update Subjects when Class changes & auto-recommend preset
+    // 2. Update Subjects when Class changes
     useEffect(() => {
         if (!selectedClassId) {
             setAvailableSubjects([]);
@@ -280,7 +267,6 @@ const PaperGenerator = () => {
                 setSelectedSubject('');
             }
 
-            // Smart preset recommendation for Primary (Class 1-5) vs Secondary (Class 6-10)
             const classNameLower = (currentClass.name || '').toLowerCase();
             const isPrimary = /\b(1|2|3|4|5|nursery|kg|prep|primary|playgroup)\b/.test(classNameLower);
             if (isPrimary && (selectedPreset === 'mid_term' || selectedPreset === 'final_board')) {
@@ -289,7 +275,7 @@ const PaperGenerator = () => {
         }
     }, [selectedClassId, classes]);
 
-    // 3. Fetch Real Chapters from Firestore (from Upload Syllabus)
+    // 3. Fetch Real Chapters from Firestore
     useEffect(() => {
         const fetchSyllabusChapters = async () => {
             if (!schoolId || !selectedClassId || !selectedSubject) {
@@ -310,8 +296,6 @@ const PaperGenerator = () => {
 
                 list.sort((a, b) => a.num - b.num);
                 setFirestoreChapters(list);
-
-                // Auto-select all uploaded chapters by default
                 setSelectedChapterIds(list.map(c => c.id));
             } catch (err) {
                 console.error("Error fetching chapters from Firestore:", err);
@@ -324,195 +308,160 @@ const PaperGenerator = () => {
         fetchSyllabusChapters();
     }, [schoolId, selectedClassId, selectedSubject]);
 
-    // Quick Syllabus Selection Helpers
-    const handleSelectAllChapters = () => {
-        setSelectedChapterIds(firestoreChapters.map(c => c.id));
-    };
-
-    const handleSelectHalfBook = (half) => {
-        const total = firestoreChapters.length;
-        const mid = Math.ceil(total / 2);
-        if (half === 1) {
-            setSelectedChapterIds(firestoreChapters.slice(0, mid).map(c => c.id));
-        } else {
-            setSelectedChapterIds(firestoreChapters.slice(mid).map(c => c.id));
-        }
-    };
-
-    const handleToggleChapter = (chId) => {
-        setSelectedChapterIds(prev => {
-            if (prev.includes(chId)) {
-                if (prev.length === 1) return prev; // Keep at least one
-                return prev.filter(id => id !== chId);
-            } else {
-                return [...prev, chId];
-            }
-        });
-    };
-
-    // Apply Preset (Clamped to available questions in syllabus)
+    // Apply Preset parameters
     const handleApplyPreset = (presetId) => {
         setSelectedPreset(presetId);
         const preset = EXAM_PRESETS.find(p => p.id === presetId);
         if (preset) {
             setTimeAllowed(preset.timeAllowed);
-            setMcqCount(Math.min(preset.mcqCount, availableCounts.mcq));
             setMcqMarksEach(preset.mcqMarksEach);
-            setBlankCount(Math.min(preset.blankCount || 0, availableCounts.blank));
             setBlankMarksEach(preset.blankMarksEach || 1);
-            setTfCount(Math.min(preset.tfCount || 0, availableCounts.true_false));
             setTfMarksEach(preset.tfMarksEach || 1);
-            const targetShort = Math.min(preset.shortCount, availableCounts.short);
-            setShortCount(targetShort);
-            setShortAttempt(Math.min(preset.shortAttempt, targetShort));
+            setShortAttempt(preset.shortAttempt);
             setShortMarksEach(preset.shortMarksEach);
-            const targetLong = Math.min(preset.longCount, availableCounts.long);
-            setLongCount(targetLong);
-            setLongAttempt(Math.min(preset.longAttempt, targetLong));
+            setLongAttempt(preset.longAttempt);
             setLongMarksEach(preset.longMarksEach);
+            if (preset.defaultPages) {
+                setPageCountMode(preset.defaultPages);
+            }
             if (typeof preset.showAnswerLines === 'boolean') {
                 setShowAnswerLines(preset.showAnswerLines);
             }
         }
     };
 
-    // 4. Generate Paper from REAL Scanned Questions
-    const handleGeneratePaper = () => {
-        if (firestoreChapters.length === 0) {
-            alert(`No chapters found for ${selectedSubject} in ${selectedClassName}. Please upload syllabus in "Settings -> Upload Syllabus" first.`);
+    // Auto-generate or populate paper whenever chapters/questions are loaded
+    const buildPaperFromSyllabus = (customCounts = null) => {
+        if (allSyllabusQuestions.length === 0) {
             return;
         }
 
-        if (selectedChapterIds.length === 0) {
-            alert('Please select at least one chapter to generate the exam paper.');
-            return;
+        const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
+
+        let mcqPool = shuffle(allSyllabusQuestions.filter(q => q.type === 'mcq'));
+        let blankPool = shuffle(allSyllabusQuestions.filter(q => q.type === 'blank'));
+        let tfPool = shuffle(allSyllabusQuestions.filter(q => q.type === 'true_false'));
+        let shortPool = shuffle(allSyllabusQuestions.filter(q => q.type === 'short' || (!q.type && q.type !== 'mcq' && q.type !== 'long' && q.type !== 'blank' && q.type !== 'true_false')));
+        let longPool = shuffle(allSyllabusQuestions.filter(q => q.type === 'long'));
+
+        const preset = EXAM_PRESETS.find(p => p.id === selectedPreset) || EXAM_PRESETS[2];
+
+        const targetMcqs = customCounts?.mcqCount ?? Math.min(preset.mcqCount, mcqPool.length);
+        const targetBlanks = customCounts?.blankCount ?? Math.min(preset.blankCount || 0, blankPool.length);
+        const targetTfs = customCounts?.tfCount ?? Math.min(preset.tfCount || 0, tfPool.length);
+        const targetShorts = customCounts?.shortCount ?? Math.min(preset.shortCount, shortPool.length);
+        const targetLongs = customCounts?.longCount ?? Math.min(preset.longCount, longPool.length);
+
+        setPaperQuestions({
+            mcqs: mcqPool.slice(0, targetMcqs),
+            blanks: blankPool.slice(0, targetBlanks),
+            true_false: tfPool.slice(0, targetTfs),
+            shorts: shortPool.slice(0, targetShorts),
+            longs: longPool.slice(0, targetLongs)
+        });
+
+        setAvailablePool({
+            mcqs: mcqPool.slice(targetMcqs),
+            blanks: blankPool.slice(targetBlanks),
+            true_false: tfPool.slice(targetTfs),
+            shorts: shortPool.slice(targetShorts),
+            longs: longPool.slice(targetLongs)
+        });
+    };
+
+    // Trigger initial population when chapters change
+    useEffect(() => {
+        if (allSyllabusQuestions.length > 0) {
+            buildPaperFromSyllabus();
         }
+    }, [allSyllabusQuestions.length]);
 
-        setIsGenerating(true);
-        try {
-            const selectedChapterObjs = firestoreChapters.filter(c => selectedChapterIds.includes(c.id));
-            
-            // Gather all real questions from the selected chapters
-            let allQuestions = [];
-            selectedChapterObjs.forEach(ch => {
-                const qs = ch.questions || [];
-                qs.forEach(q => {
-                    allQuestions.push({
-                        ...q,
-                        chapterId: ch.id,
-                        chapterTitle: ch.title
-                    });
-                });
-            });
+    // Quick Add Question to Canvas
+    const handleAddQuestionToSection = (type) => {
+        let poolKey = type === 'mcq' ? 'mcqs' : type === 'blank' ? 'blanks' : type === 'true_false' ? 'true_false' : type === 'short' ? 'shorts' : 'longs';
+        const currentPool = [...(availablePool[poolKey] || [])];
+        let newQ = null;
 
-            if (allQuestions.length === 0) {
-                alert(`No exercise questions have been saved yet for the selected chapters of ${selectedSubject}.\n\nPlease go to "Settings -> Upload Syllabus", select the chapter, and scan exercise photos or upload PDF to save questions.`);
-                setIsGenerating(false);
-                return;
+        if (currentPool.length > 0) {
+            newQ = currentPool.shift();
+            setAvailablePool(prev => ({
+                ...prev,
+                [poolKey]: currentPool
+            }));
+        } else {
+            const placeholderNumber = (paperQuestions[poolKey]?.length || 0) + 1;
+            if (type === 'mcq') {
+                newQ = {
+                    id: 'custom_' + Date.now(),
+                    type: 'mcq',
+                    question: `Sample MCQ Question ${placeholderNumber} (Click edit icon to customize)`,
+                    options: ['Option A', 'Option B', 'Option C', 'Option D'],
+                    correctAnswer: 'Option A'
+                };
+            } else if (type === 'blank') {
+                newQ = {
+                    id: 'custom_' + Date.now(),
+                    type: 'blank',
+                    question: `The capital of Pakistan is ______________________.`,
+                    correctAnswer: 'Islamabad'
+                };
+            } else if (type === 'true_false') {
+                newQ = {
+                    id: 'custom_' + Date.now(),
+                    type: 'true_false',
+                    question: `Sound travels faster in air than in water. (T/F)`,
+                    correctAnswer: 'False'
+                };
+            } else if (type === 'short') {
+                newQ = {
+                    id: 'custom_' + Date.now(),
+                    type: 'short',
+                    question: `Define and state the formula for Question ${placeholderNumber}?`,
+                    correctAnswer: ''
+                };
+            } else {
+                newQ = {
+                    id: 'custom_' + Date.now(),
+                    type: 'long',
+                    question: `Explain in detail with diagram: Topic ${placeholderNumber}.`,
+                    correctAnswer: ''
+                };
             }
+        }
 
-            // Segregate by Type
-            let mcqPool = allQuestions.filter(q => q.type === 'mcq');
-            let blankPool = allQuestions.filter(q => q.type === 'blank');
-            let tfPool = allQuestions.filter(q => q.type === 'true_false');
-            let shortPool = allQuestions.filter(q => q.type === 'short' || (!q.type && q.type !== 'mcq' && q.type !== 'long'));
-            let longPool = allQuestions.filter(q => q.type === 'long');
+        setPaperQuestions(prev => ({
+            ...prev,
+            [poolKey]: [...prev[poolKey], newQ]
+        }));
+    };
 
-            // Fisher-Yates Shuffle
-            const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
+    // Remove single question from paper
+    const handleRemoveQuestion = (type, index) => {
+        let poolKey = type === 'mcq' ? 'mcqs' : type === 'blank' ? 'blanks' : type === 'true_false' ? 'true_false' : type === 'short' ? 'shorts' : 'longs';
+        const removed = paperQuestions[poolKey][index];
+        const updatedList = paperQuestions[poolKey].filter((_, i) => i !== index);
 
-            const shuffledMcqs = shuffle(mcqPool);
-            const shuffledBlanks = shuffle(blankPool);
-            const shuffledTfs = shuffle(tfPool);
-            const shuffledShorts = shuffle(shortPool);
-            const shuffledLongs = shuffle(longPool);
+        setPaperQuestions(prev => ({
+            ...prev,
+            [poolKey]: updatedList
+        }));
 
-            // Determine actual questions to display
-            const targetMcqs = Math.min(mcqCount, shuffledMcqs.length);
-            const targetBlanks = Math.min(blankCount, shuffledBlanks.length);
-            const targetTfs = Math.min(tfCount, shuffledTfs.length);
-            const targetShorts = Math.min(shortCount, shuffledShorts.length);
-            const targetLongs = Math.min(longCount, shuffledLongs.length);
-
-            const pickedMcqs = shuffledMcqs.slice(0, targetMcqs);
-            const pickedBlanks = shuffledBlanks.slice(0, targetBlanks);
-            const pickedTfs = shuffledTfs.slice(0, targetTfs);
-            const pickedShorts = shuffledShorts.slice(0, targetShorts);
-            const pickedLongs = shuffledLongs.slice(0, targetLongs);
-
-            const actualShortAttempt = Math.min(shortAttempt, targetShorts);
-            const actualLongAttempt = Math.min(longAttempt, targetLongs);
-
-            const actualTotalMarks = (targetMcqs * mcqMarksEach) + 
-                                     (targetBlanks * blankMarksEach) + 
-                                     (targetTfs * tfMarksEach) + 
-                                     (actualShortAttempt * shortMarksEach) + 
-                                     (actualLongAttempt * longMarksEach);
-
-            setAvailablePool({
-                mcqs: shuffledMcqs.slice(targetMcqs),
-                blanks: shuffledBlanks.slice(targetBlanks),
-                true_false: shuffledTfs.slice(targetTfs),
-                shorts: shuffledShorts.slice(targetShorts),
-                longs: shuffledLongs.slice(targetLongs)
-            });
-
-            setGeneratedPaper({
-                examTitle,
-                academicSession,
-                campusName,
-                classSection,
-                examDate,
-                class: selectedClassName,
-                subject: selectedSubject,
-                chapters: selectedChapterObjs.map(c => c.title),
-                timeAllowed,
-                instructions,
-                showWatermark,
-                showSchoolLogo,
-                languageMode,
-                paperStyle,
-                fontSize,
-                mcqLayout,
-                urduOptionFormat,
-                showAnswerLines,
-                answerLineCount,
-                totalMarks: actualTotalMarks,
-                mcqs: pickedMcqs,
-                blanks: pickedBlanks,
-                true_false: pickedTfs,
-                shorts: pickedShorts,
-                longs: pickedLongs,
-                mcqMarksEach,
-                blankMarksEach,
-                tfMarksEach,
-                shortMarksEach,
-                longMarksEach,
-                shortAttempt: actualShortAttempt,
-                longAttempt: actualLongAttempt
-            });
-
-            setActiveView('preview');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-
-        } catch (err) {
-            console.error("Paper generation error:", err);
-            alert("Paper Generation Error: " + err.message);
-        } finally {
-            setIsGenerating(false);
+        if (removed && removed.chapterId) {
+            setAvailablePool(prev => ({
+                ...prev,
+                [poolKey]: [removed, ...(prev[poolKey] || [])]
+            }));
         }
     };
 
     // Swap single question with alternate from pool
     const handleSwapQuestion = (type, index) => {
-        if (!generatedPaper) return;
-
         let poolKey = type === 'mcq' ? 'mcqs' : type === 'blank' ? 'blanks' : type === 'true_false' ? 'true_false' : type === 'short' ? 'shorts' : 'longs';
         let currentPool = [...(availablePool[poolKey] || [])];
-        let currentList = [...(generatedPaper[poolKey] || [])];
+        let currentList = [...(paperQuestions[poolKey] || [])];
 
         if (currentPool.length === 0) {
-            alert(`No more alternate ${type.toUpperCase().replace('_', ' ')} questions available in the current scanned pool.`);
+            alert(`No more alternate ${type.toUpperCase().replace('_', ' ')} questions available in the current scanned chapter pool.`);
             return;
         }
 
@@ -522,7 +471,7 @@ const PaperGenerator = () => {
 
         currentList[index] = newQuestion;
 
-        setGeneratedPaper(prev => ({
+        setPaperQuestions(prev => ({
             ...prev,
             [poolKey]: currentList
         }));
@@ -533,24 +482,49 @@ const PaperGenerator = () => {
         }));
     };
 
+    // Move question Up or Down
+    const handleMoveQuestion = (type, index, direction) => {
+        let poolKey = type === 'mcq' ? 'mcqs' : type === 'blank' ? 'blanks' : type === 'true_false' ? 'true_false' : type === 'short' ? 'shorts' : 'longs';
+        const list = [...paperQuestions[poolKey]];
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= list.length) return;
+
+        const temp = list[index];
+        list[index] = list[targetIndex];
+        list[targetIndex] = temp;
+
+        setPaperQuestions(prev => ({
+            ...prev,
+            [poolKey]: list
+        }));
+    };
+
+    // Save edited question
+    const handleSaveEditedQuestion = () => {
+        if (!editingQuestion) return;
+        const { type, index, data } = editingQuestion;
+        let poolKey = type === 'mcq' ? 'mcqs' : type === 'blank' ? 'blanks' : type === 'true_false' ? 'true_false' : type === 'short' ? 'shorts' : 'longs';
+        
+        const list = [...paperQuestions[poolKey]];
+        list[index] = { ...data };
+
+        setPaperQuestions(prev => ({
+            ...prev,
+            [poolKey]: list
+        }));
+
+        setEditingQuestion(null);
+    };
+
     // Download High-Fidelity Multi-Page PDF Document
     const handleDownloadPdf = async () => {
-        if (!printRef.current) return;
+        if (!pagesContainerRef.current) return;
         setIsDownloadingPdf(true);
+        const originalZoom = pagesContainerRef.current.style.zoom;
         try {
-            const paperEl = printRef.current;
-
-            const canvas = await html2canvas(paperEl, {
-                scale: 2,
-                useCORS: true,
-                logging: false,
-                backgroundColor: '#ffffff',
-                ignoreElements: (el) => {
-                    return el.classList?.contains('no-print') || 
-                           el.hasAttribute?.('data-html2canvas-ignore') || 
-                           el.tagName === 'BUTTON';
-                }
-            });
+            pagesContainerRef.current.style.zoom = '100%';
+            const pageElements = Array.from(pagesContainerRef.current.querySelectorAll('.printable-paper-sheet'));
+            if (pageElements.length === 0) return;
 
             const pdf = new jsPDF({
                 orientation: 'portrait',
@@ -558,72 +532,36 @@ const PaperGenerator = () => {
                 format: 'a4'
             });
 
-            const pdfWidth = 210;
-            const pdfHeight = 297;
-            const marginMm = 10;
-            const contentWidthMm = pdfWidth - (marginMm * 2);
-            const contentHeightMm = pdfHeight - (marginMm * 2);
+            for (let i = 0; i < pageElements.length; i++) {
+                if (i > 0) pdf.addPage();
+                const pageEl = pageElements[i];
 
-            const scaleRatio = canvas.width / paperEl.offsetWidth;
-            const maxPageCanvasHeight = (contentHeightMm / contentWidthMm) * canvas.width;
-
-            const breakElements = Array.from(paperEl.querySelectorAll('.question-item, .paper-section-header, .paper-meta-box, .school-header, .paper-answer-key'));
-            const breakPointsPx = breakElements.map(el => {
-                const rect = el.getBoundingClientRect();
-                const parentRect = paperEl.getBoundingClientRect();
-                return (rect.top - parentRect.top) * scaleRatio;
-            }).filter(top => top > 0);
-
-            breakPointsPx.push(canvas.height);
-
-            let currentY = 0;
-            let pageIndex = 0;
-
-            while (currentY < canvas.height - 10) {
-                if (pageIndex > 0) {
-                    pdf.addPage();
-                }
-
-                let targetEndY = currentY + maxPageCanvasHeight;
-                if (targetEndY >= canvas.height) {
-                    targetEndY = canvas.height;
-                } else {
-                    const validBreaks = breakPointsPx.filter(bp => bp > currentY + 100 && bp <= targetEndY);
-                    if (validBreaks.length > 0) {
-                        targetEndY = validBreaks[validBreaks.length - 1];
+                const canvas = await html2canvas(pageEl, {
+                    scale: 2,
+                    useCORS: true,
+                    logging: false,
+                    backgroundColor: '#ffffff',
+                    ignoreElements: (el) => {
+                        return el.classList?.contains('no-print') || 
+                               el.hasAttribute?.('data-html2canvas-ignore') || 
+                               el.tagName === 'BUTTON';
                     }
-                }
+                });
 
-                const sliceHeight = targetEndY - currentY;
-                if (sliceHeight <= 0) break;
-
-                const pageCanvas = document.createElement('canvas');
-                pageCanvas.width = canvas.width;
-                pageCanvas.height = sliceHeight;
-                const pageCtx = pageCanvas.getContext('2d');
-
-                pageCtx.drawImage(
-                    canvas,
-                    0, currentY, canvas.width, sliceHeight,
-                    0, 0, canvas.width, sliceHeight
-                );
-
-                const pageImgData = pageCanvas.toDataURL('image/jpeg', 0.95);
-                const renderedHeightMm = (sliceHeight * contentWidthMm) / canvas.width;
-
-                pdf.addImage(pageImgData, 'JPEG', marginMm, marginMm, contentWidthMm, renderedHeightMm);
-
-                currentY = targetEndY;
-                pageIndex++;
+                const pageImgData = canvas.toDataURL('image/jpeg', 0.98);
+                pdf.addImage(pageImgData, 'JPEG', 0, 0, 210, 297);
             }
 
-            const cleanSubject = selectedSubject.replace(/[^a-zA-Z0-9]/g, '_');
+            const cleanSubject = (selectedSubject || 'Subject').replace(/[^a-zA-Z0-9]/g, '_');
             const fileName = `${schoolInfo.name.replace(/[^a-zA-Z0-9]/g, '_')}_Class${selectedClassName}_${cleanSubject}_ExamPaper.pdf`;
             pdf.save(fileName);
         } catch (err) {
             console.error("PDF download error:", err);
             window.print();
         } finally {
+            if (pagesContainerRef.current) {
+                pagesContainerRef.current.style.zoom = originalZoom || '100%';
+            }
             setIsDownloadingPdf(false);
         }
     };
@@ -632,1556 +570,1642 @@ const PaperGenerator = () => {
         window.print();
     };
 
+    // Render Section A: MCQs
+    const renderSectionA = () => {
+        if (paperQuestions.mcqs.length === 0) return null;
+        return (
+            <div style={{ marginBottom: '1.25rem', position: 'relative', zIndex: 1 }}>
+                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #000', paddingBottom: '0.2rem', marginBottom: '0.65rem' }}>
+                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', margin: 0, textTransform: 'uppercase' }}>
+                        Section - A (Objective Type / MCQs)
+                    </h3>
+                    <span style={{ fontWeight: '800', fontSize: '0.9rem' }}>
+                        [Marks: {paperQuestions.mcqs.length * mcqMarksEach}]
+                    </span>
+                </div>
+                <p style={{ fontSize: '0.8rem', fontStyle: 'italic', marginBottom: '0.65rem' }}>
+                    <strong>Q.1:</strong> Choose the correct option for each of the following questions. Each carries {mcqMarksEach} mark.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                    {paperQuestions.mcqs.map((q, idx) => {
+                        const isUrduQ = isUrduText(q.question, selectedSubject);
+                        const urduAlpha = ['(الف)', '(ب)', '(ج)', '(د)'];
+
+                        return (
+                            <div key={q.id || idx} className="question-item canvas-question-hover" style={{ breakInside: 'avoid', marginBottom: '0.2rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                                    <div 
+                                        dir={isUrduQ ? "rtl" : "ltr"}
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'baseline', 
+                                            gap: '0.4rem', 
+                                            flex: 1,
+                                            direction: isUrduQ ? 'rtl' : 'ltr',
+                                            textAlign: isUrduQ ? 'right' : 'left'
+                                        }}
+                                    >
+                                        <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1rem' : '0.9rem' }}>({idx + 1})</strong>
+                                        <span 
+                                            className={isUrduQ ? 'urdu-paper-font' : ''} 
+                                            style={{ 
+                                                fontSize: isUrduQ ? '1.1rem' : '0.9rem', 
+                                                fontWeight: isUrduQ ? '600' : '500', 
+                                                lineHeight: isUrduQ ? '2.1' : '1.45',
+                                                flex: 1
+                                            }}
+                                        >
+                                            {q.question}
+                                        </span>
+                                    </div>
+
+                                    {/* Hover Tooling */}
+                                    <div className="question-actions no-print" data-html2canvas-ignore="true" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+                                        <button
+                                            onClick={() => handleSwapQuestion('mcq', idx)}
+                                            title="Swap with alternate from bank"
+                                            style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px' }}
+                                        >
+                                            <RefreshCw size={10} /> Swap
+                                        </button>
+                                        <button
+                                            onClick={() => setEditingQuestion({ type: 'mcq', index: idx, data: { ...q } })}
+                                            title="Edit Question Text"
+                                            style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#334155', cursor: 'pointer' }}
+                                        >
+                                            <Edit3 size={10} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleMoveQuestion('mcq', idx, 'up')}
+                                            disabled={idx === 0}
+                                            title="Move Up"
+                                            style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#64748b', cursor: idx === 0 ? 'not-allowed' : 'pointer' }}
+                                        >
+                                            <MoveUp size={10} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleMoveQuestion('mcq', idx, 'down')}
+                                            disabled={idx === paperQuestions.mcqs.length - 1}
+                                            title="Move Down"
+                                            style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#64748b', cursor: idx === paperQuestions.mcqs.length - 1 ? 'not-allowed' : 'pointer' }}
+                                        >
+                                            <MoveDown size={10} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleRemoveQuestion('mcq', idx)}
+                                            title="Remove Question"
+                                            style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#dc2626', cursor: 'pointer' }}
+                                        >
+                                            <Trash2 size={10} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {q.options?.length > 0 && (
+                                    <div 
+                                        dir={isUrduQ ? "rtl" : "ltr"}
+                                        style={{ 
+                                            display: 'grid', 
+                                            gridTemplateColumns: mcqLayout === '2_col' ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', 
+                                            gap: '0.4rem', 
+                                            marginTop: '0.25rem', 
+                                            paddingLeft: isUrduQ ? '0' : '1.25rem',
+                                            paddingRight: isUrduQ ? '1.25rem' : '0',
+                                            fontSize: isUrduQ ? '1rem' : '0.85rem',
+                                            direction: isUrduQ ? 'rtl' : 'ltr',
+                                            textAlign: isUrduQ ? 'right' : 'left'
+                                        }}
+                                    >
+                                        {q.options.map((opt, oIdx) => (
+                                            <div key={oIdx} className={isUrduQ ? 'urdu-paper-font' : ''}>
+                                                <strong>
+                                                    {isUrduQ && urduOptionFormat === 'alif_bay' 
+                                                        ? (urduAlpha[oIdx] || `(${String.fromCharCode(65 + oIdx)})`) 
+                                                        : `(${String.fromCharCode(65 + oIdx)})`
+                                                    }
+                                                </strong> {opt}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
+    // Render Section B: Blanks & Section C: True/False
+    const renderSectionBC = () => {
+        return (
+            <>
+                {/* Blanks */}
+                {paperQuestions.blanks.length > 0 && (
+                    <div style={{ marginBottom: '1.25rem', position: 'relative', zIndex: 1 }}>
+                        <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #000', paddingBottom: '0.2rem', marginBottom: '0.65rem' }}>
+                            <h3 style={{ fontSize: '0.95rem', fontWeight: '800', margin: 0, textTransform: 'uppercase' }}>
+                                Section - B: Fill in the Blanks (خالی جگہ پر کریں)
+                            </h3>
+                            <span style={{ fontWeight: '800', fontSize: '0.9rem' }}>
+                                [Marks: {paperQuestions.blanks.length * blankMarksEach}]
+                            </span>
+                        </div>
+                        <p style={{ fontSize: '0.8rem', fontStyle: 'italic', marginBottom: '0.65rem' }}>
+                            <strong>Q.2:</strong> Fill in the blanks with suitable answers. Each carries {blankMarksEach} mark.
+                        </p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                            {paperQuestions.blanks.map((q, idx) => {
+                                const isUrduQ = isUrduText(q.question, selectedSubject);
+                                let displayText = q.question || '';
+                                if (!displayText.includes('____')) displayText += ' ______________________';
+
+                                return (
+                                    <div key={q.id || idx} className="question-item canvas-question-hover" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', breakInside: 'avoid', marginBottom: '0.2rem', gap: '0.5rem' }}>
+                                        <div 
+                                            dir={isUrduQ ? "rtl" : "ltr"}
+                                            style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'baseline', 
+                                                gap: '0.4rem', 
+                                                flex: 1,
+                                                direction: isUrduQ ? 'rtl' : 'ltr',
+                                                textAlign: isUrduQ ? 'right' : 'left'
+                                            }}
+                                        >
+                                            <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1rem' : '0.9rem' }}>({idx + 1})</strong>
+                                            <span className={isUrduQ ? 'urdu-paper-font' : ''} style={{ fontSize: isUrduQ ? '1.1rem' : '0.9rem', lineHeight: isUrduQ ? '2.1' : '1.45', flex: 1 }}>
+                                                {displayText}
+                                            </span>
+                                        </div>
+
+                                        <div className="question-actions no-print" data-html2canvas-ignore="true" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+                                            <button onClick={() => handleSwapQuestion('blank', idx)} title="Swap" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#059669', cursor: 'pointer' }}>
+                                                <RefreshCw size={10} />
+                                            </button>
+                                            <button onClick={() => setEditingQuestion({ type: 'blank', index: idx, data: { ...q } })} title="Edit" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#334155', cursor: 'pointer' }}>
+                                                <Edit3 size={10} />
+                                            </button>
+                                            <button onClick={() => handleRemoveQuestion('blank', idx)} title="Remove" style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#dc2626', cursor: 'pointer' }}>
+                                                <Trash2 size={10} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* True / False */}
+                {paperQuestions.true_false.length > 0 && (
+                    <div style={{ marginBottom: '1.25rem', position: 'relative', zIndex: 1 }}>
+                        <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #000', paddingBottom: '0.2rem', marginBottom: '0.65rem' }}>
+                            <h3 style={{ fontSize: '0.95rem', fontWeight: '800', margin: 0, textTransform: 'uppercase' }}>
+                                Section - C: True or False (درست یا غلط)
+                            </h3>
+                            <span style={{ fontWeight: '800', fontSize: '0.9rem' }}>
+                                [Marks: {paperQuestions.true_false.length * tfMarksEach}]
+                            </span>
+                        </div>
+                        <p style={{ fontSize: '0.8rem', fontStyle: 'italic', marginBottom: '0.65rem' }}>
+                            <strong>Q.3:</strong> Mark <strong>True (T)</strong> or <strong>False (F)</strong> in the box provided.
+                        </p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                            {paperQuestions.true_false.map((q, idx) => {
+                                const isUrduQ = isUrduText(q.question, selectedSubject);
+                                return (
+                                    <div key={q.id || idx} className="question-item canvas-question-hover" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', breakInside: 'avoid', marginBottom: '0.2rem', gap: '0.5rem' }}>
+                                        <div 
+                                            dir={isUrduQ ? "rtl" : "ltr"}
+                                            style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'baseline', 
+                                                gap: '0.4rem', 
+                                                flex: 1,
+                                                direction: isUrduQ ? 'rtl' : 'ltr',
+                                                textAlign: isUrduQ ? 'right' : 'left'
+                                            }}
+                                        >
+                                            <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1rem' : '0.9rem' }}>({idx + 1})</strong>
+                                            <span className={isUrduQ ? 'urdu-paper-font' : ''} style={{ fontSize: isUrduQ ? '1.1rem' : '0.9rem', lineHeight: isUrduQ ? '2.1' : '1.45', flex: 1 }}>
+                                                {q.question}
+                                            </span>
+                                        </div>
+
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                                            <span style={{ border: '1.5px solid #000', padding: '1px 10px', borderRadius: '3px', fontSize: '0.8rem', fontWeight: '700', minWidth: '40px', textAlign: 'center' }}>
+                                                [&nbsp;&nbsp;&nbsp;&nbsp;]
+                                            </span>
+                                            <div className="question-actions no-print" data-html2canvas-ignore="true" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                                <button onClick={() => handleSwapQuestion('true_false', idx)} title="Swap" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#7c3aed', cursor: 'pointer' }}>
+                                                    <RefreshCw size={10} />
+                                                </button>
+                                                <button onClick={() => setEditingQuestion({ type: 'true_false', index: idx, data: { ...q } })} title="Edit" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#334155', cursor: 'pointer' }}>
+                                                    <Edit3 size={10} />
+                                                </button>
+                                                <button onClick={() => handleRemoveQuestion('true_false', idx)} title="Remove" style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#dc2626', cursor: 'pointer' }}>
+                                                    <Trash2 size={10} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+            </>
+        );
+    };
+
+    // Render Section D: Short Questions
+    const renderSectionD = () => {
+        if (paperQuestions.shorts.length === 0) return null;
+        return (
+            <div style={{ marginBottom: '1.25rem', position: 'relative', zIndex: 1 }}>
+                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #000', paddingBottom: '0.2rem', marginBottom: '0.65rem' }}>
+                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', margin: 0, textTransform: 'uppercase' }}>
+                        Section - {paperQuestions.blanks.length > 0 || paperQuestions.true_false.length > 0 ? 'D' : 'B'} (Short Questions / مختصر جوابات)
+                    </h3>
+                    <span style={{ fontWeight: '800', fontSize: '0.9rem' }}>
+                        [Marks: {actualShortAttempt * shortMarksEach}]
+                    </span>
+                </div>
+                <p style={{ fontSize: '0.8rem', fontStyle: 'italic', marginBottom: '0.65rem' }}>
+                    <strong>Q.4:</strong> Answer any <strong>{actualShortAttempt}</strong> out of the following <strong>{paperQuestions.shorts.length}</strong> questions. Each carries {shortMarksEach} marks.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                    {paperQuestions.shorts.map((q, idx) => {
+                        const isUrduQ = isUrduText(q.question, selectedSubject);
+
+                        return (
+                            <div key={q.id || idx} className="question-item canvas-question-hover" style={{ display: 'flex', flexDirection: 'column', breakInside: 'avoid', marginBottom: '0.25rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                                    <div 
+                                        dir={isUrduQ ? "rtl" : "ltr"}
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'baseline', 
+                                            gap: '0.4rem', 
+                                            flex: 1,
+                                            direction: isUrduQ ? 'rtl' : 'ltr',
+                                            textAlign: isUrduQ ? 'right' : 'left'
+                                        }}
+                                    >
+                                        <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1rem' : '0.9rem' }}>({idx + 1})</strong>
+                                        <span className={isUrduQ ? 'urdu-paper-font' : ''} style={{ fontSize: isUrduQ ? '1.1rem' : '0.9rem', lineHeight: isUrduQ ? '2.1' : '1.45', flex: 1 }}>
+                                            {q.question}
+                                        </span>
+                                    </div>
+
+                                    <div className="question-actions no-print" data-html2canvas-ignore="true" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+                                        <button onClick={() => handleSwapQuestion('short', idx)} title="Swap" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#4f46e5', cursor: 'pointer' }}>
+                                            <RefreshCw size={10} /> Swap
+                                        </button>
+                                        <button onClick={() => setEditingQuestion({ type: 'short', index: idx, data: { ...q } })} title="Edit" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#334155', cursor: 'pointer' }}>
+                                            <Edit3 size={10} />
+                                        </button>
+                                        <button onClick={() => handleMoveQuestion('short', idx, 'up')} disabled={idx === 0} title="Move Up" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#64748b', cursor: idx === 0 ? 'not-allowed' : 'pointer' }}>
+                                            <MoveUp size={10} />
+                                        </button>
+                                        <button onClick={() => handleMoveQuestion('short', idx, 'down')} disabled={idx === paperQuestions.shorts.length - 1} title="Move Down" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#64748b', cursor: idx === paperQuestions.shorts.length - 1 ? 'not-allowed' : 'pointer' }}>
+                                            <MoveDown size={10} />
+                                        </button>
+                                        <button onClick={() => handleRemoveQuestion('short', idx)} title="Remove" style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#dc2626', cursor: 'pointer' }}>
+                                            <Trash2 size={10} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {showAnswerLines && (
+                                    <div style={{ marginTop: '0.4rem', paddingLeft: isUrduQ ? '0' : '1.25rem', paddingRight: isUrduQ ? '1.25rem' : '0', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        {Array.from({ length: answerLineCount || 2 }).map((_, lineIdx) => (
+                                            <div key={lineIdx} style={{ borderBottom: '1px dotted #94a3b8', height: '14px', width: '100%' }} />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
+    // Render Section E: Long Questions
+    const renderSectionE = () => {
+        if (paperQuestions.longs.length === 0) return null;
+        return (
+            <div style={{ marginBottom: '1.25rem', position: 'relative', zIndex: 1 }}>
+                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #000', paddingBottom: '0.2rem', marginBottom: '0.65rem' }}>
+                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', margin: 0, textTransform: 'uppercase' }}>
+                        Section - {paperQuestions.blanks.length > 0 || paperQuestions.true_false.length > 0 ? 'E' : 'C'} (Long Questions / تفصیلی سوالات)
+                    </h3>
+                    <span style={{ fontWeight: '800', fontSize: '0.9rem' }}>
+                        [Marks: {actualLongAttempt * longMarksEach}]
+                    </span>
+                </div>
+                <p style={{ fontSize: '0.8rem', fontStyle: 'italic', marginBottom: '0.65rem' }}>
+                    <strong>Note:</strong> Attempt any <strong>{actualLongAttempt}</strong> out of the following <strong>{paperQuestions.longs.length}</strong> questions. Each carries {longMarksEach} marks.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                    {paperQuestions.longs.map((q, idx) => {
+                        const isUrduQ = isUrduText(q.question, selectedSubject);
+                        return (
+                            <div key={q.id || idx} className="question-item canvas-question-hover" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', breakInside: 'avoid', marginBottom: '0.25rem', gap: '0.5rem' }}>
+                                <div 
+                                    dir={isUrduQ ? "rtl" : "ltr"}
+                                    style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'baseline', 
+                                        gap: '0.4rem', 
+                                        flex: 1,
+                                        direction: isUrduQ ? 'rtl' : 'ltr',
+                                        textAlign: isUrduQ ? 'right' : 'left'
+                                    }}
+                                >
+                                    <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1rem' : '0.9rem' }}>Q.{idx + 5}:</strong>
+                                    <span className={isUrduQ ? 'urdu-paper-font' : ''} style={{ fontSize: isUrduQ ? '1.1rem' : '0.9rem', lineHeight: isUrduQ ? '2.1' : '1.45', flex: 1 }}>
+                                        {q.question}
+                                    </span>
+                                </div>
+
+                                <div className="question-actions no-print" data-html2canvas-ignore="true" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+                                    <button onClick={() => handleSwapQuestion('long', idx)} title="Swap" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#b45309', cursor: 'pointer' }}>
+                                        <RefreshCw size={10} /> Swap
+                                    </button>
+                                    <button onClick={() => setEditingQuestion({ type: 'long', index: idx, data: { ...q } })} title="Edit" style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '2px 5px', fontSize: '0.65rem', color: '#334155', cursor: 'pointer' }}>
+                                        <Edit3 size={10} />
+                                    </button>
+                                    <button onClick={() => handleRemoveQuestion('long', idx)} title="Remove" style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '4px', padding: '2px 4px', fontSize: '0.65rem', color: '#dc2626', cursor: 'pointer' }}>
+                                        <Trash2 size={10} />
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
     return (
-        <div style={{ padding: '1.5rem', color: '#1e293b', minHeight: '100vh', background: '#f8fafc' }}>
+        <div style={{ width: '100%', minHeight: '100vh', background: '#0b0f19', color: '#f8fafc', display: 'flex', flexDirection: 'column', margin: 0, padding: 0 }}>
             
-            {/* Scoped Urdu Nastaliq Book Typography & Print Rules */}
+            {/* Scoped Typography & Print Rules */}
             <style>{`
-                @import url('https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap');
+                @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap');
+                
+                .main-content {
+                    padding: 0px !important;
+                    background-color: #0b0f19 !important;
+                }
+
+                .paper-studio-container {
+                    font-family: 'Outfit', sans-serif;
+                }
+
                 .urdu-paper-font {
                     font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaliq', 'Urdu Typesetting', 'Amiri', 'Segoe UI', Tahoma, serif !important;
-                    line-height: 2.2 !important;
+                    line-height: 2.1 !important;
                     letter-spacing: 0px !important;
                     word-spacing: 0px !important;
                     font-feature-settings: "liga" 1;
                     text-rendering: optimizeLegibility;
                 }
+
+                /* Standard A4 Paper Sheet (210mm x 297mm) */
+                .printable-paper-sheet {
+                    width: 794px;
+                    height: 1123px;
+                    background: #ffffff;
+                    color: #000000;
+                    padding: 2.25rem 2.75rem;
+                    box-sizing: border-box;
+                    position: relative;
+                    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+                    font-family: "Times New Roman", "Noto Nastaliq Urdu", Times, serif;
+                    overflow: hidden;
+                    display: flex;
+                    flex-direction: column;
+                    justifyContent: space-between;
+                }
+
+                .canvas-question-hover {
+                    transition: all 0.15s ease;
+                    border-radius: 6px;
+                    padding: 3px 5px;
+                }
+
+                .canvas-question-hover:hover {
+                    background: #f8fafc;
+                    box-shadow: 0 0 0 1px #cbd5e1;
+                }
+
+                .canvas-question-hover .question-actions {
+                    opacity: 0;
+                    transition: opacity 0.15s ease;
+                }
+
+                .canvas-question-hover:hover .question-actions {
+                    opacity: 1;
+                }
+
                 @media print {
                     .no-print { display: none !important; }
-                    body { background: #ffffff !important; }
-                    .printable-paper { 
+                    body { background: #ffffff !important; margin: 0 !important; padding: 0 !important; }
+                    .printable-paper-sheet { 
                         border: none !important; 
                         box-shadow: none !important; 
-                        padding: 0 !important; 
-                        margin: 0 !important; 
                         width: 100% !important; 
+                        height: auto !important;
+                        min-height: 100vh !important;
+                        page-break-after: always !important;
+                        break-after: page !important;
+                        padding: 1.5rem !important;
                     }
                 }
             `}</style>
 
-            {/* Top Navigation Bar (Hidden on Print) */}
-            <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem', background: '#ffffff', padding: '1.25rem 1.5rem', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-                <div>
-                    <h1 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: 'linear-gradient(135deg, #1e40af, #2563eb)', display: 'flex' }}>
-                            <FileCheck size={22} color="#ffffff" />
+            {/* 🔝 1. STICKY TOP UNIVERSAL BAR (NIGHT MODE) */}
+            <header className="no-print" style={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 50,
+                background: '#0f172a',
+                borderBottom: '1px solid #1e293b',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+                padding: '0.75rem 1.5rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '1rem'
+            }}>
+                {/* Brand & Badge */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '12px',
+                        background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 4px 14px rgba(79, 70, 229, 0.4)'
+                    }}>
+                        <FileCheck size={22} color="#ffffff" />
+                    </div>
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <h1 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#ffffff', margin: 0, letterSpacing: '-0.01em' }}>
+                                Paper Studio
+                            </h1>
+                            <span style={{ fontSize: '0.7rem', fontWeight: '700', padding: '2px 8px', borderRadius: '20px', background: 'rgba(79, 70, 229, 0.25)', color: '#a5b4fc', border: '1px solid rgba(99, 102, 241, 0.4)' }}>
+                                LIVE CANVA NIGHT
+                            </span>
                         </div>
-                        Exam Paper Studio & Question Bank
-                    </h1>
-                    <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.2rem' }}>
-                        Generates genuine exam papers directly from your <strong>Uploaded Syllabus & Scanned Exercise Questions</strong>
-                    </p>
+                        <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                            Standard A4 Question Paper Editor
+                        </div>
+                    </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                {/* Dropdowns (Class, Subject, Preset) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    {/* Class */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#1e293b', padding: '5px 10px', borderRadius: '10px', border: '1px solid #334155' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#94a3b8' }}>Class:</span>
+                        <select
+                            value={selectedClassId}
+                            onChange={(e) => setSelectedClassId(e.target.value)}
+                            style={{ background: 'transparent', border: 'none', outline: 'none', fontWeight: '700', fontSize: '0.85rem', color: '#ffffff', cursor: 'pointer' }}
+                        >
+                            {classes.map(c => (
+                                <option key={c.id} value={c.id} style={{ background: '#1e293b', color: '#fff' }}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Subject */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#1e293b', padding: '5px 10px', borderRadius: '10px', border: '1px solid #334155' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#94a3b8' }}>Subject:</span>
+                        <select
+                            value={selectedSubject}
+                            onChange={(e) => setSelectedSubject(e.target.value)}
+                            disabled={availableSubjects.length === 0}
+                            style={{ background: 'transparent', border: 'none', outline: 'none', fontWeight: '700', fontSize: '0.85rem', color: availableSubjects.length === 0 ? '#64748b' : '#ffffff', cursor: availableSubjects.length === 0 ? 'not-allowed' : 'pointer' }}
+                        >
+                            {availableSubjects.length === 0 ? (
+                                <option value="" style={{ background: '#1e293b' }}>No subjects</option>
+                            ) : (
+                                availableSubjects.map(s => (
+                                    <option key={s} value={s} style={{ background: '#1e293b', color: '#fff' }}>{s}</option>
+                                ))
+                            )}
+                        </select>
+                    </div>
+
+                    {/* Preset */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#1e293b', padding: '5px 10px', borderRadius: '10px', border: '1px solid #334155' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#94a3b8' }}>Preset:</span>
+                        <select
+                            value={selectedPreset}
+                            onChange={(e) => handleApplyPreset(e.target.value)}
+                            style={{ background: 'transparent', border: 'none', outline: 'none', fontWeight: '700', fontSize: '0.85rem', color: '#818cf8', cursor: 'pointer' }}
+                        >
+                            {EXAM_PRESETS.map(p => (
+                                <option key={p.id} value={p.id} style={{ background: '#1e293b', color: '#fff' }}>{p.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {/* Right: Total Marks & Actions */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                    {/* Live Total Marks Ticker */}
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.45rem 0.9rem',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
+                        color: '#ffffff',
+                        boxShadow: '0 2px 10px rgba(79, 70, 229, 0.4)'
+                    }}>
+                        <Award size={16} color="#fbbf24" />
+                        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1 }}>
+                            <span style={{ fontSize: '0.65rem', fontWeight: '700', textTransform: 'uppercase', opacity: 0.9 }}>Total Marks</span>
+                            <span style={{ fontSize: '1.05rem', fontWeight: '900' }}>{totalMarks}</span>
+                        </div>
+                    </div>
+
+                    {/* Shuffle Button */}
                     <button
-                        onClick={() => setActiveView('config')}
+                        onClick={() => buildPaperFromSyllabus()}
+                        disabled={loadingChapters || allSyllabusQuestions.length === 0}
+                        title="Shuffle questions from syllabus"
                         style={{
-                            padding: '0.6rem 1.2rem',
+                            padding: '0.5rem 0.85rem',
                             borderRadius: '10px',
-                            fontWeight: '600',
-                            fontSize: '0.875rem',
-                            cursor: 'pointer',
+                            fontWeight: '700',
+                            fontSize: '0.8rem',
+                            cursor: loadingChapters || allSyllabusQuestions.length === 0 ? 'not-allowed' : 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '0.4rem',
-                            background: activeView === 'config' ? '#1e40af' : '#f1f5f9',
-                            color: activeView === 'config' ? '#ffffff' : '#475569',
-                            border: '1px solid ' + (activeView === 'config' ? '#1e40af' : '#cbd5e1')
+                            background: '#1e293b',
+                            color: '#ffffff',
+                            border: '1px solid #334155'
                         }}
                     >
-                        <Settings2 size={16} />
-                        Paper Settings
+                        <RefreshCw size={14} />
+                        <span>Shuffle</span>
                     </button>
 
-                    {generatedPaper && (
-                        <>
-                            <button
-                                onClick={() => setActiveView('preview')}
-                                style={{
-                                    padding: '0.6rem 1.2rem',
-                                    borderRadius: '10px',
-                                    fontWeight: '600',
-                                    fontSize: '0.875rem',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.4rem',
-                                    background: activeView === 'preview' ? '#1e40af' : '#f1f5f9',
-                                    color: activeView === 'preview' ? '#ffffff' : '#475569',
-                                    border: '1px solid ' + (activeView === 'preview' ? '#1e40af' : '#cbd5e1')
-                                }}
-                            >
-                                <Eye size={16} />
-                                View Paper Canvas
-                            </button>
-
-                            <button
-                                onClick={handleDownloadPdf}
-                                disabled={isDownloadingPdf}
-                                style={{
-                                    padding: '0.6rem 1.3rem',
-                                    borderRadius: '10px',
-                                    fontWeight: '700',
-                                    fontSize: '0.875rem',
-                                    cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                    background: 'linear-gradient(135deg, #1e40af, #2563eb)',
-                                    color: '#ffffff',
-                                    border: 'none',
-                                    boxShadow: '0 4px 12px rgba(30, 64, 175, 0.3)'
-                                }}
-                            >
-                                {isDownloadingPdf ? (
-                                    <>
-                                        <RefreshCw className="animate-spin" size={16} />
-                                        Generating PDF...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Download size={16} />
-                                        Download PDF
-                                    </>
-                                )}
-                            </button>
-                        </>
-                    )}
+                    {/* Download PDF Button */}
+                    <button
+                        onClick={handleDownloadPdf}
+                        disabled={isDownloadingPdf}
+                        style={{
+                            padding: '0.5rem 1.15rem',
+                            borderRadius: '10px',
+                            fontWeight: '800',
+                            fontSize: '0.85rem',
+                            cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.45rem',
+                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                            color: '#ffffff',
+                            border: 'none',
+                            boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)'
+                        }}
+                    >
+                        {isDownloadingPdf ? (
+                            <>
+                                <RefreshCw className="animate-spin" size={15} />
+                                <span>Exporting...</span>
+                            </>
+                        ) : (
+                            <>
+                                <Download size={15} />
+                                <span>Download PDF</span>
+                            </>
+                        )}
+                    </button>
                 </div>
-            </div>
+            </header>
 
-            {/* VIEW 1: PROFESSIONAL SETTINGS WIZARD */}
-            {activeView === 'config' && (
-                <div className="no-print" style={{ width: '100%', maxWidth: '100%' }}>
-                    {/* Settings Navigation Tabs */}
-                    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.25rem', flexWrap: 'wrap', width: '100%' }}>
+            {/* 🖥️ 2. MAIN SPLIT-SCREEN WORKSPACE (NIGHT THEME) */}
+            <div className="paper-studio-container" style={{ flex: 1, display: 'flex', minHeight: 'calc(100vh - 65px)' }}>
+                
+                {/* 👈 LEFT SIDEBAR: CREATOR TOOLBOX (DARK NIGHT THEME) */}
+                <aside className="no-print" style={{
+                    width: '350px',
+                    flexShrink: 0,
+                    background: '#0f172a',
+                    borderRight: '1px solid #1e293b',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    maxHeight: 'calc(100vh - 65px)',
+                    position: 'sticky',
+                    top: '65px',
+                    overflowY: 'auto'
+                }}>
+                    
+                    {/* Tool Tabs */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid #1e293b', background: '#090d16', padding: '5px' }}>
                         {[
-                            { id: 'syllabus', label: '1. Syllabus & Chapter Selector', icon: BookOpen },
-                            { id: 'blueprint', label: '2. Blueprint & Marks Scheme', icon: Sliders },
-                            { id: 'exam_info', label: '3. Exam Profile & Header', icon: School },
-                            { id: 'typesetting', label: '4. Layout & Language Style', icon: LayoutGrid }
+                            { id: 'add_questions', label: 'Add Items', icon: Plus },
+                            { id: 'blueprint', label: 'Scores', icon: Sliders },
+                            { id: 'chapters', label: 'Chapters', icon: BookOpen },
+                            { id: 'settings', label: 'Setup', icon: Settings2 }
                         ].map(tab => {
-                            const isActive = activeSettingsTab === tab.id;
+                            const isActive = leftActiveTab === tab.id;
                             const Icon = tab.icon;
                             return (
                                 <button
                                     key={tab.id}
-                                    type="button"
-                                    onClick={() => setActiveSettingsTab(tab.id)}
+                                    onClick={() => setLeftActiveTab(tab.id)}
                                     style={{
-                                        flex: '1 1 200px',
-                                        padding: '0.85rem 1.25rem',
-                                        borderRadius: '12px 12px 0 0',
+                                        flex: 1,
+                                        padding: '0.6rem 0.2rem',
+                                        fontSize: '0.75rem',
                                         fontWeight: '700',
-                                        fontSize: '0.95rem',
-                                        cursor: 'pointer',
                                         display: 'flex',
+                                        flexDirection: 'column',
                                         alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: '0.6rem',
+                                        gap: '0.2rem',
                                         border: 'none',
-                                        borderBottom: isActive ? '3px solid #1e40af' : '3px solid transparent',
-                                        background: isActive ? '#ffffff' : 'rgba(255,255,255,0.6)',
-                                        color: isActive ? '#1e40af' : '#64748b',
-                                        boxShadow: isActive ? '0 -2px 10px rgba(0,0,0,0.04)' : 'none',
-                                        transition: 'all 0.2s ease'
+                                        borderRadius: '8px',
+                                        background: isActive ? '#4f46e5' : 'transparent',
+                                        color: isActive ? '#ffffff' : '#94a3b8',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
                                     }}
                                 >
-                                    <Icon size={20} />
+                                    <Icon size={16} />
                                     {tab.label}
                                 </button>
                             );
                         })}
                     </div>
 
-                    {/* MAIN SETTINGS CONTAINER */}
-                    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '2rem', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', marginBottom: '1.5rem' }}>
+                    <div style={{ padding: '1.25rem', flex: 1, overflowY: 'auto' }}>
                         
-                        {/* TAB 1: SYLLABUS & CHAPTER SELECTOR (Real Uploaded Chapters) */}
-                        {activeSettingsTab === 'syllabus' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem' }}>
-                                    <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <BookOpen size={22} color="#1e40af" />
-                                        Target Class, Subject & Uploaded Chapters
-                                    </h2>
-                                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.2rem' }}>
-                                        Choose the class and subject to load all scanned chapters from your school's database. Select which chapters to include in this exam paper.
+                        {/* TAB 1: ➕ ADD QUESTIONS */}
+                        {leftActiveTab === 'add_questions' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                <div>
+                                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#ffffff', margin: '0 0 0.25rem 0' }}>
+                                        Insert into Paper
+                                    </h3>
+                                    <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
+                                        Button click karte hi question live paper canvas par add ho jayega.
                                     </p>
                                 </div>
 
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>1. Select Target Class</label>
-                                        <select
-                                            value={selectedClassId}
-                                            onChange={(e) => setSelectedClassId(e.target.value)}
-                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.95rem', fontWeight: '700', color: '#1e293b', background: '#fff' }}
-                                        >
-                                            {classes.map(c => (
-                                                <option key={c.id} value={c.id}>{c.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
+                                {/* Rich Colored Action Buttons with Pure White Text */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                                    
+                                    {/* Short Qs Button */}
+                                    <button
+                                        onClick={() => handleAddQuestionToSection('short')}
+                                        style={{
+                                            padding: '0.75rem 1rem',
+                                            borderRadius: '10px',
+                                            border: 'none',
+                                            background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
+                                            color: '#ffffff',
+                                            fontWeight: '700',
+                                            fontSize: '0.85rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <Plus size={16} color="#ffffff" />
+                                            <span>+ Short Question (مختصر سوال)</span>
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.2)', color: '#ffffff' }}>
+                                            {paperQuestions.shorts.length}
+                                        </span>
+                                    </button>
 
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>2. Select Subject</label>
-                                        <select
-                                            value={selectedSubject}
-                                            onChange={(e) => setSelectedSubject(e.target.value)}
-                                            disabled={availableSubjects.length === 0}
-                                            style={{
-                                                width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.95rem', fontWeight: '700',
-                                                color: availableSubjects.length === 0 ? '#94a3b8' : '#1e293b',
-                                                background: availableSubjects.length === 0 ? '#f8fafc' : '#fff',
-                                                cursor: availableSubjects.length === 0 ? 'not-allowed' : 'pointer'
-                                            }}
-                                        >
-                                            {availableSubjects.length === 0 ? (
-                                                <option value="">No subjects assigned to this class</option>
-                                            ) : (
-                                                availableSubjects.map(s => (
-                                                    <option key={s} value={s}>{s}</option>
-                                                ))
-                                            )}
-                                        </select>
+                                    {/* MCQ Button */}
+                                    <button
+                                        onClick={() => handleAddQuestionToSection('mcq')}
+                                        style={{
+                                            padding: '0.75rem 1rem',
+                                            borderRadius: '10px',
+                                            border: 'none',
+                                            background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                                            color: '#ffffff',
+                                            fontWeight: '700',
+                                            fontSize: '0.85rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <Plus size={16} color="#ffffff" />
+                                            <span>+ MCQ Option (معروضی)</span>
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.2)', color: '#ffffff' }}>
+                                            {paperQuestions.mcqs.length}
+                                        </span>
+                                    </button>
+
+                                    {/* Fill in Blanks Button */}
+                                    <button
+                                        onClick={() => handleAddQuestionToSection('blank')}
+                                        style={{
+                                            padding: '0.75rem 1rem',
+                                            borderRadius: '10px',
+                                            border: 'none',
+                                            background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                                            color: '#ffffff',
+                                            fontWeight: '700',
+                                            fontSize: '0.85rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 4px 12px rgba(5, 150, 105, 0.3)'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <Plus size={16} color="#ffffff" />
+                                            <span>+ Fill in the Blanks (خالی جگہ)</span>
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.2)', color: '#ffffff' }}>
+                                            {paperQuestions.blanks.length}
+                                        </span>
+                                    </button>
+
+                                    {/* True/False Button */}
+                                    <button
+                                        onClick={() => handleAddQuestionToSection('true_false')}
+                                        style={{
+                                            padding: '0.75rem 1rem',
+                                            borderRadius: '10px',
+                                            border: 'none',
+                                            background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+                                            color: '#ffffff',
+                                            fontWeight: '700',
+                                            fontSize: '0.85rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 4px 12px rgba(124, 58, 237, 0.3)'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <Plus size={16} color="#ffffff" />
+                                            <span>+ True / False (درست یا غلط)</span>
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.2)', color: '#ffffff' }}>
+                                            {paperQuestions.true_false.length}
+                                        </span>
+                                    </button>
+
+                                    {/* Long Qs Button */}
+                                    <button
+                                        onClick={() => handleAddQuestionToSection('long')}
+                                        style={{
+                                            padding: '0.75rem 1rem',
+                                            borderRadius: '10px',
+                                            border: 'none',
+                                            background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
+                                            color: '#ffffff',
+                                            fontWeight: '700',
+                                            fontSize: '0.85rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 4px 12px rgba(217, 119, 6, 0.3)'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <Plus size={16} color="#ffffff" />
+                                            <span>+ Long Question (تفصیلی سوال)</span>
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.2)', color: '#ffffff' }}>
+                                            {paperQuestions.longs.length}
+                                        </span>
+                                    </button>
+                                </div>
+
+                                {/* Scanned syllabus availability stats */}
+                                <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '12px', border: '1px solid #334155', marginTop: '0.5rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                                        <BookOpen size={14} color="#818cf8" />
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#ffffff' }}>
+                                            Syllabus Bank Status
+                                        </span>
                                     </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', fontSize: '0.75rem', color: '#94a3b8' }}>
+                                        <div>MCQs: <strong style={{ color: '#fff' }}>{syllabusCounts.mcq}</strong></div>
+                                        <div>Blanks: <strong style={{ color: '#fff' }}>{syllabusCounts.blank}</strong></div>
+                                        <div>T/F: <strong style={{ color: '#fff' }}>{syllabusCounts.true_false}</strong></div>
+                                        <div>Shorts: <strong style={{ color: '#fff' }}>{syllabusCounts.short}</strong></div>
+                                        <div>Longs: <strong style={{ color: '#fff' }}>{syllabusCounts.long}</strong></div>
+                                        <div>Total Qs: <strong style={{ color: '#fff' }}>{syllabusCounts.total}</strong></div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB 2: 🎯 SCORES & BLUEPRINT */}
+                        {leftActiveTab === 'blueprint' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                <div>
+                                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#ffffff', margin: '0 0 0.25rem 0' }}>
+                                        Scores Scheme
+                                    </h3>
+                                    <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
+                                        Section ke marks change karein, real-time recalculate honge.
+                                    </p>
+                                </div>
+
+                                {/* MCQ Marks */}
+                                <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '10px', border: '1px solid #334155' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                                        <span style={{ fontWeight: '700', fontSize: '0.8rem', color: '#f1f5f9' }}>MCQ Marks Each</span>
+                                        <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#60a5fa' }}>
+                                            {paperQuestions.mcqs.length * mcqMarksEach} Marks
+                                        </span>
+                                    </div>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="5"
+                                        value={mcqMarksEach}
+                                        onChange={(e) => setMcqMarksEach(Math.max(1, Number(e.target.value)))}
+                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #475569', background: '#0f172a', color: '#fff', fontSize: '0.85rem', fontWeight: '700' }}
+                                    />
+                                </div>
+
+                                {/* Blank Marks */}
+                                <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '10px', border: '1px solid #334155' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                                        <span style={{ fontWeight: '700', fontSize: '0.8rem', color: '#f1f5f9' }}>Blank Marks Each</span>
+                                        <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#34d399' }}>
+                                            {paperQuestions.blanks.length * blankMarksEach} Marks
+                                        </span>
+                                    </div>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="5"
+                                        value={blankMarksEach}
+                                        onChange={(e) => setBlankMarksEach(Math.max(1, Number(e.target.value)))}
+                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #475569', background: '#0f172a', color: '#fff', fontSize: '0.85rem', fontWeight: '700' }}
+                                    />
+                                </div>
+
+                                {/* Short Qs Scheme */}
+                                <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '10px', border: '1px solid #334155' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                                        <span style={{ fontWeight: '700', fontSize: '0.8rem', color: '#f1f5f9' }}>Short Questions</span>
+                                        <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#a5b4fc' }}>
+                                            {actualShortAttempt * shortMarksEach} Marks
+                                        </span>
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                        <div>
+                                            <label style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Attempt</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max={Math.max(1, paperQuestions.shorts.length)}
+                                                value={shortAttempt}
+                                                onChange={(e) => setShortAttempt(Math.max(1, Number(e.target.value)))}
+                                                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #475569', background: '#0f172a', color: '#fff', fontSize: '0.85rem', fontWeight: '700' }}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Marks Each</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="10"
+                                                value={shortMarksEach}
+                                                onChange={(e) => setShortMarksEach(Math.max(1, Number(e.target.value)))}
+                                                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #475569', background: '#0f172a', color: '#fff', fontSize: '0.85rem', fontWeight: '700' }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Long Qs Scheme */}
+                                <div style={{ background: '#1e293b', padding: '0.75rem', borderRadius: '10px', border: '1px solid #334155' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                                        <span style={{ fontWeight: '700', fontSize: '0.8rem', color: '#f1f5f9' }}>Long Questions</span>
+                                        <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#fbbf24' }}>
+                                            {actualLongAttempt * longMarksEach} Marks
+                                        </span>
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                        <div>
+                                            <label style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Attempt</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max={Math.max(1, paperQuestions.longs.length)}
+                                                value={longAttempt}
+                                                onChange={(e) => setLongAttempt(Math.max(1, Number(e.target.value)))}
+                                                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #475569', background: '#0f172a', color: '#fff', fontSize: '0.85rem', fontWeight: '700' }}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Marks Each</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="15"
+                                                value={longMarksEach}
+                                                onChange={(e) => setLongMarksEach(Math.max(1, Number(e.target.value)))}
+                                                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #475569', background: '#0f172a', color: '#fff', fontSize: '0.85rem', fontWeight: '700' }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB 3: 📚 CHAPTERS */}
+                        {leftActiveTab === 'chapters' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                <div>
+                                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#ffffff', margin: '0 0 0.25rem 0' }}>
+                                        Syllabus Scope
+                                    </h3>
+                                    <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
+                                        Chapters select karein jaha se paper pick hoga.
+                                    </p>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                    <button
+                                        onClick={() => setSelectedChapterIds(firestoreChapters.map(c => c.id))}
+                                        style={{ padding: '0.35rem 0.65rem', background: '#4f46e5', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer' }}
+                                    >
+                                        All Chapters
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const mid = Math.ceil(firestoreChapters.length / 2);
+                                            setSelectedChapterIds(firestoreChapters.slice(0, mid).map(c => c.id));
+                                        }}
+                                        style={{ padding: '0.35rem 0.65rem', background: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer' }}
+                                    >
+                                        1st Half
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const mid = Math.ceil(firestoreChapters.length / 2);
+                                            setSelectedChapterIds(firestoreChapters.slice(mid).map(c => c.id));
+                                        }}
+                                        style={{ padding: '0.35rem 0.65rem', background: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer' }}
+                                    >
+                                        2nd Half
+                                    </button>
                                 </div>
 
                                 {loadingChapters ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '3rem', color: '#475569', gap: '0.5rem' }}>
-                                        <Loader2 className="animate-spin" size={24} color="#1e40af" />
-                                        <span>Loading uploaded chapters from Firestore...</span>
-                                    </div>
-                                ) : firestoreChapters.length === 0 ? (
-                                    <div style={{ padding: '2.5rem', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1', textAlign: 'center' }}>
-                                        <AlertCircle size={36} color="#d97706" style={{ margin: '0 auto 0.75rem' }} />
-                                        <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1e293b', margin: 0 }}>
-                                            No Syllabus Uploaded for {selectedSubject} ({selectedClassName})
-                                        </h3>
-                                        <p style={{ fontSize: '0.9rem', color: '#64748b', margin: '0.5rem 0 1.25rem 0' }}>
-                                            Please go to <strong>Settings &rarr; Upload Syllabus</strong> to upload the book index and exercise questions.
-                                        </p>
+                                    <div style={{ textAlign: 'center', padding: '2rem 0', color: '#94a3b8', fontSize: '0.85rem' }}>
+                                        <Loader2 className="animate-spin" size={20} color="#818cf8" style={{ margin: '0 auto 0.5rem' }} />
+                                        Loading syllabus chapters...
                                     </div>
                                 ) : (
-                                    <>
-                                        {/* Fast Range Selection Bar */}
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', background: '#eff6ff', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid #dbeafe' }}>
-                                            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                <ListFilter size={16} />
-                                                Quick Range Selection:
-                                            </span>
-                                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                                <button
-                                                    type="button"
-                                                    onClick={handleSelectAllChapters}
-                                                    style={{ padding: '0.35rem 0.75rem', background: '#ffffff', border: '1px solid #93c5fd', color: '#1e40af', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer' }}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '350px', overflowY: 'auto' }}>
+                                        {firestoreChapters.map(ch => {
+                                            const isSelected = selectedChapterIds.includes(ch.id);
+                                            return (
+                                                <label
+                                                    key={ch.id}
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'space-between',
+                                                        padding: '0.65rem 0.75rem',
+                                                        borderRadius: '8px',
+                                                        border: isSelected ? '1px solid #6366f1' : '1px solid #334155',
+                                                        background: isSelected ? '#312e81' : '#1e293b',
+                                                        cursor: 'pointer',
+                                                        fontSize: '0.8rem',
+                                                        color: '#ffffff'
+                                                    }}
                                                 >
-                                                    Full Book (All {firestoreChapters.length} Chapters)
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleSelectHalfBook(1)}
-                                                    style={{ padding: '0.35rem 0.75rem', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' }}
-                                                >
-                                                    1st Half Book
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleSelectHalfBook(2)}
-                                                    style={{ padding: '0.35rem 0.75rem', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' }}
-                                                >
-                                                    2nd Half Book
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSelectedChapterIds(firestoreChapters.slice(0, 1).map(c => c.id))}
-                                                    style={{ padding: '0.35rem 0.75rem', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer' }}
-                                                >
-                                                    Chapter 1 Only
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        {/* Chapters Grid with Blue Background & Urdu Nastaliq Typography */}
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.6rem' }}>
-                                                Select Chapters to Include in Exam Paper ({selectedChapterIds.length} of {firestoreChapters.length} Selected):
-                                            </label>
-                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '0.85rem' }}>
-                                                {firestoreChapters.map((ch, idx) => {
-                                                    const isSelected = selectedChapterIds.includes(ch.id);
-                                                    const isUrdu = isUrduText(ch.title, selectedSubject);
-                                                    const qCount = ch.questions?.length || 0;
-                                                    const mcqCountInChapter = (ch.questions || []).filter(q => q.type === 'mcq').length;
-                                                    const shortCountInChapter = (ch.questions || []).filter(q => q.type === 'short' || !q.type).length;
-                                                    const longCountInChapter = (ch.questions || []).filter(q => q.type === 'long').length;
-
-                                                    return (
-                                                        <div
-                                                            key={ch.id}
-                                                            onClick={() => handleToggleChapter(ch.id)}
-                                                            dir={isUrdu ? "rtl" : "ltr"}
-                                                            style={{
-                                                                padding: '1rem',
-                                                                borderRadius: '12px',
-                                                                border: isSelected ? '2px solid #1e40af' : '1px solid #cbd5e1',
-                                                                background: isSelected 
-                                                                    ? 'linear-gradient(135deg, #1e40af 0%, #2563eb 100%)' 
-                                                                    : '#ffffff',
-                                                                color: isSelected ? '#ffffff' : '#1e293b',
-                                                                cursor: 'pointer',
-                                                                display: 'flex',
-                                                                alignItems: 'flex-start',
-                                                                gap: '0.85rem',
-                                                                boxShadow: isSelected ? '0 4px 12px rgba(30, 64, 175, 0.25)' : 'none',
-                                                                transition: 'all 0.2s ease'
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isSelected}
+                                                            onChange={() => {
+                                                                setSelectedChapterIds(prev => 
+                                                                    prev.includes(ch.id) ? prev.filter(id => id !== ch.id) : [...prev, ch.id]
+                                                                );
                                                             }}
-                                                        >
-                                                            {/* Number / Check Badge */}
-                                                            <div style={{
-                                                                width: '30px',
-                                                                height: '30px',
-                                                                borderRadius: '50%',
-                                                                background: isSelected ? '#ffffff' : '#f1f5f9',
-                                                                color: isSelected ? '#1e40af' : '#64748b',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                justifyContent: 'center',
-                                                                fontSize: '0.85rem',
-                                                                fontWeight: '800',
-                                                                flexShrink: 0,
-                                                                marginTop: '2px'
-                                                            }}>
-                                                                {isSelected ? '✓' : (idx + 1)}
-                                                            </div>
-
-                                                            <div style={{ flex: 1 }}>
-                                                                <div 
-                                                                    dir={isUrdu ? "rtl" : "ltr"}
-                                                                    style={{ 
-                                                                        fontSize: isUrdu ? '1.08rem' : '0.95rem', 
-                                                                        fontWeight: '700', 
-                                                                        color: isSelected ? '#ffffff' : '#1e293b',
-                                                                        lineHeight: isUrdu ? '1.8' : '1.4',
-                                                                        fontFamily: isUrdu ? '"Noto Nastaliq Urdu", "Noto Sans Arabic", "Jameel Noori Nastaleeq", serif' : 'inherit',
-                                                                        textAlign: isUrdu ? 'right' : 'left'
-                                                                    }}
-                                                                >
-                                                                    {ch.title}
-                                                                </div>
-
-                                                                {/* Question Stats Pill */}
-                                                                <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.35rem', flexWrap: 'wrap' }}>
-                                                                    <span style={{
-                                                                        fontSize: '0.72rem',
-                                                                        padding: '2px 8px',
-                                                                        borderRadius: '12px',
-                                                                        background: isSelected ? 'rgba(255,255,255,0.25)' : '#eff6ff',
-                                                                        color: isSelected ? '#ffffff' : '#1e40af',
-                                                                        fontWeight: '700',
-                                                                        border: isSelected ? '1px solid rgba(255,255,255,0.3)' : '1px solid #dbeafe'
-                                                                    }}>
-                                                                        {qCount > 0 ? `${qCount} Scanned Questions (${mcqCountInChapter} MCQs, ${shortCountInChapter} Short, ${longCountInChapter} Long)` : 'No Questions Yet'}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                        )}
-
-                        {/* TAB 2: BLUEPRINT & MARKS SCHEME (100% Dynamic & Syllabus-Adaptive) */}
-                        {activeSettingsTab === 'blueprint' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem' }}>
-                                    <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <Sliders size={22} color="#1e40af" />
-                                        Paper Blueprint & Marks Scheme
-                                    </h2>
-                                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.2rem' }}>
-                                        Customized automatically based on your <strong>Step 1 Syllabus & Chapter Selection</strong>. Only available question types are shown.
-                                    </p>
-                                </div>
-
-                                {/* Dynamic Scope & Pool Breakdown Banner */}
-                                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '12px', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                                <BookOpen size={16} />
-                                                Syllabus Scope:
-                                            </span>
-                                            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#0c4a6e' }}>
-                                                {selectedClassName || 'No Class'} • {selectedSubject || 'No Subject'} ({selectedChapterIds.length} of {firestoreChapters.length} Chapters Selected)
-                                            </span>
-                                        </div>
-                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#0284c7', background: '#e0f2fe', padding: '3px 12px', borderRadius: '20px', border: '1px solid #bae6fd' }}>
-                                            {availableCounts.total} Questions in Selected Syllabus
-                                        </span>
-                                    </div>
-
-                                    {/* Breakdown Tags */}
-                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px dashed #bae6fd' }}>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>Detected Pools:</span>
-                                        {availableCounts.mcq > 0 ? (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#dbeafe', color: '#1e40af', fontWeight: '700', border: '1px solid #bfdbfe' }}>
-                                                ✓ {availableCounts.mcq} MCQs
-                                            </span>
-                                        ) : (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
-                                                0 MCQs
-                                            </span>
-                                        )}
-                                        
-                                        {availableCounts.blank > 0 ? (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#d1fae5', color: '#065f46', fontWeight: '700', border: '1px solid #a7f3d0' }}>
-                                                ✓ {availableCounts.blank} Blanks
-                                            </span>
-                                        ) : (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
-                                                0 Blanks
-                                            </span>
-                                        )}
-
-                                        {availableCounts.true_false > 0 ? (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#ede9fe', color: '#5b21b6', fontWeight: '700', border: '1px solid #ddd6fe' }}>
-                                                ✓ {availableCounts.true_false} True/False
-                                            </span>
-                                        ) : (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
-                                                0 True/False
-                                            </span>
-                                        )}
-
-                                        {availableCounts.short > 0 ? (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#e0e7ff', color: '#3730a3', fontWeight: '700', border: '1px solid #c7d2fe' }}>
-                                                ✓ {availableCounts.short} Short Qs
-                                            </span>
-                                        ) : (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
-                                                0 Short Qs
-                                            </span>
-                                        )}
-
-                                        {availableCounts.long > 0 ? (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#fef3c7', color: '#92400e', fontWeight: '700', border: '1px solid #fde68a' }}>
-                                                ✓ {availableCounts.long} Long Qs
-                                            </span>
-                                        ) : (
-                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: '#f1f5f9', color: '#94a3b8', fontWeight: '600' }}>
-                                                0 Long Qs
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {availableCounts.total === 0 ? (
-                                    /* Empty State Warning if no questions exist in chosen chapters */
-                                    <div style={{ padding: '2.5rem', background: '#fffbeb', borderRadius: '12px', border: '2px dashed #fcd34d', textAlign: 'center' }}>
-                                        <AlertTriangle size={40} color="#d97706" style={{ margin: '0 auto 0.75rem' }} />
-                                        <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#92400e', margin: 0 }}>
-                                            No Scanned Questions Found in Selected Chapters
-                                        </h3>
-                                        <p style={{ fontSize: '0.9rem', color: '#b45309', margin: '0.5rem 0 1.25rem 0', maxWidth: '600px', marginLeft: 'auto', marginRight: 'auto' }}>
-                                            The chapters currently selected in <strong>Step 1</strong> do not have any scanned exercise questions saved yet. Please go to <strong>Settings &rarr; Upload Syllabus</strong> to scan book exercises, or select other chapters with questions.
-                                        </p>
-                                        <button
-                                            type="button"
-                                            onClick={() => setActiveSettingsTab('syllabus')}
-                                            style={{
-                                                padding: '0.65rem 1.5rem',
-                                                borderRadius: '8px',
-                                                background: '#1e40af',
-                                                color: '#fff',
-                                                fontWeight: '700',
-                                                fontSize: '0.875rem',
-                                                border: 'none',
-                                                cursor: 'pointer',
-                                                boxShadow: '0 2px 8px rgba(30,64,175,0.25)'
-                                            }}
-                                        >
-                                            &larr; Return to Step 1 (Chapter Selector)
-                                        </button>
-                                    </div>
-                                ) : (
-                                    /* Dynamic Question Sections Grid */
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
-                                        
-                                        {/* SECTION: MCQs (Shown only if MCQs exist in selected chapters) */}
-                                        {availableCounts.mcq > 0 && (
-                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                                                <div>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
-                                                        <div>
-                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Objective MCQs</div>
-                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>کثیر الانتخابی سوالات</div>
-                                                        </div>
-                                                        <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                                            {mcqCount * mcqMarksEach} Marks
-                                                        </span>
+                                                            style={{ accentColor: '#4f46e5' }}
+                                                        />
+                                                        <span>{ch.title}</span>
                                                     </div>
-
-                                                    {/* Live Availability Badge */}
-                                                    <div style={{ marginBottom: '1rem' }}>
-                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#1e40af', background: '#dbeafe', padding: '3px 8px', borderRadius: '6px' }}>
-                                                            🟢 Available in Syllabus: {availableCounts.mcq} MCQs
-                                                        </span>
-                                                    </div>
-
-                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                Number of MCQs
-                                                                <span style={{ color: '#64748b', fontWeight: '400', marginLeft: '4px' }}>(Max: {availableCounts.mcq})</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={availableCounts.mcq}
-                                                                value={mcqCount}
-                                                                onChange={(e) => {
-                                                                    const val = Number(e.target.value);
-                                                                    setMcqCount(Math.min(Math.max(0, val), availableCounts.mcq));
-                                                                }}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Marks Each</label>
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                max="5"
-                                                                value={mcqMarksEach}
-                                                                onChange={(e) => setMcqMarksEach(Math.max(1, Number(e.target.value)))}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* SECTION: FILL IN THE BLANKS (Shown only if Blanks exist in selected chapters) */}
-                                        {availableCounts.blank > 0 && (
-                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                                                <div>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
-                                                        <div>
-                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Fill in the Blanks</div>
-                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>خالی جگہ پر کریں</div>
-                                                        </div>
-                                                        <span style={{ background: '#059669', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                                            {blankCount * blankMarksEach} Marks
-                                                        </span>
-                                                    </div>
-
-                                                    {/* Live Availability Badge */}
-                                                    <div style={{ marginBottom: '1rem' }}>
-                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#065f46', background: '#d1fae5', padding: '3px 8px', borderRadius: '6px' }}>
-                                                            🟢 Available in Syllabus: {availableCounts.blank} Blanks
-                                                        </span>
-                                                    </div>
-
-                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                Number of Blanks
-                                                                <span style={{ color: '#64748b', fontWeight: '400', marginLeft: '4px' }}>(Max: {availableCounts.blank})</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={availableCounts.blank}
-                                                                value={blankCount}
-                                                                onChange={(e) => {
-                                                                    const val = Number(e.target.value);
-                                                                    setBlankCount(Math.min(Math.max(0, val), availableCounts.blank));
-                                                                }}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Marks Each</label>
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                max="5"
-                                                                value={blankMarksEach}
-                                                                onChange={(e) => setBlankMarksEach(Math.max(1, Number(e.target.value)))}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* SECTION: TRUE / FALSE (Shown only if True/False exist in selected chapters) */}
-                                        {availableCounts.true_false > 0 && (
-                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                                                <div>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
-                                                        <div>
-                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>True / False</div>
-                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>درست یا غلط</div>
-                                                        </div>
-                                                        <span style={{ background: '#7c3aed', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                                            {tfCount * tfMarksEach} Marks
-                                                        </span>
-                                                    </div>
-
-                                                    {/* Live Availability Badge */}
-                                                    <div style={{ marginBottom: '1rem' }}>
-                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#5b21b6', background: '#ede9fe', padding: '3px 8px', borderRadius: '6px' }}>
-                                                            🟢 Available in Syllabus: {availableCounts.true_false} Questions
-                                                        </span>
-                                                    </div>
-
-                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                Number of True/False
-                                                                <span style={{ color: '#64748b', fontWeight: '400', marginLeft: '4px' }}>(Max: {availableCounts.true_false})</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={availableCounts.true_false}
-                                                                value={tfCount}
-                                                                onChange={(e) => {
-                                                                    const val = Number(e.target.value);
-                                                                    setTfCount(Math.min(Math.max(0, val), availableCounts.true_false));
-                                                                }}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>Marks Each</label>
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                max="5"
-                                                                value={tfMarksEach}
-                                                                onChange={(e) => setTfMarksEach(Math.max(1, Number(e.target.value)))}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* SECTION: SHORT QUESTIONS (Shown only if Short Qs exist in selected chapters) */}
-                                        {availableCounts.short > 0 && (
-                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                                                <div>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
-                                                        <div>
-                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Short Questions</div>
-                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>مختصر سوالات</div>
-                                                        </div>
-                                                        <span style={{ background: '#1e40af', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                                            {shortAttempt * shortMarksEach} Marks
-                                                        </span>
-                                                    </div>
-
-                                                    {/* Live Availability Badge */}
-                                                    <div style={{ marginBottom: '1rem' }}>
-                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#1e40af', background: '#dbeafe', padding: '3px 8px', borderRadius: '6px' }}>
-                                                            🟢 Available in Syllabus: {availableCounts.short} Short Questions
-                                                        </span>
-                                                    </div>
-
-                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                Given Qs
-                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {availableCounts.short})</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={availableCounts.short}
-                                                                value={shortCount}
-                                                                onChange={(e) => {
-                                                                    const val = Number(e.target.value);
-                                                                    const clamped = Math.min(Math.max(0, val), availableCounts.short);
-                                                                    setShortCount(clamped);
-                                                                    if (shortAttempt > clamped) setShortAttempt(clamped);
-                                                                }}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                To Attempt
-                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {shortCount})</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={shortCount}
-                                                                value={shortAttempt}
-                                                                onChange={(e) => {
-                                                                    const val = Number(e.target.value);
-                                                                    setShortAttempt(Math.min(Math.max(0, val), shortCount));
-                                                                }}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                Marks Each
-                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>&nbsp;</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                max="10"
-                                                                value={shortMarksEach}
-                                                                onChange={(e) => setShortMarksEach(Math.max(1, Number(e.target.value)))}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Answer Writing Ruled Lines Toggle */}
-                                                    <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: '600', color: '#334155', cursor: 'pointer' }}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={showAnswerLines}
-                                                                onChange={(e) => setShowAnswerLines(e.target.checked)}
-                                                                style={{ width: '16px', height: '16px', accentColor: '#1e40af' }}
-                                                            />
-                                                            Student Ruled Lines
-                                                        </label>
-                                                        {showAnswerLines && (
-                                                            <select
-                                                                value={answerLineCount}
-                                                                onChange={(e) => setAnswerLineCount(Number(e.target.value))}
-                                                                style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600' }}
-                                                            >
-                                                                <option value="2">2 Lines</option>
-                                                                <option value="3">3 Lines</option>
-                                                                <option value="4">4 Lines</option>
-                                                            </select>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* SECTION: LONG QUESTIONS (Shown only if Long Qs exist in selected chapters) */}
-                                        {availableCounts.long > 0 && (
-                                            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                                                <div>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem' }}>
-                                                        <div>
-                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#1e293b' }}>Long Questions</div>
-                                                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>تفصیلی سوالات</div>
-                                                        </div>
-                                                        <span style={{ background: '#b45309', color: '#fff', padding: '0.2rem 0.6rem', borderRadius: '6px', fontWeight: '800', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                                            {longAttempt * longMarksEach} Marks
-                                                        </span>
-                                                    </div>
-
-                                                    {/* Live Availability Badge */}
-                                                    <div style={{ marginBottom: '1rem' }}>
-                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', fontWeight: '700', color: '#92400e', background: '#fef3c7', padding: '3px 8px', borderRadius: '6px' }}>
-                                                            🟢 Available in Syllabus: {availableCounts.long} Long Questions
-                                                        </span>
-                                                    </div>
-
-                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                Given Qs
-                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {availableCounts.long})</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={availableCounts.long}
-                                                                value={longCount}
-                                                                onChange={(e) => {
-                                                                    const val = Number(e.target.value);
-                                                                    const clamped = Math.min(Math.max(0, val), availableCounts.long);
-                                                                    setLongCount(clamped);
-                                                                    if (longAttempt > clamped) setLongAttempt(clamped);
-                                                                }}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                To Attempt
-                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>(Max: {longCount})</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="0"
-                                                                max={longCount}
-                                                                value={longAttempt}
-                                                                onChange={(e) => {
-                                                                    const val = Number(e.target.value);
-                                                                    setLongAttempt(Math.min(Math.max(0, val), longCount));
-                                                                }}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label style={{ fontSize: '0.75rem', fontWeight: '700', color: '#334155' }}>
-                                                                Marks Each
-                                                                <span style={{ color: '#64748b', fontWeight: '400', display: 'block', fontSize: '0.7rem' }}>&nbsp;</span>
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                max="15"
-                                                                value={longMarksEach}
-                                                                onChange={(e) => setLongMarksEach(Math.max(1, Number(e.target.value)))}
-                                                                style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', marginTop: '4px' }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
+                                                    <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                                        {(ch.questions || []).length} Qs
+                                                    </span>
+                                                </label>
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>
                         )}
 
-                        {/* TAB 3: EXAM PROFILE & HEADER */}
-                        {activeSettingsTab === 'exam_info' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem' }}>
-                                    <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <School size={22} color="#1e40af" />
-                                        Institutional Branding & Exam Meta Details
-                                    </h2>
-                                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.2rem' }}>
-                                        Customize how the top banner, institution details, student boxes, and guidelines appear on the printed paper.
+                        {/* TAB 4: ⚙️ SETUP */}
+                        {leftActiveTab === 'settings' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                <div>
+                                    <h3 style={{ fontSize: '0.95rem', fontWeight: '800', color: '#ffffff', margin: '0 0 0.25rem 0' }}>
+                                        Header & Typesetting
+                                    </h3>
+                                    <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
+                                        Paper title, timings, aur visual styling.
                                     </p>
-                                </div>
-
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>Exam / Term Title</label>
-                                        <input
-                                            type="text"
-                                            value={examTitle}
-                                            onChange={(e) => setExamTitle(e.target.value)}
-                                            placeholder="e.g. First Term Assessment 2026"
-                                            style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>Academic Session</label>
-                                        <input
-                                            type="text"
-                                            value={academicSession}
-                                            onChange={(e) => setAcademicSession(e.target.value)}
-                                            placeholder="e.g. 2025-2026"
-                                            style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>Campus / Branch</label>
-                                        <input
-                                            type="text"
-                                            value={campusName}
-                                            onChange={(e) => setCampusName(e.target.value)}
-                                            placeholder="e.g. Main Campus / Boys Wing"
-                                            style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>Exam Date</label>
-                                        <input
-                                            type="date"
-                                            value={examDate}
-                                            onChange={(e) => setExamDate(e.target.value)}
-                                            style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
-                                        />
-                                    </div>
                                 </div>
 
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>General Instructions for Students</label>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#cbd5e1', marginBottom: '0.2rem' }}>Exam Title</label>
+                                    <input
+                                        type="text"
+                                        value={examTitle}
+                                        onChange={(e) => setExamTitle(e.target.value)}
+                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #334155', background: '#1e293b', color: '#fff', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#cbd5e1', marginBottom: '0.2rem' }}>Time Allowed</label>
+                                    <input
+                                        type="text"
+                                        value={timeAllowed}
+                                        onChange={(e) => setTimeAllowed(e.target.value)}
+                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #334155', background: '#1e293b', color: '#fff', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#cbd5e1', marginBottom: '0.2rem' }}>Exam Date</label>
+                                    <input
+                                        type="date"
+                                        value={examDate}
+                                        onChange={(e) => setExamDate(e.target.value)}
+                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #334155', background: '#1e293b', color: '#fff', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#cbd5e1', marginBottom: '0.2rem' }}>Student Instructions</label>
                                     <textarea
                                         rows="2"
                                         value={instructions}
                                         onChange={(e) => setInstructions(e.target.value)}
-                                        style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', resize: 'vertical' }}
+                                        style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid #334155', background: '#1e293b', color: '#fff', fontSize: '0.8rem', resize: 'vertical' }}
                                     />
                                 </div>
 
-                                <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', background: '#f8fafc', padding: '1rem', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '600', color: '#334155' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', borderTop: '1px solid #334155', paddingTop: '0.75rem' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', fontWeight: '600', color: '#cbd5e1', cursor: 'pointer' }}>
                                         <input
                                             type="checkbox"
                                             checked={showSchoolLogo}
                                             onChange={(e) => setShowSchoolLogo(e.target.checked)}
-                                            style={{ width: '18px', height: '18px', accentColor: '#1e40af' }}
+                                            style={{ accentColor: '#4f46e5' }}
                                         />
-                                        Include Official School Logo in Header
+                                        Show School Logo in Header
                                     </label>
 
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '600', color: '#334155' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', fontWeight: '600', color: '#cbd5e1', cursor: 'pointer' }}>
                                         <input
                                             type="checkbox"
                                             checked={showWatermark}
                                             onChange={(e) => setShowWatermark(e.target.checked)}
-                                            style={{ width: '18px', height: '18px', accentColor: '#1e40af' }}
+                                            style={{ accentColor: '#4f46e5' }}
                                         />
-                                        Render Light Anti-Piracy Watermark on Paper
+                                        Show Background Watermark
+                                    </label>
+
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', fontWeight: '600', color: '#cbd5e1', cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={showAnswerLines}
+                                            onChange={(e) => setShowAnswerLines(e.target.checked)}
+                                            style={{ accentColor: '#4f46e5' }}
+                                        />
+                                        Student Ruled Answer Lines
                                     </label>
                                 </div>
                             </div>
                         )}
 
-                        {/* TAB 4: TYPESETTING & LANGUAGE STYLE */}
-                        {activeSettingsTab === 'typesetting' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem' }}>
-                                    <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <LayoutGrid size={22} color="#1e40af" />
-                                        Paper Layout, Language & Print Typography
-                                    </h2>
-                                    <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.2rem' }}>
-                                        Set your page density and font rendering style.
-                                    </p>
-                                </div>
-
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.25rem' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>Paper Density & Spacing</label>
-                                        <select
-                                            value={paperStyle}
-                                            onChange={(e) => setPaperStyle(e.target.value)}
-                                            style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem', background: '#fff' }}
-                                        >
-                                            <option value="board_standard">Official Board Standard (Classic A4)</option>
-                                            <option value="compact">Eco-Compact (Saves Maximum Paper)</option>
-                                            <option value="with_lines">Spacious with Student Answer Lines</option>
-                                        </select>
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '0.35rem' }}>Font Typography Size</label>
-                                        <select
-                                            value={fontSize}
-                                            onChange={(e) => setFontSize(e.target.value)}
-                                            style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem', background: '#fff' }}
-                                        >
-                                            <option value="normal">Standard (11pt / 12pt)</option>
-                                            <option value="large">Large Print (13pt / 14pt Easy-to-Read)</option>
-                                            <option value="compact">Compact Print (10pt)</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                     </div>
+                </aside>
 
-                    {/* BLUEPRINT SUMMARY & LAUNCH BAR */}
-                    <div style={{ background: 'linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%)', color: '#ffffff', padding: '1.5rem 2rem', borderRadius: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1.25rem', boxShadow: '0 8px 24px rgba(30, 64, 175, 0.25)' }}>
-                        <div style={{ display: 'flex', gap: '2rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <div>
-                                <span style={{ fontSize: '0.75rem', color: '#93c5fd', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '700' }}>TOTAL MARKS</span>
-                                <div style={{ fontSize: '2rem', fontWeight: '900', color: '#ffffff', lineHeight: 1 }}>{totalMarks}</div>
-                            </div>
-                            <div style={{ height: '36px', width: '1px', background: 'rgba(255,255,255,0.2)' }} />
-                            <div>
-                                <span style={{ fontSize: '0.75rem', color: '#93c5fd', fontWeight: '600' }}>Blueprint Summary</span>
-                                <div style={{ fontSize: '0.95rem', fontWeight: '700' }}>
-                                    {mcqCount} MCQs + {shortAttempt}/{shortCount} Short Qs + {longAttempt}/{longCount} Long Qs
-                                </div>
-                            </div>
-                            <div style={{ height: '36px', width: '1px', background: 'rgba(255,255,255,0.2)' }} />
-                            <div>
-                                <span style={{ fontSize: '0.75rem', color: '#93c5fd', fontWeight: '600' }}>Syllabus Scope</span>
-                                <div style={{ fontSize: '0.95rem', fontWeight: '700' }}>
-                                    {selectedSubject} ({selectedClassName}) &bull; {selectedChapterIds.length} Chapters
-                                </div>
-                            </div>
-                        </div>
+                {/* 👉 RIGHT SIDE: LIVE A4 PAPER CANVA VIEWPORT (NIGHT BACKGROUND) */}
+                <main style={{
+                    flex: 1,
+                    background: '#080c14',
+                    padding: '1.5rem 1rem 3rem 1rem',
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center'
+                }}>
+                    
+                    {/* Canva Page Selector & Zoom Bar (Hidden on Print) */}
+                    <div className="no-print" style={{
+                        width: '794px',
+                        background: '#0f172a',
+                        border: '1px solid #1e293b',
+                        borderRadius: '12px',
+                        padding: '0.65rem 1rem',
+                        marginBottom: '1.25rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+                        flexWrap: 'wrap',
+                        gap: '0.75rem'
+                    }}>
+                        {/* Page Selector Tabs */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase' }}>
+                                Pages:
+                            </span>
 
-                        <button
-                            type="button"
-                            onClick={handleGeneratePaper}
-                            disabled={isGenerating || firestoreChapters.length === 0}
-                            style={{
-                                padding: '0.9rem 2.25rem',
-                                borderRadius: '12px',
-                                fontWeight: '800',
-                                fontSize: '1.05rem',
-                                cursor: isGenerating || firestoreChapters.length === 0 ? 'not-allowed' : 'pointer',
-                                background: isGenerating || firestoreChapters.length === 0 ? '#94a3b8' : 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                color: '#ffffff',
-                                border: 'none',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.6rem',
-                                boxShadow: '0 4px 16px rgba(16, 185, 129, 0.35)'
-                            }}
-                        >
-                            {isGenerating ? (
-                                <>
-                                    <RefreshCw className="animate-spin" size={20} />
-                                    Synthesizing Real Paper...
-                                </>
-                            ) : (
-                                <>
-                                    <Sparkles size={20} />
-                                    1-Click Generate Paper from Syllabus
-                                </>
-                            )}
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* VIEW 2: LIVE BOARD-STANDARD PAPER CANVAS (Printable) */}
-            {activeView === 'preview' && generatedPaper && (
-                <div style={{ maxWidth: '850px', margin: '0 auto' }}>
-                    {/* Floating Controls Bar (Hidden on Print) */}
-                    <div className="no-print" style={{ background: '#1e293b', color: '#f8fafc', padding: '0.75rem 1.25rem', borderRadius: '12px', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-                            <span style={{ padding: '0.2rem 0.5rem', background: '#2563eb', borderRadius: '4px', fontWeight: '700' }}>Live Preview</span>
-                            <span>Click <strong>"🔄 Swap"</strong> next to any question to pick an alternate from the scanned pool.</span>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                             <button
-                                onClick={handleDownloadPdf}
-                                disabled={isDownloadingPdf}
-                                style={{ padding: '0.45rem 1.1rem', background: '#1e40af', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', fontSize: '0.8rem', cursor: isDownloadingPdf ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                                onClick={() => setActivePageTab('all')}
+                                style={{
+                                    padding: '0.35rem 0.75rem',
+                                    borderRadius: '8px',
+                                    fontWeight: '700',
+                                    fontSize: '0.8rem',
+                                    cursor: 'pointer',
+                                    border: 'none',
+                                    background: activePageTab === 'all' ? '#4f46e5' : '#1e293b',
+                                    color: '#ffffff'
+                                }}
                             >
-                                {isDownloadingPdf ? (
-                                    <>
-                                        <RefreshCw className="animate-spin" size={14} />
-                                        Generating PDF...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Download size={14} />
-                                        Download PDF
-                                    </>
-                                )}
+                                All Pages ({pageCountMode})
                             </button>
+
+                            <button
+                                onClick={() => setActivePageTab(1)}
+                                style={{
+                                    padding: '0.35rem 0.75rem',
+                                    borderRadius: '8px',
+                                    fontWeight: '700',
+                                    fontSize: '0.8rem',
+                                    cursor: 'pointer',
+                                    border: 'none',
+                                    background: activePageTab === 1 ? '#4f46e5' : '#1e293b',
+                                    color: '#ffffff'
+                                }}
+                            >
+                                📄 Page 1
+                            </button>
+
+                            <button
+                                onClick={() => setActivePageTab(2)}
+                                style={{
+                                    padding: '0.35rem 0.75rem',
+                                    borderRadius: '8px',
+                                    fontWeight: '700',
+                                    fontSize: '0.8rem',
+                                    cursor: 'pointer',
+                                    border: 'none',
+                                    background: activePageTab === 2 ? '#4f46e5' : '#1e293b',
+                                    color: '#ffffff'
+                                }}
+                            >
+                                📄 Page 2
+                            </button>
+
+                            {pageCountMode >= 3 && (
+                                <button
+                                    onClick={() => setActivePageTab(3)}
+                                    style={{
+                                        padding: '0.35rem 0.75rem',
+                                        borderRadius: '8px',
+                                        fontWeight: '700',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        border: 'none',
+                                        background: activePageTab === 3 ? '#4f46e5' : '#1e293b',
+                                        color: '#ffffff'
+                                    }}
+                                >
+                                    📄 Page 3
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Zoom & Layout Controls */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                            {/* Layout Selector */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Layout:</span>
+                                <select
+                                    value={pageCountMode}
+                                    onChange={(e) => setPageCountMode(Number(e.target.value))}
+                                    style={{ background: '#1e293b', border: '1px solid #334155', color: '#fff', borderRadius: '6px', padding: '3px 8px', fontSize: '0.75rem', fontWeight: '700', outline: 'none' }}
+                                >
+                                    <option value={1}>1 Page (Worksheet)</option>
+                                    <option value={2}>2 Pages (Standard Board)</option>
+                                    <option value={3}>3 Pages (Grand Test)</option>
+                                </select>
+                            </div>
+
+                            {/* Canva-Style Zoom In / Zoom Out Controls */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '2px 4px' }}>
+                                <button
+                                    onClick={() => setCanvasZoom(prev => Math.max(20, prev - 10))}
+                                    title="Zoom Out (-10%)"
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        width: '24px',
+                                        height: '24px',
+                                        borderRadius: '4px',
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: '#cbd5e1',
+                                        cursor: 'pointer'
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+                                    onMouseLeave={(e) => e.currentTarget.style.color = '#cbd5e1'}
+                                >
+                                    <ZoomOut size={13} />
+                                </button>
+
+                                <select
+                                    value={canvasZoom}
+                                    onChange={(e) => setCanvasZoom(Number(e.target.value))}
+                                    style={{
+                                        background: '#0f172a',
+                                        border: '1px solid #334155',
+                                        color: '#38bdf8',
+                                        fontWeight: '800',
+                                        fontSize: '0.75rem',
+                                        borderRadius: '4px',
+                                        padding: '2px 6px',
+                                        outline: 'none',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <option value={20}>20%</option>
+                                    <option value={35}>35%</option>
+                                    <option value={50}>50%</option>
+                                    <option value={60}>60%</option>
+                                    <option value={70}>70%</option>
+                                    <option value={85}>85%</option>
+                                    <option value={100}>100% (Actual)</option>
+                                    <option value={125}>125%</option>
+                                    <option value={150}>150%</option>
+                                </select>
+
+                                <button
+                                    onClick={() => setCanvasZoom(prev => Math.min(150, prev + 10))}
+                                    title="Zoom In (+10%)"
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        width: '24px',
+                                        height: '24px',
+                                        borderRadius: '4px',
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: '#cbd5e1',
+                                        cursor: 'pointer'
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+                                    onMouseLeave={(e) => e.currentTarget.style.color = '#cbd5e1'}
+                                >
+                                    <ZoomIn size={13} />
+                                </button>
+
+                                {canvasZoom !== 100 && (
+                                    <button
+                                        onClick={() => setCanvasZoom(100)}
+                                        title="Reset Zoom to 100%"
+                                        style={{
+                                            fontSize: '0.68rem',
+                                            fontWeight: '700',
+                                            padding: '1px 5px',
+                                            borderRadius: '4px',
+                                            background: '#334155',
+                                            color: '#94a3b8',
+                                            border: 'none',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Reset
+                                    </button>
+                                )}
+                            </div>
+
+                            <span style={{ fontSize: '0.75rem', color: '#6366f1', fontWeight: '800' }}>
+                                Standard A4 (210×297mm)
+                            </span>
                         </div>
                     </div>
 
-                    {/* PHYSICAL PAPER CANVAS */}
-                    <div 
-                        ref={printRef}
-                        className="printable-paper" 
-                        style={{ 
-                            background: '#ffffff', 
-                            padding: '2.5rem 3rem', 
-                            borderRadius: '8px', 
-                            border: '1px solid #cbd5e1', 
-                            boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
-                            fontFamily: '"Times New Roman", "Noto Nastaliq Urdu", Times, serif',
-                            color: '#000000',
-                            position: 'relative'
+                    {/* PHYSICAL A4 PAPER SHEETS CONTAINER */}
+                    <div
+                        ref={pagesContainerRef}
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '2rem',
+                            alignItems: 'center',
+                            zoom: `${canvasZoom}%`,
+                            transition: 'zoom 0.15s ease'
                         }}
                     >
-                        {/* Optional Watermark */}
-                        {generatedPaper.showWatermark && (
-                            <div style={{
-                                position: 'absolute',
-                                top: '50%',
-                                left: '50%',
-                                transform: 'translate(-50%, -50%) rotate(-35deg)',
-                                fontSize: '4.5rem',
-                                fontWeight: '900',
-                                color: 'rgba(0, 0, 0, 0.04)',
-                                whiteSpace: 'nowrap',
-                                pointerEvents: 'none',
-                                zIndex: 0,
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.1em'
-                            }}>
-                                {schoolInfo.name}
-                            </div>
-                        )}
+                        
+                        {/* 📄 PAGE 1 (OBJECTIVE / SECTION A, B, C) */}
+                        {(activePageTab === 'all' || activePageTab === 1) && (
+                            <div className="printable-paper-sheet">
+                                <div>
+                                    {/* Anti-Piracy Watermark */}
+                                    {showWatermark && (
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '50%',
+                                            left: '50%',
+                                            transform: 'translate(-50%, -50%) rotate(-35deg)',
+                                            fontSize: '3.75rem',
+                                            fontWeight: '900',
+                                            color: 'rgba(0, 0, 0, 0.035)',
+                                            whiteSpace: 'nowrap',
+                                            pointerEvents: 'none',
+                                            zIndex: 0,
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.1em'
+                                        }}>
+                                            {schoolInfo.name}
+                                        </div>
+                                    )}
 
-                        {/* SCHOOL HEADER */}
-                        <div className="school-header" style={{ textAlign: 'center', borderBottom: '2px solid #000000', paddingBottom: '0.75rem', marginBottom: '1rem', position: 'relative', zIndex: 1, breakInside: 'avoid', pageBreakInside: 'avoid' }}>
-                            <h1 style={{ fontSize: '1.75rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
-                                {schoolInfo.name}
-                            </h1>
-                            <p style={{ fontSize: '0.85rem', margin: '0.15rem 0', fontStyle: 'italic' }}>
-                                {schoolInfo.address} {schoolInfo.contact ? `| Ph: ${schoolInfo.contact}` : ''}
-                            </p>
-                            <h2 style={{ fontSize: '1.15rem', fontWeight: '700', margin: '0.35rem 0 0', textDecoration: 'underline' }}>
-                                {generatedPaper.examTitle} ({generatedPaper.academicSession})
-                            </h2>
-                        </div>
+                                    {/* SCHOOL HEADER */}
+                                    <div className="school-header" style={{ textAlign: 'center', borderBottom: '2px solid #000000', paddingBottom: '0.65rem', marginBottom: '0.85rem', position: 'relative', zIndex: 1 }}>
+                                        <h1 style={{ fontSize: '1.65rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.04em', margin: 0 }}>
+                                            {schoolInfo.name}
+                                        </h1>
+                                        <p style={{ fontSize: '0.8rem', margin: '0.15rem 0', fontStyle: 'italic' }}>
+                                            {schoolInfo.address} {schoolInfo.contact ? `| Ph: ${schoolInfo.contact}` : ''}
+                                        </p>
+                                        <h2 style={{ fontSize: '1.1rem', fontWeight: '700', margin: '0.3rem 0 0', textDecoration: 'underline' }}>
+                                            {examTitle} ({academicSession})
+                                        </h2>
+                                    </div>
 
-                        {/* STUDENT & EXAM METADATA BOX */}
-                        <div className="paper-meta-box" style={{ border: '1px solid #000000', padding: '0.5rem 0.75rem', marginBottom: '1.25rem', fontSize: '0.9rem', lineHeight: '1.5', position: 'relative', zIndex: 1, breakInside: 'avoid', pageBreakInside: 'avoid' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.35rem' }}>
-                                <div><strong>Student Name:</strong> ______________________</div>
-                                <div><strong>Roll No:</strong> ____________</div>
-                                <div><strong>Date:</strong> {generatedPaper.examDate}</div>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.5rem' }}>
-                                <div><strong>Class:</strong> {generatedPaper.class} &nbsp;|&nbsp; <strong>Subject:</strong> {generatedPaper.subject}</div>
-                                <div><strong>Time Allowed:</strong> {generatedPaper.timeAllowed}</div>
-                                <div><strong>Total Marks:</strong> {generatedPaper.totalMarks}</div>
-                            </div>
-                        </div>
-
-                        {/* INSTRUCTIONS */}
-                        {generatedPaper.instructions && (
-                            <div style={{ fontSize: '0.8rem', fontStyle: 'italic', marginBottom: '1rem', borderBottom: '1px dashed #cbd5e1', paddingBottom: '0.5rem' }}>
-                                <strong>Instructions:</strong> {generatedPaper.instructions}
-                            </div>
-                        )}
-
-                        {/* SECTION A: OBJECTIVE / MCQs */}
-                        {generatedPaper.mcqs?.length > 0 && (
-                            <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
-                                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
-                                    <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
-                                        Section - A (Objective Type / MCQs)
-                                    </h3>
-                                    <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
-                                        [Marks: {generatedPaper.mcqs.length * generatedPaper.mcqMarksEach}]
-                                    </span>
-                                </div>
-                                <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
-                                    <strong>Q.1:</strong> Choose the correct option for each of the following questions. Each question carries {generatedPaper.mcqMarksEach} mark.
-                                </p>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                                    {generatedPaper.mcqs.map((q, idx) => {
-                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
-                                        const urduAlpha = ['(الف)', '(ب)', '(ج)', '(د)'];
-
-                                        return (
-                                            <div key={q.id || idx} className="question-item" style={{ breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
-                                                    <div 
-                                                        dir={isUrduQ ? "rtl" : "ltr"}
-                                                        style={{ 
-                                                            display: 'flex', 
-                                                            alignItems: 'baseline', 
-                                                            gap: '0.4rem', 
-                                                            flex: 1,
-                                                            direction: isUrduQ ? 'rtl' : 'ltr',
-                                                            textAlign: isUrduQ ? 'right' : 'left'
-                                                        }}
-                                                    >
-                                                        <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
-                                                        <span 
-                                                            className={isUrduQ ? 'urdu-paper-font' : ''} 
-                                                            style={{ 
-                                                                fontSize: isUrduQ 
-                                                                    ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem') 
-                                                                    : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
-                                                                fontWeight: isUrduQ ? '600' : '500', 
-                                                                lineHeight: isUrduQ ? '2.2' : '1.5',
-                                                                flex: 1
-                                                            }}
-                                                        >
-                                                            {q.question}
-                                                        </span>
-                                                    </div>
-
-                                                    <button
-                                                        onClick={() => handleSwapQuestion('mcq', idx)}
-                                                        data-html2canvas-ignore="true"
-                                                        className="no-print"
-                                                        style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.5rem', flexShrink: 0 }}
-                                                        title="Swap with alternate question from bank"
-                                                    >
-                                                        <RefreshCw size={11} /> Swap
-                                                    </button>
-                                                </div>
-
-                                                {/* Options Grid */}
-                                                {q.options?.length > 0 && (
-                                                    <div 
-                                                        dir={isUrduQ ? "rtl" : "ltr"}
-                                                        style={{ 
-                                                            display: 'grid', 
-                                                            gridTemplateColumns: generatedPaper.mcqLayout === '2_col' ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', 
-                                                            gap: '0.5rem', 
-                                                            marginTop: '0.35rem', 
-                                                            paddingLeft: isUrduQ ? '0' : '1.25rem',
-                                                            paddingRight: isUrduQ ? '1.25rem' : '0',
-                                                            fontSize: isUrduQ ? '1.05rem' : '0.9rem',
-                                                            direction: isUrduQ ? 'rtl' : 'ltr',
-                                                            textAlign: isUrduQ ? 'right' : 'left'
-                                                        }}
-                                                    >
-                                                        {q.options.map((opt, oIdx) => (
-                                                            <div key={oIdx} className={isUrduQ ? 'urdu-paper-font' : ''}>
-                                                                <strong>
-                                                                    {isUrduQ && generatedPaper.urduOptionFormat === 'alif_bay' 
-                                                                        ? (urduAlpha[oIdx] || `(${String.fromCharCode(65 + oIdx)})`) 
-                                                                        : `(${String.fromCharCode(65 + oIdx)})`
-                                                                    }
-                                                                </strong> {opt}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* SECTION B: FILL IN THE BLANKS (خالی جگہ پر کریں) */}
-                        {generatedPaper.blanks?.length > 0 && (
-                            <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
-                                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
-                                    <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
-                                        Section - B: Fill in the Blanks (خالی جگہ پر کریں)
-                                    </h3>
-                                    <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
-                                        [Marks: {generatedPaper.blanks.length * generatedPaper.blankMarksEach}]
-                                    </span>
-                                </div>
-                                <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
-                                    <strong>Q.2:</strong> Fill in the blanks with suitable words / answers. Each question carries {generatedPaper.blankMarksEach} mark.
-                                </p>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                                    {generatedPaper.blanks.map((q, idx) => {
-                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
-                                        let displayText = q.question || '';
-                                        if (!displayText.includes('____')) {
-                                            displayText += ' ______________________';
-                                        }
-
-                                        return (
-                                            <div key={q.id || idx} className="question-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem', gap: '0.75rem' }}>
-                                                <div 
-                                                    dir={isUrduQ ? "rtl" : "ltr"}
-                                                    style={{ 
-                                                        display: 'flex', 
-                                                        alignItems: 'baseline', 
-                                                        gap: '0.4rem', 
-                                                        flex: 1,
-                                                        direction: isUrduQ ? 'rtl' : 'ltr',
-                                                        textAlign: isUrduQ ? 'right' : 'left'
-                                                    }}
-                                                >
-                                                    <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
-                                                    <span 
-                                                        className={isUrduQ ? 'urdu-paper-font' : ''} 
-                                                        style={{ 
-                                                            fontSize: isUrduQ 
-                                                                ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
-                                                                : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
-                                                            lineHeight: isUrduQ ? '2.2' : '1.5',
-                                                            flex: 1
-                                                        }}
-                                                    >
-                                                        {displayText}
-                                                    </span>
-                                                </div>
-
-                                                <button
-                                                    onClick={() => handleSwapQuestion('blank', idx)}
-                                                    data-html2canvas-ignore="true"
-                                                    className="no-print"
-                                                    style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.5rem', flexShrink: 0 }}
-                                                    title="Swap blank question"
-                                                >
-                                                    <RefreshCw size={11} /> Swap
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* SECTION C: TRUE / FALSE (درست یا غلط) */}
-                        {generatedPaper.true_false?.length > 0 && (
-                            <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
-                                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
-                                    <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
-                                        Section - C: State True or False (درست یا غلط کی نشان دہی کریں)
-                                    </h3>
-                                    <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
-                                        [Marks: {generatedPaper.true_false.length * generatedPaper.tfMarksEach}]
-                                    </span>
-                                </div>
-                                <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
-                                    <strong>Q.3:</strong> Read the following statements and mark <strong>True (T)</strong> or <strong>False (F)</strong> in the box provided.
-                                </p>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                                    {generatedPaper.true_false.map((q, idx) => {
-                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
-
-                                        return (
-                                            <div key={q.id || idx} className="question-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem', gap: '0.75rem' }}>
-                                                <div 
-                                                    dir={isUrduQ ? "rtl" : "ltr"}
-                                                    style={{ 
-                                                        display: 'flex', 
-                                                        alignItems: 'baseline', 
-                                                        gap: '0.4rem', 
-                                                        flex: 1,
-                                                        direction: isUrduQ ? 'rtl' : 'ltr',
-                                                        textAlign: isUrduQ ? 'right' : 'left'
-                                                    }}
-                                                >
-                                                    <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
-                                                    <span 
-                                                        className={isUrduQ ? 'urdu-paper-font' : ''} 
-                                                        style={{ 
-                                                            fontSize: isUrduQ 
-                                                                ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
-                                                                : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
-                                                            lineHeight: isUrduQ ? '2.2' : '1.5',
-                                                            flex: 1
-                                                        }}
-                                                    >
-                                                        {q.question}
-                                                    </span>
-                                                </div>
-
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
-                                                    {/* Bracket / Box for marking */}
-                                                    <span style={{ 
-                                                        border: '1.5px solid #000', 
-                                                        padding: '2px 14px', 
-                                                        borderRadius: '4px', 
-                                                        fontSize: '0.85rem', 
-                                                        fontWeight: '700',
-                                                        minWidth: '50px',
-                                                        textAlign: 'center'
-                                                    }}>
-                                                        [&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]
-                                                    </span>
-
-                                                    <button
-                                                        onClick={() => handleSwapQuestion('true_false', idx)}
-                                                        data-html2canvas-ignore="true"
-                                                        className="no-print"
-                                                        style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem' }}
-                                                        title="Swap true/false question"
-                                                    >
-                                                        <RefreshCw size={11} /> Swap
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* SECTION D: SHORT QUESTIONS */}
-                        {generatedPaper.shorts?.length > 0 && (
-                            <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
-                                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
-                                    <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
-                                        Section - {generatedPaper.blanks?.length > 0 || generatedPaper.true_false?.length > 0 ? 'D' : 'B'} (Short Questions / مختصر جوابات)
-                                    </h3>
-                                    <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
-                                        [Marks: {generatedPaper.shortAttempt * generatedPaper.shortMarksEach}]
-                                    </span>
-                                </div>
-                                <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
-                                    <strong>Q.4:</strong> Answer any <strong>{generatedPaper.shortAttempt}</strong> out of the following <strong>{generatedPaper.shorts.length}</strong> questions. Each carries {generatedPaper.shortMarksEach} marks.
-                                </p>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                                    {generatedPaper.shorts.map((q, idx) => {
-                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
-
-                                        return (
-                                            <div key={q.id || idx} className="question-item" style={{ display: 'flex', flexDirection: 'column', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.5rem' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
-                                                    <div 
-                                                        dir={isUrduQ ? "rtl" : "ltr"}
-                                                        style={{ 
-                                                            display: 'flex', 
-                                                            alignItems: 'baseline', 
-                                                            gap: '0.4rem', 
-                                                            flex: 1,
-                                                            direction: isUrduQ ? 'rtl' : 'ltr',
-                                                            textAlign: isUrduQ ? 'right' : 'left'
-                                                        }}
-                                                    >
-                                                        <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>({idx + 1})</strong>
-                                                        <span 
-                                                            className={isUrduQ ? 'urdu-paper-font' : ''} 
-                                                            style={{ 
-                                                                fontSize: isUrduQ 
-                                                                    ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
-                                                                    : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
-                                                                lineHeight: isUrduQ ? '2.2' : '1.5',
-                                                                flex: 1
-                                                            }}
-                                                        >
-                                                            {q.question}
-                                                        </span>
-                                                    </div>
-
-                                                    <button
-                                                        onClick={() => handleSwapQuestion('short', idx)}
-                                                        data-html2canvas-ignore="true"
-                                                        className="no-print"
-                                                        style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.5rem', flexShrink: 0 }}
-                                                        title="Swap question"
-                                                    >
-                                                        <RefreshCw size={11} /> Swap
-                                                    </button>
-                                                </div>
-
-                                                {/* Student Answer Writing Ruled Lines (Primary Worksheet Mode) */}
-                                                {generatedPaper.showAnswerLines && (
-                                                    <div style={{ marginTop: '0.5rem', paddingLeft: isUrduQ ? '0' : '1.25rem', paddingRight: isUrduQ ? '1.25rem' : '0', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                                                        {Array.from({ length: generatedPaper.answerLineCount || 2 }).map((_, lineIdx) => (
-                                                            <div key={lineIdx} style={{ borderBottom: '1px dotted #94a3b8', height: '18px', width: '100%' }} />
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* SECTION E: LONG / DETAILED QUESTIONS */}
-                        {generatedPaper.longs?.length > 0 && (
-                            <div style={{ marginBottom: '1.5rem', position: 'relative', zIndex: 1 }}>
-                                <div className="paper-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #000', paddingBottom: '0.25rem', marginBottom: '0.75rem', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
-                                    <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, textTransform: 'uppercase' }}>
-                                        Section - {generatedPaper.blanks?.length > 0 || generatedPaper.true_false?.length > 0 ? 'E' : 'C'} (Long / Descriptive Questions)
-                                    </h3>
-                                    <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>
-                                        [Marks: {generatedPaper.longAttempt * generatedPaper.longMarksEach}]
-                                    </span>
-                                </div>
-                                <p style={{ fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.75rem' }}>
-                                    <strong>Note:</strong> Attempt any <strong>{generatedPaper.longAttempt}</strong> out of the following <strong>{generatedPaper.longs.length}</strong> questions. Each carries {generatedPaper.longMarksEach} marks.
-                                </p>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                                    {generatedPaper.longs.map((q, idx) => {
-                                        const isUrduQ = isUrduText(q.question, generatedPaper.subject);
-                                        return (
-                                            <div key={q.id || idx} className="question-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', breakInside: 'avoid', pageBreakInside: 'avoid', marginBottom: '0.35rem', gap: '0.75rem' }}>
-                                                <div 
-                                                    dir={isUrduQ ? "rtl" : "ltr"}
-                                                    style={{ 
-                                                        display: 'flex', 
-                                                        alignItems: 'baseline', 
-                                                        gap: '0.4rem', 
-                                                        flex: 1,
-                                                        direction: isUrduQ ? 'rtl' : 'ltr',
-                                                        textAlign: isUrduQ ? 'right' : 'left'
-                                                    }}
-                                                >
-                                                    <strong style={{ flexShrink: 0, fontSize: isUrduQ ? '1.05rem' : '0.95rem' }}>Q.{idx + 5}:</strong>
-                                                    <span 
-                                                        className={isUrduQ ? 'urdu-paper-font' : ''} 
-                                                        style={{ 
-                                                            fontSize: isUrduQ 
-                                                                ? (generatedPaper.fontSize === 'large' ? '1.3rem' : generatedPaper.fontSize === 'compact' ? '1.05rem' : '1.15rem')
-                                                                : (generatedPaper.fontSize === 'large' ? '1.05rem' : generatedPaper.fontSize === 'compact' ? '0.85rem' : '0.95rem'), 
-                                                            lineHeight: isUrduQ ? '2.2' : '1.5',
-                                                            flex: 1
-                                                        }}
-                                                    >
-                                                        {q.question}
-                                                    </span>
-                                                </div>
-
-                                                <button
-                                                    onClick={() => handleSwapQuestion('long', idx)}
-                                                    data-html2canvas-ignore="true"
-                                                    className="no-print"
-                                                    style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.2rem 0.4rem', fontSize: '0.7rem', color: '#1e40af', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.5rem', flexShrink: 0 }}
-                                                    title="Swap question"
-                                                >
-                                                    <RefreshCw size={11} /> Swap
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* TEACHER ANSWER KEY & MARKING GUIDE */}
-                        {showAnswerKey && (
-                            <div className="paper-answer-key" style={{ marginTop: '2.5rem', borderTop: '2px dashed #000000', paddingTop: '1.5rem', breakBefore: 'page', pageBreakBefore: 'always', position: 'relative', zIndex: 1 }}>
-                                <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-                                    <h3 style={{ fontSize: '1.2rem', fontWeight: '800', textTransform: 'uppercase', margin: 0 }}>
-                                        Teacher Grading Guide & Solution Key
-                                    </h3>
-                                    <p style={{ fontSize: '0.85rem', fontStyle: 'italic', margin: '0.2rem 0' }}>
-                                        Confidential - For Teacher Evaluation & Marking Reference Only
-                                    </p>
-                                </div>
-
-                                {/* MCQ Solutions */}
-                                {generatedPaper.mcqs?.length > 0 && (
-                                    <div style={{ marginBottom: '1.25rem' }}>
-                                        <h4 style={{ fontSize: '0.95rem', fontWeight: '700', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.25rem', marginBottom: '0.5rem' }}>
-                                            Section A: MCQ Answer Keys
-                                        </h4>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.4rem', fontSize: '0.85rem' }}>
-                                            {generatedPaper.mcqs.map((q, idx) => (
-                                                <div key={idx} style={{ padding: '0.25rem 0.5rem', background: '#f8fafc', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
-                                                    <strong>Q.{idx + 1}:</strong> {q.correctAnswer || 'Key'}
-                                                </div>
-                                            ))}
+                                    {/* STUDENT & EXAM METADATA BOX */}
+                                    <div className="paper-meta-box" style={{ border: '1px solid #000000', padding: '0.45rem 0.65rem', marginBottom: '0.9rem', fontSize: '0.85rem', lineHeight: '1.45', position: 'relative', zIndex: 1 }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.4rem', marginBottom: '0.25rem' }}>
+                                            <div><strong>Student Name:</strong> ______________________</div>
+                                            <div><strong>Roll No:</strong> ____________</div>
+                                            <div><strong>Date:</strong> {examDate}</div>
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '0.4rem' }}>
+                                            <div><strong>Class:</strong> {selectedClassName} &nbsp;|&nbsp; <strong>Subject:</strong> {selectedSubject}</div>
+                                            <div><strong>Time Allowed:</strong> {timeAllowed}</div>
+                                            <div><strong>Total Marks:</strong> {totalMarks}</div>
                                         </div>
                                     </div>
-                                )}
 
-                                {/* Blanks & True/False Solutions */}
-                                {(generatedPaper.blanks?.length > 0 || generatedPaper.true_false?.length > 0) && (
-                                    <div style={{ marginBottom: '1.25rem' }}>
-                                        <h4 style={{ fontSize: '0.95rem', fontWeight: '700', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.25rem', marginBottom: '0.5rem' }}>
-                                            Section B & C: Blanks & True/False Keys
-                                        </h4>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.4rem', fontSize: '0.85rem' }}>
-                                            {generatedPaper.blanks?.map((q, idx) => (
-                                                <div key={`b_${idx}`} style={{ padding: '0.25rem 0.5rem', background: '#f0fdf4', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
-                                                    <strong>Blank {idx + 1}:</strong> {q.correctAnswer || 'Key'}
-                                                </div>
-                                            ))}
-                                            {generatedPaper.true_false?.map((q, idx) => (
-                                                <div key={`tf_${idx}`} style={{ padding: '0.25rem 0.5rem', background: '#faf5ff', borderRadius: '4px', border: '1px solid #e9d5ff' }}>
-                                                    <strong>T/F {idx + 1}:</strong> {q.correctAnswer || 'Key'}
-                                                </div>
-                                            ))}
+                                    {/* GENERAL INSTRUCTIONS */}
+                                    {instructions && (
+                                        <div style={{ fontSize: '0.75rem', fontStyle: 'italic', marginBottom: '0.85rem', borderBottom: '1px dashed #cbd5e1', paddingBottom: '0.35rem' }}>
+                                            <strong>Instructions:</strong> {instructions}
                                         </div>
-                                    </div>
-                                )}
+                                    )}
+
+                                    {/* PAGE 1 CONTENT */}
+                                    {renderSectionA()}
+                                    {renderSectionBC()}
+
+                                    {/* If 1 Page Mode: render short questions as well */}
+                                    {pageCountMode === 1 && (
+                                        <>
+                                            {renderSectionD()}
+                                            {renderSectionE()}
+                                        </>
+                                    )}
+                                </div>
+
+                                {/* Page 1 Footer */}
+                                <div style={{ borderTop: '1px solid #000', paddingTop: '0.4rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', fontWeight: '700' }}>
+                                    <span>{selectedSubject} - Class {selectedClassName}</span>
+                                    <span>Page 1 of {pageCountMode} {pageCountMode > 1 ? '(Turn Over →)' : ''}</span>
+                                </div>
                             </div>
                         )}
+
+                        {/* 📄 PAGE 2 (SUBJECTIVE / SECTION D & SECTION E) */}
+                        {pageCountMode >= 2 && (activePageTab === 'all' || activePageTab === 2) && (
+                            <div className="printable-paper-sheet">
+                                <div>
+                                    {/* Mini Header for Page 2 */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #000', paddingBottom: '0.35rem', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: '700' }}>
+                                        <span>{schoolInfo.name}</span>
+                                        <span>{examTitle}</span>
+                                        <span>Subject: {selectedSubject} (Class {selectedClassName})</span>
+                                    </div>
+
+                                    {/* PAGE 2 CONTENT */}
+                                    {renderSectionD()}
+                                    {pageCountMode === 2 && renderSectionE()}
+                                </div>
+
+                                {/* Page 2 Footer */}
+                                <div style={{ borderTop: '1px solid #000', paddingTop: '0.4rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', fontWeight: '700' }}>
+                                    <span>{schoolInfo.name} &bull; Examination Branch</span>
+                                    <span>Page 2 of {pageCountMode} {pageCountMode === 2 ? '(End of Paper)' : '(Turn Over →)'}</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 📄 PAGE 3 (LONG QUESTIONS / GRAND TEST MODE) */}
+                        {pageCountMode >= 3 && (activePageTab === 'all' || activePageTab === 3) && (
+                            <div className="printable-paper-sheet">
+                                <div>
+                                    {/* Mini Header for Page 3 */}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #000', paddingBottom: '0.35rem', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: '700' }}>
+                                        <span>{schoolInfo.name}</span>
+                                        <span>Section - E (Descriptive Long Questions)</span>
+                                        <span>Class {selectedClassName}</span>
+                                    </div>
+
+                                    {/* PAGE 3 CONTENT */}
+                                    {renderSectionE()}
+                                </div>
+
+                                {/* Page 3 Footer */}
+                                <div style={{ borderTop: '1px solid #000', paddingTop: '0.4rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', fontWeight: '700' }}>
+                                    <span>End of Examination Paper</span>
+                                    <span>Page 3 of {pageCountMode}</span>
+                                </div>
+                            </div>
+                        )}
+
+                    </div>
+                </main>
+            </div>
+
+            {/* 📝 3. MODAL FOR EDITING ANY QUESTION TEXT (NIGHT THEME) */}
+            {editingQuestion && (
+                <div className="no-print" style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(0, 0, 0, 0.75)',
+                    backdropFilter: 'blur(6px)',
+                    zIndex: 9999,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '1rem'
+                }}>
+                    <div style={{
+                        background: '#0f172a',
+                        borderRadius: '16px',
+                        width: '100%',
+                        maxWidth: '560px',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                        padding: '1.5rem',
+                        border: '1px solid #334155',
+                        color: '#ffffff'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffffff', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Edit3 size={18} color="#818cf8" />
+                                Edit Question Text
+                            </h3>
+                            <button
+                                onClick={() => setEditingQuestion(null)}
+                                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#cbd5e1', marginBottom: '0.35rem' }}>
+                                    Question Text (Urdu or English)
+                                </label>
+                                <textarea
+                                    rows="3"
+                                    value={editingQuestion.data.question}
+                                    onChange={(e) => setEditingQuestion(prev => ({
+                                        ...prev,
+                                        data: { ...prev.data, question: e.target.value }
+                                    }))}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.65rem',
+                                        borderRadius: '8px',
+                                        border: '1px solid #334155',
+                                        background: '#1e293b',
+                                        color: '#ffffff',
+                                        fontSize: '0.95rem',
+                                        resize: 'vertical',
+                                        fontFamily: isUrduText(editingQuestion.data.question) ? "'Noto Nastaliq Urdu', serif" : 'inherit',
+                                        lineHeight: isUrduText(editingQuestion.data.question) ? '2' : '1.5'
+                                    }}
+                                />
+                            </div>
+
+                            {/* Options if MCQ */}
+                            {editingQuestion.type === 'mcq' && editingQuestion.data.options && (
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#cbd5e1', marginBottom: '0.35rem' }}>
+                                        Options (A, B, C, D)
+                                    </label>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                        {editingQuestion.data.options.map((opt, oIdx) => (
+                                            <input
+                                                key={oIdx}
+                                                type="text"
+                                                value={opt}
+                                                onChange={(e) => {
+                                                    const updatedOpts = [...editingQuestion.data.options];
+                                                    updatedOpts[oIdx] = e.target.value;
+                                                    setEditingQuestion(prev => ({
+                                                        ...prev,
+                                                        data: { ...prev.data, options: updatedOpts }
+                                                    }));
+                                                }}
+                                                placeholder={`Option ${String.fromCharCode(65 + oIdx)}`}
+                                                style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #334155', background: '#1e293b', color: '#fff', fontSize: '0.85rem' }}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#cbd5e1', marginBottom: '0.35rem' }}>
+                                    Correct Answer Key (Optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={editingQuestion.data.correctAnswer || ''}
+                                    onChange={(e) => setEditingQuestion(prev => ({
+                                        ...prev,
+                                        data: { ...prev.data, correctAnswer: e.target.value }
+                                    }))}
+                                    placeholder="e.g. Option A or 9.8 m/s²"
+                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #334155', background: '#1e293b', color: '#fff', fontSize: '0.85rem' }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.65rem', marginTop: '0.5rem' }}>
+                                <button
+                                    onClick={() => setEditingQuestion(null)}
+                                    style={{ padding: '0.6rem 1rem', borderRadius: '8px', border: '1px solid #334155', background: '#1e293b', color: '#94a3b8', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSaveEditedQuestion}
+                                    style={{ padding: '0.6rem 1.25rem', borderRadius: '8px', border: 'none', background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)', color: '#ffffff', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}
+                                >
+                                    Apply Changes
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
