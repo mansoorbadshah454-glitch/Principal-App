@@ -1012,40 +1012,48 @@ export default function SchoolLeaving() {
         return calculateStudentRealDues(selectedStudent, manualFinancialOverride);
     }, [selectedStudent, manualFinancialOverride]);
 
-    // Dynamic 12-Month Payment Reliability Score & Session Timeline based on Real Dues
+    // Dynamic 12-Month Payment Reliability Score & Calendar Timeline based on Parent App (yearly_fee_calendar.dart)
     const studentReliabilityData = useMemo(() => {
-        const monthsMeta = [
-            { id: 'Apr', fullName: 'April', index: 0 },
-            { id: 'May', fullName: 'May', index: 1 },
-            { id: 'Jun', fullName: 'June', index: 2 },
-            { id: 'Jul', fullName: 'July', index: 3 },
-            { id: 'Aug', fullName: 'August', index: 4 },
-            { id: 'Sep', fullName: 'September', index: 5 },
-            { id: 'Oct', fullName: 'October', index: 6 },
-            { id: 'Nov', fullName: 'November', index: 7 },
-            { id: 'Dec', fullName: 'December', index: 8 },
-            { id: 'Jan', fullName: 'January', index: 9 },
-            { id: 'Feb', fullName: 'February', index: 10 },
-            { id: 'Mar', fullName: 'March', index: 11 }
-        ];
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const now = new Date();
+        const currentMonthIdx = now.getMonth(); // 0 = Jan, 11 = Dec
+        const currentYear = now.getFullYear();
+
+        const monthsMeta = monthNames.map((name, index) => ({
+            id: name,
+            fullName: name,
+            index,
+            isCurrent: index === currentMonthIdx
+        }));
 
         if (!selectedStudent) {
             return {
                 score: 95,
-                badgeLabel: 'Excellent Standing',
+                badgeLabel: 'Excellent',
                 badgeColor: '#10b981',
-                onTimeRate: 96,
+                onTimeRate: 95,
                 message: 'Exemplary fee payment track record.',
                 tenureTier: 'Exemplary Tier',
-                tenureSubtext: 'Zero Bounced Records',
-                paidCount: 12,
+                tenureSubtext: 'Zero Defaulter Notices',
+                paidCount: currentMonthIdx + 1,
                 unpaidCount: 0,
-                timeline: monthsMeta.map(m => ({ ...m, status: 'paid', label: 'Paid' }))
+                timeline: monthsMeta.map((m, idx) => ({
+                    ...m,
+                    status: idx <= currentMonthIdx ? 'paid' : 'upcoming',
+                    label: idx <= currentMonthIdx ? 'Paid' : 'Upcoming'
+                }))
             };
         }
 
         const totalDues = studentClearanceStatus.totalDues;
         const isCurrentPaid = (selectedStudent.monthlyFeeStatus || '').toLowerCase() === 'paid';
+        let paidDate = null;
+        if (selectedStudent.monthlyFeeDate) {
+            try {
+                const parsed = new Date(selectedStudent.monthlyFeeDate);
+                if (!isNaN(parsed.getTime())) paidDate = parsed;
+            } catch (e) {}
+        }
 
         // Count how many months are recorded as unpaid
         let unpaidCount = Number(selectedStudent.unpaidMonthsCount) || Number(selectedStudent.previousMonthsUnpaidCount) || 0;
@@ -1056,42 +1064,55 @@ export default function SchoolLeaving() {
             unpaidCount = 1;
         }
 
-        // Admission Date Check (to handle students admitted mid-session)
-        let admissionMonthIdx = 0; // default April (full session)
-        if (selectedStudent.admissionDate) {
-            try {
-                const admDate = new Date(selectedStudent.admissionDate);
-                if (!isNaN(admDate.getTime())) {
-                    const m = admDate.getMonth(); // 0 = Jan, 3 = Apr
-                    // Map calendar month to session month (April = 0)
-                    const sessionIdx = (m >= 3) ? (m - 3) : (m + 9);
-                    const currentYear = new Date().getFullYear();
-                    if (admDate.getFullYear() >= currentYear - 1) {
-                        admissionMonthIdx = Math.min(11, Math.max(0, sessionIdx));
-                    }
-                }
-            } catch (e) {}
-        }
-
-        // Build authentic 12-month timeline
-        // Months before admission: 'not_enrolled'
-        // Last `unpaidCount` active months: 'due'
-        // Other active months: 'paid'
+        // Build 12-month timeline Jan -> Dec matching Parent Mobile App yearly_fee_calendar.dart
         const timeline = monthsMeta.map((m, idx) => {
-            if (idx < admissionMonthIdx) {
-                return { ...m, status: 'na', label: 'N/A' };
+            const monthNumber = idx + 1;
+            const currentMonthNumber = currentMonthIdx + 1;
+            let status = 'paid';
+            let label = 'Paid';
+
+            if (monthNumber < currentMonthNumber) {
+                // Past months: check if within trailing unpaid count
+                const distanceToCurrent = currentMonthNumber - 1 - monthNumber;
+                const pastUnpaidSpan = isCurrentPaid ? unpaidCount : Math.max(0, unpaidCount - 1);
+                if (distanceToCurrent < pastUnpaidSpan) {
+                    status = 'due';
+                    label = 'Due';
+                } else {
+                    status = 'paid';
+                    label = 'Paid';
+                }
+            } else if (monthNumber === currentMonthNumber) {
+                // Current month
+                if (isCurrentPaid) {
+                    status = 'paid';
+                    label = 'Paid';
+                } else {
+                    status = 'due';
+                    label = 'Due';
+                }
+            } else {
+                // Future months (not recorded yet / upcoming)
+                status = 'upcoming';
+                label = 'Upcoming';
             }
-            // Active session months
-            const distanceToEnd = 11 - idx;
-            if (distanceToEnd < unpaidCount) {
-                return { ...m, status: 'due', label: 'Due' };
+
+            // Explicit paid check if paidDate matches a specific month
+            if (isCurrentPaid && paidDate && paidDate.getMonth() === idx && paidDate.getFullYear() === currentYear) {
+                status = 'paid';
+                label = 'Paid';
             }
-            return { ...m, status: 'paid', label: 'Paid' };
+
+            return {
+                ...m,
+                status,
+                label
+            };
         });
 
-        const activeEnrolledMonths = timeline.filter(t => t.status !== 'na');
-        const paidMonthsCount = activeEnrolledMonths.filter(t => t.status === 'paid').length;
-        const dueMonthsCount = activeEnrolledMonths.filter(t => t.status === 'due').length;
+        const activeEnrolledMonths = timeline.filter(t => t.status !== 'upcoming');
+        const paidMonthsCount = timeline.filter(t => t.status === 'paid').length;
+        const dueMonthsCount = timeline.filter(t => t.status === 'due').length;
 
         // Exact match with Parent Mobile App (FeeCalculatorService & fee_screen.dart)
         // Parent App logic:
@@ -3237,28 +3258,37 @@ export default function SchoolLeaving() {
                                             </div>
                                         </div>
 
-                                        {/* 12-Month Session Timeline Matrix */}
-                                        <div className="space-y-2">
+                                        {/* 12-Month Calendar Timeline Matrix (Jan - Dec) */}
+                                        <div className="space-y-2.5">
                                             <div className="flex items-center justify-between text-xs">
-                                                <span className="font-black text-slate-700">12-Month Session Fee Clearance Timeline</span>
-                                                <span className="text-[10px] text-slate-500 font-medium">Session (Apr — Mar) • Live Audit</span>
+                                                <span className="font-black text-slate-700">12-Month Fee Clearance Calendar</span>
+                                                <span className="text-[10px] text-slate-500 font-medium">Calendar Year (Jan — Dec) • Real-time Sync</span>
                                             </div>
 
-                                            <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5 text-center">
+                                            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-12 gap-2 text-center">
                                                 {studentReliabilityData.timeline.map((monthItem) => {
                                                     const isDue = monthItem.status === 'due';
-                                                    const isNa = monthItem.status === 'na';
+                                                    const isUpcoming = monthItem.status === 'upcoming';
+                                                    const isCurrent = monthItem.isCurrent;
+
                                                     return (
                                                         <div
                                                             key={monthItem.id}
-                                                            className={`p-2 rounded-xl border transition-all ${
+                                                            className={`p-2 rounded-xl border transition-all relative ${
+                                                                isCurrent ? 'ring-2 ring-indigo-500 ring-offset-1 shadow-xs' : ''
+                                                            } ${
                                                                 isDue
                                                                     ? 'bg-rose-50 border-rose-300 text-rose-800'
-                                                                    : isNa
-                                                                        ? 'bg-slate-50 border-slate-200 text-slate-400 opacity-60'
-                                                                        : 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
+                                                                    : isUpcoming
+                                                                        ? 'bg-slate-100/80 border-slate-200 text-slate-400'
+                                                                        : 'bg-emerald-50 border-emerald-300 text-emerald-800'
                                                             }`}
                                                         >
+                                                            {isCurrent && (
+                                                                <span className="absolute -top-1.5 -right-1 px-1 py-0.2 bg-indigo-600 text-white rounded text-[7px] font-black uppercase tracking-wider">
+                                                                    Now
+                                                                </span>
+                                                            )}
                                                             <span className="text-[11px] font-black block">{monthItem.id}</span>
                                                             <span className="text-[9px] font-extrabold mt-0.5 block opacity-90">
                                                                 {monthItem.label}
@@ -3268,10 +3298,11 @@ export default function SchoolLeaving() {
                                                 })}
                                             </div>
 
-                                            <div className="flex items-center gap-4 text-[10px] text-slate-500 font-medium pt-1">
-                                                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span> Paid On-Time</span>
-                                                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span> Arrears / Due</span>
-                                                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-300 inline-block"></span> N/A (Pre-Admission)</span>
+                                            <div className="flex flex-wrap items-center gap-4 text-[10px] text-slate-500 font-medium pt-1">
+                                                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Paid (Green)</span>
+                                                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span> Pending / Due (Red)</span>
+                                                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-300 inline-block"></span> Upcoming / Not Recorded (Grey)</span>
+                                                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border-2 border-indigo-600 inline-block"></span> Current Month (Ring)</span>
                                             </div>
                                         </div>
                                     </div>
