@@ -231,7 +231,7 @@ const DECADE_CONFIG = [
 ];
 
 // Multi-Category Real Dues Audit Engine (Tuition, Transport, Store & Inventory, Event Actions, Fines)
-function calculateStudentRealDues(st) {
+function calculateStudentRealDues(st, manualOverride = null) {
     if (!st) {
         return {
             duesStatus: 'cleared',
@@ -241,27 +241,87 @@ function calculateStudentRealDues(st) {
             storeDues: 0,
             actionDues: 0,
             finesDues: 0,
+            sourceLabel: 'Student Profile Record',
+            isManualOverride: false,
+            clearanceNote: '100% Cleared for School Leaving Certificate',
+            certificatePaidUpTo: 'All Dues Paid in Full (100% Cleared)',
             storeBreakdown: [],
             actionBreakdown: [],
             finesBreakdown: []
         };
     }
 
-    // 1. Tuition Fee & Arrears
-    let tuitionDues = 0;
-    const monthlyTuition = Number(st.tuitionFee || st.monthlyFee || st.fee || 0);
-    if (st.monthlyFeeStatus === 'unpaid' || st.monthlyFeeStatus === 'pending') {
-        tuitionDues += monthlyTuition;
+    // 0. If Principal applied manual accounts register reconciliation
+    if (manualOverride && manualOverride.active) {
+        const tDues = Number(manualOverride.tuitionDues) || 0;
+        const trDues = Number(manualOverride.transportDues) || 0;
+        const sDues = Number(manualOverride.storeDues) || 0;
+        const fDues = Number(manualOverride.finesDues) || 0;
+        const tot = tDues + trDues + sDues + fDues;
+        return {
+            duesStatus: tot <= 0 ? 'cleared' : 'pending',
+            totalDues: tot,
+            tuitionDues: tDues,
+            transportDues: trDues,
+            storeDues: sDues,
+            actionDues: 0,
+            finesDues: fDues,
+            sourceLabel: 'Manually Verified from Accounts Register',
+            isManualOverride: true,
+            clearanceNote: manualOverride.remarks || 'Accounts Verified against School Fee Register',
+            certificatePaidUpTo: manualOverride.paidUpTo || (tot <= 0 ? 'All Dues Paid in Full (100% Cleared)' : `Dues Pending: Rs. ${tot}`),
+            storeBreakdown: sDues > 0 ? [{ id: 'manual_store', title: 'Store Charges (Manual Balance)', amount: sDues }] : [],
+            actionBreakdown: [],
+            finesBreakdown: fDues > 0 ? [{ id: 'manual_fines', title: 'Charges & Penalties (Manual)', amount: fDues }] : []
+        };
     }
+
+    // 1. Tuition Fee & Arrears Audit (Support Flat fields + feeStructure array + unpaidMonthsCount)
+    let tuitionDues = 0;
+    let baseMonthlyTuition = 0;
+    let baseMonthlyTransport = 0;
+
+    // Scan feeStructure array from Admission / Profile
+    if (Array.isArray(st.feeStructure) && st.feeStructure.length > 0) {
+        st.feeStructure.forEach(item => {
+            const name = (item.name || item.title || '').toLowerCase();
+            const amt = Number(item.amount || 0);
+            if (amt > 0) {
+                if (name.includes('transport') || name.includes('bus') || name.includes('van')) {
+                    baseMonthlyTransport += amt;
+                } else if (name.includes('tuition') || name.includes('monthly') || name.includes('school fee')) {
+                    baseMonthlyTuition += amt;
+                } else {
+                    baseMonthlyTuition += amt;
+                }
+            }
+        });
+    }
+
+    // Fallback to flat fields if not in feeStructure
+    if (baseMonthlyTuition === 0) {
+        baseMonthlyTuition = Number(st.tuitionFee || st.monthlyFee || st.fee || 0);
+    }
+    if (baseMonthlyTransport === 0) {
+        baseMonthlyTransport = Number(st.transportFee || 0);
+    }
+
+    const isMonthlyPaid = (st.monthlyFeeStatus || '').toLowerCase() === 'paid';
+    const unpaidMonths = Number(st.unpaidMonthsCount) || Number(st.previousMonthsUnpaidCount) || (st.unpaidMonths ? Number(st.unpaidMonths) : (isMonthlyPaid ? 0 : 1));
+
+    if (!isMonthlyPaid || unpaidMonths > 0) {
+        tuitionDues += (baseMonthlyTuition * Math.max(1, unpaidMonths));
+    }
+
     const arrears = Number(st.feeDues || st.arrears || st.balance || 0);
     tuitionDues += arrears;
 
     // 2. Transport Fleet Fee
     let transportDues = 0;
-    const transFee = Number(st.transportFee || 0);
-    if (transFee > 0) {
-        if (st.transportFeeStatus === 'unpaid' || st.transportStatus === 'unpaid' || (!st.transportFeeStatus && st.monthlyFeeStatus === 'unpaid')) {
-            transportDues += transFee;
+    if (baseMonthlyTransport > 0) {
+        const isTransportPaid = (st.transportFeeStatus || '').toLowerCase() === 'paid';
+        if (!isTransportPaid && (!st.transportFeeStatus ? !isMonthlyPaid : true)) {
+            transportDues += (baseMonthlyTransport * Math.max(1, unpaidMonths));
         }
     }
 
@@ -360,6 +420,12 @@ function calculateStudentRealDues(st) {
         tuitionDues = generalRemaining;
     }
 
+    // Determine Certificate Dues Text
+    const nowMonthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    const certText = total <= 0
+        ? `All Dues Paid in Full up to ${nowMonthName}`
+        : `Dues Pending: Rs. ${total.toLocaleString()}`;
+
     return {
         duesStatus: total <= 0 ? 'cleared' : 'pending',
         totalDues: total,
@@ -368,6 +434,10 @@ function calculateStudentRealDues(st) {
         storeDues,
         actionDues,
         finesDues,
+        sourceLabel: total <= 0 ? 'Accounts Clearance Certified' : 'Live Accounts Balance',
+        isManualOverride: false,
+        clearanceNote: total <= 0 ? 'All student tuition fees, campus dues, and lab settlement verified.' : `Pending balance: Rs. ${total.toLocaleString()}`,
+        certificatePaidUpTo: certText,
         storeBreakdown,
         actionBreakdown,
         finesBreakdown
@@ -401,8 +471,18 @@ export default function SchoolLeaving() {
     const [classAttendanceDocs, setClassAttendanceDocs] = useState([]);
     const [manualAcademicOverride, setManualAcademicOverride] = useState(null);
     const [manualAttendanceOverride, setManualAttendanceOverride] = useState(null);
+    const [manualFinancialOverride, setManualFinancialOverride] = useState(null);
     const [showAcademicOverrideModal, setShowAcademicOverrideModal] = useState(false);
     const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+    const [showFinancialModal, setShowFinancialModal] = useState(false);
+    const [finOverrideForm, setFinOverrideForm] = useState({
+        tuitionDues: 0,
+        transportDues: 0,
+        storeDues: 0,
+        finesDues: 0,
+        paidUpTo: 'All Dues Paid in Full (100% Cleared)',
+        remarks: 'Accounts Verified against School Fee Register'
+    });
     const [attOverrideForm, setAttOverrideForm] = useState({
         totalDays: 195,
         presentDays: 182,
@@ -824,6 +904,7 @@ export default function SchoolLeaving() {
         setSelectedStudent(student);
         setManualAcademicOverride(null);
         setManualAttendanceOverride(null);
+        setManualFinancialOverride(null);
         setDossierStep(1);
         if (student) {
             setSlcSerialNo(`SLC-${new Date().getFullYear()}/${student.rollNo ? String(student.rollNo).padStart(3, '0') : String(Math.floor(Math.random() * 899) + 100)}`);
@@ -849,24 +930,22 @@ export default function SchoolLeaving() {
 
         // 2. Fetch from Cloud Database
         try {
-            const histRef = collection(db, `schools/${sid}/slc_history`);
-            const q = query(histRef, orderBy('createdAt', 'desc'));
-            const snap = await getDocs(q);
-            const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const snap = await getDocsFast(collection(db, `schools/${sid}/slc_history`));
+            const cloudList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-            // Merge with local pending sync queue items
-            const rawQueue = localStorage.getItem(`slc_sync_queue_${sid}`);
-            const queue = rawQueue ? JSON.parse(rawQueue) : [];
-            const pendingList = queue.map(q => ({ ...q.slcRecord, isPendingSync: true }));
+            // Natural sort by issuedAt or timestamp descending
+            cloudList.sort((a, b) => {
+                const tA = new Date(a.issuedAt || a.timestamp || 0).getTime();
+                const tB = new Date(b.issuedAt || b.timestamp || 0).getTime();
+                return tB - tA;
+            });
 
-            const merged = [...pendingList, ...list.filter(item => !pendingList.some(p => p.certificateNo === item.certificateNo))];
-
-            setSlcHistory(merged);
+            setSlcHistory(cloudList);
             try {
-                localStorage.setItem(`slc_history_cache_${sid}`, JSON.stringify(merged));
+                localStorage.setItem(`slc_history_cache_${sid}`, JSON.stringify(cloudList));
             } catch (e) {}
         } catch (err) {
-            console.warn("SLC History fetch skipped/failed (offline mode active):", err);
+            console.warn("Failed fetching SLC history from Firestore:", err);
         } finally {
             setLoadingHistory(false);
         }
@@ -874,8 +953,8 @@ export default function SchoolLeaving() {
 
     // Calculate Comprehensive Real-Time Student Dues across Tuition, Transport, Store, Actions & Fines
     const studentClearanceStatus = useMemo(() => {
-        return calculateStudentRealDues(selectedStudent);
-    }, [selectedStudent]);
+        return calculateStudentRealDues(selectedStudent, manualFinancialOverride);
+    }, [selectedStudent, manualFinancialOverride]);
 
     // Dynamic 12-Month Payment Reliability Score based on Real Dues
     const studentReliabilityData = useMemo(() => {
@@ -1647,7 +1726,7 @@ export default function SchoolLeaving() {
                 ['8. Class in which Pupil Last Studied:', `${targetRec.classAtLeaving || 'Class 10'} (Session: ${targetRec.session || '2025-2026'})`],
                 ['9. School / Board Annual Examination:', targetRec.academicRecord?.examStatus && targetRec.academicRecord.gpa !== 'Pending' ? `${targetRec.academicRecord.examStatus} (GPA: ${targetRec.academicRecord.gpa}, Grade: ${targetRec.academicRecord.grade})` : (targetRec.academicRecord?.boardStatus || 'Passed & Cleared')],
                 ['10. Whether Qualified for Promotion:', targetRec.academicRecord?.promoCertificateText || targetRec.academicRecord?.promoStatus || (String(targetRec.classAtLeaving || '').toLowerCase().includes('10') ? 'Yes, Passed SSC / Eligible for College' : 'Yes, Promoted to Higher Class')],
-                ['11. Month up to which School Dues Paid:', 'All Dues Paid in Full (100% Cleared)'],
+                ['11. Month up to which School Dues Paid:', targetRec.duesRecord?.certificatePaidUpTo || (targetRec.duesStatus === 'cleared' ? 'All Dues Paid in Full (100% Cleared)' : (studentClearanceStatus.certificatePaidUpTo || 'All Dues Paid in Full (100% Cleared)'))],
                 ['12. Total Attendance / Working Days:', targetRec.attendanceRecord?.certificateText || `${studentAttendanceData.present} / ${studentAttendanceData.total} Days (${studentAttendanceData.rate}%) — Regular & Punctual`],
                 ['13. General Conduct & Character:', targetRec.conduct || 'Exemplary / Very Good'],
                 ['14. Date of Striking Off Roll / Leaving:', targetRec.leavingDate || slcLeavingDate],
@@ -1751,6 +1830,17 @@ export default function SchoolLeaving() {
                 conduct: slcConduct,
                 remarks: slcRemarks,
                 duesStatus: studentClearanceStatus.duesStatus,
+                duesRecord: {
+                    totalDues: studentClearanceStatus.totalDues,
+                    tuitionDues: studentClearanceStatus.tuitionDues,
+                    transportDues: studentClearanceStatus.transportDues,
+                    storeDues: studentClearanceStatus.storeDues,
+                    actionDues: studentClearanceStatus.actionDues,
+                    finesDues: studentClearanceStatus.finesDues,
+                    sourceLabel: studentClearanceStatus.sourceLabel,
+                    certificatePaidUpTo: studentClearanceStatus.certificatePaidUpTo,
+                    isManualOverride: studentClearanceStatus.isManualOverride || false
+                },
                 duesBreakdown: {
                     totalDues: studentClearanceStatus.totalDues,
                     tuitionDues: studentClearanceStatus.tuitionDues,
@@ -2742,27 +2832,32 @@ export default function SchoolLeaving() {
                                     })}
                                 </div>
 
-                                {/* STAGE 1: FINANCIAL CLEARANCE DESK (HERO CARD) */}
-                                {dossierStep === 1 && (
-                                    <div className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5 animate-fadeIn">
-                                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                                            <div className="flex items-center gap-2.5">
-                                                <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center font-black shadow-xs">
-                                                    <Wallet size={20} />
+                                    {/* STAGE 1: FINANCIAL CLEARANCE DESK (HERO CARD) */}
+                                    {dossierStep === 1 && (
+                                        <div className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5 animate-fadeIn">
+                                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                                <div className="flex items-center gap-2.5">
+                                                    <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center font-black shadow-xs">
+                                                        <Wallet size={20} />
+                                                    </div>
+                                                    <div>
+                                                        <h4 className="text-sm font-black text-slate-900">Checkpoint 1: Financial & Accounts Clearance</h4>
+                                                        <p className="text-[11px] text-slate-500 font-medium">Full student tuition fees, campus dues, and lab settlement verification</p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <h4 className="text-sm font-black text-slate-900">Checkpoint 1: Financial & Accounts Clearance</h4>
-                                                    <p className="text-[11px] text-slate-500 font-medium">Full student tuition fees, campus dues, and lab settlement verification</p>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold">
+                                                        {studentClearanceStatus.sourceLabel}
+                                                    </span>
+                                                    <span className={`px-3 py-1 rounded-full text-xs font-black border ${
+                                                        studentClearanceStatus.duesStatus === 'cleared'
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                            : 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
+                                                    }`}>
+                                                        {studentClearanceStatus.duesStatus === 'cleared' ? '✅ 100% Cleared' : '⚠️ Action Required'}
+                                                    </span>
                                                 </div>
                                             </div>
-                                            <span className={`px-3 py-1 rounded-full text-xs font-black border ${
-                                                studentClearanceStatus.duesStatus === 'cleared'
-                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                    : 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
-                                            }`}>
-                                                {studentClearanceStatus.duesStatus === 'cleared' ? '✅ 100% Cleared' : '⚠️ Action Required'}
-                                            </span>
-                                        </div>
 
                                         {/* Hero Visual Audit Banner */}
                                         <div className={`p-5 rounded-2xl border text-center transition-all ${
@@ -2884,6 +2979,28 @@ export default function SchoolLeaving() {
                                                 </div>
                                             </div>
                                         )}
+
+                                        {/* Verify / Reconcile Accounts Register Override Trigger */}
+                                        <div className="flex justify-end pt-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setFinOverrideForm({
+                                                        tuitionDues: studentClearanceStatus.tuitionDues,
+                                                        transportDues: studentClearanceStatus.transportDues,
+                                                        storeDues: studentClearanceStatus.storeDues,
+                                                        finesDues: studentClearanceStatus.finesDues,
+                                                        paidUpTo: studentClearanceStatus.certificatePaidUpTo || 'All Dues Paid in Full (100% Cleared)',
+                                                        remarks: studentClearanceStatus.clearanceNote || 'Accounts Verified against School Fee Register'
+                                                    });
+                                                    setShowFinancialModal(true);
+                                                }}
+                                                className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 transition-colors flex items-center gap-1 cursor-pointer"
+                                            >
+                                                <Sliders size={12} />
+                                                {studentClearanceStatus.isManualOverride ? 'Edit Accounts Override' : 'Verify / Reconcile Accounts Ledger'}
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
 
@@ -4244,6 +4361,171 @@ export default function SchoolLeaving() {
                                     className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all"
                                 >
                                     Save Verification ✍️
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ======================================================== */}
+            {/* MODAL: MANUAL FINANCIAL & ACCOUNTS CLEARANCE RECONCILE    */}
+            {/* ======================================================== */}
+            {showFinancialModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fadeIn">
+                    <div className="bg-white text-slate-800 rounded-3xl border border-slate-200 shadow-2xl p-6 max-w-lg w-full space-y-4">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div>
+                                <h3 className="text-base font-black text-slate-900 flex items-center gap-1.5">
+                                    <Wallet size={18} className="text-emerald-600" />
+                                    <span>Verify / Reconcile Accounts Ledger</span>
+                                </h3>
+                                <p className="text-xs text-slate-500 font-medium">
+                                    Reconcile tuition, transport, and campus dues with school fee counter register
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowFinancialModal(false)}
+                                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-full bg-slate-100 cursor-pointer"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3.5">
+                            <div className="p-3 bg-emerald-50/70 rounded-2xl border border-emerald-200/80 text-xs text-emerald-900 space-y-1">
+                                <span className="font-black flex items-center gap-1">
+                                    <ShieldCheck size={14} className="text-emerald-700" />
+                                    Official Accounts Clearance Protocol
+                                </span>
+                                <p className="text-[11px] text-emerald-800">
+                                    Amounts set to 0 indicate complete clearance. Total dues will update Checkpoint 1 and will be printed onto Official SLC Certificate Item #11.
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Tuition Fee & Arrears (Rs.)</label>
+                                    <input
+                                        type="number"
+                                        value={finOverrideForm.tuitionDues}
+                                        onChange={(e) => setFinOverrideForm(prev => ({ ...prev, tuitionDues: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                        placeholder="0"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Transport Fleet Dues (Rs.)</label>
+                                    <input
+                                        type="number"
+                                        value={finOverrideForm.transportDues}
+                                        onChange={(e) => setFinOverrideForm(prev => ({ ...prev, transportDues: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                        placeholder="0"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Store & Uniform Dues (Rs.)</label>
+                                    <input
+                                        type="number"
+                                        value={finOverrideForm.storeDues}
+                                        onChange={(e) => setFinOverrideForm(prev => ({ ...prev, storeDues: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                        placeholder="0"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Fines & Penalties (Rs.)</label>
+                                    <input
+                                        type="number"
+                                        value={finOverrideForm.finesDues}
+                                        onChange={(e) => setFinOverrideForm(prev => ({ ...prev, finesDues: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                        placeholder="0"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Calculated Total Summary */}
+                            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center justify-between text-xs font-bold">
+                                <span className="text-slate-600">Reconciled Total Outstanding:</span>
+                                <span className={`text-sm font-black ${(Number(finOverrideForm.tuitionDues) + Number(finOverrideForm.transportDues) + Number(finOverrideForm.storeDues) + Number(finOverrideForm.finesDues)) > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                    Rs. {(Number(finOverrideForm.tuitionDues) + Number(finOverrideForm.transportDues) + Number(finOverrideForm.storeDues) + Number(finOverrideForm.finesDues)).toLocaleString()}
+                                    {(Number(finOverrideForm.tuitionDues) + Number(finOverrideForm.transportDues) + Number(finOverrideForm.storeDues) + Number(finOverrideForm.finesDues)) === 0 && ' (100% Cleared ✅)'}
+                                </span>
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black uppercase text-slate-500">Certificate Paid-Up-To Stamping Note</label>
+                                <input
+                                    type="text"
+                                    value={finOverrideForm.paidUpTo}
+                                    onChange={(e) => setFinOverrideForm(prev => ({ ...prev, paidUpTo: e.target.value }))}
+                                    placeholder="e.g. All Dues Paid in Full up to March 2026"
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black uppercase text-slate-500">Principal Endorsement Remark</label>
+                                <input
+                                    type="text"
+                                    value={finOverrideForm.remarks}
+                                    onChange={(e) => setFinOverrideForm(prev => ({ ...prev, remarks: e.target.value }))}
+                                    placeholder="e.g. Paid in full via fee counter receipt #1042..."
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="pt-3 flex items-center justify-between gap-2 border-t border-slate-100">
+                            {manualFinancialOverride?.active ? (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setManualFinancialOverride(null);
+                                        setShowFinancialModal(false);
+                                    }}
+                                    className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                                >
+                                    Reset to System Accounts
+                                </button>
+                            ) : <div></div>}
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFinancialModal(false)}
+                                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const tDues = Math.max(0, parseInt(finOverrideForm.tuitionDues) || 0);
+                                        const trDues = Math.max(0, parseInt(finOverrideForm.transportDues) || 0);
+                                        const sDues = Math.max(0, parseInt(finOverrideForm.storeDues) || 0);
+                                        const fDues = Math.max(0, parseInt(finOverrideForm.finesDues) || 0);
+                                        const tot = tDues + trDues + sDues + fDues;
+
+                                        setManualFinancialOverride({
+                                            active: true,
+                                            tuitionDues: tDues,
+                                            transportDues: trDues,
+                                            storeDues: sDues,
+                                            finesDues: fDues,
+                                            paidUpTo: finOverrideForm.paidUpTo || (tot === 0 ? 'All Dues Paid in Full (100% Cleared)' : `Dues Pending: Rs. ${tot}`),
+                                            remarks: finOverrideForm.remarks || 'Accounts Verified against School Fee Register'
+                                        });
+                                        setShowFinancialModal(false);
+                                    }}
+                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all"
+                                >
+                                    Save Accounts Endorsement 💳
                                 </button>
                             </div>
                         </div>
