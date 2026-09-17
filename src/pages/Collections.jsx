@@ -5060,72 +5060,44 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         return () => unsub();
     }, [schoolId, selectedStudent?.id]);
 
-    // Sibling / Family Detection Algorithm (Multi-Method: Parent Account Links + Phone + CNIC + Family ID + Name)
+    // Sibling / Family Detection Algorithm (Strictly Parent Account Linked Students)
     const detectedSiblings = useMemo(() => {
         if (!selectedStudent || allStudents.length === 0) return [];
 
-        const fatherPhone = (selectedStudent.parentDetails?.fatherPhone || selectedStudent.fatherPhone || selectedStudent.parentDetails?.phone || selectedStudent.phone || selectedStudent.emergencyContact || '').replace(/\D/g, '');
-        const fatherCNIC = (selectedStudent.parentDetails?.fatherCNIC || selectedStudent.fatherCNIC || '').replace(/\D/g, '');
-        const fatherName = (selectedStudent.parentDetails?.fatherName || selectedStudent.fatherName || '').trim().toLowerCase();
-        const familyId = selectedStudent.familyId || selectedStudent.parentDetails?.familyId || null;
         const studentParentId = selectedStudent.parentId || selectedStudent.parentDetails?.parentId || null;
 
-        // 1. Direct Parent Account Match (from schools/${schoolId}/parents)
+        // 1. Find the official Parent Account (from schools/${schoolId}/parents) that links this student
         const parentLinkedStudentIds = new Set();
+        parentLinkedStudentIds.add(selectedStudent.id); // Always include current student
+
         const matchingParent = allParents.find(p => {
+            // Direct ID match
             if (studentParentId && p.id === studentParentId) return true;
+            // Explicit linkedStudents list check
             if (p.linkedStudents && Array.isArray(p.linkedStudents) && p.linkedStudents.some(ls => ls.studentId === selectedStudent.id)) {
-                return true;
-            }
-            const pPhone = (p.phone || p.fatherPhone || '').replace(/\D/g, '');
-            if (fatherPhone && fatherPhone.length >= 7 && pPhone && pPhone.length >= 7 && (pPhone.includes(fatherPhone) || fatherPhone.includes(pPhone))) {
-                return true;
-            }
-            const pCNIC = (p.cnic || p.fatherCNIC || '').replace(/\D/g, '');
-            if (fatherCNIC && fatherCNIC.length >= 10 && pCNIC && pCNIC.length >= 10 && pCNIC === fatherCNIC) {
-                return true;
-            }
-            const pName = (p.name || p.fatherName || '').trim().toLowerCase();
-            if (fatherName && fatherName.length >= 4 && pName && (pName === fatherName || pName.includes(fatherName) || fatherName.includes(pName))) {
                 return true;
             }
             return false;
         });
 
+        // If parent account found, populate only students linked inside that parent account
         if (matchingParent && matchingParent.linkedStudents && Array.isArray(matchingParent.linkedStudents)) {
             matchingParent.linkedStudents.forEach(ls => {
                 if (ls.studentId) parentLinkedStudentIds.add(ls.studentId);
             });
         }
 
+        // Filter allStudents to ONLY include those in parentLinkedStudentIds
         const matched = allStudents.filter(s => {
             if (s.id === selectedStudent.id) return true;
 
-            // Direct link inside parent account document
+            // Strict: Must be explicitly linked in the parent account
             if (parentLinkedStudentIds.has(s.id)) {
                 return true;
             }
 
+            // Direct parentId match if both point to the same registered parent
             if (studentParentId && (s.parentId === studentParentId || s.parentDetails?.parentId === studentParentId)) {
-                return true;
-            }
-
-            if (familyId && (s.familyId === familyId || s.parentDetails?.familyId === familyId)) {
-                return true;
-            }
-
-            const sPhone = (s.parentDetails?.fatherPhone || s.fatherPhone || s.parentDetails?.phone || s.phone || s.emergencyContact || '').replace(/\D/g, '');
-            if (fatherPhone && fatherPhone.length >= 7 && sPhone && sPhone.length >= 7 && (sPhone.includes(fatherPhone) || fatherPhone.includes(sPhone))) {
-                return true;
-            }
-
-            const sCNIC = (s.parentDetails?.fatherCNIC || s.fatherCNIC || '').replace(/\D/g, '');
-            if (fatherCNIC && fatherCNIC.length >= 10 && sCNIC && sCNIC.length >= 10 && sCNIC === fatherCNIC) {
-                return true;
-            }
-
-            const sFatherName = (s.parentDetails?.fatherName || s.fatherName || '').trim().toLowerCase();
-            if (fatherName && fatherName.length >= 4 && sFatherName && sFatherName === fatherName) {
                 return true;
             }
 
@@ -5170,6 +5142,24 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
         return selectedStudent;
     }, [selectedStudent, activeSiblingId, detectedSiblings]);
+
+    // Active Parent Account (Official registered parent in schools/${schoolId}/parents)
+    const activeParentAccount = useMemo(() => {
+        if (!selectedStudent || !allParents || allParents.length === 0) return null;
+        const studentParentId = selectedStudent.parentId || selectedStudent.parentDetails?.parentId || null;
+        return allParents.find(p => {
+            if (studentParentId && p.id === studentParentId) return true;
+            if (p.linkedStudents && Array.isArray(p.linkedStudents) && p.linkedStudents.some(ls => ls.studentId === selectedStudent.id)) {
+                return true;
+            }
+            return false;
+        }) || null;
+    }, [selectedStudent, allParents]);
+
+    // Consistent Family Father Name across all siblings
+    const officialFamilyFatherName = useMemo(() => {
+        return activeParentAccount?.fatherName || activeParentAccount?.name || activeChild?.parentDetails?.fatherName || activeChild?.fatherName || selectedStudent?.fatherName || 'Parent';
+    }, [activeParentAccount, activeChild, selectedStudent]);
 
     const activeSiblingIndex = useMemo(() => {
         if (!detectedSiblings || detectedSiblings.length <= 1) return 0;
@@ -6965,7 +6955,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                             </span>
                                         </div>
                                         <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
-                                            {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'} &bull; Father: <strong>{activeChild?.parentDetails?.fatherName || activeChild?.fatherName || selectedStudent.fatherName || 'Parent'}</strong>
+                                            {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'} &bull; Father: <strong>{officialFamilyFatherName}</strong>
+                                            {activeParentAccount && (
+                                                <span style={{ marginLeft: '6px', fontSize: '0.68rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 6px', borderRadius: '4px', fontWeight: '700' }}>
+                                                    Verified Family Account
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -7036,7 +7031,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                             <Users size={15} color="#0284c7" />
                                             <strong style={{ fontSize: '0.82rem', color: '#0369a1' }}>
-                                                Family Sibling Hub ({detectedSiblings.length} Children)
+                                                Family Sibling Hub ({detectedSiblings.length} Children) &bull; <span style={{ fontWeight: '600' }}>{officialFamilyFatherName}'s Household</span>
                                             </strong>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.35rem' }}>
