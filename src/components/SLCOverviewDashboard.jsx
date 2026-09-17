@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     TrendingUp, TrendingDown, Users, UserPlus, LogOut, Archive, Award,
-    AlertCircle, Sparkles, CheckCircle2, ChevronRight, Calendar, Layers,
+    AlertCircle, Sparkles, CheckCircle2, ChevronRight, ChevronDown, Calendar, Layers,
     Filter, ArrowUpRight, ArrowDownRight, BarChart3, PieChart, ShieldCheck,
     Folder, BookOpen, Clock, Printer, RefreshCw, AlertTriangle, Database, X
 } from 'lucide-react';
@@ -317,14 +317,21 @@ export default function SLCOverviewDashboard({
         };
     }, [effectiveSlcHistory, effectiveStudents, currentYear, selectedYearFilter]);
 
-    // Handle Year Switch
-    const availableYearFilters = useMemo(() => {
+    // Handle Year Switch Options
+    const quickYearFilters = useMemo(() => {
         return [
             { label: `${currentYear} (Current)`, value: currentYear },
-            { label: `${currentYear - 1} (Last Year)`, value: currentYear - 1 },
-            { label: `${currentYear - 2}`, value: currentYear - 2 },
-            { label: 'All Sessions', value: 'all' }
+            { label: `${currentYear - 1} (Last Year)`, value: currentYear - 1 }
         ];
+    }, [currentYear]);
+
+    // Extended 10-Year Sessions list for the smart dropdown
+    const pastSessionsList = useMemo(() => {
+        const years = [];
+        for (let y = currentYear - 2; y >= currentYear - 10; y--) {
+            years.push({ label: `Session ${y}`, value: y });
+        }
+        return years;
     }, [currentYear]);
 
     return (
@@ -375,13 +382,15 @@ export default function SLCOverviewDashboard({
                             )}
                         </button>
 
-                        {/* Quick Session Filter Pills with White Background and Black Text & Blue Button Theme */}
+                        {/* Option A: Quick Session Filter Pills + Historical Year Dropdown */}
                         <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl border border-blue-100 shadow-md">
                             <span className="text-[11px] font-black text-slate-900 px-2.5 uppercase tracking-wider flex items-center gap-1.5">
                                 <Calendar size={13} className="text-blue-600" />
                                 <span>Session:</span>
                             </span>
-                            {availableYearFilters.map(filter => {
+
+                            {/* 1. Quick Current Year & Last Year Buttons */}
+                            {quickYearFilters.map(filter => {
                                 const isSelected = selectedYearFilter === filter.value;
                                 return (
                                     <button
@@ -398,6 +407,50 @@ export default function SLCOverviewDashboard({
                                     </button>
                                 );
                             })}
+
+                            {/* 2. Historical Multi-Year Dropdown (5 to 10 Years Back + All Time) */}
+                            <div className="relative inline-flex items-center">
+                                <select
+                                    value={
+                                        selectedYearFilter === currentYear || selectedYearFilter === currentYear - 1
+                                            ? ''
+                                            : selectedYearFilter
+                                    }
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === 'all') {
+                                            setSelectedYearFilter('all');
+                                        } else if (val) {
+                                            setSelectedYearFilter(parseInt(val));
+                                        }
+                                    }}
+                                    className={`px-3 py-1.5 pr-7 rounded-xl text-xs font-black transition-all cursor-pointer appearance-none border outline-none ${
+                                        selectedYearFilter !== currentYear && selectedYearFilter !== currentYear - 1
+                                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm ring-1 ring-blue-700'
+                                            : 'bg-slate-100/90 text-slate-800 border-slate-200 hover:bg-blue-50 hover:text-blue-700'
+                                    }`}
+                                    title="View Historical 5 to 10 Years Sessions"
+                                >
+                                    <option value="" disabled className="bg-white text-slate-400 font-bold">
+                                        More Sessions ▾
+                                    </option>
+                                    <option value="all" className="bg-white text-slate-900 font-black">
+                                        🌟 All Sessions (Lifetime)
+                                    </option>
+                                    <optgroup label="Past Historical Sessions" className="bg-white text-slate-500 font-bold">
+                                        {pastSessionsList.map(session => (
+                                            <option key={session.value} value={session.value} className="bg-white text-slate-900 font-extrabold">
+                                                {session.label} ({session.value})
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                </select>
+                                <ChevronDown size={13} className={`absolute right-2 pointer-events-none ${
+                                    selectedYearFilter !== currentYear && selectedYearFilter !== currentYear - 1
+                                        ? 'text-white'
+                                        : 'text-slate-600'
+                                }`} />
+                            </div>
                         </div>
                     </div>
                 </div>
