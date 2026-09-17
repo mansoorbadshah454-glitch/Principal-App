@@ -7,7 +7,7 @@ import {
     DollarSign, Wallet, CreditCard, Tag, Receipt, ExternalLink, Archive,
     Folder, FolderOpen, SearchCode, PlusCircle, Sliders, ZoomIn, ZoomOut,
     Maximize2, Shield, Stamp, FileSpreadsheet, Building2, User, Phone, MessageCircle, Activity,
-    Wifi, WifiOff, CloudUpload
+    Wifi, WifiOff, CloudUpload, BarChart3
 } from 'lucide-react';
 import { db, auth, storage } from '../firebase';
 import {
@@ -18,6 +18,7 @@ import { getDocsFast } from '../utils/cacheUtils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
+import SLCOverviewDashboard from '../components/SLCOverviewDashboard';
 
 // Multi-Strategy Base64 Image Loader (Bypasses Storage & CORS for jsPDF)
 async function fetchImageAsBase64(url) {
@@ -304,7 +305,7 @@ function calculateStudentRealDues(st) {
 
 export default function SchoolLeaving() {
     // --- Page Level Tab ---
-    const [pageTab, setPageTab] = useState('studio'); // 'studio' | 'cupboard'
+    const [pageTab, setPageTab] = useState('overview'); // 'overview' | 'studio' | 'cupboard'
     const [rightStudioTab, setRightStudioTab] = useState('dossier'); // 'dossier' | 'canvas'
     const [dossierStep, setDossierStep] = useState(1); // 1: Finance | 2: Reliability | 3: Academics | 4: Attendance
 
@@ -335,9 +336,19 @@ export default function SchoolLeaving() {
     // Certificate Meta Fields
     const [slcSerialNo, setSlcSerialNo] = useState(() => `SLC-${new Date().getFullYear()}/${String(Math.floor(Math.random() * 899) + 100)}`);
     const [slcLeavingDate, setSlcLeavingDate] = useState(() => new Date().toISOString().split('T')[0]);
+    const [slcDob, setSlcDob] = useState('2009-04-14');
     const [slcReason, setSlcReason] = useState('Completed Matriculation Examination');
     const [slcConduct, setSlcConduct] = useState('Exemplary / Very Good');
     const [slcRemarks, setSlcRemarks] = useState('Student has maintained high moral character, good attendance, and exemplary discipline.');
+
+    // Keep slcDob in sync whenever selected student changes
+    useEffect(() => {
+        if (selectedStudent?.dob) {
+            setSlcDob(selectedStudent.dob);
+        } else if (!selectedStudent) {
+            setSlcDob('2009-04-14');
+        }
+    }, [selectedStudent?.id]);
     const [showWatermark, setShowWatermark] = useState(true);
     const [showGoldenSeal, setShowGoldenSeal] = useState(true);
     const [showQrCode, setShowQrCode] = useState(true);
@@ -1022,7 +1033,7 @@ export default function SchoolLeaving() {
                 fatherName: selectedStudent?.fatherName || 'Tariq Mehmood Khan',
                 grNo: selectedStudent?.grNo || 'GR-4890',
                 rollNo: selectedStudent?.rollNo || '101',
-                dob: selectedStudent?.dob || '2009-04-14',
+                dob: slcDob || selectedStudent?.dob || '2009-04-14',
                 admissionDate: selectedStudent?.admissionDate || '2019-04-01',
                 classAtLeaving: classes.find(c => c.id === selectedClassId)?.name || 'Class 10',
                 session: '2025-2026',
@@ -1219,7 +1230,7 @@ export default function SchoolLeaving() {
                 fatherName: selectedStudent.fatherName || selectedStudent.parentDetails?.fatherName || '',
                 grNo: selectedStudent.grNo || selectedStudent.admissionNo || 'N/A',
                 rollNo: selectedStudent.rollNo || selectedStudent.rollNumber || '',
-                dob: selectedStudent.dob || '2009-04-14',
+                dob: slcDob || selectedStudent.dob || '2009-04-14',
                 admissionDate: selectedStudent.admissionDate || '2019-04-01',
                 classAtLeaving: currentCls.name,
                 classAtLeavingId: selectedClassId,
@@ -1413,165 +1424,207 @@ export default function SchoolLeaving() {
 
     return (
         <div className="min-h-screen w-full bg-slate-50 text-slate-800 p-4 sm:p-6 lg:p-8 space-y-6 animate-fadeIn font-sans">
-            {/* Top Hero Banner & Navigation Tabs */}
-            <div className="relative overflow-hidden bg-gradient-to-r from-indigo-700 via-indigo-800 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl border border-indigo-600/30">
-                <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-                    <div className="space-y-2">
-                        <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-white/15 border border-white/25 rounded-full text-indigo-100 text-xs font-black tracking-wider uppercase backdrop-blur-xs">
-                            <DoorOpen size={14} className="text-cyan-300" />
-                            Official School Leaving & Archive Vault
-                        </div>
-                        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-3">
-                            <span>School Leaving Certificate (SLC) Studio</span>
-                        </h1>
-                        <p className="text-xs sm:text-sm text-indigo-100/90 max-w-2xl font-medium leading-relaxed">
-                            Paper Generator-grade Live Canvas Studio with 360° Clearance Radar & 50-Year Interactive Digital Cupboard (Almari) for long-term historical archives.
-                        </p>
-                    </div>
-
-                    {/* Mode Buttons */}
-                    <div className="flex flex-wrap items-center gap-3">
-                        <button
-                            type="button"
-                            onClick={() => injectMockDemoData()}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black transition-all cursor-pointer shadow-md ${
-                                demoMode
-                                    ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
-                                    : 'bg-white/15 hover:bg-white/25 text-white border border-white/20'
-                            }`}
-                        >
-                            <Sparkles size={15} className={demoMode ? 'text-slate-950' : 'text-amber-300'} />
-                            <span>{demoMode ? '✨ Demo Mode Active' : '✨ Inject Demo Data'}</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => fetchSLCHistory(schoolId)}
-                            disabled={loadingHistory}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-white/15 hover:bg-white/25 text-white rounded-2xl text-xs font-black border border-white/20 transition-all cursor-pointer shadow-xs"
-                        >
-                            <RefreshCw size={14} className={loadingHistory ? 'animate-spin' : ''} />
-                            <span>Refresh Desk</span>
-                        </button>
-
-                        {/* Real-Time Cloud Connectivity Status */}
-                        {isOnline ? (
-                            <span className="flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 rounded-2xl text-xs font-black shadow-xs">
-                                <Wifi size={13} className="text-emerald-300" />
-                                <span>Cloud Connected</span>
-                            </span>
-                        ) : (
-                            <span className="flex items-center gap-1.5 px-3.5 py-2.5 bg-amber-500/30 text-amber-200 border border-amber-400/50 rounded-2xl text-xs font-black animate-pulse shadow-xs">
-                                <WifiOff size={13} className="text-amber-300" />
-                                <span>Offline Mode Active</span>
-                            </span>
-                        )}
-
-                        {/* Background Offline Sync Queue Badge */}
-                        {syncQueueCount > 0 && (
-                            <button
-                                type="button"
-                                onClick={() => syncOfflineSLCQueue(schoolId)}
-                                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-sky-500/30 hover:bg-sky-500/40 text-sky-100 border border-sky-400/50 rounded-2xl text-xs font-black cursor-pointer shadow-xs transition-all animate-bounce"
-                                title="Click to manually push pending offline records to Cloud"
-                            >
-                                <CloudUpload size={14} className="text-sky-200" />
-                                <span>{syncQueueCount} Pending Cloud Sync</span>
-                            </button>
-                        )}
-                    </div>
+            {/* Top Navigation Tabs Header (Matching Promotions Header Style) */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+                <div>
+                    <h1 className="text-2xl sm:text-3xl font-black text-slate-900 flex items-center gap-3">
+                        <span className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100 flex items-center justify-center">
+                            <DoorOpen size={28} />
+                        </span>
+                        <span>School Leaving (SLC)</span>
+                    </h1>
+                    <p className="text-slate-500 text-xs sm:text-sm font-medium mt-1">
+                        Paper Generator-grade Live Canvas Studio with 360° Clearance Radar & 50-Year Interactive Digital Cupboard (Almari).
+                    </p>
                 </div>
 
-                {/* Optional Auto-Sync Toast Notification */}
-                {syncSuccessToast && (
-                    <div className="relative z-10 mt-4 p-3.5 bg-emerald-500/90 text-white rounded-2xl text-xs font-black shadow-md flex items-center justify-between animate-fadeIn border border-emerald-300/40">
-                        <div className="flex items-center gap-2">
-                            <CheckCircle2 size={16} />
-                            <span>{syncSuccessToast}</span>
-                        </div>
-                        <button type="button" onClick={() => setSyncSuccessToast(null)} className="p-1 hover:bg-white/20 rounded-lg cursor-pointer">
-                            <X size={14} />
-                        </button>
-                    </div>
-                )}
+                {/* Primary 3-Tab Switcher Placed on Header Right */}
+                <div className="flex items-center gap-1.5 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 shadow-xs self-start md:self-auto">
+                    <button
+                        type="button"
+                        onClick={() => setPageTab('overview')}
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm transition-all duration-200 select-none cursor-pointer ${
+                            pageTab === 'overview'
+                                ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700/50'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
+                        }`}
+                    >
+                        <BarChart3 size={18} />
+                        <span>Overview Dashboard</span>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                            pageTab === 'overview' ? 'bg-indigo-700/60 text-indigo-100' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                            Analytics
+                        </span>
+                    </button>
 
-                {/* Main Navigation Segmented Switcher */}
-                <div className="relative z-10 flex items-center gap-3 mt-8 pt-6 border-t border-white/15 overflow-x-auto">
                     <button
                         type="button"
                         onClick={() => setPageTab('studio')}
-                        className={`flex items-center gap-2.5 px-6 py-3 rounded-2xl font-black text-sm transition-all cursor-pointer ${
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm transition-all duration-200 select-none cursor-pointer ${
                             pageTab === 'studio'
-                                ? 'bg-white text-indigo-950 shadow-lg'
-                                : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+                                ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700/50'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
                         }`}
                     >
-                        <FileCheck size={18} className={pageTab === 'studio' ? 'text-indigo-600' : 'text-indigo-200'} />
-                        <span>1. Live SLC Issuance Studio</span>
+                        <FileCheck size={18} />
+                        <span>Live SLC Studio</span>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                            pageTab === 'studio' ? 'bg-indigo-700/60 text-indigo-100' : 'bg-slate-200 text-slate-700'
+                        }`}>
+                            Active
+                        </span>
                     </button>
 
                     <button
                         type="button"
                         onClick={() => setPageTab('cupboard')}
-                        className={`flex items-center gap-2.5 px-6 py-3 rounded-2xl font-black text-sm transition-all cursor-pointer ${
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm transition-all duration-200 select-none cursor-pointer ${
                             pageTab === 'cupboard'
-                                ? 'bg-amber-400 text-slate-950 shadow-lg'
-                                : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+                                ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700/50'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
                         }`}
                     >
-                        <Archive size={18} className={pageTab === 'cupboard' ? 'text-slate-950' : 'text-amber-300'} />
-                        <span>2. 🗄️ 50-Year Visual Archive Cupboard (Almari)</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                            pageTab === 'cupboard' ? 'bg-slate-950 text-amber-300' : 'bg-white/20 text-white'
+                        <Archive size={18} />
+                        <span>50-Year Visual Cupboard</span>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                            pageTab === 'cupboard' ? 'bg-indigo-700/60 text-indigo-100' : 'bg-slate-200 text-slate-700'
                         }`}>
-                            {slcHistory.length} Files
+                            {slcHistory.length}
                         </span>
                     </button>
                 </div>
             </div>
 
-            {/* 5 KPI Metric Widgets (Day Mode) */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
-                <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 hover:shadow-md transition-all">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Active Session SLCs</span>
-                    <div className="text-2xl font-black text-slate-900 mt-1 flex items-baseline gap-1.5">
-                        <span>{stats.thisSession}</span>
-                        <span className="text-xs font-bold text-slate-400">Students</span>
-                    </div>
+            {/* Header Utility & Desk Actions Strip */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 px-5 rounded-2xl border border-slate-200/80 shadow-xs">
+                <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="text-xs font-bold text-slate-500">Workspace Status:</span>
+                    {/* Real-Time Cloud Connectivity Status */}
+                    {isOnline ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-xl text-xs font-black shadow-xs">
+                            <Wifi size={13} className="text-emerald-500" />
+                            <span>Cloud Connected</span>
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-700 border border-amber-300 rounded-xl text-xs font-black animate-pulse shadow-xs">
+                            <WifiOff size={13} className="text-amber-500" />
+                            <span>Offline Mode Active</span>
+                        </span>
+                    )}
+
+                    {/* Background Offline Sync Queue Badge */}
+                    {syncQueueCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => syncOfflineSLCQueue(schoolId)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-300 rounded-xl text-xs font-black cursor-pointer shadow-xs transition-all animate-bounce"
+                            title="Click to manually push pending offline records to Cloud"
+                        >
+                            <CloudUpload size={13} className="text-sky-600" />
+                            <span>{syncQueueCount} Pending Cloud Sync</span>
+                        </button>
+                    )}
                 </div>
 
-                <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all">
-                    <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wider block">50-Year Digital Vault</span>
-                    <div className="text-2xl font-black text-indigo-900 mt-1 flex items-baseline gap-1.5">
-                        <span>{stats.totalIssued}</span>
-                        <span className="text-xs font-bold text-indigo-600">Total Issued</span>
-                    </div>
-                </div>
+                {/* Desk Actions */}
+                <div className="flex items-center gap-2.5">
+                    <button
+                        type="button"
+                        onClick={() => injectMockDemoData()}
+                        className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs ${
+                            demoMode
+                                ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
+                                : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
+                        }`}
+                    >
+                        <Sparkles size={14} className={demoMode ? 'text-slate-950' : 'text-purple-600'} />
+                        <span>{demoMode ? '✨ Demo Mode Active' : '✨ Inject Demo Data'}</span>
+                    </button>
 
-                <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200/80 shadow-xs hover:border-emerald-300 hover:shadow-md transition-all">
-                    <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">100% Dues Cleared</span>
-                    <div className="text-2xl font-black text-emerald-900 mt-1 flex items-baseline gap-1.5">
-                        <span>{stats.duesCleared}</span>
-                        <span className="text-xs font-bold text-emerald-600">Verified</span>
-                    </div>
-                </div>
-
-                <div className="p-4 bg-amber-50/50 rounded-2xl border border-amber-200/80 shadow-xs hover:border-amber-300 hover:shadow-md transition-all">
-                    <span className="text-[10px] font-black text-amber-700 uppercase tracking-wider block">Matric 10th Passed</span>
-                    <div className="text-2xl font-black text-amber-900 mt-1 flex items-baseline gap-1.5">
-                        <span>{stats.matricPass}</span>
-                        <span className="text-xs font-bold text-amber-600">Graduates</span>
-                    </div>
-                </div>
-
-                <div className="p-4 bg-rose-50/50 rounded-2xl border border-rose-200/80 shadow-xs hover:border-rose-300 hover:shadow-md transition-all col-span-2 md:col-span-1">
-                    <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Transfers & Migration</span>
-                    <div className="text-2xl font-black text-rose-900 mt-1 flex items-baseline gap-1.5">
-                        <span>{stats.migrations}</span>
-                        <span className="text-xs font-bold text-rose-600">Certificates</span>
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => fetchSLCHistory(schoolId)}
+                        disabled={loadingHistory}
+                        className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black border border-slate-200 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                    >
+                        <RefreshCw size={13} className={loadingHistory ? 'animate-spin' : ''} />
+                        <span>Refresh Desk</span>
+                    </button>
                 </div>
             </div>
+
+            {/* Optional Auto-Sync Toast Notification */}
+            {syncSuccessToast && (
+                <div className="p-3.5 bg-emerald-500 text-white rounded-2xl text-xs font-black shadow-md flex items-center justify-between animate-fadeIn border border-emerald-400">
+                    <div className="flex items-center gap-2">
+                        <CheckCircle2 size={16} />
+                        <span>{syncSuccessToast}</span>
+                    </div>
+                    <button type="button" onClick={() => setSyncSuccessToast(null)} className="p-1 hover:bg-white/20 rounded-lg cursor-pointer">
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
+            {/* ======================================================== */}
+            {/* TAB 0: OVERVIEW & GROWTH ANALYTICS SHOWCASE DASHBOARD     */}
+            {/* ======================================================== */}
+            {pageTab === 'overview' && (
+                <SLCOverviewDashboard
+                    schoolId={schoolId}
+                    slcHistory={slcHistory}
+                    classes={classes}
+                    onNavigateToCupboard={() => setPageTab('cupboard')}
+                    onNavigateToStudio={() => setPageTab('studio')}
+                    demoMode={demoMode}
+                />
+            )}
+
+            {/* 5 KPI Metric Widgets (Day Mode - Studio View) */}
+            {pageTab === 'studio' && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
+                    <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 hover:shadow-md transition-all">
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Active Session SLCs</span>
+                        <div className="text-2xl font-black text-slate-900 mt-1 flex items-baseline gap-1.5">
+                            <span>{stats.thisSession}</span>
+                            <span className="text-xs font-bold text-slate-400">Students</span>
+                        </div>
+                    </div>
+
+                    <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all">
+                        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wider block">50-Year Digital Vault</span>
+                        <div className="text-2xl font-black text-indigo-900 mt-1 flex items-baseline gap-1.5">
+                            <span>{stats.totalIssued}</span>
+                            <span className="text-xs font-bold text-indigo-600">Total Issued</span>
+                        </div>
+                    </div>
+
+                    <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200/80 shadow-xs hover:border-emerald-300 hover:shadow-md transition-all">
+                        <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">100% Dues Cleared</span>
+                        <div className="text-2xl font-black text-emerald-900 mt-1 flex items-baseline gap-1.5">
+                            <span>{stats.duesCleared}</span>
+                            <span className="text-xs font-bold text-emerald-600">Verified</span>
+                        </div>
+                    </div>
+
+                    <div className="p-4 bg-amber-50/50 rounded-2xl border border-amber-200/80 shadow-xs hover:border-amber-300 hover:shadow-md transition-all">
+                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wider block">Matric 10th Passed</span>
+                        <div className="text-2xl font-black text-amber-900 mt-1 flex items-baseline gap-1.5">
+                            <span>{stats.matricPass}</span>
+                            <span className="text-xs font-bold text-amber-600">Graduates</span>
+                        </div>
+                    </div>
+
+                    <div className="p-4 bg-rose-50/50 rounded-2xl border border-rose-200/80 shadow-xs hover:border-rose-300 hover:shadow-md transition-all col-span-2 md:col-span-1">
+                        <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Transfers & Migration</span>
+                        <div className="text-2xl font-black text-rose-900 mt-1 flex items-baseline gap-1.5">
+                            <span>{stats.migrations}</span>
+                            <span className="text-xs font-bold text-rose-600">Certificates</span>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ======================================================== */}
             {/* TAB 1: LIVE SLC ISSUANCE STUDIO (DAY MODE CANVAS STYLE)   */}
@@ -1806,6 +1859,45 @@ export default function SchoolLeaving() {
                                             </div>
                                         </div>
 
+                                        {/* Date of Birth Editing & Alphabetical Auto-Words Sync */}
+                                        <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] font-black uppercase text-slate-700 flex items-center gap-1.5">
+                                                    <Calendar size={13} className="text-indigo-600" />
+                                                    <span>Date of Birth (DOB Correction)</span>
+                                                </label>
+                                                <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md">
+                                                    Auto-Words Sync ⚡
+                                                </span>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 gap-2">
+                                                <div className="space-y-1">
+                                                    <span className="text-[10px] font-bold text-slate-500 block">In Figures (YYYY-MM-DD):</span>
+                                                    <input
+                                                        type="date"
+                                                        value={slcDob}
+                                                        onChange={(e) => {
+                                                            const newDob = e.target.value;
+                                                            setSlcDob(newDob);
+                                                            setSelectedStudent(prev => prev ? ({ ...prev, dob: newDob }) : prev);
+                                                        }}
+                                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:bg-white shadow-2xs transition-all"
+                                                    />
+                                                </div>
+
+                                                <div className="space-y-1">
+                                                    <span className="text-[10px] font-bold text-slate-500 block">In Alphabet / Words:</span>
+                                                    <div className="w-full px-3 py-2 bg-indigo-50/70 border border-indigo-200/80 rounded-xl text-xs font-black text-indigo-950 italic shadow-2xs select-all">
+                                                        {formatDateOfBirthInWords(slcDob)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 font-medium">
+                                                Tip: Figures update hote hi alphabetical words canvas aur certificate par khud ba khud update ho jayenge.
+                                            </p>
+                                        </div>
+
                                         {/* Reason for Leaving + 1-Click Preset Chips */}
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black uppercase text-slate-500 block">
@@ -1988,67 +2080,61 @@ export default function SchoolLeaving() {
                         {rightStudioTab === 'dossier' && (
                             <div className="space-y-4 animate-fadeIn">
                                 {/* Student Passport Identity Card */}
-                                <div className="bg-gradient-to-br from-white via-indigo-50/40 to-slate-50 rounded-3xl border border-slate-200 p-6 shadow-sm text-slate-900 relative overflow-hidden">
+                                <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 rounded-3xl border border-blue-400/30 p-6 shadow-md text-white relative overflow-hidden">
                                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                                         <div className="flex items-center gap-4">
                                             {/* Avatar Circle */}
-                                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-600 to-cyan-600 text-white flex items-center justify-center font-black text-2xl shadow-md border border-indigo-200 flex-shrink-0">
+                                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-white flex items-center justify-center font-black text-2xl shadow-md border border-white/30 flex-shrink-0">
                                                 {selectedStudent?.name ? selectedStudent.name.charAt(0).toUpperCase() : 'S'}
                                             </div>
 
                                             <div className="space-y-0.5">
                                                 <div className="flex items-center gap-2">
-                                                    <h3 className="text-xl font-black tracking-tight text-slate-900">
+                                                    <h3 className="text-xl font-black tracking-tight text-white">
                                                         {selectedStudent?.name || 'Muhammad Daniyal'}
                                                     </h3>
-                                                    <span className="px-2.5 py-0.5 bg-indigo-100 border border-indigo-200 rounded-full text-indigo-800 text-[10px] font-black uppercase">
+                                                    <span className="px-2.5 py-0.5 bg-white text-slate-950 border border-white/90 rounded-full text-[11px] font-black uppercase shadow-xs">
                                                         Roll #{selectedStudent?.rollNo || '101'}
                                                     </span>
                                                 </div>
-                                                <p className="text-xs text-slate-600 font-medium">
-                                                    s/o <strong className="text-slate-900 font-bold">{selectedStudent?.fatherName || 'Tariq Mehmood Khan'}</strong>
+                                                <p className="text-xs text-blue-100 font-medium">
+                                                    s/o <strong className="text-white font-bold">{selectedStudent?.fatherName || 'Tariq Mehmood Khan'}</strong>
                                                 </p>
-                                                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-medium pt-1">
-                                                    <span>Class: <strong className="text-indigo-700">{classes.find(c => c.id === selectedClassId)?.name || 'Class 10'}</strong></span>
+                                                <div className="flex flex-wrap items-center gap-2 text-[11px] text-blue-200 font-medium pt-1">
+                                                    <span>Class: <strong className="text-white">{classes.find(c => c.id === selectedClassId)?.name || 'Class 10'}</strong></span>
                                                     <span>•</span>
-                                                    <span>GR No: <strong className="text-slate-800">{selectedStudent?.grNo || 'GR-4890'}</strong></span>
+                                                    <span>GR No: <strong className="text-white">{selectedStudent?.grNo || 'GR-4890'}</strong></span>
                                                     <span>•</span>
-                                                    <span>Joined: <strong className="text-slate-700">{selectedStudent?.admissionDate || '01-Apr-2019'}</strong></span>
+                                                    <span>Joined: <strong className="text-white">{selectedStudent?.admissionDate || '01-Apr-2019'}</strong></span>
                                                 </div>
                                             </div>
                                         </div>
 
                                         {/* Clearance Status Badge */}
                                         <div className="sm:text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
-                                            <span className="text-[10px] font-black uppercase text-slate-500">Departure Clearance</span>
+                                            <span className="text-[10px] font-black uppercase text-blue-200">Departure Clearance</span>
                                             {studentClearanceStatus.duesStatus === 'cleared' ? (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black shadow-2xs">
-                                                    <CheckCircle2 size={14} className="text-emerald-700" />
+                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-emerald-800 border border-white/80 text-xs font-black shadow-xs">
+                                                    <CheckCircle2 size={14} className="text-emerald-600" />
                                                     100% Cleared
                                                 </span>
                                             ) : (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-100 text-rose-800 border border-rose-300 text-xs font-black animate-pulse shadow-2xs">
-                                                    <AlertCircle size={14} className="text-rose-700" />
+                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-rose-800 border border-white/80 text-xs font-black animate-pulse shadow-xs">
+                                                    <AlertCircle size={14} className="text-rose-600" />
                                                     Rs. {studentClearanceStatus.totalDues} Due
                                                 </span>
                                             )}
                                         </div>
                                     </div>
 
-                                    {/* Sub Identity Details Grid */}
-                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 pt-4 border-t border-slate-200 text-xs">
+                                    {/* Sub Identity Details Grid (3 Cards) */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5 pt-4 border-t border-white/20 text-xs">
                                         <div className="p-2.5 bg-white rounded-xl border border-slate-200/80 shadow-2xs">
                                             <span className="text-[10px] font-bold text-slate-500 uppercase block">Date of Birth</span>
                                             <span className="font-extrabold text-slate-900 mt-0.5 block">{selectedStudent?.dob || '2009-04-14'}</span>
                                             <span className="text-[9px] text-indigo-700 italic font-medium truncate block">
                                                 {formatDateOfBirthInWords(selectedStudent?.dob || '2009-04-14')}
                                             </span>
-                                        </div>
-
-                                        <div className="p-2.5 bg-white rounded-xl border border-slate-200/80 shadow-2xs">
-                                            <span className="text-[10px] font-bold text-slate-500 uppercase block">B-Form / CNIC</span>
-                                            <span className="font-extrabold text-slate-900 mt-0.5 block">61101-4890123-5</span>
-                                            <span className="text-[9px] text-slate-500 font-medium">NADRA Verified</span>
                                         </div>
 
                                         <div className="p-2.5 bg-white rounded-xl border border-slate-200/80 shadow-2xs">
@@ -2080,17 +2166,40 @@ export default function SchoolLeaving() {
                                                 key={step.id}
                                                 type="button"
                                                 onClick={() => setDossierStep(step.id)}
-                                                className={`flex-1 min-w-[130px] flex items-center justify-between px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                                                className={`flex-1 min-w-[150px] flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-black transition-all duration-200 cursor-pointer select-none ${
                                                     isActive
-                                                        ? 'bg-white text-slate-900 shadow-xs border border-slate-200 ring-2 ring-indigo-500/20'
-                                                        : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                                                        ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-700/50'
+                                                        : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
                                                 }`}
                                             >
-                                                <div className="flex items-center gap-1.5">
-                                                    <StepIcon size={14} className={step.color} />
-                                                    <span>{step.label}</span>
+                                                <div className="flex items-center gap-2.5">
+                                                    <StepIcon 
+                                                        size={18} 
+                                                        strokeWidth={isActive ? 2.5 : 2.2}
+                                                        className={isActive ? 'text-white' : step.color} 
+                                                        style={isActive ? { filter: 'drop-shadow(0 0 1px #000) drop-shadow(0 1px 1px rgba(0,0,0,0.8))' } : undefined}
+                                                    />
+                                                    <span 
+                                                        className={isActive ? 'text-white font-black tracking-tight text-sm sm:text-[15px]' : 'font-extrabold text-sm text-slate-700'}
+                                                        style={isActive ? { 
+                                                            textShadow: '-0.5px -0.5px 0 #000, 0.5px -0.5px 0 #000, -0.5px 0.5px 0 #000, 0.5px 0.5px 0 #000, 0 1px 2px rgba(0,0,0,0.8)',
+                                                            WebkitTextStroke: '0.35px #000'
+                                                        } : undefined}
+                                                    >
+                                                        {step.label}
+                                                    </span>
                                                 </div>
-                                                <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-extrabold ${isActive ? 'bg-slate-100 text-slate-800' : 'text-slate-400'}`}>
+                                                <span 
+                                                    className={`text-xs px-2.5 py-0.5 rounded-full font-black transition-all ${
+                                                        isActive
+                                                            ? 'bg-white/20 text-white border border-white/40 shadow-xs'
+                                                            : 'bg-slate-200/80 text-slate-600'
+                                                    }`}
+                                                    style={isActive ? { 
+                                                        textShadow: '-0.5px -0.5px 0 #000, 0.5px -0.5px 0 #000, -0.5px 0.5px 0 #000, 0.5px 0.5px 0 #000',
+                                                        WebkitTextStroke: '0.25px #000'
+                                                    } : undefined}
+                                                >
                                                     {step.status}
                                                 </span>
                                             </button>
@@ -2655,14 +2764,14 @@ export default function SchoolLeaving() {
                                             <div className="grid grid-cols-12 py-1 border-b border-slate-100">
                                                 <span className="col-span-5 font-bold text-slate-500">4. Date of Birth (Figures):</span>
                                                 <span className="col-span-7 font-bold text-slate-800">
-                                                    {selectedStudent?.dob || '2009-04-14'}
+                                                    {slcDob || selectedStudent?.dob || '2009-04-14'}
                                                 </span>
                                             </div>
 
                                             <div className="grid grid-cols-12 py-1 border-b border-slate-100">
                                                 <span className="col-span-5 font-bold text-slate-500">5. Date of Birth (Words):</span>
                                                 <span className="col-span-7 font-serif italic font-bold text-indigo-900">
-                                                    {formatDateOfBirthInWords(selectedStudent?.dob || '2009-04-14')}
+                                                    {formatDateOfBirthInWords(slcDob || selectedStudent?.dob || '2009-04-14')}
                                                 </span>
                                             </div>
 
