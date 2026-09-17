@@ -582,27 +582,18 @@ export default function SchoolLeaving() {
     // 1. Initial Load: Fetch School Profile & Classes + Network Monitor
     useEffect(() => {
         let sid = null;
-        try {
-            const rawSession = localStorage.getItem('manual_session');
-            if (rawSession) {
-                const s = JSON.parse(rawSession);
-                sid = s.schoolId;
-            }
-        } catch (e) {}
+        let isMounted = true;
 
-        if (!sid && auth.currentUser) {
-            sid = auth.currentUser.uid;
-        }
-
-        if (sid) {
-            setSchoolId(sid);
-            fetchSchoolProfile(sid);
-            fetchClasses(sid);
-            fetchSLCHistory(sid);
+        const initSchoolData = (resolvedSid) => {
+            if (!resolvedSid || !isMounted) return;
+            setSchoolId(resolvedSid);
+            fetchSchoolProfile(resolvedSid);
+            fetchClasses(resolvedSid);
+            fetchSLCHistory(resolvedSid);
 
             // Read pending sync queue count on load
             try {
-                const qRaw = localStorage.getItem(`slc_sync_queue_${sid}`);
+                const qRaw = localStorage.getItem(`slc_sync_queue_${resolvedSid}`);
                 if (qRaw) {
                     const qArr = JSON.parse(qRaw);
                     setSyncQueueCount(Array.isArray(qArr) ? qArr.length : 0);
@@ -611,12 +602,45 @@ export default function SchoolLeaving() {
 
             // Auto-sync pending queue if internet is already available
             if (typeof navigator !== 'undefined' && navigator.onLine) {
-                syncOfflineSLCQueue(sid);
+                syncOfflineSLCQueue(resolvedSid);
             }
-        } else {
-            // Demo fallback if no session
-            injectMockDemoData();
-        }
+        };
+
+        // Priority 1: Instant check from manual session
+        try {
+            const rawSession = localStorage.getItem('manual_session');
+            if (rawSession) {
+                const s = JSON.parse(rawSession);
+                if (s.schoolId) {
+                    sid = s.schoolId;
+                    initSchoolData(sid);
+                }
+            }
+        } catch (e) {}
+
+        // Priority 2: Firebase Auth Listener (Handles Deployed Hosting Latency & Token Claims)
+        const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
+            if (!isMounted) return;
+            if (user) {
+                try {
+                    const tokenResult = await user.getIdTokenResult();
+                    const claimSid = tokenResult.claims?.schoolId || user.uid;
+                    if (claimSid && claimSid !== sid) {
+                        sid = claimSid;
+                        initSchoolData(claimSid);
+                    }
+                } catch (err) {
+                    console.warn("[SchoolLeaving] Token resolution error, falling back to UID:", err);
+                    if (!sid) {
+                        sid = user.uid;
+                        initSchoolData(user.uid);
+                    }
+                }
+            } else if (!sid) {
+                // If definitely no logged in user & no session, load demo fallback
+                injectMockDemoData();
+            }
+        });
 
         // Real-Time Network Listeners for Zero-Touch Sync
         const handleOnline = () => {
@@ -631,6 +655,8 @@ export default function SchoolLeaving() {
         window.addEventListener('offline', handleOffline);
 
         return () => {
+            isMounted = false;
+            unsubscribeAuth();
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
             if (studentsUnsubRef.current) {
@@ -757,16 +783,46 @@ export default function SchoolLeaving() {
         }
     };
 
-    // 3. Fetch Classes
+    // 3. Fetch Classes (With Instant Local Cache & Cloud Sync)
     const fetchClasses = async (sid) => {
+        if (!sid) return;
+
+        // A. Instant Local Cache Hydration (0ms display)
         try {
-            const snap = await getDocsFast(collection(db, `schools/${sid}/classes`));
-            const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const cachedRaw = localStorage.getItem(`slc_classes_cache_${sid}`);
+            if (cachedRaw) {
+                const cachedList = JSON.parse(cachedRaw);
+                if (Array.isArray(cachedList) && cachedList.length > 0) {
+                    setClasses(cachedList);
+                    if (!selectedClassId) {
+                        handleClassSelect(cachedList[0].id, sid);
+                    }
+                }
+            }
+        } catch (e) {}
+
+        // B. Cloud Fetch from Firestore
+        try {
+            const snap = await getDocs(collection(db, `schools/${sid}/classes`));
+            const list = snap.docs
+                .filter(d => d.id !== 'action_metadata')
+                .map(d => ({ id: d.id, ...d.data() }));
+
             // Natural sort classes
             list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
-            setClasses(list);
+
             if (list.length > 0) {
-                handleClassSelect(list[0].id, sid);
+                setClasses(list);
+                try {
+                    localStorage.setItem(`slc_classes_cache_${sid}`, JSON.stringify(list));
+                } catch (e) {}
+
+                setSelectedClassId(prevId => {
+                    const exists = list.some(c => c.id === prevId);
+                    const chosenId = exists ? prevId : list[0].id;
+                    handleClassSelect(chosenId, sid);
+                    return chosenId;
+                });
             }
         } catch (e) {
             console.error("Classes fetch error:", e);
