@@ -135,6 +135,77 @@ function formatDateOfBirthInWords(dobStr) {
     }
 }
 
+// Determine Dynamic Class Progression & Promotion Eligibility (For Nursery through Class 10 / Matric)
+function getNextClassAndEligibility(currentClassName = '', isPassed = true, failedCount = 0, isMidSession = false) {
+    const raw = String(currentClassName || '').toLowerCase().trim();
+    
+    // Check if class 10 / Matric / SSC
+    const isMatric = raw.includes('10') || raw.includes('matric') || raw.includes('ssc') || raw.includes('tenth');
+
+    // Extract numeric grade if present
+    const numMatch = raw.match(/\d+/);
+    const gradeNum = numMatch ? parseInt(numMatch[0]) : null;
+
+    let nextGradeName = '';
+    if (isMatric || gradeNum === 10) {
+        nextGradeName = 'College / Higher Secondary (11th Grade)';
+    } else if (gradeNum !== null && gradeNum < 10) {
+        nextGradeName = `Class ${gradeNum + 1}`;
+    } else if (raw.includes('playgroup') || raw.includes('pg')) {
+        nextGradeName = 'Nursery';
+    } else if (raw.includes('nursery')) {
+        nextGradeName = 'Prep / KG';
+    } else if (raw.includes('prep') || raw.includes('kg')) {
+        nextGradeName = 'Class 1';
+    } else {
+        nextGradeName = 'Next Higher Class';
+    }
+
+    if (!isPassed || failedCount > 0) {
+        const clsDisplay = currentClassName || 'Current Class';
+        return {
+            status: `Detained in ${clsDisplay} (Compartment)`,
+            subtext: `Candidate has ${failedCount > 0 ? `${failedCount} compartment paper(s)` : 'unfulfilled passing criteria'}; not cleared for next grade promotion.`,
+            certificateText: `No, Detained in ${clsDisplay}`,
+            isPromoted: false,
+            isMatric,
+            nextGradeName
+        };
+    }
+
+    if (isMidSession) {
+        const clsDisplay = currentClassName || 'Current Class';
+        return {
+            status: `Studying in ${clsDisplay} (Transfer Mid-Term)`,
+            subtext: `Transferred during academic session; eligible for admission in same grade (${clsDisplay}) at destination school.`,
+            certificateText: `Studying in ${clsDisplay} (Left mid-session)`,
+            isPromoted: false,
+            isMatric,
+            nextGradeName
+        };
+    }
+
+    if (isMatric || gradeNum === 10) {
+        return {
+            status: 'Eligible for College / Higher Secondary',
+            subtext: 'Secondary School Certificate (SSC) completed. Unconditional college admission clearance granted.',
+            certificateText: 'Yes, Passed SSC / Eligible for College',
+            isPromoted: true,
+            isMatric: true,
+            nextGradeName
+        };
+    }
+
+    return {
+        status: `Promoted to ${nextGradeName}`,
+        subtext: `Successfully qualified annual assessment for promotion to ${nextGradeName}.`,
+        certificateText: `Yes, Promoted to ${nextGradeName}`,
+        isPromoted: true,
+        isMatric: false,
+        nextGradeName
+    };
+}
+
 // 1-Click Preset Reason Chips
 const REASON_PRESETS = [
     { id: 'matric', label: '🎓 Completed Matriculation (10th Exam)', text: 'Completed Matriculation Examination' },
@@ -325,6 +396,28 @@ export default function SchoolLeaving() {
     const [syncQueueCount, setSyncQueueCount] = useState(0);
     const [syncSuccessToast, setSyncSuccessToast] = useState(null);
     const studentsUnsubRef = useRef(null);
+    const marksUnsubRef = useRef(null);
+    const [classMarksDocs, setClassMarksDocs] = useState([]);
+    const [classAttendanceDocs, setClassAttendanceDocs] = useState([]);
+    const [manualAcademicOverride, setManualAcademicOverride] = useState(null);
+    const [manualAttendanceOverride, setManualAttendanceOverride] = useState(null);
+    const [showAcademicOverrideModal, setShowAcademicOverrideModal] = useState(false);
+    const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+    const [attOverrideForm, setAttOverrideForm] = useState({
+        totalDays: 195,
+        presentDays: 182,
+        leaveDays: 8,
+        absentDays: 5,
+        conduct: 'Exemplary / Very Good'
+    });
+    const [overrideForm, setOverrideForm] = useState({
+        gpa: '',
+        percentage: '',
+        grade: 'A+ Grade',
+        boardRollNo: '',
+        promoStatus: '',
+        remarks: ''
+    });
 
     // Classes & Students for Issuance
     const [classes, setClasses] = useState([]);
@@ -462,6 +555,9 @@ export default function SchoolLeaving() {
             window.removeEventListener('offline', handleOffline);
             if (studentsUnsubRef.current) {
                 studentsUnsubRef.current();
+            }
+            if (marksUnsubRef.current) {
+                marksUnsubRef.current();
             }
         };
     }, []);
@@ -601,15 +697,22 @@ export default function SchoolLeaving() {
     const handleClassSelect = (clsId, sid = schoolId) => {
         setSelectedClassId(clsId);
         setSelectedStudent(null);
+        setManualAcademicOverride(null);
 
         // Unsubscribe previous student listener
         if (studentsUnsubRef.current) {
             studentsUnsubRef.current();
             studentsUnsubRef.current = null;
         }
+        // Unsubscribe previous marks listener
+        if (marksUnsubRef.current) {
+            marksUnsubRef.current();
+            marksUnsubRef.current = null;
+        }
 
         if (!clsId || !sid) {
             setClassStudents([]);
+            setClassMarksDocs([]);
             return;
         }
 
@@ -623,6 +726,16 @@ export default function SchoolLeaving() {
                 if (Array.isArray(cachedList) && cachedList.length > 0) {
                     setClassStudents(cachedList);
                     setLoadingClassStudents(false);
+                }
+            }
+        } catch (e) {}
+
+        try {
+            const cachedMarksRaw = localStorage.getItem(`slc_exam_marks_cache_${sid}_${clsId}`);
+            if (cachedMarksRaw) {
+                const cachedMarks = JSON.parse(cachedMarksRaw);
+                if (Array.isArray(cachedMarks) && cachedMarks.length > 0) {
+                    setClassMarksDocs(cachedMarks);
                 }
             }
         } catch (e) {}
@@ -662,11 +775,55 @@ export default function SchoolLeaving() {
             console.error("Students listener setup error:", e);
             setLoadingClassStudents(false);
         }
+
+        // C. Real-Time onSnapshot Listener on exam_marks for Real Academic Mastery & GPA
+        try {
+            const marksColRef = collection(db, `schools/${sid}/classes/${clsId}/exam_marks`);
+            const unsubMarks = onSnapshot(marksColRef, (marksSnap) => {
+                const marksList = marksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                setClassMarksDocs(marksList);
+                try {
+                    localStorage.setItem(`slc_exam_marks_cache_${sid}_${clsId}`, JSON.stringify(marksList));
+                } catch (e) {}
+            }, (err) => {
+                console.warn("[SchoolLeaving] Exam marks onSnapshot offline/error:", err);
+            });
+
+            marksUnsubRef.current = unsubMarks;
+        } catch (e) {
+            console.error("Exam marks listener setup error:", e);
+        }
+
+        // D. Fetch Class Attendance via Cache-First getDocsFast (Zero extra read cost after 1st fetch)
+        try {
+            const cachedAttRaw = localStorage.getItem(`slc_attendance_cache_${sid}_${clsId}`);
+            if (cachedAttRaw) {
+                const cachedAtt = JSON.parse(cachedAttRaw);
+                if (Array.isArray(cachedAtt) && cachedAtt.length > 0) {
+                    setClassAttendanceDocs(cachedAtt);
+                }
+            }
+        } catch (e) {}
+
+        (async () => {
+            try {
+                const attSnap = await getDocsFast(collection(db, `schools/${sid}/classes/${clsId}/attendance`));
+                if (attSnap && !attSnap.empty) {
+                    const attList = attSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setClassAttendanceDocs(attList);
+                    try {
+                        localStorage.setItem(`slc_attendance_cache_${sid}_${clsId}`, JSON.stringify(attList));
+                    } catch (e) {}
+                }
+            } catch (e) {}
+        })();
     };
 
     // 5. Select Student
     const handleStudentSelect = (student) => {
         setSelectedStudent(student);
+        setManualAcademicOverride(null);
+        setManualAttendanceOverride(null);
         setDossierStep(1);
         if (student) {
             setSlcSerialNo(`SLC-${new Date().getFullYear()}/${student.rollNo ? String(student.rollNo).padStart(3, '0') : String(Math.floor(Math.random() * 899) + 100)}`);
@@ -764,41 +921,393 @@ export default function SchoolLeaving() {
         };
     }, [selectedStudent, studentClearanceStatus]);
 
-    // Student Academic Scorecard
+    // Student Academic Scorecard (Real-Time Firestore & Offline Cache Integrated)
     const studentAcademicData = useMemo(() => {
-        if (!selectedStudent) return { gpa: '3.85', percentage: '88.4%', grade: 'A+ Grade', rank: 'Rank #3 in Class', examStatus: 'Passed Matric Exam' };
-        const rollSeed = parseInt(selectedStudent.rollNo) || 10;
-        const pct = Math.min(96, Math.max(68, 85 + (rollSeed % 12) - 4));
-        let gr = 'A+ Grade';
-        if (pct < 70) gr = 'B Grade';
-        else if (pct < 80) gr = 'A Grade';
+        const currentClsName = classes.find(c => c.id === selectedClassId)?.name || 'Class 10';
 
+        if (!selectedStudent) {
+            const promoInfo = getNextClassAndEligibility(currentClsName, true, 0, false);
+            return {
+                hasRealData: false,
+                isManualOverride: false,
+                gpa: '3.85',
+                percentage: '88.4%',
+                grade: 'A+ Grade',
+                rank: 'Rank #3 in Class',
+                examStatus: 'Passed Official Exam',
+                statusLabel: 'Passed with Distinction',
+                totalObtained: 0,
+                totalMax: 0,
+                subjects: [],
+                boardStatus: promoInfo.isMatric ? 'All Papers Passed' : 'Annual Exam Cleared',
+                boardSubtext: promoInfo.isMatric ? 'Qualified for Secondary School Certificate (SSC).' : `Cleared for promotion to ${promoInfo.nextGradeName}.`,
+                promoStatus: promoInfo.status,
+                promoSubtext: promoInfo.subtext,
+                promoCertificateText: promoInfo.certificateText,
+                integrityStatus: 'Clean Record',
+                integritySubtext: 'Zero exam misconduct or disciplinary flags.',
+                failedCount: 0
+            };
+        }
+
+        // If manual override is active for this student
+        if (manualAcademicOverride && manualAcademicOverride.active) {
+            const gpaVal = manualAcademicOverride.gpa || '3.50';
+            const pctVal = String(manualAcademicOverride.percentage || '80');
+            const grVal = manualAcademicOverride.grade || 'A Grade';
+            const rollVal = manualAcademicOverride.boardRollNo ? `Board Roll: ${manualAcademicOverride.boardRollNo}` : 'Manual Verified';
+            const defaultPromo = getNextClassAndEligibility(currentClsName, true, 0, false);
+            const promoStatusVal = manualAcademicOverride.promoStatus || defaultPromo.status;
+            const promoSubtextVal = manualAcademicOverride.promoSubtext || defaultPromo.subtext;
+            const promoCertVal = manualAcademicOverride.promoCertificateText || defaultPromo.certificateText;
+
+            return {
+                hasRealData: true,
+                isManualOverride: true,
+                gpa: gpaVal,
+                percentage: pctVal.includes('%') ? pctVal : `${pctVal}%`,
+                grade: grVal,
+                rank: rollVal,
+                examStatus: 'Manually Verified by Principal',
+                statusLabel: 'Manually Verified Standing',
+                totalObtained: manualAcademicOverride.totalObtained || 0,
+                totalMax: manualAcademicOverride.totalMax || 0,
+                subjects: [],
+                boardStatus: 'Manually Verified',
+                boardSubtext: manualAcademicOverride.boardRollNo ? `BISE Board Roll No: ${manualAcademicOverride.boardRollNo}` : 'Principal endorsed board scorecard.',
+                promoStatus: promoStatusVal,
+                promoSubtext: promoSubtextVal,
+                promoCertificateText: promoCertVal,
+                integrityStatus: 'Clean Record',
+                integritySubtext: 'Verified by Principal.',
+                failedCount: 0
+            };
+        }
+
+        // Extract real subject marks for selected student from classMarksDocs
+        const subjects = [];
+        let totalObtained = 0;
+        let totalMax = 0;
+        let failedCount = 0;
+
+        if (Array.isArray(classMarksDocs) && classMarksDocs.length > 0) {
+            classMarksDocs.forEach(mDoc => {
+                const entry = mDoc.marks?.[selectedStudent.id];
+                if (entry) {
+                    const total = Number(mDoc.totalMarks) || 100;
+                    const passing = Number(mDoc.passingMarks) || 33;
+                    const isAbsent = entry.isAbsent === true;
+                    const obtained = isAbsent ? 0 : (entry.obtainedMarks !== null && entry.obtainedMarks !== undefined ? Number(entry.obtainedMarks) : null);
+
+                    if (obtained !== null) {
+                        totalObtained += obtained;
+                        totalMax += total;
+                        const isFail = isAbsent || obtained < passing;
+                        if (isFail) failedCount++;
+
+                        let gradeLetter = entry.grade;
+                        if (!gradeLetter) {
+                            if (isAbsent) gradeLetter = 'ABS';
+                            else {
+                                const subjectPct = total > 0 ? (obtained / total) * 100 : 0;
+                                if (subjectPct >= 80) gradeLetter = 'A+';
+                                else if (subjectPct >= 70) gradeLetter = 'A';
+                                else if (subjectPct >= 60) gradeLetter = 'B';
+                                else if (subjectPct >= 50) gradeLetter = 'C';
+                                else if (subjectPct >= 33) gradeLetter = 'D';
+                                else gradeLetter = 'F';
+                            }
+                        }
+
+                        subjects.push({
+                            subject: mDoc.subject || 'Subject',
+                            obtained,
+                            total,
+                            passing,
+                            isAbsent,
+                            isFail,
+                            grade: gradeLetter,
+                            examTitle: mDoc.examTitle || 'Exam'
+                        });
+                    }
+                }
+            });
+        }
+
+        // If authentic marks were found in classMarksDocs
+        if (subjects.length > 0 && totalMax > 0) {
+            const pctNumber = parseFloat(((totalObtained / totalMax) * 100).toFixed(1));
+
+            // Real GPA calculation (standard educational 4.0 scale)
+            let calcGpa = 0.0;
+            if (pctNumber >= 85) calcGpa = 4.0;
+            else if (pctNumber >= 80) calcGpa = 3.7;
+            else if (pctNumber >= 75) calcGpa = 3.3;
+            else if (pctNumber >= 70) calcGpa = 3.0;
+            else if (pctNumber >= 65) calcGpa = 2.7;
+            else if (pctNumber >= 60) calcGpa = 2.3;
+            else if (pctNumber >= 50) calcGpa = 2.0;
+            else if (pctNumber >= 33) calcGpa = 1.0;
+            else calcGpa = 0.0;
+
+            // Grade label
+            let gr = 'A+ Grade';
+            if (pctNumber < 33) gr = 'F Grade';
+            else if (pctNumber < 50) gr = 'D Grade';
+            else if (pctNumber < 60) gr = 'C Grade';
+            else if (pctNumber < 70) gr = 'B Grade';
+            else if (pctNumber < 80) gr = 'A Grade';
+
+            // Real class rank calculation
+            let computedRank = 'Standing Verified';
+            if (Array.isArray(classStudents) && classStudents.length > 0) {
+                const studentScores = classStudents.map(st => {
+                    let stTotal = 0;
+                    classMarksDocs.forEach(mDoc => {
+                        const stEntry = mDoc.marks?.[st.id];
+                        if (stEntry && !stEntry.isAbsent && stEntry.obtainedMarks !== null && stEntry.obtainedMarks !== undefined) {
+                            stTotal += Number(stEntry.obtainedMarks);
+                        }
+                    });
+                    return { studentId: st.id, total: stTotal };
+                });
+                studentScores.sort((a, b) => b.total - a.total);
+                const myIdx = studentScores.findIndex(s => s.studentId === selectedStudent.id);
+                if (myIdx !== -1) {
+                    computedRank = `Rank #${myIdx + 1} of ${classStudents.length}`;
+                }
+            }
+
+            const isAllPassed = failedCount === 0;
+            const statusLabel = isAllPassed
+                ? (pctNumber >= 80 ? 'Passed with Distinction' : 'Passed Official Examination')
+                : `Compartment (${failedCount} Fail)`;
+
+            const promoInfo = getNextClassAndEligibility(currentClsName, isAllPassed, failedCount, false);
+
+            return {
+                hasRealData: true,
+                isManualOverride: false,
+                gpa: calcGpa.toFixed(2),
+                percentage: `${pctNumber}%`,
+                grade: gr,
+                rank: computedRank,
+                examStatus: isAllPassed ? 'Passed Official Examination' : `Failed in ${failedCount} Subject(s)`,
+                statusLabel,
+                totalObtained,
+                totalMax,
+                subjects,
+                boardStatus: isAllPassed
+                    ? (promoInfo.isMatric ? 'SSC Board Cleared' : `All ${subjects.length} Papers Cleared`)
+                    : `${failedCount} Subject(s) Failed`,
+                boardSubtext: isAllPassed
+                    ? (promoInfo.isMatric ? 'Qualified for Secondary School Certificate (SSC).' : `Qualified for promotion to ${promoInfo.nextGradeName}.`)
+                    : 'Candidate requires supplementary examination for clearance.',
+                promoStatus: promoInfo.status,
+                promoSubtext: promoInfo.subtext,
+                promoCertificateText: promoInfo.certificateText,
+                integrityStatus: 'Clean Record',
+                integritySubtext: 'Zero exam misconduct or disciplinary flags reported.',
+                failedCount
+            };
+        }
+
+        // Graceful Fallback if exam_marks are not recorded yet in system (e.g. Mid-Session Transfer)
+        const fallbackPromo = getNextClassAndEligibility(currentClsName, true, 0, true);
         return {
-            gpa: (pct / 25).toFixed(2),
-            percentage: `${pct}%`,
-            grade: gr,
-            rank: `Rank #${(rollSeed % 5) + 1} in Class`,
-            examStatus: 'Passed Official Examination'
+            hasRealData: false,
+            isManualOverride: false,
+            gpa: 'Pending',
+            percentage: 'N/A',
+            grade: 'Not Graded',
+            rank: 'Standing Pending',
+            examStatus: 'No Exam Marks in System',
+            statusLabel: 'Pending Marksheet Upload',
+            totalObtained: 0,
+            totalMax: 0,
+            subjects: [],
+            boardStatus: 'In-Session Standing',
+            boardSubtext: 'Transferred before annual board / final examination.',
+            promoStatus: fallbackPromo.status,
+            promoSubtext: fallbackPromo.subtext,
+            promoCertificateText: fallbackPromo.certificateText,
+            integrityStatus: 'Clean Record',
+            integritySubtext: 'No disciplinary violations on file.',
+            failedCount: 0
         };
-    }, [selectedStudent]);
+    }, [selectedStudent, classMarksDocs, classStudents, manualAcademicOverride, selectedClassId, classes]);
 
-    // Student Attendance Score
+    // Student Attendance Score (Real Database Logs, In-Memory Object, & Zero-Cost Cache)
     const studentAttendanceData = useMemo(() => {
-        if (!selectedStudent) return { rate: 94.2, present: 182, total: 195, leaves: 8, absent: 5, status: 'Exemplary Attendance' };
-        const rollSeed = parseInt(selectedStudent.rollNo) || 12;
-        const present = Math.min(195, Math.max(160, 185 - (rollSeed % 15)));
-        const rate = ((present / 195) * 100).toFixed(1);
-        const absent = 195 - present;
-        const leaves = Math.min(absent, Math.floor(absent / 2) + 2);
+        if (!selectedStudent) {
+            return {
+                hasRealData: false,
+                isManualOverride: false,
+                sourceLabel: 'Default Session Template',
+                rate: 94.2,
+                present: 182,
+                total: 195,
+                leaves: 8,
+                absent: 5,
+                status: 'Exemplary Attendance',
+                conductStatus: 'Clean Record',
+                hasDisciplineFlags: false,
+                certificateText: '182 / 195 Days (94.2%) — Regular & Punctual'
+            };
+        }
+
+        // Audit disciplinary records from individualActions
+        let hasDisciplineFlags = false;
+        let disciplineRemarks = 'Student maintained exemplary ethical standards and cooperated constructively with faculty.';
+        if (Array.isArray(selectedStudent.individualActions)) {
+            const discActions = selectedStudent.individualActions.filter(ia =>
+                ia.type === 'discipline' || ia.category === 'conduct' || (ia.notes && /misconduct|discipline|warning/i.test(ia.notes))
+            );
+            if (discActions.length > 0) {
+                hasDisciplineFlags = true;
+                disciplineRemarks = `Noted: ${discActions[0].notes || 'Disciplinary advisory issued during session.'}`;
+            }
+        }
+
+        // 1. Check if Principal applied manual working days override
+        if (manualAttendanceOverride && manualAttendanceOverride.active) {
+            const tot = Number(manualAttendanceOverride.totalDays) || 195;
+            const pres = Number(manualAttendanceOverride.presentDays) || 0;
+            const lvs = Number(manualAttendanceOverride.leaveDays) || 0;
+            const abs = Number(manualAttendanceOverride.absentDays) || Math.max(0, tot - pres - lvs);
+            const r = tot > 0 ? parseFloat(((pres / tot) * 100).toFixed(1)) : 0;
+            const stat = r >= 90 ? 'Exemplary Attendance' : (r >= 75 ? 'Good Attendance' : 'Short Attendance');
+
+            return {
+                hasRealData: true,
+                isManualOverride: true,
+                sourceLabel: 'Manually Verified from Register',
+                rate: r,
+                present: pres,
+                total: tot,
+                leaves: lvs,
+                absent: abs,
+                status: stat,
+                conductStatus: hasDisciplineFlags ? 'Disciplinary Advisory on File' : 'Exemplary Conduct',
+                hasDisciplineFlags,
+                disciplineRemarks,
+                certificateText: `${pres} / ${tot} Days (${r}%) — Regular & Punctual`
+            };
+        }
+
+        // 2. Check if daily teacher attendance logs exist in classAttendanceDocs (Zero Extra Read Cache)
+        if (Array.isArray(classAttendanceDocs) && classAttendanceDocs.length > 0) {
+            let pres = 0;
+            let abs = 0;
+            let lvs = 0;
+            let recordedDays = 0;
+
+            classAttendanceDocs.forEach(attDoc => {
+                const rec = attDoc.records?.[selectedStudent.id] || attDoc.students?.[selectedStudent.id] || attDoc[selectedStudent.id];
+                if (rec !== undefined && rec !== null) {
+                    recordedDays++;
+                    const st = typeof rec === 'string' ? rec.toLowerCase() : (rec?.status ? String(rec.status).toLowerCase() : '');
+                    if (st === 'present' || st === 'p') {
+                        pres++;
+                    } else if (st === 'leave' || st === 'l') {
+                        lvs++;
+                    } else if (st === 'absent' || st === 'a') {
+                        abs++;
+                    } else {
+                        pres++;
+                    }
+                }
+            });
+
+            if (recordedDays > 0) {
+                const tot = recordedDays;
+                const r = parseFloat(((pres / tot) * 100).toFixed(1));
+                const stat = r >= 90 ? 'Exemplary Attendance' : (r >= 75 ? 'Good Attendance' : 'Short Attendance');
+                return {
+                    hasRealData: true,
+                    isManualOverride: false,
+                    sourceLabel: 'Teacher Daily Logs (Live)',
+                    rate: r,
+                    present: pres,
+                    total: tot,
+                    leaves: lvs,
+                    absent: abs,
+                    status: stat,
+                    conductStatus: hasDisciplineFlags ? 'Disciplinary Advisory on File' : 'Exemplary Conduct',
+                    hasDisciplineFlags,
+                    disciplineRemarks,
+                    certificateText: `${pres} / ${tot} Days (${r}%) — Regular & Punctual`
+                };
+            }
+        }
+
+        // 3. Check in-memory student document fields (Already loaded in memory -> 0 DB reads!)
+        const rawAtt = selectedStudent.attendance !== undefined ? selectedStudent.attendance : selectedStudent.attendancePercentage;
+        if (rawAtt !== undefined && rawAtt !== null) {
+            if (typeof rawAtt === 'object') {
+                const tot = Number(rawAtt.totalDays) || 195;
+                const pres = Number(rawAtt.presentDays) || Math.round(((Number(rawAtt.percentage) || 85) / 100) * tot);
+                const lvs = Number(rawAtt.leaves || rawAtt.leaveDays) || 5;
+                const abs = Math.max(0, tot - pres - lvs);
+                const r = parseFloat(((pres / tot) * 100).toFixed(1));
+                const stat = r >= 90 ? 'Exemplary Attendance' : (r >= 75 ? 'Good Attendance' : 'Short Attendance');
+                return {
+                    hasRealData: true,
+                    isManualOverride: false,
+                    sourceLabel: 'Student Profile Record',
+                    rate: r,
+                    present: pres,
+                    total: tot,
+                    leaves: lvs,
+                    absent: abs,
+                    status: stat,
+                    conductStatus: hasDisciplineFlags ? 'Disciplinary Advisory on File' : 'Exemplary Conduct',
+                    hasDisciplineFlags,
+                    disciplineRemarks,
+                    certificateText: `${pres} / ${tot} Days (${r}%) — Regular & Punctual`
+                };
+            } else if (!isNaN(Number(rawAtt))) {
+                const r = parseFloat(Number(rawAtt).toFixed(1));
+                const tot = 195;
+                const pres = Math.round((r / 100) * tot);
+                const lvs = Math.max(0, Math.floor((tot - pres) / 2));
+                const abs = Math.max(0, tot - pres - lvs);
+                const stat = r >= 90 ? 'Exemplary Attendance' : (r >= 75 ? 'Good Attendance' : 'Short Attendance');
+                return {
+                    hasRealData: true,
+                    isManualOverride: false,
+                    sourceLabel: 'Student Record Score',
+                    rate: r,
+                    present: pres,
+                    total: tot,
+                    leaves: lvs,
+                    absent: abs,
+                    status: stat,
+                    conductStatus: hasDisciplineFlags ? 'Disciplinary Advisory on File' : 'Exemplary Conduct',
+                    hasDisciplineFlags,
+                    disciplineRemarks,
+                    certificateText: `${pres} / ${tot} Days (${r}%) — Regular & Punctual`
+                };
+            }
+        }
+
+        // 4. Default Session Baseline (Physical Register default with 1-click verification)
         return {
-            rate: parseFloat(rate),
-            present,
+            hasRealData: false,
+            isManualOverride: false,
+            sourceLabel: 'Standard Session Baseline (195 Days)',
+            rate: 92.3,
+            present: 180,
             total: 195,
-            leaves,
-            absent: Math.max(0, absent - leaves),
-            status: parseFloat(rate) >= 90 ? 'Exemplary Attendance' : (parseFloat(rate) >= 75 ? 'Good Attendance' : 'Short Attendance')
+            leaves: 6,
+            absent: 9,
+            status: 'Regular Attendance',
+            conductStatus: hasDisciplineFlags ? 'Disciplinary Advisory on File' : 'Exemplary Conduct',
+            hasDisciplineFlags,
+            disciplineRemarks,
+            certificateText: '180 / 195 Days (92.3%) — Regular & Punctual'
         };
-    }, [selectedStudent]);
+    }, [selectedStudent, classAttendanceDocs, manualAttendanceOverride]);
 
     // Handle Quick Settle Dues (Clears Tuition, Transport, Store, Actions, and Fines atomically)
     const handleSettleDues = async () => {
@@ -1136,10 +1645,10 @@ export default function SchoolLeaving() {
                 ['6. Nationality & Religion:', 'Pakistani / Muslim'],
                 ['7. Date of First Admission:', targetRec.admissionDate || '01-Apr-2019'],
                 ['8. Class in which Pupil Last Studied:', `${targetRec.classAtLeaving || 'Class 10'} (Session: ${targetRec.session || '2025-2026'})`],
-                ['9. School / Board Annual Examination:', 'Passed & Cleared'],
-                ['10. Whether Qualified for Promotion:', 'Yes, Eligible for Higher Class / College'],
+                ['9. School / Board Annual Examination:', targetRec.academicRecord?.examStatus && targetRec.academicRecord.gpa !== 'Pending' ? `${targetRec.academicRecord.examStatus} (GPA: ${targetRec.academicRecord.gpa}, Grade: ${targetRec.academicRecord.grade})` : (targetRec.academicRecord?.boardStatus || 'Passed & Cleared')],
+                ['10. Whether Qualified for Promotion:', targetRec.academicRecord?.promoCertificateText || targetRec.academicRecord?.promoStatus || (String(targetRec.classAtLeaving || '').toLowerCase().includes('10') ? 'Yes, Passed SSC / Eligible for College' : 'Yes, Promoted to Higher Class')],
                 ['11. Month up to which School Dues Paid:', 'All Dues Paid in Full (100% Cleared)'],
-                ['12. Total Attendance / Working Days:', 'Regular & Punctual (Exemplary Attendance)'],
+                ['12. Total Attendance / Working Days:', targetRec.attendanceRecord?.certificateText || `${studentAttendanceData.present} / ${studentAttendanceData.total} Days (${studentAttendanceData.rate}%) — Regular & Punctual`],
                 ['13. General Conduct & Character:', targetRec.conduct || 'Exemplary / Very Good'],
                 ['14. Date of Striking Off Roll / Leaving:', targetRec.leavingDate || slcLeavingDate],
                 ['15. Reason for Leaving the School:', targetRec.reason || 'Completed Matriculation Examination'],
@@ -1249,6 +1758,32 @@ export default function SchoolLeaving() {
                     storeDues: studentClearanceStatus.storeDues,
                     actionDues: studentClearanceStatus.actionDues,
                     finesDues: studentClearanceStatus.finesDues
+                },
+                academicRecord: {
+                    gpa: studentAcademicData.gpa,
+                    percentage: studentAcademicData.percentage,
+                    grade: studentAcademicData.grade,
+                    rank: studentAcademicData.rank,
+                    examStatus: studentAcademicData.examStatus,
+                    promoStatus: studentAcademicData.promoStatus,
+                    promoCertificateText: studentAcademicData.promoCertificateText || studentAcademicData.promoStatus,
+                    hasRealExamData: studentAcademicData.hasRealData,
+                    isManualOverride: studentAcademicData.isManualOverride || false,
+                    totalObtained: studentAcademicData.totalObtained,
+                    totalMax: studentAcademicData.totalMax,
+                    evaluatedSubjectsCount: studentAcademicData.subjects?.length || 0
+                },
+                attendanceRecord: {
+                    totalDays: studentAttendanceData.total,
+                    presentDays: studentAttendanceData.present,
+                    leaveDays: studentAttendanceData.leaves,
+                    absentDays: studentAttendanceData.absent,
+                    rate: studentAttendanceData.rate,
+                    status: studentAttendanceData.status,
+                    sourceLabel: studentAttendanceData.sourceLabel,
+                    certificateText: studentAttendanceData.certificateText,
+                    hasRealData: studentAttendanceData.hasRealData,
+                    isManualOverride: studentAttendanceData.isManualOverride || false
                 },
                 issuedAt: new Date().toISOString(),
                 isPendingSync: (typeof navigator !== 'undefined' && !navigator.onLine)
@@ -2432,146 +2967,303 @@ export default function SchoolLeaving() {
                                     </div>
                                 )}
 
-                                {/* STAGE 3: ACADEMIC MASTERY & RESULTS (HERO CARD) */}
-                                {dossierStep === 3 && (
-                                    <div className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5 animate-fadeIn">
-                                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                                            <div className="flex items-center gap-2.5">
-                                                <div className="w-10 h-10 rounded-2xl bg-cyan-50 border border-cyan-200 text-cyan-700 flex items-center justify-center font-black shadow-xs">
-                                                    <Award size={20} />
-                                                </div>
-                                                <div>
-                                                    <h4 className="text-sm font-black text-slate-900">Checkpoint 3: Academic Mastery & Examination Clearance</h4>
-                                                    <p className="text-[11px] text-slate-500 font-medium">Board examination scorecard, overall GPA, and academic class standing</p>
-                                                </div>
-                                            </div>
-                                            <span className="px-3 py-1 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 text-xs font-black">
-                                                {studentAcademicData.grade}
-                                            </span>
-                                        </div>
+                                 {/* STAGE 3: ACADEMIC MASTERY & RESULTS (HERO CARD) */}
+                                 {dossierStep === 3 && (
+                                     <div className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5 animate-fadeIn">
+                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+                                             <div className="flex items-center gap-2.5">
+                                                 <div className="w-10 h-10 rounded-2xl bg-cyan-50 border border-cyan-200 text-cyan-700 flex items-center justify-center font-black shadow-xs flex-shrink-0">
+                                                     <Award size={20} />
+                                                 </div>
+                                                 <div>
+                                                     <h4 className="text-sm font-black text-slate-900">Checkpoint 3: Academic Mastery & Examination Clearance</h4>
+                                                     <p className="text-[11px] text-slate-500 font-medium">Board examination scorecard, overall GPA, and academic class standing</p>
+                                                 </div>
+                                             </div>
+                                             <div className="flex items-center gap-2 self-start sm:self-auto">
+                                                 {studentAcademicData.isManualOverride && (
+                                                     <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-black">
+                                                         Manual Override
+                                                     </span>
+                                                 )}
+                                                 {studentAcademicData.hasRealData && !studentAcademicData.isManualOverride && (
+                                                     <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black flex items-center gap-1">
+                                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Live Firestore Data
+                                                     </span>
+                                                 )}
+                                                 <span className="px-3 py-1 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 text-xs font-black">
+                                                     {studentAcademicData.grade}
+                                                 </span>
+                                             </div>
+                                         </div>
 
-                                        {/* Hero Scorecard Banner */}
-                                        <div className="p-5 bg-gradient-to-r from-cyan-50/60 via-slate-50 to-cyan-50/30 rounded-2xl border border-cyan-100 flex flex-col sm:flex-row items-center justify-between gap-6">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-16 h-16 rounded-3xl bg-cyan-600 text-white flex items-center justify-center font-black text-xl shadow-md flex-shrink-0">
-                                                    <GraduationCap size={32} />
+                                         {/* Hero Scorecard Banner */}
+                                         <div className="p-5 bg-gradient-to-r from-cyan-50/60 via-slate-50 to-cyan-50/30 rounded-2xl border border-cyan-100 flex flex-col sm:flex-row items-center justify-between gap-6">
+                                             <div className="flex items-center gap-4">
+                                                 <div className="w-16 h-16 rounded-3xl bg-cyan-600 text-white flex items-center justify-center font-black text-xl shadow-md flex-shrink-0">
+                                                     <GraduationCap size={32} />
+                                                 </div>
+                                                 <div className="space-y-0.5">
+                                                     <h5 className="text-base font-black text-slate-900">{studentAcademicData.rank}</h5>
+                                                     <p className="text-xs text-slate-600 font-medium">
+                                                         Examination Status: <strong className="text-cyan-800 font-bold">{studentAcademicData.examStatus}</strong>
+                                                     </p>
+                                                     <span className={`inline-block px-2.5 py-0.5 rounded-lg text-[10px] font-black mt-1 ${
+                                                         studentAcademicData.failedCount > 0
+                                                             ? 'bg-rose-100 text-rose-800'
+                                                             : 'bg-emerald-100 text-emerald-800'
+                                                     }`}>
+                                                         {studentAcademicData.statusLabel}
+                                                     </span>
+                                                 </div>
+                                             </div>
+
+                                             <div className="flex items-center gap-3">
+                                                 <div className="text-center p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs min-w-[90px]">
+                                                     <span className="text-[10px] font-bold text-slate-400 uppercase block">Board Score</span>
+                                                     <span className="text-lg font-black text-cyan-700 mt-0.5 block">{studentAcademicData.percentage}</span>
+                                                 </div>
+                                                 <div className="text-center p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs min-w-[90px]">
+                                                     <span className="text-[10px] font-bold text-slate-400 uppercase block">Cumulative GPA</span>
+                                                     <span className="text-lg font-black text-indigo-700 mt-0.5 block">
+                                                         {studentAcademicData.gpa}{studentAcademicData.gpa !== 'Pending' ? ' / 4.0' : ''}
+                                                     </span>
+                                                 </div>
+                                             </div>
+                                         </div>
+
+                                         {/* Evaluated Subject Papers Breakdown (Real Firestore Marks) */}
+                                         {studentAcademicData.hasRealData && studentAcademicData.subjects?.length > 0 && (
+                                             <div className="space-y-2 pt-1">
+                                                 <div className="flex items-center justify-between text-xs font-bold text-slate-700 px-1">
+                                                     <span className="flex items-center gap-1.5">
+                                                         <BookOpen size={14} className="text-cyan-600" />
+                                                         Evaluated Subject Papers ({studentAcademicData.subjects.length}):
+                                                     </span>
+                                                     <span className="text-slate-500 text-[11px] font-medium">
+                                                         Total: <strong>{studentAcademicData.totalObtained}</strong> / {studentAcademicData.totalMax} Marks
+                                                     </span>
+                                                 </div>
+                                                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                                                     {studentAcademicData.subjects.map((subj, idx) => (
+                                                         <div
+                                                             key={idx}
+                                                             className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition-all ${
+                                                                 subj.isFail
+                                                                     ? 'bg-rose-50/70 border-rose-200 text-rose-900'
+                                                                     : 'bg-slate-50/80 border-slate-200/80 text-slate-800'
+                                                             }`}
+                                                         >
+                                                             <div className="truncate pr-2">
+                                                                 <span className="font-bold block truncate text-slate-900">{subj.subject}</span>
+                                                                 <span className="text-[10px] text-slate-500 block">
+                                                                     {subj.isAbsent ? 'Absent' : `${subj.obtained} / ${subj.total}`}
+                                                                 </span>
+                                                             </div>
+                                                             <span
+                                                                 className={`px-2 py-0.5 rounded-md text-[10px] font-black flex-shrink-0 ${
+                                                                     subj.isFail
+                                                                         ? 'bg-rose-100 text-rose-800'
+                                                                         : 'bg-emerald-100 text-emerald-800'
+                                                                 }`}
+                                                             >
+                                                                 {subj.grade}
+                                                             </span>
+                                                         </div>
+                                                     ))}
+                                                 </div>
+                                             </div>
+                                         )}
+
+                                         {/* No Real Marks Found Notice with Quick Action */}
+                                         {!studentAcademicData.hasRealData && (
+                                             <div className="p-3.5 bg-amber-50/90 rounded-2xl border border-amber-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                                                 <div className="space-y-0.5">
+                                                     <p className="font-black text-amber-900 flex items-center gap-1.5">
+                                                         <AlertCircle size={14} className="text-amber-600" />
+                                                         No Examination Marksheets Found in Exams Module
+                                                     </p>
+                                                     <p className="text-[11px] text-amber-700">
+                                                         Exam marks have not been uploaded for this class. You can issue clearance or enter BISE Board results manually.
+                                                     </p>
+                                                 </div>
+                                                 <button
+                                                     type="button"
+                                                     onClick={() => {
+                                                         setOverrideForm({
+                                                             gpa: '3.60',
+                                                             percentage: '82',
+                                                             grade: 'A+ Grade',
+                                                             boardRollNo: selectedStudent?.rollNo || '',
+                                                             promoStatus: studentAcademicData.promoStatus,
+                                                             remarks: 'Officially verified from BISE Board scorecard.'
+                                                         });
+                                                         setShowAcademicOverrideModal(true);
+                                                     }}
+                                                     className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl text-xs flex-shrink-0 transition-colors shadow-xs cursor-pointer"
+                                                 >
+                                                     Enter Board Score Manually
+                                                 </button>
+                                             </div>
+                                         )}
+
+                                         {studentAcademicData.hasRealData && (
+                                             <div className="flex justify-end pt-1">
+                                                 <button
+                                                     type="button"
+                                                     onClick={() => {
+                                                         setOverrideForm({
+                                                             gpa: studentAcademicData.gpa,
+                                                             percentage: studentAcademicData.percentage.replace('%', ''),
+                                                             grade: studentAcademicData.grade,
+                                                             boardRollNo: selectedStudent?.rollNo || '',
+                                                             promoStatus: studentAcademicData.promoStatus,
+                                                             remarks: 'Manual board marks endorsement'
+                                                         });
+                                                         setShowAcademicOverrideModal(true);
+                                                     }}
+                                                     className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors flex items-center gap-1 cursor-pointer"
+                                                 >
+                                                     <Sliders size={12} />
+                                                     {studentAcademicData.isManualOverride ? 'Edit Manual Board Score' : 'Override with External Board Score'}
+                                                 </button>
+                                             </div>
+                                         )}
+
+                                         {/* 3 Sub-Cards for Academic Clearance */}
+                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                                             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                                                 <span className="text-[10px] font-bold text-slate-500 uppercase block">Board Status</span>
+                                                 <span className={`font-black block ${studentAcademicData.failedCount > 0 ? 'text-rose-700' : 'text-slate-900'}`}>
+                                                     {studentAcademicData.boardStatus}
+                                                 </span>
+                                                 <p className="text-[10px] text-slate-500">{studentAcademicData.boardSubtext}</p>
+                                             </div>
+                                             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                                                 <span className="text-[10px] font-bold text-slate-500 uppercase block">Promotion Eligibility</span>
+                                                 <span className={`font-black block ${studentAcademicData.failedCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                                     {studentAcademicData.promoStatus}
+                                                 </span>
+                                                 <p className="text-[10px] text-slate-500">{studentAcademicData.promoSubtext}</p>
+                                             </div>
+                                             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                                                 <span className="text-[10px] font-bold text-slate-500 uppercase block">Academic Integrity</span>
+                                                 <span className="font-black text-indigo-700 block">{studentAcademicData.integrityStatus}</span>
+                                                 <p className="text-[10px] text-slate-500">{studentAcademicData.integritySubtext}</p>
+                                             </div>
+                                         </div>
+                                     </div>
+                                 )}
+
+                                        {/* STAGE 4: ATTENDANCE & CONDUCT RADAR (HERO CARD) */}
+                                        {dossierStep === 4 && (
+                                            <div className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5 animate-fadeIn">
+                                                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                                    <div className="flex items-center gap-2.5">
+                                                        <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center font-black shadow-xs">
+                                                            <Activity size={20} />
+                                                        </div>
+                                                        <div>
+                                                            <h4 className="text-sm font-black text-slate-900">Checkpoint 4: Attendance & Moral Conduct Endorsement</h4>
+                                                            <p className="text-[11px] text-slate-500 font-medium">Class attendance tracking, discipline logs, and moral character evaluation</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold">
+                                                            {studentAttendanceData.sourceLabel}
+                                                        </span>
+                                                        <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-black">
+                                                            {studentAttendanceData.status}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <div className="space-y-0.5">
-                                                    <h5 className="text-base font-black text-slate-900">{studentAcademicData.rank}</h5>
-                                                    <p className="text-xs text-slate-600 font-medium">
-                                                        Examination Status: <strong className="text-cyan-800 font-bold">{studentAcademicData.examStatus}</strong>
-                                                    </p>
-                                                    <span className="inline-block px-2.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-black mt-1">
-                                                        Passed with Distinction
+
+                                                {/* Hero Attendance Progress Arc */}
+                                                <div className="p-5 bg-gradient-to-r from-amber-50/60 via-slate-50 to-amber-50/30 rounded-2xl border border-amber-100 space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <h5 className="text-sm font-black text-slate-900">Overall Working Days Attendance</h5>
+                                                            <p className="text-xs text-slate-600 font-medium">Session Total: {studentAttendanceData.total} Instructional Days</p>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <span className="text-xl font-black text-amber-700">{studentAttendanceData.rate}%</span>
+                                                            <span className="text-[10px] font-bold text-slate-400 block">Attendance Rate</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Visual Gauge Bar */}
+                                                    <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+                                                        <div
+                                                            style={{ width: `${Math.min(100, Math.max(0, studentAttendanceData.rate))}%` }}
+                                                            className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full transition-all duration-700"
+                                                        />
+                                                    </div>
+
+                                                    <div className="grid grid-cols-3 gap-2 text-center pt-2">
+                                                        <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
+                                                            <span className="text-[10px] font-bold text-slate-500 uppercase block">Present Days</span>
+                                                            <span className="text-sm font-black text-emerald-700 mt-0.5 block">{studentAttendanceData.present} Days</span>
+                                                        </div>
+                                                        <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
+                                                            <span className="text-[10px] font-bold text-slate-500 uppercase block">Authorized Leaves</span>
+                                                            <span className="text-sm font-black text-amber-600 mt-0.5 block">{studentAttendanceData.leaves} Days</span>
+                                                        </div>
+                                                        <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
+                                                            <span className="text-[10px] font-bold text-slate-500 uppercase block">Unexcused Absents</span>
+                                                            <span className="text-sm font-black text-rose-600 mt-0.5 block">{studentAttendanceData.absent} Days</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Verify / Override Working Days Trigger */}
+                                                    <div className="flex justify-end pt-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setAttOverrideForm({
+                                                                    totalDays: studentAttendanceData.total,
+                                                                    presentDays: studentAttendanceData.present,
+                                                                    leaveDays: studentAttendanceData.leaves,
+                                                                    absentDays: studentAttendanceData.absent,
+                                                                    conduct: slcConduct || 'Exemplary / Very Good'
+                                                                });
+                                                                setShowAttendanceModal(true);
+                                                            }}
+                                                            className="text-[11px] font-bold text-amber-700 hover:text-amber-900 transition-colors flex items-center gap-1 cursor-pointer"
+                                                        >
+                                                            <Sliders size={12} />
+                                                            {studentAttendanceData.isManualOverride ? 'Edit Register Override' : 'Verify / Adjust Working Days'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Moral Conduct Endorsement Box */}
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <ShieldCheck size={28} className={studentAttendanceData.hasDisciplineFlags ? 'text-amber-600 flex-shrink-0' : 'text-indigo-600 flex-shrink-0'} />
+                                                        <div className="space-y-0.5">
+                                                            <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                                                                <span>Moral Character & Discipline Certified:</span>
+                                                                {studentAttendanceData.hasDisciplineFlags && (
+                                                                    <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[9px] font-black">
+                                                                        Advisory Noted
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                            <p className="text-[11px] text-slate-600 italic">
+                                                                "{slcConduct} — {studentAttendanceData.disciplineRemarks}"
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black uppercase flex-shrink-0 border ${
+                                                        studentAttendanceData.hasDisciplineFlags
+                                                            ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                                            : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                                    }`}>
+                                                        {studentAttendanceData.hasDisciplineFlags ? 'Audit Logged' : 'Seal Verified'}
                                                     </span>
                                                 </div>
                                             </div>
-
-                                            <div className="flex items-center gap-3">
-                                                <div className="text-center p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs min-w-[90px]">
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Board Score</span>
-                                                    <span className="text-lg font-black text-cyan-700 mt-0.5 block">{studentAcademicData.percentage}</span>
-                                                </div>
-                                                <div className="text-center p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs min-w-[90px]">
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Cumulative GPA</span>
-                                                    <span className="text-lg font-black text-indigo-700 mt-0.5 block">{studentAcademicData.gpa} / 4.0</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* 3 Sub-Cards for Academic Clearance */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                                            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
-                                                <span className="text-[10px] font-bold text-slate-500 uppercase block">Board Status</span>
-                                                <span className="font-black text-slate-900 block">All Papers Passed</span>
-                                                <p className="text-[10px] text-slate-500">Qualified for Secondary School Certificate (SSC).</p>
-                                            </div>
-                                            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
-                                                <span className="text-[10px] font-bold text-slate-500 uppercase block">Promotion Eligibility</span>
-                                                <span className="font-black text-emerald-700 block">Eligible for College</span>
-                                                <p className="text-[10px] text-slate-500">Unconditional migration clearance granted.</p>
-                                            </div>
-                                            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
-                                                <span className="text-[10px] font-bold text-slate-500 uppercase block">Academic Integrity</span>
-                                                <span className="font-black text-indigo-700 block">Clean Record</span>
-                                                <p className="text-[10px] text-slate-500">Zero exam misconduct or disciplinary flags.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* STAGE 4: ATTENDANCE & CONDUCT RADAR (HERO CARD) */}
-                                {dossierStep === 4 && (
-                                    <div className="bg-white rounded-3xl border border-slate-200/90 p-6 sm:p-7 shadow-xs space-y-5 animate-fadeIn">
-                                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                                            <div className="flex items-center gap-2.5">
-                                                <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center font-black shadow-xs">
-                                                    <Activity size={20} />
-                                                </div>
-                                                <div>
-                                                    <h4 className="text-sm font-black text-slate-900">Checkpoint 4: Attendance & Moral Conduct Endorsement</h4>
-                                                    <p className="text-[11px] text-slate-500 font-medium">Class attendance tracking, discipline logs, and moral character evaluation</p>
-                                                </div>
-                                            </div>
-                                            <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-black">
-                                                {studentAttendanceData.status}
-                                            </span>
-                                        </div>
-
-                                        {/* Hero Attendance Progress Arc */}
-                                        <div className="p-5 bg-gradient-to-r from-amber-50/60 via-slate-50 to-amber-50/30 rounded-2xl border border-amber-100 space-y-3">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <h5 className="text-sm font-black text-slate-900">Overall Working Days Attendance</h5>
-                                                    <p className="text-xs text-slate-600 font-medium">Session Total: 195 Instructional Days</p>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className="text-xl font-black text-amber-700">{studentAttendanceData.rate}%</span>
-                                                    <span className="text-[10px] font-bold text-slate-400 block">Attendance Rate</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Visual Gauge Bar */}
-                                            <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
-                                                <div
-                                                    style={{ width: `${studentAttendanceData.rate}%` }}
-                                                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full transition-all duration-700"
-                                                />
-                                            </div>
-
-                                            <div className="grid grid-cols-3 gap-2 text-center pt-2">
-                                                <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
-                                                    <span className="text-[10px] font-bold text-slate-500 uppercase block">Present Days</span>
-                                                    <span className="text-sm font-black text-emerald-700 mt-0.5 block">{studentAttendanceData.present} Days</span>
-                                                </div>
-                                                <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
-                                                    <span className="text-[10px] font-bold text-slate-500 uppercase block">Authorized Leaves</span>
-                                                    <span className="text-sm font-black text-amber-600 mt-0.5 block">{studentAttendanceData.leaves} Days</span>
-                                                </div>
-                                                <div className="p-2.5 bg-white rounded-xl border border-slate-200/80">
-                                                    <span className="text-[10px] font-bold text-slate-500 uppercase block">Unexcused Absents</span>
-                                                    <span className="text-sm font-black text-rose-600 mt-0.5 block">{studentAttendanceData.absent} Days</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Moral Conduct Endorsement Box */}
-                                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-4">
-                                            <div className="flex items-center gap-3">
-                                                <ShieldCheck size={28} className="text-indigo-600 flex-shrink-0" />
-                                                <div className="space-y-0.5">
-                                                    <span className="text-xs font-black text-slate-900 block">Moral Character & Discipline Certified:</span>
-                                                    <p className="text-[11px] text-slate-600 italic">
-                                                        "{slcConduct} — Student maintained exemplary ethical standards and cooperated constructively with faculty."
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <span className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl text-[10px] font-black uppercase flex-shrink-0">
-                                                Seal Verified
-                                            </span>
-                                        </div>
-                                    </div>
-                                )}
+                                        )}
 
                                 {/* STEPPER PREV / NEXT NAVIGATION CONTROLLER */}
                                 <div className="flex items-center justify-between gap-3 pt-2">
@@ -3216,6 +3908,345 @@ export default function SchoolLeaving() {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ======================================================== */}
+            {/* MODAL: MANUAL ACADEMIC & BOARD MARKS OVERRIDE            */}
+            {/* ======================================================== */}
+            {showAcademicOverrideModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fadeIn">
+                    <div className="bg-white text-slate-800 rounded-3xl border border-slate-200 shadow-2xl p-6 sm:p-7 max-w-md w-full space-y-5">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-xl bg-cyan-50 border border-cyan-200 text-cyan-700 flex items-center justify-center">
+                                    <Award size={18} />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-black text-slate-900">Academic Scorecard Override</h3>
+                                    <p className="text-xs text-slate-500 font-medium">
+                                        {selectedStudent?.name} (Roll #{selectedStudent?.rollNo})
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowAcademicOverrideModal(false)}
+                                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-full bg-slate-100 cursor-pointer"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3.5 text-xs">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">BISE Board Roll No</label>
+                                    <input
+                                        type="text"
+                                        value={overrideForm.boardRollNo}
+                                        onChange={(e) => setOverrideForm(prev => ({ ...prev, boardRollNo: e.target.value }))}
+                                        placeholder="e.g. 524109"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-cyan-500"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Board Score / Pct (%)</label>
+                                    <input
+                                        type="text"
+                                        value={overrideForm.percentage}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            const num = parseFloat(val) || 0;
+                                            // auto suggest GPA
+                                            let autoGpa = '3.00';
+                                            if (num >= 85) autoGpa = '4.00';
+                                            else if (num >= 80) autoGpa = '3.70';
+                                            else if (num >= 75) autoGpa = '3.30';
+                                            else if (num >= 70) autoGpa = '3.00';
+                                            else if (num >= 60) autoGpa = '2.50';
+                                            else if (num >= 50) autoGpa = '2.00';
+                                            else autoGpa = '1.00';
+                                            setOverrideForm(prev => ({ ...prev, percentage: val, gpa: autoGpa }));
+                                        }}
+                                        placeholder="e.g. 84.5"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-cyan-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Cumulative GPA (out of 4.0)</label>
+                                    <input
+                                        type="text"
+                                        value={overrideForm.gpa}
+                                        onChange={(e) => setOverrideForm(prev => ({ ...prev, gpa: e.target.value }))}
+                                        placeholder="e.g. 3.75"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-indigo-700 focus:bg-white focus:ring-2 focus:ring-indigo-500"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Final Grade</label>
+                                    <select
+                                        value={overrideForm.grade}
+                                        onChange={(e) => setOverrideForm(prev => ({ ...prev, grade: e.target.value }))}
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-cyan-500"
+                                    >
+                                        <option value="A+ Grade">A+ Grade (Distinction)</option>
+                                        <option value="A Grade">A Grade (Excellent)</option>
+                                        <option value="B Grade">B Grade (Good)</option>
+                                        <option value="C Grade">C Grade (Fair)</option>
+                                        <option value="D Grade">D Grade (Pass)</option>
+                                        <option value="F Grade">F Grade (Compartment)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black uppercase text-slate-500">Promotion / Migration Clearance</label>
+                                <input
+                                    type="text"
+                                    value={overrideForm.promoStatus}
+                                    onChange={(e) => setOverrideForm(prev => ({ ...prev, promoStatus: e.target.value }))}
+                                    placeholder="e.g. Promoted to Class 6 / Eligible for College..."
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-cyan-500"
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black uppercase text-slate-500">Principal Endorsement Note</label>
+                                <input
+                                    type="text"
+                                    value={overrideForm.remarks}
+                                    onChange={(e) => setOverrideForm(prev => ({ ...prev, remarks: e.target.value }))}
+                                    placeholder="e.g. Verified against official BISE Board Gazette..."
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-cyan-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="pt-3 flex items-center justify-between gap-2 border-t border-slate-100">
+                            {manualAcademicOverride?.active ? (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setManualAcademicOverride(null);
+                                        setShowAcademicOverrideModal(false);
+                                    }}
+                                    className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                                >
+                                    Reset to System
+                                </button>
+                            ) : <div></div>}
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAcademicOverrideModal(false)}
+                                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const pStatus = overrideForm.promoStatus || studentAcademicData.promoStatus;
+                                        setManualAcademicOverride({
+                                            active: true,
+                                            gpa: overrideForm.gpa || '3.50',
+                                            percentage: overrideForm.percentage || '80',
+                                            grade: overrideForm.grade || 'A Grade',
+                                            boardRollNo: overrideForm.boardRollNo || '',
+                                            promoStatus: pStatus,
+                                            promoCertificateText: pStatus.startsWith('Yes') || pStatus.startsWith('No') || pStatus.startsWith('Studying') ? pStatus : `Yes, ${pStatus}`,
+                                            remarks: overrideForm.remarks || ''
+                                        });
+                                        setShowAcademicOverrideModal(false);
+                                    }}
+                                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all"
+                                >
+                                    Save Endorsement 🎖️
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ======================================================== */}
+            {/* MODAL: MANUAL ATTENDANCE & WORKING DAYS OVERRIDE (REGISTER) */}
+            {/* ======================================================== */}
+            {showAttendanceModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fadeIn">
+                    <div className="bg-white text-slate-800 rounded-3xl border border-slate-200 shadow-2xl p-6 max-w-lg w-full space-y-4">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div>
+                                <h3 className="text-base font-black text-slate-900 flex items-center gap-1.5">
+                                    <Activity size={18} className="text-amber-600" />
+                                    <span>Verify / Adjust Session Working Days</span>
+                                </h3>
+                                <p className="text-xs text-slate-500 font-medium">
+                                    Manually reconcile student attendance with the physical admission/attendance register
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowAttendanceModal(false)}
+                                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-full bg-slate-100 cursor-pointer"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3.5">
+                            <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-200/80 text-xs text-amber-900 space-y-1">
+                                <span className="font-black flex items-center gap-1">
+                                    <ShieldCheck size={14} className="text-amber-700" />
+                                    Official Register Verification Note
+                                </span>
+                                <p className="text-[11px] text-amber-800">
+                                    Values entered here will immediately update Checkpoint 4 and will be stamped onto Official SLC Certificate Item #12 without modifying cloud database logs.
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Total Instructional Days</label>
+                                    <input
+                                        type="number"
+                                        value={attOverrideForm.totalDays}
+                                        onChange={(e) => {
+                                            const tot = parseInt(e.target.value) || 0;
+                                            setAttOverrideForm(prev => {
+                                                const pres = Math.min(prev.presentDays, tot);
+                                                const lvs = prev.leaveDays;
+                                                const abs = Math.max(0, tot - pres - lvs);
+                                                return { ...prev, totalDays: tot, presentDays: pres, absentDays: abs };
+                                            });
+                                        }}
+                                        placeholder="e.g. 195"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-500"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Present Days</label>
+                                    <input
+                                        type="number"
+                                        value={attOverrideForm.presentDays}
+                                        onChange={(e) => {
+                                            const pres = parseInt(e.target.value) || 0;
+                                            setAttOverrideForm(prev => {
+                                                const tot = prev.totalDays;
+                                                const lvs = prev.leaveDays;
+                                                const abs = Math.max(0, tot - pres - lvs);
+                                                return { ...prev, presentDays: pres, absentDays: abs };
+                                            });
+                                        }}
+                                        placeholder="e.g. 182"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-emerald-700 focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Authorized Leaves</label>
+                                    <input
+                                        type="number"
+                                        value={attOverrideForm.leaveDays}
+                                        onChange={(e) => {
+                                            const lvs = parseInt(e.target.value) || 0;
+                                            setAttOverrideForm(prev => {
+                                                const tot = prev.totalDays;
+                                                const pres = prev.presentDays;
+                                                const abs = Math.max(0, tot - pres - lvs);
+                                                return { ...prev, leaveDays: lvs, absentDays: abs };
+                                            });
+                                        }}
+                                        placeholder="e.g. 8"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-amber-600 focus:bg-white focus:ring-2 focus:ring-amber-500"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase text-slate-500">Unexcused Absents</label>
+                                    <input
+                                        type="number"
+                                        value={attOverrideForm.absentDays}
+                                        onChange={(e) => setAttOverrideForm(prev => ({ ...prev, absentDays: parseInt(e.target.value) || 0 }))}
+                                        placeholder="e.g. 5"
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-rose-600 focus:bg-white focus:ring-2 focus:ring-rose-500"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Calculated Summary Preview */}
+                            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center justify-between text-xs font-bold">
+                                <span className="text-slate-600">Calculated Attendance Rate:</span>
+                                <span className="text-sm font-black text-amber-700">
+                                    {attOverrideForm.totalDays > 0 ? ((attOverrideForm.presentDays / attOverrideForm.totalDays) * 100).toFixed(1) : 0}%
+                                </span>
+                            </div>
+
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black uppercase text-slate-500">Moral Character & Conduct Remark</label>
+                                <input
+                                    type="text"
+                                    value={attOverrideForm.conduct}
+                                    onChange={(e) => setAttOverrideForm(prev => ({ ...prev, conduct: e.target.value }))}
+                                    placeholder="e.g. Exemplary / Very Good"
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="pt-3 flex items-center justify-between gap-2 border-t border-slate-100">
+                            {manualAttendanceOverride?.active ? (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setManualAttendanceOverride(null);
+                                        setShowAttendanceModal(false);
+                                    }}
+                                    className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                                >
+                                    Reset to System Logs
+                                </button>
+                            ) : <div></div>}
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAttendanceModal(false)}
+                                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const tot = parseInt(attOverrideForm.totalDays) || 195;
+                                        const pres = parseInt(attOverrideForm.presentDays) || 0;
+                                        const lvs = parseInt(attOverrideForm.leaveDays) || 0;
+                                        const abs = parseInt(attOverrideForm.absentDays) || Math.max(0, tot - pres - lvs);
+                                        setManualAttendanceOverride({
+                                            active: true,
+                                            totalDays: tot,
+                                            presentDays: pres,
+                                            leaveDays: lvs,
+                                            absentDays: abs,
+                                            conduct: attOverrideForm.conduct || 'Exemplary / Very Good'
+                                        });
+                                        if (attOverrideForm.conduct) {
+                                            setSlcConduct(attOverrideForm.conduct);
+                                        }
+                                        setShowAttendanceModal(false);
+                                    }}
+                                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all"
+                                >
+                                    Save Verification ✍️
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
