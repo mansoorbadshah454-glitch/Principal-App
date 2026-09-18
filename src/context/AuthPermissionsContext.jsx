@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { checkPermission, PERMISSIONS_LIST } from '../constants/permissions';
 
@@ -38,6 +39,36 @@ export const AuthPermissionsProvider = ({ children }) => {
         return () => window.removeEventListener('storage', handleStorageChange);
     }, []);
 
+    // Listen to Auth State to keep session synchronized
+    useEffect(() => {
+        const unsubAuth = onAuthStateChanged(auth, async (currentUser) => {
+            if (currentUser) {
+                try {
+                    const tokenResult = await currentUser.getIdTokenResult();
+                    const claims = tokenResult.claims;
+                    if (claims.schoolId) {
+                        setSessionData(prev => {
+                            const updated = {
+                                ...(prev || {}),
+                                uid: currentUser.uid,
+                                schoolId: claims.schoolId,
+                                role: claims.role || prev?.role || 'principal',
+                                email: currentUser.email
+                            };
+                            try {
+                                localStorage.setItem('manual_session', JSON.stringify(updated));
+                            } catch (e) {}
+                            return updated;
+                        });
+                    }
+                } catch (e) {
+                    console.warn("Error checking auth token claims in context:", e);
+                }
+            }
+        });
+        return () => unsubAuth();
+    }, []);
+
     // Listen to School document for SaaS Subscription package & modules
     useEffect(() => {
         if (!schoolId) {
@@ -48,7 +79,9 @@ export const AuthPermissionsProvider = ({ children }) => {
         const schoolDocRef = doc(db, 'schools', schoolId);
         const unsub = onSnapshot(schoolDocRef, (docSnap) => {
             if (docSnap.exists()) {
-                setSchoolData(docSnap.data());
+                const data = docSnap.data();
+                setSchoolData(data);
+                console.log("🏫 Real-time School Plan Updated:", data.package, data.modules);
             } else {
                 setSchoolData(null);
             }
@@ -105,7 +138,7 @@ export const AuthPermissionsProvider = ({ children }) => {
         return checkPermission(role, permissions, permKey);
     };
 
-    const schoolPackage = schoolData?.package || 'standard';
+    const schoolPackage = (schoolData?.package || 'standard').toLowerCase();
     const schoolModules = schoolData?.modules || {
         transport: schoolPackage === 'premium',
         surveillance: schoolPackage === 'premium',
@@ -116,7 +149,7 @@ export const AuthPermissionsProvider = ({ children }) => {
     const hasModule = (moduleKey) => {
         if (!moduleKey) return true;
         if (schoolPackage === 'premium') return true;
-        return schoolModules[moduleKey] === true;
+        return Boolean(schoolModules?.[moduleKey]);
     };
 
     const isPrincipal = (() => {

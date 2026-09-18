@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
     Clock, CheckCircle2, XCircle, Search, Eye, Filter, Download, ExternalLink, 
-    Smartphone, Landmark, AlertCircle, ArrowUpRight, Check, X, Loader2 
+    Smartphone, Landmark, AlertCircle, ArrowUpRight, Check, X, Loader2,
+    ZoomIn, ZoomOut, RotateCcw
 } from 'lucide-react';
 import { db, storage } from '../firebase';
 import { 
@@ -16,9 +17,22 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
     
     // Modal states
     const [selectedProofUrl, setSelectedProofUrl] = useState(null);
+    const [zoomLevel, setZoomLevel] = useState(1); // 1 = 100%, 1.5 = 150%, 2 = 200%, 2.5 = 250%
     const [rejectingSub, setRejectingSub] = useState(null);
     const [rejectReason, setRejectReason] = useState('');
     const [processingId, setProcessingId] = useState(null);
+
+    const handleZoomIn = () => {
+        setZoomLevel(prev => Math.min(Number((prev + 0.5).toFixed(1)), 2.5));
+    };
+
+    const handleZoomOut = () => {
+        setZoomLevel(prev => Math.max(Number((prev - 0.5).toFixed(1)), 1));
+    };
+
+    const handleResetZoom = () => {
+        setZoomLevel(1);
+    };
 
     // Real-time listener for payment submissions
     useEffect(() => {
@@ -466,7 +480,10 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                                             <td style={{ padding: '1rem 1.25rem' }}>
                                                 {sub.proofUrl ? (
                                                     <div 
-                                                        onClick={() => setSelectedProofUrl(sub.proofUrl)}
+                                                        onClick={() => {
+                                                            setSelectedProofUrl(sub.proofUrl);
+                                                            setZoomLevel(1);
+                                                        }}
                                                         style={{
                                                             width: '48px', height: '48px', borderRadius: '8px', overflow: 'hidden',
                                                             border: '1px solid #cbd5e1', cursor: 'pointer', position: 'relative'
@@ -544,45 +561,221 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
             {/* Proof Lightbox Modal */}
             {selectedProofUrl && (
                 <div 
-                    onClick={() => setSelectedProofUrl(null)}
+                    onClick={() => {
+                        setSelectedProofUrl(null);
+                        setZoomLevel(1);
+                    }}
                     style={{
-                        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+                        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-                        padding: '2rem'
+                        padding: '1.5rem', backdropFilter: 'blur(4px)'
                     }}
                 >
                     <div 
                         onClick={(e) => e.stopPropagation()}
                         style={{
-                            background: 'white', borderRadius: '16px', maxWidth: '650px', width: '100%',
-                            overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', position: 'relative'
+                            background: 'white', borderRadius: '16px', maxWidth: '750px', width: '95%',
+                            overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', position: 'relative',
+                            display: 'flex', flexDirection: 'column'
                         }}
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', borderBottom: '1px solid #e2e8f0' }}>
-                            <h4 style={{ margin: 0, fontWeight: '700', color: '#1e293b' }}>Payment Slip Receipt</h4>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <div style={{ 
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
+                            padding: '0.85rem 1.25rem', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+                            flexWrap: 'wrap', gap: '0.5rem'
+                        }}>
+                            <h4 style={{ margin: 0, fontWeight: '700', color: '#1e293b', fontSize: '0.95rem' }}>
+                                Payment Slip Receipt
+                            </h4>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                {/* Zoom Controls Pill */}
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    background: '#ffffff',
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: '8px',
+                                    padding: '2px',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                                }}>
+                                    <button 
+                                        type="button"
+                                        onClick={handleZoomOut}
+                                        disabled={zoomLevel <= 1}
+                                        title="Zoom Out"
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            width: '28px',
+                                            height: '28px',
+                                            border: 'none',
+                                            background: zoomLevel <= 1 ? '#f8fafc' : 'white',
+                                            color: zoomLevel <= 1 ? '#cbd5e1' : '#334155',
+                                            cursor: zoomLevel <= 1 ? 'not-allowed' : 'pointer',
+                                            borderRadius: '6px',
+                                            transition: 'all 0.15s'
+                                        }}
+                                    >
+                                        <ZoomOut size={15} />
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={handleResetZoom}
+                                        title="Click to reset zoom (100%)"
+                                        style={{
+                                            padding: '0 0.45rem',
+                                            height: '28px',
+                                            border: 'none',
+                                            background: 'transparent',
+                                            color: zoomLevel > 1 ? '#4f46e5' : '#64748b',
+                                            fontSize: '0.75rem',
+                                            fontWeight: '700',
+                                            cursor: 'pointer',
+                                            fontFamily: 'monospace',
+                                            minWidth: '50px',
+                                            textAlign: 'center'
+                                        }}
+                                    >
+                                        {Math.round(zoomLevel * 100)}%
+                                    </button>
+
+                                    <button 
+                                        type="button"
+                                        onClick={handleZoomIn}
+                                        disabled={zoomLevel >= 2.5}
+                                        title="Zoom In (150%, 200%)"
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            width: '28px',
+                                            height: '28px',
+                                            border: 'none',
+                                            background: zoomLevel >= 2.5 ? '#f8fafc' : 'white',
+                                            color: zoomLevel >= 2.5 ? '#cbd5e1' : '#334155',
+                                            cursor: zoomLevel >= 2.5 ? 'not-allowed' : 'pointer',
+                                            borderRadius: '6px',
+                                            transition: 'all 0.15s'
+                                        }}
+                                    >
+                                        <ZoomIn size={15} />
+                                    </button>
+
+                                    {zoomLevel > 1 && (
+                                        <button
+                                            type="button"
+                                            onClick={handleResetZoom}
+                                            title="Reset to 100%"
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                width: '26px',
+                                                height: '28px',
+                                                border: 'none',
+                                                background: '#f1f5f9',
+                                                color: '#64748b',
+                                                cursor: 'pointer',
+                                                borderRadius: '6px',
+                                                marginLeft: '2px'
+                                            }}
+                                        >
+                                            <RotateCcw size={13} />
+                                        </button>
+                                    )}
+                                </div>
+
                                 <a 
                                     href={selectedProofUrl} 
                                     target="_blank" 
                                     rel="noreferrer" 
-                                    style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--primary)', fontSize: '0.85rem', fontWeight: '600', textDecoration: 'none', padding: '0.3rem 0.6rem', borderRadius: '6px', background: '#f1f5f9' }}
+                                    style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '0.3rem', 
+                                        color: 'var(--primary, #4f46e5)', 
+                                        fontSize: '0.8rem', 
+                                        fontWeight: '600', 
+                                        textDecoration: 'none', 
+                                        padding: '0.4rem 0.65rem', 
+                                        borderRadius: '8px', 
+                                        background: '#ffffff',
+                                        border: '1px solid #cbd5e1' 
+                                    }}
                                 >
-                                    <ExternalLink size={14} /> Open Full
+                                    <ExternalLink size={13} /> Open Full
                                 </a>
+
                                 <button 
-                                    onClick={() => setSelectedProofUrl(null)}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+                                    type="button"
+                                    onClick={() => {
+                                        setSelectedProofUrl(null);
+                                        setZoomLevel(1);
+                                    }}
+                                    style={{ 
+                                        background: '#ffffff', 
+                                        border: '1px solid #cbd5e1', 
+                                        borderRadius: '8px',
+                                        width: '32px',
+                                        height: '32px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer', 
+                                        color: '#64748b' 
+                                    }}
+                                    title="Close"
                                 >
-                                    <X size={20} />
+                                    <X size={18} />
                                 </button>
                             </div>
                         </div>
-                        <div style={{ padding: '1rem', maxHeight: '75vh', overflowY: 'auto', display: 'flex', justifyContent: 'center', background: '#0f172a' }}>
-                            <img 
-                                src={selectedProofUrl} 
-                                alt="Payment Proof Full" 
-                                style={{ maxWidth: '100%', maxHeight: '68vh', objectFit: 'contain', borderRadius: '8px' }} 
-                            />
+
+                        {/* Image Viewer Container */}
+                        <div 
+                            style={{ 
+                                padding: '1rem', 
+                                maxHeight: '72vh', 
+                                overflow: 'auto', 
+                                display: 'flex', 
+                                justifyContent: 'center', 
+                                alignItems: zoomLevel > 1 ? 'flex-start' : 'center', 
+                                background: '#0f172a',
+                                minHeight: '350px'
+                            }}
+                        >
+                            <div
+                                style={{
+                                    transform: `scale(${zoomLevel})`,
+                                    transformOrigin: zoomLevel > 1 ? 'top center' : 'center center',
+                                    transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)',
+                                    display: 'inline-block',
+                                    cursor: zoomLevel > 1 ? 'zoom-out' : 'zoom-in',
+                                    padding: zoomLevel > 1 ? `${(zoomLevel - 1) * 12}rem ${(zoomLevel - 1) * 10}rem` : '0',
+                                    margin: 'auto'
+                                }}
+                                onClick={() => {
+                                    if (zoomLevel >= 2) setZoomLevel(1);
+                                    else handleZoomIn();
+                                }}
+                                title={zoomLevel >= 2 ? "Click to reset zoom (100%)" : "Click to zoom in (150%, 200%)"}
+                            >
+                                <img 
+                                    src={selectedProofUrl} 
+                                    alt="Payment Proof Full" 
+                                    style={{ 
+                                        maxWidth: '100%', 
+                                        maxHeight: '66vh', 
+                                        display: 'block',
+                                        objectFit: 'contain', 
+                                        borderRadius: '8px',
+                                        boxShadow: zoomLevel > 1 ? '0 25px 50px -12px rgba(0,0,0,0.8)' : 'none'
+                                    }} 
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
