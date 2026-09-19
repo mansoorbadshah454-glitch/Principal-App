@@ -68,9 +68,9 @@ const Sidebar = () => {
 
     const [openGroups, setOpenGroups] = useState({
         overview: true,
-        academics: true,
-        finance_store: true,
-        hr_staff: true,
+        academics: false,
+        finance_store: false,
+        hr_staff: false,
         administration: true
     });
 
