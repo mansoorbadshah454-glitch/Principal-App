@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby, LayoutGrid, List, MessageSquare } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { db, functions } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc, serverTimestamp, limit } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
@@ -639,8 +640,734 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
     );
 });
 
+// Internal Component for Parent Table Row (Table View)
+const ParentTableRow = ({ parent, onDelete, onUpdate, onSendMessage, dbClasses, schoolId, onEdit, onMessage }) => {
+    const isAppUser = Boolean(parent.username && parent.password);
+    const linkedStudents = parent.linkedStudents || [];
+
+    return (
+        <tr
+            style={{
+                borderBottom: '1px solid #f1f5f9',
+                cursor: 'pointer',
+                transition: 'background-color 0.15s ease'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        >
+            {/* Parent Info */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{
+                        width: '38px',
+                        height: '38px',
+                        borderRadius: '50%',
+                        background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontWeight: '800',
+                        fontSize: '0.95rem',
+                        boxShadow: '0 2px 8px rgba(188, 24, 136, 0.25)',
+                        flexShrink: 0
+                    }}>
+                        {parent.name ? parent.name.charAt(0).toUpperCase() : 'P'}
+                    </div>
+                    <div>
+                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.95rem' }}>
+                            {parent.name}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '2px' }}>
+                            {parent.phone && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    <Phone size={12} color="#94a3b8" /> {parent.phone}
+                                </span>
+                            )}
+                            {parent.email && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    <Mail size={12} color="#94a3b8" /> {parent.email}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </td>
+
+            {/* Linked Children */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', maxWidth: '280px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            padding: '0.15rem 0.55rem',
+                            borderRadius: '20px',
+                            fontSize: '0.72rem',
+                            fontWeight: '700',
+                            background: linkedStudents.length > 0 ? '#fdf2f8' : '#f1f5f9',
+                            color: linkedStudents.length > 0 ? '#db2777' : '#94a3b8',
+                            border: linkedStudents.length > 0 ? '1px solid #fbcfe8' : '1px solid #e2e8f0'
+                        }}>
+                            <Baby size={11} />
+                            <span>{linkedStudents.length} {linkedStudents.length === 1 ? 'Child' : 'Children'}</span>
+                        </span>
+                    </div>
+
+                    {linkedStudents.length > 0 ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                            {linkedStudents.map((s, idx) => (
+                                <span
+                                    key={idx}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.3rem',
+                                        fontSize: '0.75rem',
+                                        padding: '0.2rem 0.55rem',
+                                        borderRadius: '6px',
+                                        background: '#f8fafc',
+                                        border: '1px solid #e2e8f0',
+                                        color: '#334155',
+                                        fontWeight: '600'
+                                    }}
+                                >
+                                    <span>{s.studentName || 'Student'} <span style={{ color: '#64748b', fontWeight: '500' }}>({s.className || 'Class'})</span></span>
+                                </span>
+                            ))}
+                        </div>
+                    ) : (
+                        <span style={{ fontSize: '0.78rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                            No Students Linked
+                        </span>
+                    )}
+                </div>
+            </td>
+
+            {/* Portal App User Status */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                {isAppUser ? (
+                    <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        padding: '0.25rem 0.65rem',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: '700',
+                        background: '#dcfce7',
+                        color: '#15803d',
+                        border: '1px solid #bbf7d0'
+                    }}>
+                        <ShieldCheck size={13} />
+                        App User ({parent.username})
+                    </span>
+                ) : (
+                    <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        padding: '0.25rem 0.65rem',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: '600',
+                        background: '#f1f5f9',
+                        color: '#64748b',
+                        border: '1px solid #e2e8f0'
+                    }}>
+                        Not Registered
+                    </span>
+                )}
+            </td>
+
+            {/* Actions */}
+            <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onMessage(parent);
+                        }}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            padding: '0.5rem 0.85rem',
+                            background: '#fff0f9',
+                            border: '1px solid #fce7f3',
+                            borderRadius: '8px',
+                            color: '#bc1888',
+                            fontSize: '0.8rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#fdf2f8'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#fff0f9'; }}
+                        title="Send Message"
+                    >
+                        <Mail size={14} />
+                        <span>Message</span>
+                    </button>
+
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onEdit(parent);
+                        }}
+                        style={{
+                            padding: '0.5rem',
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '8px',
+                            color: '#475569',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#bc1888'; e.currentTarget.style.borderColor = '#fbcfe8'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                        title="Edit Parent"
+                    >
+                        <Edit size={16} />
+                    </button>
+
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete(parent.id);
+                        }}
+                        style={{
+                            padding: '0.5rem',
+                            background: '#fff1f2',
+                            border: '1px solid #fecdd3',
+                            borderRadius: '8px',
+                            color: '#e11d48',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#ffe4e6'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#fff1f2'; }}
+                        title="Delete Parent"
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                </div>
+            </td>
+        </tr>
+    );
+};
+
+// Internal Component for Parent Edit Modal (Used in Table View)
+const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
+    const [editStep, setEditStep] = useState(1);
+    const [isSaving, setIsSaving] = useState(false);
+    const [editedParent, setEditedParent] = useState({ ...parent });
+
+    // Step 3 Student Linking State
+    const [selectedStepClassId, setSelectedStepClassId] = useState('');
+    const [selectedStepStudentId, setSelectedStepStudentId] = useState('');
+    const [availableStepStudents, setAvailableStepStudents] = useState([]);
+
+    useEffect(() => {
+        if (!schoolId || !selectedStepClassId) {
+            setAvailableStepStudents([]);
+            return;
+        }
+
+        const fetchStudents = async () => {
+            try {
+                const q = query(collection(db, `schools/${schoolId}/classes/${selectedStepClassId}/students`));
+                const snapshot = await getDocsFast(q);
+                const validStudents = [];
+                snapshot.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    if (data.name || data.firstName) {
+                        validStudents.push({
+                            id: docSnap.id,
+                            name: data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim(),
+                            rollNo: data.rollNo
+                        });
+                    }
+                });
+                setAvailableStepStudents(validStudents);
+            } catch (err) {
+                console.error("Error fetching students in modal:", err);
+            }
+        };
+        fetchStudents();
+    }, [schoolId, selectedStepClassId]);
+
+    const handleLinkStudent = () => {
+        if (!selectedStepClassId || !selectedStepStudentId) return;
+        const classObj = dbClasses.find(c => c.id === selectedStepClassId);
+        const studentObj = availableStepStudents.find(s => s.id === selectedStepStudentId);
+
+        if (classObj && studentObj) {
+            const exists = editedParent.linkedStudents?.some(s => s.studentId === studentObj.id);
+            if (!exists) {
+                setEditedParent(prev => ({
+                    ...prev,
+                    linkedStudents: [...(prev.linkedStudents || []), {
+                        studentId: studentObj.id,
+                        studentName: studentObj.name,
+                        classId: classObj.id,
+                        className: classObj.name,
+                        rollNo: studentObj.rollNo || ''
+                    }]
+                }));
+            }
+        }
+        setSelectedStepStudentId('');
+    };
+
+    const handleUnlinkStudent = (studentId) => {
+        setEditedParent(prev => ({
+            ...prev,
+            linkedStudents: prev.linkedStudents.filter(s => s.studentId !== studentId)
+        }));
+    };
+
+    const handleSubmit = async (e) => {
+        if (e) e.preventDefault();
+        setIsSaving(true);
+        try {
+            await onSave(parent.id, editedParent);
+            onCancel();
+        } catch (error) {
+            console.error("Error saving parent in modal:", error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    if (!parent) return null;
+
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 1100,
+                background: 'rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem',
+                backdropFilter: 'blur(4px)'
+            }}
+            onClick={onCancel}
+        >
+            <div
+                className="card custom-scrollbar"
+                style={{
+                    width: '100%',
+                    maxWidth: '560px',
+                    maxHeight: '90vh',
+                    overflowY: 'auto',
+                    background: 'white',
+                    borderRadius: '24px',
+                    padding: '0',
+                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+                    animation: 'slideUp 0.25s ease-out'
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div style={{
+                    padding: '1.2rem 1.5rem',
+                    background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                    color: 'white',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    borderTopLeftRadius: '24px',
+                    borderTopRightRadius: '24px'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        {editStep > 1 && (
+                            <button
+                                onClick={() => setEditStep(prev => prev - 1)}
+                                style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '10px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}
+                            >
+                                <ChevronLeft size={18} />
+                            </button>
+                        )}
+                        <h3 style={{ fontSize: '1.1rem', fontWeight: '800', margin: 0 }}>
+                            {editStep === 1 && 'Edit Parent Info'}
+                            {editStep === 2 && 'App Credentials'}
+                            {editStep === 3 && 'Linked Children'}
+                        </h3>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '800', padding: '0.2rem 0.6rem', background: 'rgba(255, 255, 255, 0.2)', borderRadius: '12px' }}>
+                            {editStep}/3
+                        </span>
+                        <button onClick={onCancel} style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '10px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}>
+                            <X size={18} />
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                    {editStep === 1 && (
+                        <>
+                            <div>
+                                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Full Name</label>
+                                <input
+                                    type="text"
+                                    value={editedParent.name || ''}
+                                    onChange={(e) => setEditedParent({ ...editedParent, name: e.target.value })}
+                                    style={{ width: '100%', padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: '#faf5ff' }}
+                                    required
+                                />
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Phone</label>
+                                    <input
+                                        type="tel"
+                                        value={editedParent.phone || ''}
+                                        onChange={(e) => setEditedParent({ ...editedParent, phone: e.target.value })}
+                                        style={{ width: '100%', padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: '#faf5ff' }}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Email</label>
+                                    <input
+                                        type="email"
+                                        value={editedParent.email || ''}
+                                        onChange={(e) => setEditedParent({ ...editedParent, email: e.target.value })}
+                                        style={{ width: '100%', padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: '#faf5ff' }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Address</label>
+                                <input
+                                    type="text"
+                                    value={editedParent.address || ''}
+                                    onChange={(e) => setEditedParent({ ...editedParent, address: e.target.value })}
+                                    style={{ width: '100%', padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: '#faf5ff' }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={onCancel}
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white', border: '1px solid #e2e8f0', color: '#64748b', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditStep(2)}
+                                    style={{ flex: 1.5, padding: '0.75rem', borderRadius: '12px', background: '#bc1888', border: 'none', color: 'white', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Next: Credentials
+                                </button>
+                            </div>
+                        </>
+                    )}
+
+                    {editStep === 2 && (
+                        <>
+                            <div style={{ background: '#fffaff', padding: '1.25rem', borderRadius: '16px', border: '1px solid #fdf2ff' }}>
+                                <div style={{ marginBottom: '1.25rem' }}>
+                                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Username</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.6rem 0.85rem', borderRadius: '12px' }}>
+                                        <User size={16} color="#bc1888" />
+                                        <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#bc1888' }}>{parent.username || 'Not Set'}</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>New Password (leave blank to keep current)</label>
+                                    <input
+                                        type="password"
+                                        placeholder="Enter new password"
+                                        value={editedParent.password || ''}
+                                        onChange={(e) => setEditedParent({ ...editedParent, password: e.target.value })}
+                                        style={{ width: '100%', padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditStep(1)}
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white', border: '1px solid #e2e8f0', color: '#64748b', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Back
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditStep(3)}
+                                    style={{ flex: 1.5, padding: '0.75rem', borderRadius: '12px', background: '#bc1888', border: 'none', color: 'white', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Next: Link Children
+                                </button>
+                            </div>
+                        </>
+                    )}
+
+                    {editStep === 3 && (
+                        <>
+                            <div>
+                                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Current Linked Children</label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                                    {editedParent.linkedStudents?.length > 0 ? (
+                                        editedParent.linkedStudents.map((s, idx) => (
+                                            <span
+                                                key={idx}
+                                                style={{
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.4rem',
+                                                    padding: '0.4rem 0.75rem',
+                                                    borderRadius: '10px',
+                                                    background: '#fdf2f8',
+                                                    border: '1px solid #fbcfe8',
+                                                    color: '#db2777',
+                                                    fontWeight: '700',
+                                                    fontSize: '0.8rem'
+                                                }}
+                                            >
+                                                <span>{s.studentName} ({s.className})</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleUnlinkStudent(s.studentId)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', display: 'flex', alignItems: 'center' }}
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            </span>
+                                        ))
+                                    ) : (
+                                        <p style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic', margin: 0 }}>No students linked yet.</p>
+                                    )}
+                                </div>
+
+                                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Link New Student</label>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                    <select
+                                        value={selectedStepClassId}
+                                        onChange={(e) => setSelectedStepClassId(e.target.value)}
+                                        style={{ padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.85rem', background: '#faf5ff' }}
+                                    >
+                                        <option value="">Select Class</option>
+                                        {dbClasses.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
+                                    <select
+                                        value={selectedStepStudentId}
+                                        onChange={(e) => setSelectedStepStudentId(e.target.value)}
+                                        disabled={!selectedStepClassId}
+                                        style={{ padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.85rem', background: '#faf5ff' }}
+                                    >
+                                        <option value="">Select Student</option>
+                                        {availableStepStudents.map(s => (
+                                            <option key={s.id} value={s.id}>{s.name} {s.rollNo ? `(#${s.rollNo})` : ''}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleLinkStudent}
+                                    disabled={!selectedStepClassId || !selectedStepStudentId}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.6rem',
+                                        borderRadius: '10px',
+                                        background: '#fdf2f8',
+                                        border: '1px solid #fbcfe8',
+                                        color: '#db2777',
+                                        fontWeight: '700',
+                                        cursor: (!selectedStepClassId || !selectedStepStudentId) ? 'not-allowed' : 'pointer',
+                                        fontSize: '0.85rem'
+                                    }}
+                                >
+                                    + Attach Student
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditStep(2)}
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '12px', background: 'white', border: '1px solid #e2e8f0', color: '#64748b', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Back
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleSubmit}
+                                    disabled={isSaving}
+                                    style={{ flex: 1.5, padding: '0.75rem', borderRadius: '12px', background: '#bc1888', border: 'none', color: 'white', fontWeight: '700', cursor: isSaving ? 'not-allowed' : 'pointer' }}
+                                >
+                                    {isSaving ? 'Saving...' : 'Save Changes'}
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// Internal Component for Parent Message Modal (Used in Table View)
+const ParentMessageModal = ({ parent, onCancel, onSendMessage }) => {
+    const [messageText, setMessageText] = useState('');
+    const [isSending, setIsSending] = useState(false);
+
+    const handleSend = async () => {
+        if (!messageText.trim() || isSending) return;
+        setIsSending(true);
+        try {
+            await onSendMessage(parent.id, messageText.trim());
+            onCancel();
+        } catch (error) {
+            console.error("Error sending message:", error);
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    if (!parent) return null;
+
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 1100,
+                background: 'rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem',
+                backdropFilter: 'blur(4px)'
+            }}
+            onClick={onCancel}
+        >
+            <div
+                className="card animate-scale-in"
+                style={{
+                    width: '100%',
+                    maxWidth: '480px',
+                    padding: '0',
+                    overflow: 'hidden',
+                    background: '#fffaff',
+                    borderRadius: '24px',
+                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)'
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div style={{
+                    padding: '1.2rem 1.5rem',
+                    background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                    color: 'white',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '800', margin: 0 }}>Message Parent</h3>
+                    <button onClick={onCancel} style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '10px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}>
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.75rem', background: 'white', borderRadius: '16px', border: '1px solid #fdf2ff' }}>
+                        <div style={{
+                            width: '40px', height: '40px', borderRadius: '50%',
+                            background: '#bc1888', color: 'white',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem'
+                        }}>
+                            {parent.name?.charAt(0) || 'P'}
+                        </div>
+                        <div>
+                            <h4 style={{ fontWeight: '700', margin: 0, fontSize: '0.95rem' }}>{parent.name}</h4>
+                            <p style={{ fontSize: '0.75rem', color: '#64748b', margin: 0 }}>Write your private message below</p>
+                        </div>
+                    </div>
+
+                    <textarea
+                        placeholder="Type your message here..."
+                        rows="5"
+                        value={messageText}
+                        onChange={(e) => setMessageText(e.target.value)}
+                        style={{
+                            width: '100%', padding: '1rem', borderRadius: '16px',
+                            border: '1px solid #fdf2ff', resize: 'none', outline: 'none',
+                            fontSize: '0.9rem', background: 'white', fontFamily: 'inherit'
+                        }}
+                    />
+
+                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            style={{ flex: 1, padding: '0.85rem', borderRadius: '14px', background: 'white', border: '1px solid #e2e8f0', color: '#64748b', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem' }}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSend}
+                            disabled={!messageText.trim() || isSending}
+                            style={{
+                                flex: 1.5, padding: '0.85rem', borderRadius: '14px',
+                                background: '#bc1888', border: 'none', color: 'white',
+                                fontWeight: '700', cursor: messageText.trim() && !isSending ? 'pointer' : 'not-allowed',
+                                fontSize: '0.9rem', boxShadow: '0 4px 15px rgba(188, 24, 136, 0.25)',
+                                opacity: messageText.trim() && !isSending ? 1 : 0.6
+                            }}
+                        >
+                            {isSending ? 'Sending...' : 'Send Message'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const Parents = () => {
     const { showAlert } = useAlert();
+    const [viewMode, setViewMode] = useState(() => {
+        try {
+            return localStorage.getItem('parents_view_mode') || 'grid';
+        } catch (e) {
+            return 'grid';
+        }
+    });
+
+    const handleViewChange = (mode) => {
+        setViewMode(mode);
+        try {
+            localStorage.setItem('parents_view_mode', mode);
+        } catch (e) {
+            console.error("Failed to save view mode", e);
+        }
+    };
+
+    const [editingParentTable, setEditingParentTable] = useState(null);
+    const [messagingParentTable, setMessagingParentTable] = useState(null);
+
     const [showAddParent, setShowAddParent] = useState(false);
     const [step, setStep] = useState(1);
     const [isSubmittingParent, setIsSubmittingParent] = useState(false);
@@ -1228,21 +1955,80 @@ const Parents = () => {
                     </h1>
                     <p style={{ color: 'var(--text-secondary)' }}>Manage parent accounts and student linkages</p>
                 </div>
-                <button
-                    onClick={() => setShowAddParent(true)}
-                    className="btn-primary"
-                    style={{
-                        padding: '0.75rem 1.5rem',
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                    {/* View Switcher: Grid vs Table */}
+                    <div style={{
+                        display: 'inline-flex',
+                        background: '#f1f5f9',
+                        padding: '4px',
                         borderRadius: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
-                    }}
-                >
-                    <Plus size={20} />
-                    <span>Add New Parent</span>
-                </button>
+                        border: '1px solid #e2e8f0',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.04)'
+                    }}>
+                        <button
+                            type="button"
+                            onClick={() => handleViewChange('grid')}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.55rem 0.95rem',
+                                borderRadius: '9px',
+                                border: 'none',
+                                background: viewMode === 'grid' ? 'white' : 'transparent',
+                                color: viewMode === 'grid' ? '#bc1888' : '#64748b',
+                                fontWeight: viewMode === 'grid' ? '700' : '600',
+                                fontSize: '0.85rem',
+                                boxShadow: viewMode === 'grid' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                            }}
+                            title="Grid View"
+                        >
+                            <LayoutGrid size={16} />
+                            <span>Grid</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleViewChange('table')}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.55rem 0.95rem',
+                                borderRadius: '9px',
+                                border: 'none',
+                                background: viewMode === 'table' ? 'white' : 'transparent',
+                                color: viewMode === 'table' ? '#bc1888' : '#64748b',
+                                fontWeight: viewMode === 'table' ? '700' : '600',
+                                fontSize: '0.85rem',
+                                boxShadow: viewMode === 'table' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                            }}
+                            title="Table View"
+                        >
+                            <List size={16} />
+                            <span>Table</span>
+                        </button>
+                    </div>
+
+                    <button
+                        onClick={() => setShowAddParent(true)}
+                        className="btn-primary"
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            borderRadius: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                        }}
+                    >
+                        <Plus size={20} />
+                        <span>Add New Parent</span>
+                    </button>
+                </div>
             </div>
 
             {/* Stats Cards */}
@@ -1378,19 +2164,101 @@ const Parents = () => {
                     <p>No parents found matching your search.</p>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
-                    {filteredParents.map((p) => (
-                        <ParentCard
-                            key={p.id}
-                            parent={p}
-                            onDelete={handleDeleteClick}
-                            onUpdate={handleUpdateParent}
-                            onSendMessage={handleSendMessage}
-                            dbClasses={dbClasses}
-                            schoolId={schoolId}
-                        />
-                    ))}
-                </div>
+                <AnimatePresence mode="wait">
+                    {viewMode === 'grid' ? (
+                        <motion.div
+                            key="parents-grid-view"
+                            initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.99 }}
+                            transition={{ duration: 0.22, ease: "easeOut" }}
+                            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}
+                        >
+                            {filteredParents.map((p) => (
+                                <ParentCard
+                                    key={p.id}
+                                    parent={p}
+                                    onDelete={handleDeleteClick}
+                                    onUpdate={handleUpdateParent}
+                                    onSendMessage={handleSendMessage}
+                                    dbClasses={dbClasses}
+                                    schoolId={schoolId}
+                                />
+                            ))}
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            key="parents-table-view"
+                            initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.99 }}
+                            transition={{ duration: 0.22, ease: "easeOut" }}
+                            style={{
+                                background: 'white',
+                                borderRadius: '16px',
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)',
+                                overflow: 'hidden'
+                            }}
+                        >
+                            <div style={{ overflowX: 'auto' }} className="custom-scrollbar">
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '850px' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Parent / Guardian
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Linked Children
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                App Account
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>
+                                                Actions
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredParents.map((p) => (
+                                            <ParentTableRow
+                                                key={p.id}
+                                                parent={p}
+                                                onDelete={handleDeleteClick}
+                                                onUpdate={handleUpdateParent}
+                                                onSendMessage={handleSendMessage}
+                                                dbClasses={dbClasses}
+                                                schoolId={schoolId}
+                                                onEdit={(parent) => setEditingParentTable(parent)}
+                                                onMessage={(parent) => setMessagingParentTable(parent)}
+                                            />
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            )}
+
+            {/* Edit Parent Modal (For Table View) */}
+            {editingParentTable && viewMode === 'table' && (
+                <ParentEditModal
+                    parent={editingParentTable}
+                    dbClasses={dbClasses}
+                    schoolId={schoolId}
+                    onCancel={() => setEditingParentTable(null)}
+                    onSave={handleUpdateParent}
+                />
+            )}
+
+            {/* Message Parent Modal (For Table View) */}
+            {messagingParentTable && viewMode === 'table' && (
+                <ParentMessageModal
+                    parent={messagingParentTable}
+                    onCancel={() => setMessagingParentTable(null)}
+                    onSendMessage={handleSendMessage}
+                />
             )}
             
             {!loading && parents.length >= parentLimit && !searchQuery && !filterClassId && (

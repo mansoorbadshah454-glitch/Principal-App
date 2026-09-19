@@ -1,11 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2, Edit, Save } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, ChevronRight, ChevronDown, Trash2, Loader2, Edit, Save, LayoutGrid, List } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, writeBatch, where } from 'firebase/firestore';
 import { auth } from '../firebase';
 import StudentCircle from '../components/StudentCircle';
 import CachedImage from '../components/CachedImage';
+
+// Shared Helper for robust date & timezone matching
+const isDateToday = (targetDate) => {
+    if (!targetDate) return false;
+    let targetStr = targetDate;
+    if (typeof targetDate === 'object' && targetDate.toDate) {
+        const d = targetDate.toDate();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        targetStr = `${y}-${m}-${day}`;
+    }
+
+    const d = new Date();
+    const localYear = d.getFullYear();
+    const localMonth = String(d.getMonth() + 1).padStart(2, '0');
+    const localDay = String(d.getDate()).padStart(2, '0');
+    const localToday = `${localYear}-${localMonth}-${localDay}`;
+    const utcToday = d.toISOString().split('T')[0];
+
+    return targetStr === localToday || targetStr === utcToday;
+};
 
 // Internal Component for individual Class Card logic
 const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subjectOptions, onCancel, onSave }) => {
@@ -596,7 +619,489 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
     );
 };
 
+// Internal Component for Class Table Row (Table View)
+const ClassTableRow = ({ cls, schoolId, onEdit, onDelete, navigate }) => {
+    const [realStats, setRealStats] = useState({ present: 0, absent: 0, total: 0 });
+
+    useEffect(() => {
+        if (!schoolId || !cls.id) return;
+
+        const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const students = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+
+            const present = students.filter(s => (s.status || '').toLowerCase() === 'present' && isDateToday(s.lastAttendanceDate)).length;
+            const absent = students.filter(s => (s.status || '').toLowerCase() === 'absent' && isDateToday(s.lastAttendanceDate)).length;
+
+            setRealStats({
+                present,
+                absent,
+                total: students.length
+            });
+        }, (error) => {
+            console.error("Error fetching students for row:", error);
+        });
+
+        return () => unsubscribe();
+    }, [schoolId, cls.id]);
+
+    const { present, absent, total } = realStats;
+
+    return (
+        <tr
+            onClick={() => navigate(`/classes/${cls.id}`)}
+            style={{
+                borderBottom: '1px solid #f1f5f9',
+                cursor: 'pointer',
+                transition: 'background-color 0.15s ease'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        >
+            {/* Class Name */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{
+                        width: '38px',
+                        height: '38px',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontWeight: '700',
+                        fontSize: '0.85rem',
+                        boxShadow: '0 2px 6px rgba(37, 99, 235, 0.25)',
+                        flexShrink: 0
+                    }}>
+                        {cls.name ? cls.name.slice(0, 2).toUpperCase() : 'CL'}
+                    </div>
+                    <div>
+                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.95rem' }}>
+                            {cls.name}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                            ID: {cls.id ? cls.id.slice(0, 8) : ''}...
+                        </div>
+                    </div>
+                </div>
+            </td>
+
+            {/* Assigned Teacher */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '8px',
+                        background: cls.teacher ? '#eff6ff' : '#f1f5f9',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: cls.teacher ? '#3b82f6' : '#94a3b8'
+                    }}>
+                        <User size={15} />
+                    </div>
+                    {cls.teacher ? (
+                        <span style={{ fontWeight: '600', color: '#334155', fontSize: '0.9rem' }}>
+                            {cls.teacher}
+                        </span>
+                    ) : (
+                        <span style={{ fontStyle: 'italic', color: '#94a3b8', fontSize: '0.85rem' }}>
+                            Unassigned
+                        </span>
+                    )}
+                </div>
+            </td>
+
+            {/* Total Students */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    padding: '0.3rem 0.75rem',
+                    borderRadius: '20px',
+                    fontSize: '0.8rem',
+                    fontWeight: '700',
+                    background: '#f1f5f9',
+                    color: '#475569',
+                    border: '1px solid #e2e8f0'
+                }}>
+                    <Users size={13} style={{ marginRight: '0.35rem' }} />
+                    {total} Enrolled
+                </span>
+            </td>
+
+            {/* Attendance Status */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        padding: '0.25rem 0.65rem',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: '700',
+                        background: '#dcfce7',
+                        color: '#15803d',
+                        border: '1px solid #bbf7d0'
+                    }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#16a34a' }}></span>
+                        {present} Present
+                    </span>
+
+                    <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        padding: '0.25rem 0.65rem',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: '700',
+                        background: absent > 0 ? '#fee2e2' : '#f8fafc',
+                        color: absent > 0 ? '#b91c1c' : '#94a3b8',
+                        border: absent > 0 ? '1px solid #fecaca' : '1px solid #e2e8f0'
+                    }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: absent > 0 ? '#dc2626' : '#cbd5e1' }}></span>
+                        {absent} Absent
+                    </span>
+                </div>
+            </td>
+
+            {/* Subjects */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.35rem', maxWidth: '280px' }}>
+                    {cls.subjects && cls.subjects.length > 0 ? (
+                        <>
+                            {cls.subjects.slice(0, 3).map((subj, sIdx) => (
+                                <span
+                                    key={sIdx}
+                                    style={{
+                                        fontSize: '0.75rem',
+                                        padding: '0.2rem 0.5rem',
+                                        borderRadius: '6px',
+                                        background: '#eff6ff',
+                                        border: '1px solid #dbeafe',
+                                        color: '#2563eb',
+                                        fontWeight: '500'
+                                    }}
+                                >
+                                    {subj}
+                                </span>
+                            ))}
+                            {cls.subjects.length > 3 && (
+                                <span style={{
+                                    fontSize: '0.7rem',
+                                    padding: '0.2rem 0.45rem',
+                                    borderRadius: '6px',
+                                    background: '#f1f5f9',
+                                    color: '#64748b',
+                                    fontWeight: '600'
+                                }}>
+                                    +{cls.subjects.length - 3}
+                                </span>
+                            )}
+                        </>
+                    ) : (
+                        <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>None</span>
+                    )}
+                </div>
+            </td>
+
+            {/* Actions */}
+            <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/classes/${cls.id}`);
+                        }}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            padding: '0.5rem 0.85rem',
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '8px',
+                            color: '#1e293b',
+                            fontSize: '0.8rem',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
+                        title="View Class Details"
+                    >
+                        <span>Details</span>
+                        <ChevronRight size={14} />
+                    </button>
+
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onEdit(cls.id);
+                        }}
+                        style={{
+                            padding: '0.5rem',
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '8px',
+                            color: '#475569',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#2563eb'; e.currentTarget.style.borderColor = '#93c5fd'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                        title="Edit Class"
+                    >
+                        <Edit size={16} />
+                    </button>
+
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete(cls.id);
+                        }}
+                        style={{
+                            padding: '0.5rem',
+                            background: '#fff1f2',
+                            border: '1px solid #fecdd3',
+                            borderRadius: '8px',
+                            color: '#e11d48',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#ffe4e6'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#fff1f2'; }}
+                        title="Delete Class"
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                </div>
+            </td>
+        </tr>
+    );
+};
+
+// Internal Component for Class Edit Modal (Used in Table View)
+const ClassEditModal = ({ cls, teachers, subjectOptions, onCancel, onSave }) => {
+    const [editForm, setEditForm] = useState({
+        teacher: cls?.teacher || '',
+        teacherId: cls?.teacherId || null,
+        subjects: cls?.subjects || []
+    });
+    const [newSubjectName, setNewSubjectName] = useState('');
+
+    const handleSubjectToggle = (subject) => {
+        setEditForm(prev => {
+            const subjects = prev.subjects.includes(subject)
+                ? prev.subjects.filter(s => s !== subject)
+                : [...prev.subjects, subject];
+            return { ...prev, subjects };
+        });
+    };
+
+    const handleTeacherChange = (e) => {
+        const selectedId = e.target.value;
+        if (!selectedId) {
+            setEditForm({ ...editForm, teacher: '', teacherId: null });
+            return;
+        }
+        const selectedTeacher = teachers.find(t => t.id === selectedId);
+        if (selectedTeacher) {
+            setEditForm({ ...editForm, teacher: selectedTeacher.name, teacherId: selectedTeacher.id });
+        }
+    };
+
+    if (!cls) return null;
+
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 1100,
+                background: 'rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem',
+                backdropFilter: 'blur(4px)'
+            }}
+            onClick={onCancel}
+        >
+            <div
+                className="card custom-scrollbar"
+                style={{
+                    width: '100%',
+                    maxWidth: '520px',
+                    background: 'white',
+                    borderRadius: '20px',
+                    padding: '2rem',
+                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+                    animation: 'slideUp 0.25s ease-out'
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)' }}>
+                        Edit: {cls.name}
+                    </h3>
+                    <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                        <X size={20} color="var(--text-secondary)" />
+                    </button>
+                </div>
+
+                <div style={{ marginBottom: '1.25rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
+                        Assign Teacher
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                        <select
+                            value={editForm.teacherId || ''}
+                            onChange={handleTeacherChange}
+                            style={{
+                                width: '100%', padding: '0.65rem', borderRadius: '8px',
+                                border: '1px solid #e2e8f0', outline: 'none',
+                                fontSize: '0.9rem', appearance: 'none',
+                                backgroundColor: 'white', cursor: 'pointer'
+                            }}
+                        >
+                            <option value="">Select a Teacher</option>
+                            {teachers.map(t => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                        </select>
+                        <ChevronDown size={14} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#64748b' }} />
+                    </div>
+                </div>
+
+                <div style={{ marginBottom: '1.5rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>
+                        Manage Subjects
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', maxHeight: '150px', overflowY: 'auto', paddingRight: '0.25rem' }} className="custom-scrollbar">
+                        {Array.from(new Set([...subjectOptions, ...editForm.subjects])).map((subj) => (
+                            <div
+                                key={subj}
+                                onClick={() => handleSubjectToggle(subj)}
+                                style={{
+                                    padding: '0.5rem',
+                                    borderRadius: '6px',
+                                    border: editForm.subjects.includes(subj) ? '1px solid var(--primary)' : '1px solid #e2e8f0',
+                                    background: editForm.subjects.includes(subj) ? '#eff6ff' : 'white',
+                                    cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                <div style={{
+                                    width: '16px', height: '16px', borderRadius: '3px',
+                                    border: editForm.subjects.includes(subj) ? 'none' : '2px solid #cbd5e1',
+                                    background: editForm.subjects.includes(subj) ? 'var(--primary)' : 'transparent',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                    {editForm.subjects.includes(subj) && <span style={{ color: 'white', fontSize: '10px' }}>✓</span>}
+                                </div>
+                                <span style={{ fontSize: '0.8rem', color: editForm.subjects.includes(subj) ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: '500' }}>
+                                    {subj}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+                        <input
+                            type="text"
+                            placeholder="Create new subject"
+                            value={newSubjectName}
+                            onChange={(e) => setNewSubjectName(e.target.value)}
+                            style={{
+                                flex: 1, padding: '0.5rem', borderRadius: '6px',
+                                border: '1px solid #e2e8f0', outline: 'none',
+                                fontSize: '0.8rem'
+                            }}
+                        />
+                        <button
+                            onClick={() => {
+                                const subject = newSubjectName.trim();
+                                if (subject && !editForm.subjects.includes(subject)) {
+                                    handleSubjectToggle(subject);
+                                }
+                                setNewSubjectName('');
+                            }}
+                            style={{
+                                padding: '0.5rem 1rem', borderRadius: '6px',
+                                background: 'var(--primary)', border: 'none',
+                                color: 'white', fontSize: '0.8rem', fontWeight: '600',
+                                cursor: 'pointer'
+                            }}
+                            type="button"
+                        >
+                            Add
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button
+                        onClick={onCancel}
+                        style={{
+                            flex: 1, padding: '0.65rem', borderRadius: '8px',
+                            background: 'transparent', border: '1px solid #e2e8f0',
+                            cursor: 'pointer', fontWeight: '600', color: 'var(--text-secondary)', fontSize: '0.85rem'
+                        }}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => onSave(cls.id, editForm)}
+                        style={{
+                            flex: 1, padding: '0.65rem', borderRadius: '8px',
+                            background: 'var(--primary)', border: 'none',
+                            cursor: 'pointer', fontWeight: '600', color: 'white', fontSize: '0.85rem',
+                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                        }}
+                    >
+                        Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const Classes = () => {
+    const navigate = useNavigate();
+    const [viewMode, setViewMode] = useState(() => {
+        try {
+            return localStorage.getItem('classes_view_mode') || 'grid';
+        } catch (e) {
+            return 'grid';
+        }
+    });
+
+    const handleViewChange = (mode) => {
+        setViewMode(mode);
+        try {
+            localStorage.setItem('classes_view_mode', mode);
+        } catch (e) {
+            console.error("Failed to save view mode", e);
+        }
+    };
+
     const [showAddClass, setShowAddClass] = useState(false);
 
     const [newClass, setNewClass] = useState({
@@ -838,10 +1343,14 @@ const Classes = () => {
                 subjects: updatedData.subjects
             });
             setEditingClassId(null);
-            toast.success('Class updated successfully!');
+            if (typeof toast !== 'undefined') {
+                toast.success('Class updated successfully!');
+            }
         } catch (error) {
             console.error("Error updating class:", error);
-            toast.error("Failed to update class.");
+            if (typeof toast !== 'undefined') {
+                toast.error("Failed to update class.");
+            }
         }
     };
 
@@ -893,21 +1402,80 @@ const Classes = () => {
                     </h1>
                     <p style={{ color: 'var(--text-secondary)' }}>Manage class structures, subjects, and teacher assignments</p>
                 </div>
-                <button
-                    onClick={() => setShowAddClass(true)}
-                    className="btn-primary"
-                    style={{
-                        padding: '0.75rem 1.5rem',
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                    {/* View Switcher: Grid vs Table */}
+                    <div style={{
+                        display: 'inline-flex',
+                        background: '#f1f5f9',
+                        padding: '4px',
                         borderRadius: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
-                    }}
-                >
-                    <Plus size={20} />
-                    <span>Add New Class</span>
-                </button>
+                        border: '1px solid #e2e8f0',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.04)'
+                    }}>
+                        <button
+                            type="button"
+                            onClick={() => handleViewChange('grid')}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.55rem 0.95rem',
+                                borderRadius: '9px',
+                                border: 'none',
+                                background: viewMode === 'grid' ? 'white' : 'transparent',
+                                color: viewMode === 'grid' ? 'var(--primary, #3b82f6)' : '#64748b',
+                                fontWeight: viewMode === 'grid' ? '700' : '600',
+                                fontSize: '0.85rem',
+                                boxShadow: viewMode === 'grid' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                            }}
+                            title="Grid View"
+                        >
+                            <LayoutGrid size={16} />
+                            <span>Grid</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleViewChange('table')}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.55rem 0.95rem',
+                                borderRadius: '9px',
+                                border: 'none',
+                                background: viewMode === 'table' ? 'white' : 'transparent',
+                                color: viewMode === 'table' ? 'var(--primary, #3b82f6)' : '#64748b',
+                                fontWeight: viewMode === 'table' ? '700' : '600',
+                                fontSize: '0.85rem',
+                                boxShadow: viewMode === 'table' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                            }}
+                            title="Table View"
+                        >
+                            <List size={16} />
+                            <span>Table</span>
+                        </button>
+                    </div>
+
+                    <button
+                        onClick={() => setShowAddClass(true)}
+                        className="btn-primary"
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            borderRadius: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                        }}
+                    >
+                        <Plus size={20} />
+                        <span>Add New Class</span>
+                    </button>
+                </div>
             </div>
 
             {/* Stats Cards */}
@@ -1057,22 +1625,98 @@ const Classes = () => {
                     </button>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
-                    {classes.map((cls) => (
-                        <ClassCard
-                            key={cls.id}
-                            cls={cls}
-                            onDelete={handleDeleteClick}
-                            onEdit={handleEditClick}
-                            isEditing={editingClassId === cls.id}
-                            teachers={teachers}
-                            subjectOptions={subjectOptions}
-                            onCancel={handleCancelEdit}
-                            onSave={handleUpdateClass}
-                            schoolId={schoolId}
-                        />
-                    ))}
-                </div>
+                <AnimatePresence mode="wait">
+                    {viewMode === 'grid' ? (
+                        <motion.div
+                            key="classes-grid-view"
+                            initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.99 }}
+                            transition={{ duration: 0.22, ease: "easeOut" }}
+                            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}
+                        >
+                            {classes.map((cls) => (
+                                <ClassCard
+                                    key={cls.id}
+                                    cls={cls}
+                                    onDelete={handleDeleteClick}
+                                    onEdit={handleEditClick}
+                                    isEditing={editingClassId === cls.id}
+                                    teachers={teachers}
+                                    subjectOptions={subjectOptions}
+                                    onCancel={handleCancelEdit}
+                                    onSave={handleUpdateClass}
+                                    schoolId={schoolId}
+                                />
+                            ))}
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            key="classes-table-view"
+                            initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.99 }}
+                            transition={{ duration: 0.22, ease: "easeOut" }}
+                            style={{
+                                background: 'white',
+                                borderRadius: '16px',
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)',
+                                overflow: 'hidden'
+                            }}
+                        >
+                            <div style={{ overflowX: 'auto' }} className="custom-scrollbar">
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '750px' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Class Name
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Assigned Teacher
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Enrolled
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Today's Attendance
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Subjects
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>
+                                                Actions
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {classes.map((cls) => (
+                                            <ClassTableRow
+                                                key={cls.id}
+                                                cls={cls}
+                                                schoolId={schoolId}
+                                                onEdit={handleEditClick}
+                                                onDelete={handleDeleteClick}
+                                                navigate={navigate}
+                                            />
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            )}
+
+            {/* Edit Class Modal (For Table View) */}
+            {editingClassId && viewMode === 'table' && (
+                <ClassEditModal
+                    cls={classes.find(c => c.id === editingClassId)}
+                    teachers={teachers}
+                    subjectOptions={subjectOptions}
+                    onCancel={handleCancelEdit}
+                    onSave={handleUpdateClass}
+                />
             )}
 
             {/* Delete Confirmation Modal */}

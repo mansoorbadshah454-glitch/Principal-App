@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode, LayoutGrid, List } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as QRCodeLib from 'qrcode';
@@ -463,8 +464,568 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
     );
 });
 
+// Internal Component for Teacher Table Row (Table View)
+const TeacherTableRow = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, todayStr, onSelectAttendance, onEdit }) => {
+    const isPresentToday = teacher.lastAttendanceDate === todayStr;
+    const subjects = Array.isArray(teacher.displaySubjects) 
+        ? teacher.displaySubjects 
+        : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : []));
+    
+    const assignedClasses = Array.isArray(teacher.assignedClasses) 
+        ? teacher.assignedClasses 
+        : (teacher.assignedClass ? [teacher.assignedClass] : []);
+
+    return (
+        <tr
+            style={{
+                borderBottom: '1px solid #f1f5f9',
+                cursor: 'pointer',
+                transition: 'background-color 0.15s ease'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        >
+            {/* Teacher Info */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{
+                        width: '38px',
+                        height: '38px',
+                        borderRadius: '12px',
+                        background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        fontWeight: '700',
+                        fontSize: '0.9rem',
+                        boxShadow: '0 2px 8px rgba(109, 40, 217, 0.25)',
+                        flexShrink: 0
+                    }}>
+                        {teacher.name ? teacher.name.slice(0, 2).toUpperCase() : 'TC'}
+                    </div>
+                    <div>
+                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.95rem' }}>
+                            {teacher.name}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '2px' }}>
+                            {teacher.phone && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    <Phone size={12} color="#94a3b8" /> {teacher.phone}
+                                </span>
+                            )}
+                            {teacher.email && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    <Mail size={12} color="#94a3b8" /> {teacher.email}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </td>
+
+            {/* Assigned Classes */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', maxWidth: '200px' }}>
+                    {assignedClasses && assignedClasses.length > 0 ? (
+                        assignedClasses.map((cls, idx) => (
+                            <span
+                                key={idx}
+                                style={{
+                                    fontSize: '0.75rem',
+                                    padding: '0.2rem 0.55rem',
+                                    borderRadius: '6px',
+                                    background: '#f5f3ff',
+                                    border: '1px solid #ddd6fe',
+                                    color: '#7c3aed',
+                                    fontWeight: '600'
+                                }}
+                            >
+                                {cls}
+                            </span>
+                        ))
+                    ) : (
+                        <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>None</span>
+                    )}
+                </div>
+            </td>
+
+            {/* Subjects */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', maxWidth: '220px' }}>
+                    {subjects && subjects.length > 0 ? (
+                        <>
+                            {subjects.slice(0, 3).map((subj, idx) => (
+                                <span
+                                    key={idx}
+                                    style={{
+                                        fontSize: '0.75rem',
+                                        padding: '0.2rem 0.5rem',
+                                        borderRadius: '6px',
+                                        background: '#eff6ff',
+                                        border: '1px solid #dbeafe',
+                                        color: '#2563eb',
+                                        fontWeight: '500'
+                                    }}
+                                >
+                                    {subj}
+                                </span>
+                            ))}
+                            {subjects.length > 3 && (
+                                <span style={{
+                                    fontSize: '0.7rem',
+                                    padding: '0.2rem 0.45rem',
+                                    borderRadius: '6px',
+                                    background: '#f1f5f9',
+                                    color: '#64748b',
+                                    fontWeight: '600'
+                                }}>
+                                    +{subjects.length - 3}
+                                </span>
+                            )}
+                        </>
+                    ) : (
+                        <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>None</span>
+                    )}
+                </div>
+            </td>
+
+            {/* Today's Status */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                {isPresentToday ? (
+                    <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        padding: '0.25rem 0.65rem',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: '700',
+                        background: '#dcfce7',
+                        color: '#15803d',
+                        border: '1px solid #bbf7d0'
+                    }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#16a34a' }}></span>
+                        Active Today
+                    </span>
+                ) : (
+                    <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        padding: '0.25rem 0.65rem',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: '700',
+                        background: '#fef3c7',
+                        color: '#b45309',
+                        border: '1px solid #fde68a'
+                    }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f59e0b' }}></span>
+                        On Leave / Absent
+                    </span>
+                )}
+            </td>
+
+            {/* Monthly Salary */}
+            <td style={{ padding: '1rem 1.25rem' }}>
+                <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    padding: '0.25rem 0.65rem',
+                    borderRadius: '20px',
+                    fontSize: '0.8rem',
+                    fontWeight: '700',
+                    background: '#f8fafc',
+                    color: '#334155',
+                    border: '1px solid #e2e8f0'
+                }}>
+                    {teacher.salary ? `Rs. ${Number(teacher.salary).toLocaleString()}` : 'Not Set'}
+                </span>
+            </td>
+
+            {/* Actions */}
+            <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectAttendance(teacher);
+                        }}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            padding: '0.5rem 0.85rem',
+                            background: '#f5f3ff',
+                            border: '1px solid #ddd6fe',
+                            borderRadius: '8px',
+                            color: '#6d28d9',
+                            fontSize: '0.8rem',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#ede9fe'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#f5f3ff'; }}
+                        title="View Attendance History"
+                    >
+                        <Calendar size={14} />
+                        <span>Attendance</span>
+                    </button>
+
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onEdit(teacher);
+                        }}
+                        style={{
+                            padding: '0.5rem',
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '8px',
+                            color: '#475569',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#7c3aed'; e.currentTarget.style.borderColor = '#c4b5fd'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                        title="Edit Teacher"
+                    >
+                        <Edit size={16} />
+                    </button>
+
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete(teacher.id);
+                        }}
+                        style={{
+                            padding: '0.5rem',
+                            background: '#fff1f2',
+                            border: '1px solid #fecdd3',
+                            borderRadius: '8px',
+                            color: '#e11d48',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#ffe4e6'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#fff1f2'; }}
+                        title="Delete Teacher"
+                    >
+                        <Trash2 size={16} />
+                    </button>
+                </div>
+            </td>
+        </tr>
+    );
+};
+
+// Internal Component for Teacher Edit Modal (Used in Table View)
+const TeacherEditModal = ({ teacher, dbClasses, onCancel, onSave }) => {
+    const [editStep, setEditStep] = useState(1);
+    const [isSaving, setIsSaving] = useState(false);
+    const [editedTeacher, setEditedTeacher] = useState({
+        ...teacher,
+        salary: teacher.salary || '',
+        subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
+        assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
+    });
+
+    const purpleHeader = '#5b21b6';
+    const purpleAccent = '#8b5cf6';
+    const subjectOptions = [
+        'English', 'Urdu', 'Mathematics', 'Islamiyat', 'QURAN',
+        'Social Study', 'Art', 'Science', 'Biology', 'Chemistry', 'Physic'
+    ];
+
+    const handleSubmit = async (e) => {
+        if (e) e.preventDefault();
+        setIsSaving(true);
+        try {
+            await onSave(teacher.id, editedTeacher);
+            onCancel();
+        } catch (error) {
+            console.error("Error saving teacher in modal:", error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    if (!teacher) return null;
+
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 1100,
+                background: 'rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem',
+                backdropFilter: 'blur(4px)'
+            }}
+            onClick={onCancel}
+        >
+            <div
+                className="card custom-scrollbar"
+                style={{
+                    width: '100%',
+                    maxWidth: '560px',
+                    maxHeight: '90vh',
+                    overflowY: 'auto',
+                    background: 'white',
+                    borderRadius: '24px',
+                    padding: '0',
+                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+                    animation: 'slideUp 0.25s ease-out'
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div style={{
+                    padding: '1.25rem 1.5rem',
+                    background: purpleHeader,
+                    color: 'white',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    borderTopLeftRadius: '24px',
+                    borderTopRightRadius: '24px'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        {editStep > 1 && (
+                            <button
+                                onClick={() => setEditStep(prev => prev - 1)}
+                                style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}
+                            >
+                                <ChevronLeft size={18} />
+                            </button>
+                        )}
+                        <h3 style={{ fontSize: '1.1rem', fontWeight: '700', margin: 0 }}>
+                            {editStep === 1 ? `Edit: ${teacher.name}` : 'Update Credentials'}
+                        </h3>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '0.2rem 0.5rem', background: 'rgba(255, 255, 255, 0.2)', borderRadius: '10px' }}>
+                            {editStep}/2
+                        </span>
+                        <button onClick={onCancel} style={{ background: 'rgba(255, 255, 255, 0.2)', border: 'none', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white' }}>
+                            <X size={18} />
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                    {editStep === 1 && (
+                        <>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Full Name</label>
+                                    <input
+                                        type="text"
+                                        value={editedTeacher.name}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, name: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Phone</label>
+                                    <input
+                                        type="tel"
+                                        value={editedTeacher.phone}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, phone: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Subjects</label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', background: '#fcfaff', padding: '0.75rem', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
+                                    {subjectOptions.map((subj) => {
+                                        const isSelected = editedTeacher.subjects.includes(subj);
+                                        return (
+                                            <div
+                                                key={subj}
+                                                onClick={() => {
+                                                    setEditedTeacher(prev => ({
+                                                        ...prev,
+                                                        subjects: isSelected
+                                                            ? prev.subjects.filter(s => s !== subj)
+                                                            : [...prev.subjects, subj]
+                                                    }));
+                                                }}
+                                                style={{
+                                                    padding: '0.3rem 0.6rem',
+                                                    borderRadius: '6px',
+                                                    border: isSelected ? `1px solid ${purpleAccent}` : '1px solid #e2e8f0',
+                                                    background: isSelected ? '#f5f3ff' : 'white',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '600',
+                                                    color: isSelected ? purpleAccent : '#64748b'
+                                                }}
+                                            >
+                                                {subj}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Assign Classes</label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', background: '#fcfaff', padding: '0.75rem', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
+                                    {dbClasses.map((clsName) => {
+                                        const isSelected = editedTeacher.assignedClasses.includes(clsName);
+                                        return (
+                                            <div
+                                                key={clsName}
+                                                onClick={() => {
+                                                    setEditedTeacher(prev => ({
+                                                        ...prev,
+                                                        assignedClasses: isSelected ? [] : [clsName]
+                                                    }));
+                                                }}
+                                                style={{
+                                                    padding: '0.3rem 0.6rem',
+                                                    borderRadius: '6px',
+                                                    border: isSelected ? `1px solid ${purpleAccent}` : '1px solid #e2e8f0',
+                                                    background: isSelected ? '#f5f3ff' : 'white',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '600',
+                                                    color: isSelected ? purpleAccent : '#64748b'
+                                                }}
+                                            >
+                                                {clsName}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Email</label>
+                                    <input
+                                        type="email"
+                                        value={editedTeacher.email || ''}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, email: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Monthly Salary</label>
+                                    <input
+                                        type="number"
+                                        value={editedTeacher.salary || ''}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, salary: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                        placeholder="e.g. 50000"
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={onCancel}
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '10px', background: 'white', border: '1px solid #ddd6fe', color: '#64748b', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditStep(2)}
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '10px', background: purpleAccent, border: 'none', color: 'white', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Next: Credentials
+                                </button>
+                            </div>
+                        </>
+                    )}
+
+                    {editStep === 2 && (
+                        <>
+                            <div style={{ background: '#fcfaff', padding: '1.25rem', borderRadius: '16px', border: '1px solid #ddd6fe' }}>
+                                <div style={{ marginBottom: '1.25rem' }}>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Username</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                                        <User size={16} color={purpleAccent} />
+                                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: purpleHeader }}>{teacher.username}</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>New Password (leave blank to keep current)</label>
+                                    <input
+                                        type="password"
+                                        placeholder="Enter new password"
+                                        value={editedTeacher.password || ''}
+                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, password: e.target.value })}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditStep(1)}
+                                    style={{ flex: 1, padding: '0.75rem', borderRadius: '10px', background: 'white', border: '1px solid #ddd6fe', color: '#64748b', fontWeight: '700', cursor: 'pointer' }}
+                                >
+                                    Back
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleSubmit}
+                                    disabled={isSaving}
+                                    style={{ flex: 1.5, padding: '0.75rem', borderRadius: '10px', background: purpleHeader, border: 'none', color: 'white', fontWeight: '700', cursor: isSaving ? 'not-allowed' : 'pointer' }}
+                                >
+                                    {isSaving ? 'Saving...' : 'Save All Changes'}
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const Teachers = () => {
     const { showAlert } = useAlert();
+    const [viewMode, setViewMode] = useState(() => {
+        try {
+            return localStorage.getItem('teachers_view_mode') || 'grid';
+        } catch (e) {
+            return 'grid';
+        }
+    });
+
+    const handleViewChange = (mode) => {
+        setViewMode(mode);
+        try {
+            localStorage.setItem('teachers_view_mode', mode);
+        } catch (e) {
+            console.error("Failed to save view mode", e);
+        }
+    };
+
+    const [editingTeacherTable, setEditingTeacherTable] = useState(null);
+
     const getTodayStr = () => {
         const today = new Date();
         const year = today.getFullYear();
@@ -1563,21 +2124,80 @@ const Teachers = () => {
                     </h1>
                     <p style={{ color: 'var(--text-secondary)' }}>Manage your faculty members and assignments</p>
                 </div>
-                <button
-                    onClick={() => setShowAddTeacher(true)}
-                    className="btn-primary"
-                    style={{
-                        padding: '0.75rem 1.5rem',
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+                    {/* View Switcher: Grid vs Table */}
+                    <div style={{
+                        display: 'inline-flex',
+                        background: '#f1f5f9',
+                        padding: '4px',
                         borderRadius: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
-                    }}
-                >
-                    <Plus size={20} />
-                    <span>Add New Teacher</span>
-                </button>
+                        border: '1px solid #e2e8f0',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.04)'
+                    }}>
+                        <button
+                            type="button"
+                            onClick={() => handleViewChange('grid')}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.55rem 0.95rem',
+                                borderRadius: '9px',
+                                border: 'none',
+                                background: viewMode === 'grid' ? 'white' : 'transparent',
+                                color: viewMode === 'grid' ? 'var(--primary, #4f46e5)' : '#64748b',
+                                fontWeight: viewMode === 'grid' ? '700' : '600',
+                                fontSize: '0.85rem',
+                                boxShadow: viewMode === 'grid' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                            }}
+                            title="Grid View"
+                        >
+                            <LayoutGrid size={16} />
+                            <span>Grid</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleViewChange('table')}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.55rem 0.95rem',
+                                borderRadius: '9px',
+                                border: 'none',
+                                background: viewMode === 'table' ? 'white' : 'transparent',
+                                color: viewMode === 'table' ? 'var(--primary, #4f46e5)' : '#64748b',
+                                fontWeight: viewMode === 'table' ? '700' : '600',
+                                fontSize: '0.85rem',
+                                boxShadow: viewMode === 'table' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                            }}
+                            title="Table View"
+                        >
+                            <List size={16} />
+                            <span>Table</span>
+                        </button>
+                    </div>
+
+                    <button
+                        onClick={() => setShowAddTeacher(true)}
+                        className="btn-primary"
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            borderRadius: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                        }}
+                    >
+                        <Plus size={20} />
+                        <span>Add New Teacher</span>
+                    </button>
+                </div>
             </div>
 
             {/* Stats Cards */}
@@ -1702,20 +2322,101 @@ const Teachers = () => {
                     <p>No teachers added yet. Click 'Add New Teacher' to start.</p>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
-                    {teachers.map((t) => (
-                        <TeacherCard
-                            key={t.id}
-                            teacher={t}
-                            onDelete={handleDeleteClick}
-                            onUpdate={handleUpdateTeacher}
-                            schoolId={schoolId}
-                            dbClasses={dbClasses}
-                            isHighlighted={highlightedTeacherId === t.id}
-                            todayStr={todayStr}
-                        />
-                    ))}
-                </div>
+                <AnimatePresence mode="wait">
+                    {viewMode === 'grid' ? (
+                        <motion.div
+                            key="teachers-grid-view"
+                            initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.99 }}
+                            transition={{ duration: 0.22, ease: "easeOut" }}
+                            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}
+                        >
+                            {teachers.map((t) => (
+                                <TeacherCard
+                                    key={t.id}
+                                    teacher={t}
+                                    onDelete={handleDeleteClick}
+                                    onUpdate={handleUpdateTeacher}
+                                    schoolId={schoolId}
+                                    dbClasses={dbClasses}
+                                    isHighlighted={highlightedTeacherId === t.id}
+                                    todayStr={todayStr}
+                                />
+                            ))}
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            key="teachers-table-view"
+                            initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.99 }}
+                            transition={{ duration: 0.22, ease: "easeOut" }}
+                            style={{
+                                background: 'white',
+                                borderRadius: '16px',
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.05)',
+                                overflow: 'hidden'
+                            }}
+                        >
+                            <div style={{ overflowX: 'auto' }} className="custom-scrollbar">
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '850px' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Faculty Member
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Assigned Classes
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Subjects
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Today's Status
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                Salary
+                                            </th>
+                                            <th style={{ padding: '1rem 1.25rem', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>
+                                                Actions
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {teachers.map((t) => (
+                                            <TeacherTableRow
+                                                key={t.id}
+                                                teacher={t}
+                                                onDelete={handleDeleteClick}
+                                                onUpdate={handleUpdateTeacher}
+                                                schoolId={schoolId}
+                                                dbClasses={dbClasses}
+                                                todayStr={todayStr}
+                                                onSelectAttendance={(teacher) => {
+                                                    setSelectedAttendanceTeacher(teacher);
+                                                    setActiveTab('attendance');
+                                                }}
+                                                onEdit={(teacher) => setEditingTeacherTable(teacher)}
+                                            />
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            )}
+
+            {/* Edit Teacher Modal (For Table View) */}
+            {editingTeacherTable && viewMode === 'table' && (
+                <TeacherEditModal
+                    teacher={editingTeacherTable}
+                    dbClasses={dbClasses}
+                    onCancel={() => setEditingTeacherTable(null)}
+                    onSave={handleUpdateTeacher}
+                />
             )}
             {!loading && teachers.length >= teacherLimit && (
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: '2rem' }}>
