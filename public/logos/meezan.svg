@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 50" width="160" height="50">
+  <rect width="160" height="50" rx="10" fill="#005A36"/>
+  <g transform="translate(12, 10)">
+    <!-- Crescent & Star -->
+    <path d="M 16 4 C 11 4 7 8 7 14 C 7 20 11 25 17 25 C 19 25 21 24 23 23 C 19 23 15 20 15 15 C 15 10 18 6 22 5 C 20 4 18 4 16 4 Z" fill="#D4AF37"/>
+    <polygon points="21,11 22.5,14 25.5,14 23,16 24,19 21.5,17 19,19 20,16 17.5,14 20.5,14" fill="#D4AF37"/>
+  </g>
+  <text x="48" y="27" font-family="'Montserrat', 'Poppins', sans-serif" font-weight="800" font-size="14" fill="#ffffff">Meezan Bank</text>
+  <text x="48" y="38" font-family="'Montserrat', 'Poppins', sans-serif" font-weight="600" font-size="8" fill="#D4AF37" letter-spacing="0.5">THE PREMIER ISLAMIC BANK</text>
+</svg>

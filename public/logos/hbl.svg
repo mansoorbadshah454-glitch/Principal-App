@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 50" width="160" height="50">
+  <rect width="160" height="50" rx="10" fill="#008269"/>
+  <g transform="translate(14, 10)">
+    <!-- HBL Geometric Prism Cube -->
+    <polygon points="14,4 25,10 25,21 14,15" fill="#ffffff" opacity="0.95"/>
+    <polygon points="14,4 3,10 14,15 25,10" fill="#ffffff" opacity="0.8"/>
+    <polygon points="3,10 14,15 14,26 3,21" fill="#ffffff" opacity="0.6"/>
+  </g>
+  <text x="50" y="34" font-family="'Montserrat', 'Poppins', sans-serif" font-weight="900" font-size="22" fill="#ffffff" letter-spacing="1">HBL</text>
+</svg>

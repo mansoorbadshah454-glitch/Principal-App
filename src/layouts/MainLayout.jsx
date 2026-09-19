@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar';
 import { db, auth, messaging } from '../firebase';
 import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
-import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info, CreditCard } from 'lucide-react';
 import PrincipalAiAssistant from '../components/PrincipalAiAssistant/PrincipalAiAssistant';
 
 const MainLayout = () => {
@@ -229,23 +229,54 @@ const MainLayout = () => {
         );
     }
 
-    if (isSuspended) {
+    if (isSuspended && location.pathname !== '/settings') {
         return (
-            <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a', padding: '2rem' }}>
-                <div className="card glass" style={{ maxWidth: '500px', textAlign: 'center', padding: '3rem', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                    <div style={{ width: '80px', height: '80px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 2rem' }}>
-                        <ShieldAlert size={40} color="#f87171" />
+            <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a', padding: '1.5rem' }}>
+                <div className="card glass" style={{ maxWidth: '520px', width: '100%', textAlign: 'center', padding: '2.5rem 2rem', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '24px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)' }}>
+                    <div style={{ width: '76px', height: '76px', background: 'rgba(239, 68, 68, 0.12)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
+                        <ShieldAlert size={38} color="#f87171" />
                     </div>
-                    <h2 style={{ fontSize: '1.75rem', color: 'white', marginBottom: '1rem' }}>System Access Suspended</h2>
-                    <p style={{ color: '#94a3b8', marginBottom: '2.5rem', lineHeight: '1.6' }}>
-                        Your school's access to the administrative portal has been temporarily stopped by the Super Admin.
-                        This usually happens due to pending monthly fees or system maintenance.
+                    <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: 'white', marginBottom: '0.75rem' }}>System Access Stopped</h2>
+                    <p style={{ color: '#cbd5e1', fontSize: '0.9rem', marginBottom: '0.5rem', lineHeight: '1.6' }}>
+                        Your school's access to the management portal has been temporarily paused by Super Admin due to pending monthly subscription dues.
                     </p>
-                    <button onClick={handleLogout} className="btn" style={{ width: '100%', justifyContent: 'center', background: 'rgba(255,255,255,0.05)', color: 'white' }}>
-                        <LogOut size={18} />
-                        Logout Session
-                    </button>
-                    <p style={{ marginTop: '1.5rem', fontSize: '0.85rem', color: 'var(--primary)' }}>Please contact Super Administration for support.</p>
+                    <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '2rem', lineHeight: '1.6', direction: 'rtl' }}>
+                        محترم پرنسپل صاحب، واجب الادا فیس جمع کروا کے سسٹم کو دوبارہ فعال کرنے کیلئے نیچے "Pay & Submit Slip" بٹن پر کلک کریں۔
+                    </p>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <a
+                            href="/settings?tab=billing"
+                            className="btn"
+                            style={{
+                                width: '100%',
+                                justifyContent: 'center',
+                                background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+                                color: 'white',
+                                padding: '0.85rem 1.5rem',
+                                borderRadius: '12px',
+                                fontWeight: '700',
+                                fontSize: '0.95rem',
+                                textDecoration: 'none',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.6rem',
+                                boxShadow: '0 10px 20px -5px rgba(79, 70, 229, 0.4)'
+                            }}
+                        >
+                            <CreditCard size={18} />
+                            Pay & Submit Slip (Billing Tab)
+                        </a>
+
+                        <button onClick={handleLogout} className="btn" style={{ width: '100%', justifyContent: 'center', background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            <LogOut size={18} />
+                            Logout Session
+                        </button>
+                    </div>
+
+                    <p style={{ marginTop: '1.5rem', fontSize: '0.82rem', color: '#818cf8', margin: '1.5rem 0 0' }}>
+                        ⚡ Instant reactivation: Once verified by Super Admin, your portal automatically unlocks.
+                    </p>
                 </div>
             </div>
         );
@@ -253,6 +284,27 @@ const MainLayout = () => {
 
     return (
         <div className="app-container">
+            {isSuspended && (
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 999,
+                    background: 'linear-gradient(90deg, #b91c1c 0%, #dc2626 100%)',
+                    color: 'white',
+                    padding: '0.65rem 1.5rem',
+                    textAlign: 'center',
+                    fontWeight: '700',
+                    fontSize: '0.88rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.75rem',
+                    boxShadow: '0 4px 12px rgba(185, 28, 28, 0.3)'
+                }}>
+                    <AlertTriangle size={18} />
+                    <span>School portal is suspended. You have unrestricted access to Billing & Payment below to submit your payment proof.</span>
+                </div>
+            )}
             {announcement && (
                 <div style={{
                     position: 'fixed',

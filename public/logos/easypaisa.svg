@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 50" width="160" height="50">
+  <rect width="160" height="50" rx="10" fill="#00A859"/>
+  <!-- EasyPaisa iconic "e" emblem circle -->
+  <g transform="translate(14, 10)">
+    <circle cx="15" cy="15" r="14" fill="#ffffff"/>
+    <path d="M 15 6 C 10 6 7 9 7 14 C 7 19 10 23 15 23 C 19 23 22 20 23 17 L 19 17 C 18 19 17 20 15 20 C 12 20 10.5 18 10.2 15 L 23 15 C 23.2 14 23.2 13 23 12 C 22 8 19 6 15 6 Z M 10.5 12 C 11 9.5 13 8.5 15 8.5 C 17 8.5 19 9.5 19.5 12 L 10.5 12 Z" fill="#00A859"/>
+    <!-- EasyPaisa green dot/accent -->
+    <circle cx="20.5" cy="8.5" r="2" fill="#00E676"/>
+  </g>
+  <!-- Text -->
+  <text x="52" y="32" font-family="'Montserrat', 'Poppins', 'Segoe UI', sans-serif" font-weight="800" font-size="19" fill="#ffffff" letter-spacing="-0.3">easypaisa</text>
+</svg>
