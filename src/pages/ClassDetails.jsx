@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
     CheckCircle2, XCircle, MoreVertical, Search, Filter,
-    CheckCircle, Ban, Wallet, X, Trophy
+    X, Trophy
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
@@ -206,46 +206,6 @@ const ClassDetails = () => {
             }
         }
     }, [students, selectedStudent]);
-
-    const toggleIndividualAction = async (studentId, actionId, newStatus) => {
-        // Check for Manual Bypass
-        const manualSession = localStorage.getItem('manual_session');
-        if (manualSession) {
-            const session = JSON.parse(manualSession);
-            if (session.isManual) {
-                alert("Restricted: Manual Bypass Mode is Read-Only. Cannot update payments.");
-                return;
-            }
-        }
-
-        if (!schoolId || !classId || !auth.currentUser) return;
-
-        try {
-            const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
-            const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
-
-            // We need the current individualActions array to update the specific object inside it
-            const student = students.find(s => s.id === studentId);
-            if (!student) return;
-
-            const updatedActions = (student.individualActions || []).map(action => {
-                if (action.id === actionId) {
-                    return { ...action, status: newStatus };
-                }
-                return action;
-            });
-
-            await updateDoc(studentRef, { individualActions: updatedActions });
-            try {
-                await updateDoc(masterStudentRef, { individualActions: updatedActions });
-            } catch (err) {} // Master doc might not exist
-        } catch (error) {
-            console.error("Error updating action:", error);
-            alert("Failed to update status");
-        }
-    };
-
-
 
     // Calculate Live Class Metrics
     const classMetrics = useMemo(() => {
@@ -527,39 +487,6 @@ const ClassDetails = () => {
                                 {student.status === 'present' ? 'Present Today' : 'Absent Today'}
                             </div>
 
-                            {/* Individual Actions */}
-                            {student.individualActions && student.individualActions.length > 0 && (
-                                <div style={{ width: '100%', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
-                                    {student.individualActions.map(action => (
-                                        <div key={action.id} style={{ width: '100%' }}>
-                                            {action.status === 'paid' ? (
-                                                <button
-                                                    onClick={() => toggleIndividualAction(student.id, action.id, 'unpaid')}
-                                                    style={{
-                                                        width: '100%', padding: '0.5rem', borderRadius: '8px', border: 'none',
-                                                        background: '#dcfce7', color: '#166534', fontWeight: '600', cursor: 'pointer',
-                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                                    }}
-                                                >
-                                                    <CheckCircle size={16} /> Paid: {action.name} (Rs {action.amount})
-                                                </button>
-                                            ) : (
-                                                <button
-                                                    onClick={() => toggleIndividualAction(student.id, action.id, 'paid')}
-                                                    style={{
-                                                        width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #fee2e2',
-                                                        background: 'white', color: '#dc2626', fontWeight: '600', cursor: 'pointer',
-                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
-                                                    }}
-                                                >
-                                                    <Ban size={16} /> Mark {action.name} Paid
-                                                </button>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
                         </div>
                     );
                 })}
@@ -574,6 +501,8 @@ const ClassDetails = () => {
                 rank={selectedStudent?.rank}
                 classSubjects={classData?.subjects}
                 cardRect={selectedCardRect}
+                schoolId={schoolId}
+                classId={classId}
             />
 
             {/* Student Action Popup */}
