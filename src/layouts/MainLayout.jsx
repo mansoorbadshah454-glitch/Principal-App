@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import Sidebar from '../components/Sidebar';
 import { db, auth, messaging } from '../firebase';
 import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -344,7 +345,15 @@ const MainLayout = () => {
             )}
             <Sidebar />
             <main ref={mainContentRef} className="main-content" style={{ paddingTop: announcement ? '50px' : '0' }}>
-                <Outlet />
+                <motion.div
+                    key={location.pathname}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    style={{ width: '100%', minHeight: '100%' }}
+                >
+                    <Outlet />
+                </motion.div>
             </main>
             {schoolId && <PrincipalAiAssistant schoolId={schoolId} />}
         </div>

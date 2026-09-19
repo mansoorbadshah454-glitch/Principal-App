@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
     Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap, MessageCircle, MessagesSquare, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
-    Wifi, WifiOff, RefreshCw, Loader2
+    Wifi, WifiOff, RefreshCw, Loader2, Sparkles
 } from 'lucide-react';
 import { db, auth, functions } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, setDoc, doc, getDoc } from 'firebase/firestore';
@@ -108,6 +108,8 @@ const Dashboard = () => {
     const [rankingCycle, setRankingCycle] = useState('');
     const [isSyncingRankings, setIsSyncingRankings] = useState(false);
     const [lastRankingSync, setLastRankingSync] = useState(null);
+    const [isInjectingDemo, setIsInjectingDemo] = useState(false);
+    const [isInjectingSyllabus, setIsInjectingSyllabus] = useState(false);
 
     // Syllabus Widget State
     const [syllabusWidgetClass, setSyllabusWidgetClass] = useState('');
@@ -931,6 +933,223 @@ const Dashboard = () => {
 
     const availableClasses = ['All School', ...fetchedClasses.map(c => c.name)];
 
+    const handleInjectPerformanceDemoData = async () => {
+        const session = localStorage.getItem('manual_session');
+        const activeSchoolId = schoolId || (session ? JSON.parse(session).schoolId : null);
+        if (!activeSchoolId) {
+            alert("School ID not found. Please log in again.");
+            return;
+        }
+
+        setIsInjectingDemo(true);
+        try {
+            // 1. Identify target classes or create if empty
+            let targetClasses = [...fetchedClasses];
+
+            if (targetClasses.length === 0) {
+                const sampleClasses = [
+                    { name: 'Class 10', section: 'A' },
+                    { name: 'Class 9', section: 'A' },
+                    { name: 'Class 8', section: 'A' },
+                    { name: 'Class 5', section: 'A' }
+                ];
+                for (const sc of sampleClasses) {
+                    const classRef = await addDoc(collection(db, `schools/${activeSchoolId}/classes`), {
+                        name: sc.name,
+                        section: sc.section,
+                        createdAt: serverTimestamp()
+                    });
+                    targetClasses.push({ id: classRef.id, name: sc.name, section: sc.section });
+                }
+            }
+
+            const studentNames = [
+                "Muhammad Ali", "Fatima Zahra", "Ahmed Raza", "Zainab Bibi",
+                "Hamza Tariq", "Ayesha Malik", "Bilal Khan", "Maryam Noor"
+            ];
+
+            const today = new Date();
+            const localYear = today.getFullYear();
+            const localMonth = String(today.getMonth() + 1).padStart(2, '0');
+            const localDay = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${localYear}-${localMonth}-${localDay}`;
+
+            // 2. Populate realistic students and scores for each class
+            for (let cIdx = 0; cIdx < targetClasses.length; cIdx++) {
+                const cls = targetClasses[cIdx];
+                const studentsCol = collection(db, `schools/${activeSchoolId}/classes/${cls.id}/students`);
+                const createdStudentIds = [];
+
+                for (let sIdx = 0; sIdx < 6; sIdx++) {
+                    const name = studentNames[(cIdx * 2 + sIdx) % studentNames.length];
+                    const rollNo = `${(cIdx + 1) * 100 + (sIdx + 1)}`;
+                    const baseAcademic = 75 + ((cIdx * 5 + sIdx * 7) % 20);
+                    const baseHw = 80 + ((cIdx * 7 + sIdx * 5) % 18);
+
+                    const sDoc = await addDoc(studentsCol, {
+                        name,
+                        rollNo,
+                        status: sIdx === 5 ? 'absent' : 'present',
+                        lastAttendanceDate: todayStr,
+                        monthlyFeeStatus: sIdx % 4 === 0 ? 'unpaid' : 'paid',
+                        academicScores: [
+                            { subject: 'Mathematics', score: Math.min(99, baseAcademic + 4) },
+                            { subject: 'English', score: Math.min(99, baseAcademic - 3) },
+                            { subject: 'Urdu', score: Math.min(99, baseAcademic + 2) },
+                            { subject: 'Science', score: Math.min(99, baseAcademic + 6) },
+                            { subject: 'Islamiyat', score: Math.min(99, baseAcademic + 8) },
+                            { subject: 'Social Study', score: Math.min(99, baseAcademic - 2) }
+                        ],
+                        homeworkScores: [
+                            { subject: 'Mathematics', score: Math.min(100, baseHw + 5) },
+                            { subject: 'English', score: Math.min(100, baseHw + 2) },
+                            { subject: 'Urdu', score: Math.min(100, baseHw + 4) },
+                            { subject: 'Science', score: Math.min(100, baseHw + 8) },
+                            { subject: 'Islamiyat', score: Math.min(100, baseHw + 6) },
+                            { subject: 'Social Study', score: Math.min(100, baseHw) }
+                        ],
+                        createdAt: serverTimestamp()
+                    });
+                    createdStudentIds.push(sDoc.id);
+                }
+
+                // 3. Inject attendance records across past 6 weeks for attendance trends
+                for (let w = 0; w < 6; w++) {
+                    const pastDate = new Date();
+                    pastDate.setDate(pastDate.getDate() - (w * 7 + (cIdx % 3)));
+                    const pYear = pastDate.getFullYear();
+                    const pMonth = String(pastDate.getMonth() + 1).padStart(2, '0');
+                    const pDay = String(pastDate.getDate()).padStart(2, '0');
+                    const pDateStr = `${pYear}-${pMonth}-${pDay}`;
+
+                    await addDoc(collection(db, `schools/${activeSchoolId}/attendance`), {
+                        classId: cls.id,
+                        className: cls.name,
+                        date: pDateStr,
+                        records: createdStudentIds.map((stId, rIdx) => ({
+                            studentId: stId,
+                            status: (rIdx === 0 && w % 2 === 1) ? 'absent' : 'present'
+                        })),
+                        timestamp: serverTimestamp()
+                    });
+                }
+            }
+
+            alert("✨ Demo Performance Data Injected Successfully!\n\nAll 4 tabs (Classes, Subjects, Homework, and Attendance) are now active with live data.");
+        } catch (error) {
+            console.error("Error injecting demo performance data:", error);
+            alert("Error injecting demo data: " + error.message);
+        } finally {
+            setIsInjectingDemo(false);
+        }
+    };
+
+    const handleInjectSyllabusDemoData = async () => {
+        const session = localStorage.getItem('manual_session');
+        const activeSchoolId = schoolId || (session ? JSON.parse(session).schoolId : null);
+        if (!activeSchoolId) {
+            alert("School ID not found. Please log in again.");
+            return;
+        }
+
+        setIsInjectingSyllabus(true);
+        try {
+            const primaryClasses = [
+                { name: 'Class 1', section: 'A' },
+                { name: 'Class 2', section: 'A' },
+                { name: 'Class 3', section: 'A' },
+                { name: 'Class 4', section: 'A' },
+                { name: 'Class 5', section: 'A' }
+            ];
+
+            const primarySubjects = ['Mathematics', 'English', 'General Science', 'Urdu', 'Islamiyat'];
+
+            const syllabusDataBySubject = {
+                'Mathematics': [
+                    { title: "Unit 1: Numbers & Counting (1 to 1000)", time: "2 weeks", status: "Completed", topics: ["Counting & Writing Numbers", "Odd & Even Numbers", "Place Value Chart"] },
+                    { title: "Unit 2: Addition & Subtraction Fundamentals", time: "3 weeks", status: "Completed", topics: ["2-Digit & 3-Digit Addition", "Carrying Over & Borrowing", "Word Problems"] },
+                    { title: "Unit 3: Multiplication Tables (2 to 10)", time: "3 weeks", status: "Completed", topics: ["Skip Counting Drills", "Mental Math Shortcuts", "Multiplication Tables"] },
+                    { title: "Unit 4: Division & Equal Sharing", time: "2 weeks", status: "In Progress", topics: ["Concept of Equal Sharing", "Single Digit Division", "Remainders"] },
+                    { title: "Unit 5: 2D & 3D Basic Geometry", time: "2 weeks", status: "Pending", topics: ["Circle, Triangle, Rectangle", "Edges, Vertices and Faces", "Drawing Patterns"] },
+                    { title: "Unit 6: Measurement, Money & Telling Time", time: "2 weeks", status: "Pending", topics: ["Reading Analog Clocks", "Pakistani Rupee Coins & Notes", "Length in Meters & Centimeters"] }
+                ],
+                'General Science': [
+                    { title: "Unit 1: Human Body & Five Senses", time: "2 weeks", status: "Completed", topics: ["Sight, Hearing, Smell, Taste, Touch", "Healthy Habits & Cleanliness", "Body Parts"] },
+                    { title: "Unit 2: Plants & Living Things", time: "2 weeks", status: "Completed", topics: ["Parts of a Plant (Roots, Stem, Leaves)", "Seeds Germination Process", "What Plants Need to Grow"] },
+                    { title: "Unit 3: Animals & Their Habitats", time: "2 weeks", status: "Completed", topics: ["Domestic vs Wild Animals", "Birds, Fish and Insects", "Herbivores and Carnivores"] },
+                    { title: "Unit 4: Matter, Materials & Water", time: "2 weeks", status: "In Progress", topics: ["Solids, Liquids and Gases", "Water Cycle in Nature", "Sink or Float Fun Experiment"] },
+                    { title: "Unit 5: Earth, Sun & Weather Seasons", time: "2 weeks", status: "Pending", topics: ["Day & Night Rotation", "Four Seasons of Pakistan", "Clouds, Rain & Wind"] }
+                ],
+                'English': [
+                    { title: "Unit 1: The Magic Garden (Reading)", time: "2 weeks", status: "Completed", topics: ["Reading Fluency & Phonics", "New Vocabulary Words", "Nouns & Proper Nouns"] },
+                    { title: "Unit 2: Friends in Need (Story)", time: "2 weeks", status: "Completed", topics: ["Moral Story Reading", "Action Verbs & Simple Present", "Making Sentences"] },
+                    { title: "Unit 3: Poem - Twinkling Stars", time: "1 week", status: "Completed", topics: ["Rhyming Words & Rhythm", "Recitation & Expression", "Short Comprehension Questions"] },
+                    { title: "Unit 4: A Wonderful Zoo Visit", time: "2 weeks", status: "In Progress", topics: ["Creative Paragraph Writing", "Adjectives & Describing Words", "Punctuation Rules"] },
+                    { title: "Unit 5: Clean City, Green Pakistan", time: "2 weeks", status: "Pending", topics: ["Civic Sense & Hygiene", "Pronouns & Conjunctions", "Spelling Bee Activity"] }
+                ],
+                'Urdu': [
+                    { title: "سبق نمبر 1: حمد باری تعالیٰ", time: "2 ہفتے", status: "Completed", topics: ["اشعار کی درست پڑھائی اور مفہوم", "مشکل الفاظ کے معانی", "املا اور جملہ سازی"] },
+                    { title: "سبق نمبر 2: نعت رسول مقبول ﷺ", time: "2 ہفتے", status: "Completed", topics: ["سیرت پاک کی جھلکیاں", "نظم خوانی ترنم کے ساتھ", "ہم قافیہ الفاظ"] },
+                    { title: "سبق نمبر 3: سچ بولنے کی برکت", time: "2 ہفتے", status: "Completed", topics: ["سبق آموز کہانی و فہم", "اسم، فعل اور حرف کی پہچان", "خوشخطی مشق"] },
+                    { title: "سبق نمبر 4: ہماری پیاری دھرتی (پاکستان)", time: "2 ہفتے", status: "In Progress", topics: ["وطن سے محبت و قومی پرچم", "مختصر سوال جواب", "مضمون نویسی کی مشق"] },
+                    { title: "سبق نمبر 5: وقت کی پابندی اور محنت", time: "2 ہفتے", status: "Pending", topics: ["روزمرہ کا ٹائم ٹیبل", "قواعد و انشا پردازی", "واحد جمع اور متضاد الفاظ"] }
+                ],
+                'Islamiyat': [
+                    { title: "باب 1: بنیادی عقائد و ارکانِ اسلام", time: "2 ہفتے", status: "Completed", topics: ["کلمہ طیبہ اور توحید کا مفہوم", "نماز کی پابندی", "روزہ اور زکوٰۃ کا بنیادی تعارف"] },
+                    { title: "باب 2: سیرت طیبہ حضرت محمد ﷺ", time: "3 ہفتے", status: "Completed", topics: ["ولادت باسعادت اور بچپن", "صادق اور امین کے اوصاف", "بچوں اور بزرگوں پر شفقت"] },
+                    { title: "باب 3: طہارت، وضو اور نماز", time: "2 ہفتے", status: "Completed", topics: ["وضو کے فرائض و سنن", "نماز کے ارکان اور دعائیں", "عملی وضو و نماز مشق"] },
+                    { title: "باب 4: حسن اخلاق اور والدین کا احترام", time: "2 ہفتے", status: "In Progress", topics: ["والدین اور اساتذہ کا ادب", "سلام میں پہل کرنا", "سچائی اور امانت داری"] },
+                    { title: "باب 5: روزمرہ کی مسنون دعائیں اور کلمات", time: "2 ہفتے", status: "Pending", topics: ["کھانے سے پہلے اور بعد کی دعا", "سونے اور جاگنے کی دعا", "حفظ و ترجمہ"] }
+                ]
+            };
+
+            for (const pc of primaryClasses) {
+                // Find existing class or create
+                let classDoc = fetchedClasses.find(c => c.name?.toLowerCase().trim() === pc.name.toLowerCase().trim());
+                let classId = classDoc?.id;
+
+                if (!classId) {
+                    const classRef = await addDoc(collection(db, `schools/${activeSchoolId}/classes`), {
+                        name: pc.name,
+                        section: pc.section,
+                        subjects: primarySubjects,
+                        createdAt: serverTimestamp()
+                    });
+                    classId = classRef.id;
+                } else {
+                    // Update subjects list
+                    await setDoc(doc(db, `schools/${activeSchoolId}/classes`, classId), {
+                        subjects: primarySubjects
+                    }, { merge: true });
+                }
+
+                // Inject chapters for all 5 subjects
+                for (const subj of primarySubjects) {
+                    const chapters = syllabusDataBySubject[subj] || [];
+                    for (let chIdx = 0; chIdx < chapters.length; chIdx++) {
+                        const chapter = chapters[chIdx];
+                        const chapRef = doc(db, `schools/${activeSchoolId}/classes/${classId}/syllabus/${subj}/chapters`, `chap_${chIdx + 1}`);
+                        await setDoc(chapRef, {
+                            ...chapter,
+                            order: chIdx + 1,
+                            updatedAt: serverTimestamp()
+                        }, { merge: true });
+                    }
+                }
+            }
+
+            // Immediately switch widget to Class 1 - Mathematics for instant live presentation!
+            setSyllabusWidgetClass('Class 1');
+            setSyllabusWidgetSubject('Mathematics');
+
+            alert("✨ Demo Syllabus Injected Successfully!\n\nClass 1 to Class 5 syllabi (Mathematics, General Science, English, Urdu, Islamiyat) are now live and ready for presentation.");
+        } catch (error) {
+            console.error("Error injecting demo syllabus:", error);
+            alert("Error injecting syllabus demo data: " + error.message);
+        } finally {
+            setIsInjectingSyllabus(false);
+        }
+    };
 
     const handleSendMessage = async () => {
         if (!messageText.trim() || !selectedTeacher) return;
@@ -1201,7 +1420,9 @@ const Dashboard = () => {
                             alignItems: 'center',
                             marginBottom: '1rem',
                             position: 'relative',
-                            zIndex: 2
+                            zIndex: 2,
+                            flexWrap: 'wrap',
+                            gap: '0.75rem'
                         }}>
                             <h2 style={{
                                 fontSize: '1.25rem',
@@ -1213,8 +1434,58 @@ const Dashboard = () => {
                                 SCHOOL PERFORMANCE
                             </h2>
 
-                            {/* Class Selector Dropdown */}
-                            <div style={{ position: 'relative' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                                {/* Inject Demo Data Button */}
+                                <button
+                                    onClick={handleInjectPerformanceDemoData}
+                                    disabled={isInjectingDemo}
+                                    title="Inject realistic demo data for all 4 performance tabs"
+                                    style={{
+                                        padding: '0.65rem 1.1rem',
+                                        background: isInjectingDemo ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.22)',
+                                        backdropFilter: 'blur(10px)',
+                                        color: '#ffffff',
+                                        border: '1.5px solid rgba(255, 255, 255, 0.4)',
+                                        borderRadius: '12px',
+                                        fontSize: '0.88rem',
+                                        fontWeight: '700',
+                                        cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.45rem',
+                                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
+                                        transition: 'all 0.2s ease',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        if (!isInjectingDemo) {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.35)';
+                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.2)';
+                                        }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        if (!isInjectingDemo) {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.22)';
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.12)';
+                                        }
+                                    }}
+                                >
+                                    {isInjectingDemo ? (
+                                        <>
+                                            <Loader2 size={16} className="animate-spin" />
+                                            <span>Injecting...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles size={16} color="#fde047" />
+                                            <span>Inject Demo Data</span>
+                                        </>
+                                    )}
+                                </button>
+
+                                {/* Class Selector Dropdown */}
+                                <div style={{ position: 'relative' }}>
                                 <button
                                     onClick={() => setShowClassDropdown(!showClassDropdown)}
                                     style={{
@@ -1338,6 +1609,7 @@ const Dashboard = () => {
                                         })}
                                     </div>
                                 )}
+                                </div>
                             </div>
                         </div>
 
@@ -1652,23 +1924,71 @@ const Dashboard = () => {
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', position: 'relative', zIndex: 2, flexWrap: 'wrap', gap: '2rem' }}>
                             <div style={{ flex: '1 1 400px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                                    <div style={{ 
-                                        padding: '0.6rem', 
-                                        background: '#eff6ff', 
-                                        borderRadius: '8px', 
-                                        color: '#0078d4', 
-                                        border: '1px solid #dbeafe',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center'
-                                    }}>
-                                        <BookOpen size={22} />
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                        <div style={{ 
+                                            padding: '0.6rem', 
+                                            background: '#eff6ff', 
+                                            borderRadius: '8px', 
+                                            color: '#0078d4', 
+                                            border: '1px solid #dbeafe',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}>
+                                            <BookOpen size={22} />
+                                        </div>
+                                        <div>
+                                            <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#0f172a', margin: 0 }}>Live Syllabus Viewer</h2>
+                                            <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '2px 0 0 0' }}>Select a class and subject to track real-time progress</p>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#0f172a', margin: 0 }}>Live Syllabus Viewer</h2>
-                                        <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '2px 0 0 0' }}>Select a class and subject to track real-time progress</p>
-                                    </div>
+
+                                    {/* Demo Syllabus Inject Button */}
+                                    <button
+                                        onClick={handleInjectSyllabusDemoData}
+                                        disabled={isInjectingSyllabus}
+                                        title="Inject realistic demo syllabus for Class 1 to 5 for presentation"
+                                        style={{
+                                            padding: '0.55rem 0.95rem',
+                                            background: isInjectingSyllabus ? '#f1f5f9' : '#eff6ff',
+                                            color: '#1d4ed8',
+                                            border: '1.5px solid #bfdbfe',
+                                            borderRadius: '8px',
+                                            fontSize: '0.82rem',
+                                            fontWeight: '700',
+                                            cursor: isInjectingSyllabus ? 'not-allowed' : 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.45rem',
+                                            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (!isInjectingSyllabus) {
+                                                e.currentTarget.style.background = '#dbeafe';
+                                                e.currentTarget.style.transform = 'translateY(-1px)';
+                                            }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (!isInjectingSyllabus) {
+                                                e.currentTarget.style.background = '#eff6ff';
+                                                e.currentTarget.style.transform = 'translateY(0)';
+                                            }
+                                        }}
+                                    >
+                                        {isInjectingSyllabus ? (
+                                            <>
+                                                <Loader2 size={15} className="animate-spin" />
+                                                <span>Injecting...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles size={15} color="#2563eb" />
+                                                <span>Inject Demo Syllabus (Class 1-5)</span>
+                                            </>
+                                        )}
+                                    </button>
                                 </div>
 
                                 <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem' }}>
