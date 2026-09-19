@@ -248,12 +248,246 @@ const PaperGenerator = () => {
         };
     }, [selectedClassName, selectedSubject, selectedBoardName]);
 
+    // Dynamic exam presets: Synchronized with the School's active Board & Subject marks
+    const activeExamPresets = useMemo(() => {
+        const targetBoardMarks = currentBoardSLO.marks || 60;
+        const boardDisplayName = selectedBoardName || 'BISE';
+
+        if (isBoardGrade) {
+            return [
+                { 
+                    id: 'monthly_test', 
+                    name: 'Monthly Class Test (25 Marks)', 
+                    title: 'Monthly Class Test',
+                    badge: 'Class 9-10', 
+                    totalMarks: 25, 
+                    timeAllowed: '45 Minutes', 
+                    mcqCount: 6, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: 6, 
+                    shortAttempt: 4, 
+                    shortMarksEach: 3, 
+                    longCount: 2, 
+                    longAttempt: 1, 
+                    longMarksEach: 7, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                },
+                { 
+                    id: 'first_term', 
+                    name: '1st Term Examination (50 Marks)', 
+                    title: 'First Term Examination 2026',
+                    badge: 'Term 50M', 
+                    totalMarks: 50, 
+                    timeAllowed: '1 Hour 30 Mins', 
+                    mcqCount: 10, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: 10, 
+                    shortAttempt: 8, 
+                    shortMarksEach: 3, 
+                    longCount: 3, 
+                    longAttempt: 2, 
+                    longMarksEach: 8, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                },
+                { 
+                    id: 'mid_term', 
+                    name: 'Mid Term Examination (50 Marks)', 
+                    title: 'Mid Term Examination 2026',
+                    badge: 'Mid Term 50M', 
+                    totalMarks: 50, 
+                    timeAllowed: '1 Hour 30 Mins', 
+                    mcqCount: 10, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: 10, 
+                    shortAttempt: 8, 
+                    shortMarksEach: 3, 
+                    longCount: 3, 
+                    longAttempt: 2, 
+                    longMarksEach: 8, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                },
+                { 
+                    id: 'pre_board', 
+                    name: `Pre-Board / Send-up Exam (${targetBoardMarks} Marks - ${boardDisplayName})`, 
+                    title: `Pre-Board / Send-up Examination 2026 (${boardDisplayName} Pattern)`,
+                    badge: `Send-up ${targetBoardMarks}M`, 
+                    totalMarks: targetBoardMarks, 
+                    timeAllowed: targetBoardMarks <= 50 ? '2 Hours' : '3 Hours', 
+                    mcqCount: targetBoardMarks >= 75 ? 15 : targetBoardMarks <= 50 ? 10 : 12, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: targetBoardMarks >= 75 ? 13 : targetBoardMarks <= 50 ? 8 : 11, 
+                    shortAttempt: targetBoardMarks >= 75 ? 10 : targetBoardMarks <= 50 ? 6 : 8, 
+                    shortMarksEach: 3, 
+                    longCount: targetBoardMarks >= 75 ? 4 : 3, 
+                    longAttempt: targetBoardMarks >= 75 ? 3 : 2, 
+                    longMarksEach: targetBoardMarks >= 75 ? 10 : targetBoardMarks <= 50 ? 11 : 12, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                },
+                { 
+                    id: 'final_board', 
+                    name: `Annual Board Examination (${targetBoardMarks} Marks - ${boardDisplayName})`, 
+                    title: `Annual Board Examination 2026 (${boardDisplayName} Pattern)`,
+                    badge: `Board ${targetBoardMarks}M`, 
+                    totalMarks: targetBoardMarks, 
+                    timeAllowed: targetBoardMarks <= 50 ? '2 Hours' : '3 Hours', 
+                    mcqCount: targetBoardMarks >= 75 ? 15 : targetBoardMarks <= 50 ? 10 : 12, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: targetBoardMarks >= 75 ? 13 : targetBoardMarks <= 50 ? 8 : 11, 
+                    shortAttempt: targetBoardMarks >= 75 ? 10 : targetBoardMarks <= 50 ? 6 : 8, 
+                    shortMarksEach: 3, 
+                    longCount: targetBoardMarks >= 75 ? 4 : 3, 
+                    longAttempt: targetBoardMarks >= 75 ? 3 : 2, 
+                    longMarksEach: targetBoardMarks >= 75 ? 10 : targetBoardMarks <= 50 ? 11 : 12, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                }
+            ];
+        } else {
+            return [
+                { 
+                    id: 'primary_worksheet', 
+                    name: 'Primary School Worksheet (25 Marks)', 
+                    title: 'Worksheet / Assessment',
+                    badge: 'Class 1-5', 
+                    totalMarks: 25, 
+                    timeAllowed: '45 Minutes', 
+                    mcqCount: 5, 
+                    mcqMarksEach: 1, 
+                    blankCount: 5, 
+                    blankMarksEach: 1, 
+                    tfCount: 5, 
+                    tfMarksEach: 1, 
+                    shortCount: 5, 
+                    shortAttempt: 5, 
+                    shortMarksEach: 2, 
+                    longCount: 0, 
+                    longAttempt: 0, 
+                    longMarksEach: 0, 
+                    showAnswerLines: true, 
+                    defaultPages: 1 
+                },
+                { 
+                    id: 'monthly_test', 
+                    name: 'Monthly Class Test (25 Marks)', 
+                    title: 'Monthly Class Test',
+                    badge: 'Class 1-8', 
+                    totalMarks: 25, 
+                    timeAllowed: '45 Minutes', 
+                    mcqCount: 5, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: 6, 
+                    shortAttempt: 4, 
+                    shortMarksEach: 2, 
+                    longCount: 2, 
+                    longAttempt: 1, 
+                    longMarksEach: 6, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                },
+                { 
+                    id: 'first_term', 
+                    name: '1st Term Examination (50 Marks)', 
+                    title: 'First Term Examination 2026',
+                    badge: '1st Term 50M', 
+                    totalMarks: 50, 
+                    timeAllowed: '1 Hour 30 Mins', 
+                    mcqCount: 10, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: 8, 
+                    shortAttempt: 6, 
+                    shortMarksEach: 3, 
+                    longCount: 3, 
+                    longAttempt: 2, 
+                    longMarksEach: 6, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                },
+                { 
+                    id: 'mid_term', 
+                    name: 'Mid Term Examination (50 Marks)', 
+                    title: 'Mid Term Examination 2026',
+                    badge: 'Standard 50M', 
+                    totalMarks: 50, 
+                    timeAllowed: '1 Hour 30 Mins', 
+                    mcqCount: 10, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: 8, 
+                    shortAttempt: 6, 
+                    shortMarksEach: 3, 
+                    longCount: 3, 
+                    longAttempt: 2, 
+                    longMarksEach: 6, 
+                    showAnswerLines: false, 
+                    defaultPages: 2 
+                },
+                { 
+                    id: 'final_term', 
+                    name: 'Annual / Final Examination (100 Marks)', 
+                    title: 'Annual Examination 2026',
+                    badge: 'Annual 100M', 
+                    totalMarks: 100, 
+                    timeAllowed: '3 Hours', 
+                    mcqCount: 20, 
+                    mcqMarksEach: 1, 
+                    blankCount: 0, 
+                    blankMarksEach: 1, 
+                    tfCount: 0, 
+                    tfMarksEach: 1, 
+                    shortCount: 18, 
+                    shortAttempt: 12, 
+                    shortMarksEach: 2, 
+                    longCount: 6, 
+                    longAttempt: 4, 
+                    longMarksEach: 8, 
+                    showAnswerLines: false, 
+                    defaultPages: 3 
+                }
+            ];
+        }
+    }, [isBoardGrade, currentBoardSLO.marks, selectedBoardName]);
+
     // /* === SUPER POWER BUTTON: 9th/10th BOARD SLO AUTO-MATCH TARGETS === */
     const boardTargets = useMemo(() => {
         const targetTotalMarks = currentBoardSLO.marks || 60;
         if (selectedPreset === 'monthly_test') {
             return { mcq: 6, short: 6, long: 2, shortAttempt: 4, longAttempt: 1, totalMarks: 25 };
-        } else if (selectedPreset === 'mid_term') {
+        } else if (selectedPreset === 'first_term' || selectedPreset === 'mid_term') {
             return { mcq: 10, short: 10, long: 3, shortAttempt: 8, longAttempt: 2, totalMarks: 50 };
         } else {
             if (targetTotalMarks >= 75) {
@@ -286,8 +520,8 @@ const PaperGenerator = () => {
             setLongMarksEach(7);
             setPageCountMode(2);
             buildPaperFromSyllabus({ mcqCount: 6, blankCount: 0, tfCount: 0, shortCount: 6, longCount: 2 });
-        } else if (presetId === 'mid_term') {
-            // Mid Term Exam (Scaled to 50 Marks, preserving exact SLO Cognitive Balance)
+        } else if (presetId === 'first_term' || presetId === 'mid_term') {
+            // Term Exam (Scaled to 50 Marks, preserving exact SLO Cognitive Balance)
             setMcqMarksEach(1);
             setShortAttempt(8);
             setShortMarksEach(3);
@@ -296,7 +530,7 @@ const PaperGenerator = () => {
             setPageCountMode(2);
             buildPaperFromSyllabus({ mcqCount: 10, blankCount: 0, tfCount: 0, shortCount: 10, longCount: 3 });
         } else {
-            // Full Board Standard Exam (Annual / Pre-Board / Grand Test)
+            // Full Board Standard Exam (Annual / Pre-Board / Send-up)
             if (targetTotalMarks >= 75) {
                 setMcqMarksEach(1);
                 setShortAttempt(10);
@@ -471,8 +705,11 @@ const PaperGenerator = () => {
     // Apply Preset parameters
     const handleApplyPreset = (presetId) => {
         setSelectedPreset(presetId);
-        const preset = EXAM_PRESETS.find(p => p.id === presetId);
+        const preset = activeExamPresets.find(p => p.id === presetId) || EXAM_PRESETS.find(p => p.id === presetId);
         if (preset) {
+            if (preset.title) {
+                setExamTitle(preset.title);
+            }
             setTimeAllowed(preset.timeAllowed);
             setMcqMarksEach(preset.mcqMarksEach);
             setBlankMarksEach(preset.blankMarksEach || 1);
@@ -488,8 +725,8 @@ const PaperGenerator = () => {
                 setShowAnswerLines(preset.showAnswerLines);
             }
 
-            // If Super Power Board Match is active, auto-rebalance paper to this preset
-            if (autoMatchBoard && isBoardGrade) {
+            // If Board Grade or Super Power Board Match is active, auto-rebalance paper to this preset
+            if (isBoardGrade && (autoMatchBoard || presetId === 'pre_board' || presetId === 'final_board')) {
                 setTimeout(() => {
                     triggerBoardBalance(presetId);
                 }, 50);
@@ -507,7 +744,7 @@ const PaperGenerator = () => {
         let shortPool = shuffle(allSyllabusQuestions.filter(q => q.type === 'short' || (!q.type && q.type !== 'mcq' && q.type !== 'long' && q.type !== 'blank' && q.type !== 'true_false')));
         let longPool = shuffle(allSyllabusQuestions.filter(q => q.type === 'long'));
 
-        const preset = EXAM_PRESETS.find(p => p.id === selectedPreset) || EXAM_PRESETS[2];
+        const preset = activeExamPresets.find(p => p.id === selectedPreset) || EXAM_PRESETS.find(p => p.id === selectedPreset) || activeExamPresets[0];
 
         const targetMcqs = customCounts?.mcqCount ?? (autoMatchBoard ? boardTargets.mcq : Math.min(preset.mcqCount, mcqPool.length));
         const targetBlanks = customCounts?.blankCount ?? (autoMatchBoard ? 0 : Math.min(preset.blankCount || 0, blankPool.length));
@@ -1298,16 +1535,27 @@ const PaperGenerator = () => {
                         </select>
                     </div>
 
-                    {/* Preset */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#1e293b', padding: '5px 10px', borderRadius: '10px', border: '1px solid #334155' }}>
-                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#94a3b8' }}>Preset:</span>
+                    {/* Exam Preset Selector */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#1e293b', padding: '5px 12px', borderRadius: '10px', border: '1px solid #334155' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#94a3b8' }}>Exam:</span>
                         <select
                             value={selectedPreset}
                             onChange={(e) => handleApplyPreset(e.target.value)}
-                            style={{ background: 'transparent', border: 'none', outline: 'none', fontWeight: '700', fontSize: '0.85rem', color: '#818cf8', cursor: 'pointer' }}
+                            style={{ 
+                                background: 'transparent', 
+                                border: 'none', 
+                                outline: 'none', 
+                                fontWeight: '800', 
+                                fontSize: '0.85rem', 
+                                color: isBoardGrade ? '#a5b4fc' : '#818cf8', 
+                                cursor: 'pointer',
+                                maxWidth: '340px'
+                            }}
                         >
-                            {EXAM_PRESETS.map(p => (
-                                <option key={p.id} value={p.id} style={{ background: '#1e293b', color: '#fff' }}>{p.name}</option>
+                            {activeExamPresets.map(p => (
+                                <option key={p.id} value={p.id} style={{ background: '#1e293b', color: '#fff' }}>
+                                    {p.name}
+                                </option>
                             ))}
                         </select>
                     </div>
@@ -1568,7 +1816,7 @@ const PaperGenerator = () => {
                                         Insert into Paper
                                     </h3>
                                     <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
-                                        Button click karte hi question live paper canvas par add ho jayega.
+                                        Click any button below to instantly insert a question into the live paper canvas.
                                     </p>
                                 </div>
 
@@ -1774,7 +2022,7 @@ const PaperGenerator = () => {
                                         Scores Scheme
                                     </h3>
                                     <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
-                                        Section ke marks change karein, real-time recalculate honge.
+                                        Customize section scoring; marks are dynamically recalculated in real time.
                                     </p>
                                 </div>
 
@@ -1950,7 +2198,7 @@ const PaperGenerator = () => {
                                         Syllabus Scope
                                     </h3>
                                     <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
-                                        Chapters select karein jaha se paper pick hoga.
+                                        Select syllabus chapters to curate questions for the examination paper.
                                     </p>
                                 </div>
 
