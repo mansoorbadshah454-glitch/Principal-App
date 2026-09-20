@@ -44,6 +44,18 @@ const Inbox = () => {
     const messagesEndRef = useRef(null);
     const menuRef = useRef(null);
 
+    // Ensure full-bleed zero padding on .main-content while on Inbox (full page size)
+    useEffect(() => {
+        const mainEl = document.querySelector('.main-content');
+        if (mainEl) {
+            const prevPadding = mainEl.style.padding;
+            mainEl.style.padding = '0px';
+            return () => {
+                mainEl.style.padding = prevPadding;
+            };
+        }
+    }, []);
+
     // Close menu when clicking outside
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -543,6 +555,11 @@ const Inbox = () => {
 
     return (
         <div className="inbox-container">
+            <style>{`
+                .main-content {
+                    padding: 0px !important;
+                }
+            `}</style>
             {/* Sidebar Pane (Teachers List) */}
             <div className={`inbox-sidebar ${selectedTeacher ? 'mobile-hidden' : ''}`}>
                 <div className="inbox-sidebar-header">
