@@ -344,13 +344,39 @@ const MainLayout = () => {
                 </div>
             )}
             <Sidebar />
-            <main ref={mainContentRef} className="main-content" style={{ paddingTop: announcement ? '50px' : '0' }}>
+            <main
+                ref={mainContentRef}
+                className="main-content"
+                style={{
+                    paddingTop: announcement ? '50px' : '0',
+                    transition: 'none'
+                }}
+            >
+                <style>{`
+                    .main-content {
+                        transition: none !important;
+                    }
+                    /* Harmonize page root animations so all routes share the identical ultra-fast GPU transition */
+                    .main-content > div > .animate-fade-in-up,
+                    .main-content > div > div.animate-fade-in-up,
+                    .main-content > div > .settings-studio-container,
+                    .main-content > div > div[style*="animation: 'fadeIn"],
+                    .main-content > div > div[style*="animation: fadeIn"] {
+                        animation: none !important;
+                    }
+                `}</style>
                 <motion.div
                     key={location.pathname}
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                    style={{ width: '100%', minHeight: '100%' }}
+                    transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+                    style={{
+                        width: '100%',
+                        maxWidth: '100%',
+                        minHeight: '100%',
+                        boxSizing: 'border-box',
+                        willChange: 'transform, opacity'
+                    }}
                 >
                     <Outlet />
                 </motion.div>
