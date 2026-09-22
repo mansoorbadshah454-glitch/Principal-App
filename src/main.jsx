@@ -22,3 +22,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </BrowserRouter>
   </ErrorBoundary>,
 );
+
+// Register Offline Service Worker for 0ms offline capability
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/firebase-messaging-sw.js')
+      .then((reg) => console.log('🚀 [PWA] Offline Service Worker registered:', reg.scope))
+      .catch((err) => console.warn('⚠️ [PWA] Service Worker registration failed:', err));
+  });
+}

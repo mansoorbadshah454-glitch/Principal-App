@@ -16,10 +16,25 @@ export const AuthPermissionsProvider = ({ children }) => {
         }
     });
 
-    const [userProfile, setUserProfile] = useState(null);
-    const [permissions, setPermissions] = useState({});
-    const [schoolData, setSchoolData] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [userProfile, setUserProfile] = useState(() => {
+        try {
+            const raw = localStorage.getItem('cached_user_profile');
+            return raw ? JSON.parse(raw) : null;
+        } catch (_) { return null; }
+    });
+    const [permissions, setPermissions] = useState(() => {
+        try {
+            const raw = localStorage.getItem('cached_admin_perms');
+            return raw ? JSON.parse(raw) : {};
+        } catch (_) { return {}; }
+    });
+    const [schoolData, setSchoolData] = useState(() => {
+        try {
+            const raw = localStorage.getItem('cached_school_data');
+            return raw ? JSON.parse(raw) : null;
+        } catch (_) { return null; }
+    });
+    const [loading, setLoading] = useState(false);
 
     const schoolId = sessionData?.schoolId;
     const uid = sessionData?.uid;
@@ -81,12 +96,13 @@ export const AuthPermissionsProvider = ({ children }) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
                 setSchoolData(data);
+                try {
+                    localStorage.setItem('cached_school_data', JSON.stringify(data));
+                } catch (_) {}
                 console.log("🏫 Real-time School Plan Updated:", data.package, data.modules);
-            } else {
-                setSchoolData(null);
             }
         }, (err) => {
-            console.warn("School doc listener error:", err);
+            console.warn("School doc listener notice (safe offline):", err);
         });
 
         return () => unsub();
@@ -114,6 +130,10 @@ export const AuthPermissionsProvider = ({ children }) => {
                 const data = docSnap.data();
                 setUserProfile(data);
                 setPermissions(data.permissions || {});
+                try {
+                    localStorage.setItem('cached_user_profile', JSON.stringify(data));
+                    localStorage.setItem('cached_admin_perms', JSON.stringify(data.permissions || {}));
+                } catch (_) {}
             } else {
                 // Fallback check in users collection
                 const userDocRef = doc(db, `schools/${schoolId}/users`, uid);
@@ -122,12 +142,16 @@ export const AuthPermissionsProvider = ({ children }) => {
                         const uData = uSnap.data();
                         setUserProfile(uData);
                         setPermissions(uData.permissions || {});
+                        try {
+                            localStorage.setItem('cached_user_profile', JSON.stringify(uData));
+                            localStorage.setItem('cached_admin_perms', JSON.stringify(uData.permissions || {}));
+                        } catch (_) {}
                     }
                 }).catch(console.error);
             }
             setLoading(false);
         }, (err) => {
-            console.warn("Permissions listener error:", err);
+            console.warn("Permissions listener notice (safe offline):", err);
             setLoading(false);
         });
 

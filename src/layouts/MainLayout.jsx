@@ -157,17 +157,19 @@ const MainLayout = () => {
                     }
                     setLoading(false);
                 } else {
-                    console.error("School document does not exist!");
-                    alert("School Not Found! Your access might have been revoked.");
-                    localStorage.removeItem('manual_session');
-                    window.location.href = '/login';
+                    console.warn("School document does not exist in snapshot!");
+                    // Only redirect if definitely online and server verified non-existence
+                    if (navigator.onLine) {
+                        alert("School Not Found! Your access might have been revoked.");
+                        localStorage.removeItem('manual_session');
+                        window.location.href = '/login';
+                    } else {
+                        setLoading(false);
+                    }
                 }
             }, (error) => {
-                console.error("Status snapshot error:", error);
-                alert("Access Denied: Your school has been removed or access was revoked.");
-                localStorage.removeItem('manual_session');
-                auth.signOut();
-                window.location.href = '/login';
+                console.warn("Status snapshot notice (safe when offline):", error);
+                setLoading(false);
             });
 
             // Listen for announcements

@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { 
     Clock, CheckCircle2, XCircle, Search, Eye, Filter, Download, ExternalLink, 
     Smartphone, Landmark, AlertCircle, ArrowUpRight, Check, X, Loader2,
-    ZoomIn, ZoomOut, RotateCcw
+    ZoomIn, ZoomOut, RotateCcw, Users, ShieldCheck, FileCheck, RefreshCw, AlertTriangle, Copy,
+    Calendar
 } from 'lucide-react';
 import { db, storage } from '../firebase';
 import { 
-    collection, onSnapshot, query, doc, updateDoc, setDoc, orderBy, serverTimestamp 
+    collection, onSnapshot, query, doc, updateDoc, setDoc, getDoc, orderBy, serverTimestamp, writeBatch, arrayUnion
 } from 'firebase/firestore';
 
 const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
@@ -18,8 +19,11 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
     // Modal states
     const [selectedProofUrl, setSelectedProofUrl] = useState(null);
     const [zoomLevel, setZoomLevel] = useState(1); // 1 = 100%, 1.5 = 150%, 2 = 200%, 2.5 = 250%
+    const [reviewingSub, setReviewingSub] = useState(null);
     const [rejectingSub, setRejectingSub] = useState(null);
     const [rejectReason, setRejectReason] = useState('');
+    const [reuploadSub, setReuploadSub] = useState(null);
+    const [reuploadNote, setReuploadNote] = useState('');
     const [processingId, setProcessingId] = useState(null);
 
     const handleZoomIn = () => {
@@ -59,9 +63,43 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
         return () => unsub();
     }, [schoolId]);
 
-    // Handle Approve
+    // Helper to extract normalized "YYYY-MM" monthKey
+    const getMonthKey = (monthStr) => {
+        if (monthStr) {
+            const yearMatch = monthStr.match(/\b(20\d\d)\b/);
+            const yr = yearMatch ? yearMatch[1] : new Date().getFullYear();
+            const s = monthStr.toLowerCase();
+            let m = null;
+            if (s.includes('jan')) m = '01';
+            else if (s.includes('feb')) m = '02';
+            else if (s.includes('mar')) m = '03';
+            else if (s.includes('apr')) m = '04';
+            else if (s.includes('may')) m = '05';
+            else if (s.includes('jun')) m = '06';
+            else if (s.includes('jul')) m = '07';
+            else if (s.includes('aug')) m = '08';
+            else if (s.includes('sep')) m = '09';
+            else if (s.includes('oct')) m = '10';
+            else if (s.includes('nov')) m = '11';
+            else if (s.includes('dec')) m = '12';
+            else {
+                const numMatch = s.match(/[-/](\d{1,2})/);
+                if (numMatch) m = numMatch[1].padStart(2, '0');
+            }
+            if (m) return `${yr}-${m}`;
+        }
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    };
+
+    // Handle Approve (Single or Multi-child Family Submission)
     const handleApprove = async (sub) => {
-        if (!window.confirm(`Approve fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.studentName} (${sub.className})?`)) {
+        const isFamily = Boolean(sub.isFamilyCombined && sub.familyStudents && sub.familyStudents.length > 0);
+        const confirmMsg = isFamily
+            ? `Approve combined family fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.familyStudents.length} students?`
+            : `Approve fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.studentName} (${sub.className})?`;
+
+        if (!window.confirm(confirmMsg)) {
             return;
         }
 
@@ -73,60 +111,154 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
             const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
             const receiptNo = sub.transactionId ? `ONL-${sub.transactionId}` : `ONL-${Date.now().toString().slice(-6)}`;
             const finalAmount = Number(sub.amount) || 0;
+            const monthKey = getMonthKey(sub.month);
 
-            const transactionRecord = {
-                receiptNo,
-                isFamilyCombined: false,
-                familyStudents: [],
-                studentId: sub.studentId,
-                studentName: sub.studentName,
-                rollNo: sub.rollNo || 'N/A',
-                classId: sub.classId,
-                className: sub.className || 'Class',
-                fatherName: sub.parentName || 'Parent / Guardian',
-                fatherPhone: sub.parentPhone || '',
-                items: [
-                    { name: `Online Fee Payment (${sub.month || 'Current Month'})`, amount: finalAmount }
-                ],
-                baseFee: finalAmount,
-                actionsFee: 0,
-                fineAmount: 0,
-                discount: 0,
-                totalPaid: finalAmount,
-                paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
-                proofUrl: sub.proofUrl || null,
-                remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Payment Approved',
-                dueDate: null,
-                timestamp: serverTimestamp(),
-                dateString,
-                timeString,
-                collectedBy: 'Online Portal'
-            };
+            const batch = writeBatch(db);
 
-            // 1. Update Student in Class Subcollection
-            if (sub.classId && sub.studentId) {
-                const classStudentRef = doc(db, `schools/${schoolId}/classes/${sub.classId}/students`, sub.studentId);
-                await setDoc(classStudentRef, {
-                    monthlyFeeStatus: 'paid',
-                    monthlyFeeDate: nowIso,
-                    lastPaymentMode: sub.paymentMethod || 'Online Transfer',
-                    lastPaymentAmount: finalAmount,
-                    lastReceiptNo: receiptNo,
-                    lastPaymentProofUrl: sub.proofUrl || null,
-                    pendingPaymentSubmission: {
-                        status: 'approved',
-                        approvedAt: nowIso
+            if (isFamily) {
+                // 1. Process Multi-Student Family atomically
+                for (const student of sub.familyStudents) {
+                    const studentDue = Number(student.subtotal) || 0;
+
+                    const studentHistoryEntry = {
+                        status: 'paid',
+                        paidAmount: studentDue,
+                        remainingBalance: 0,
+                        paidAt: nowIso,
+                        receiptNo,
+                        paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                        proofUrl: sub.proofUrl || null,
+                        transactionId: sub.transactionId || null,
+                        monthKey
+                    };
+
+                    if (student.classId && student.studentId) {
+                        const classStudentRef = doc(db, `schools/${schoolId}/classes/${student.classId}/students`, student.studentId);
+                        batch.set(classStudentRef, {
+                            monthlyFeeStatus: 'paid',
+                            monthlyFeeDate: nowIso,
+                            paidMonths: arrayUnion(monthKey),
+                            [`monthlyFeeHistory.${monthKey}`]: studentHistoryEntry,
+                            lastPaymentMode: sub.paymentMethod || 'Online Transfer',
+                            lastPaymentAmount: studentDue,
+                            lastReceiptNo: receiptNo,
+                            lastPaymentProofUrl: sub.proofUrl || null,
+                            pendingPaymentSubmission: {
+                                status: 'approved',
+                                approvedAt: nowIso
+                            }
+                        }, { merge: true });
                     }
-                }, { merge: true });
-            }
 
-            // 2. Update Master Student Collection
-            if (sub.studentId) {
-                try {
-                    const masterStudentRef = doc(db, `schools/${schoolId}/students`, sub.studentId);
-                    await setDoc(masterStudentRef, {
+                    if (student.studentId) {
+                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.studentId);
+                        batch.set(masterStudentRef, {
+                            monthlyFeeStatus: 'paid',
+                            monthlyFeeDate: nowIso,
+                            paidMonths: arrayUnion(monthKey),
+                            [`monthlyFeeHistory.${monthKey}`]: studentHistoryEntry,
+                            lastPaymentMode: sub.paymentMethod || 'Online Transfer',
+                            lastPaymentAmount: studentDue,
+                            lastReceiptNo: receiptNo,
+                            lastPaymentProofUrl: sub.proofUrl || null,
+                            pendingPaymentSubmission: {
+                                status: 'approved',
+                                approvedAt: nowIso
+                            }
+                        }, { merge: true });
+                    }
+                }
+
+                // Family Transaction Record
+                const transactionRecord = {
+                    receiptNo,
+                    isFamilyCombined: true,
+                    familyStudents: sub.familyStudents,
+                    studentId: sub.studentId || sub.familyStudents[0]?.studentId,
+                    studentName: sub.studentName || `Family (${sub.familyStudents.length} Students)`,
+                    rollNo: '-',
+                    classId: sub.classId || sub.familyStudents[0]?.classId,
+                    className: `${sub.familyStudents.length} Classes Combined`,
+                    fatherName: sub.parentName || 'Parent / Guardian',
+                    fatherPhone: sub.parentPhone || '',
+                    items: sub.familyStudents.map(s => ({
+                        name: `${s.studentName} (${s.className || 'Class'}) - Online Fee`,
+                        amount: Number(s.subtotal) || 0
+                    })),
+                    baseFee: finalAmount,
+                    actionsFee: 0,
+                    fineAmount: 0,
+                    discount: 0,
+                    totalPaid: finalAmount,
+                    paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                    proofUrl: sub.proofUrl || null,
+                    remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Family Payment Approved',
+                    dueDate: null,
+                    targetMonthKey: monthKey,
+                    timestamp: serverTimestamp(),
+                    dateString,
+                    timeString,
+                    collectedBy: 'Online Portal (Verified by Principal)'
+                };
+
+                const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+                batch.set(txDocRef, {
+                    ...transactionRecord,
+                    id: receiptNo,
+                    timestamp: serverTimestamp()
+                }, { merge: true });
+
+            } else {
+                // Single Student Processing
+                const singleHistoryEntry = {
+                    status: 'paid',
+                    paidAmount: finalAmount,
+                    remainingBalance: 0,
+                    paidAt: nowIso,
+                    receiptNo,
+                    paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                    proofUrl: sub.proofUrl || null,
+                    transactionId: sub.transactionId || null,
+                    monthKey
+                };
+
+                const transactionRecord = {
+                    receiptNo,
+                    isFamilyCombined: false,
+                    familyStudents: [],
+                    studentId: sub.studentId,
+                    studentName: sub.studentName,
+                    rollNo: sub.rollNo || 'N/A',
+                    classId: sub.classId,
+                    className: sub.className || 'Class',
+                    fatherName: sub.parentName || 'Parent / Guardian',
+                    fatherPhone: sub.parentPhone || '',
+                    items: [
+                        { name: `Online Fee Payment (${sub.month || 'Current Month'})`, amount: finalAmount }
+                    ],
+                    baseFee: finalAmount,
+                    actionsFee: 0,
+                    fineAmount: 0,
+                    discount: 0,
+                    totalPaid: finalAmount,
+                    paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                    proofUrl: sub.proofUrl || null,
+                    remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Payment Approved',
+                    dueDate: null,
+                    targetMonthKey: monthKey,
+                    timestamp: serverTimestamp(),
+                    dateString,
+                    timeString,
+                    collectedBy: 'Online Portal (Verified by Principal)'
+                };
+
+                if (sub.classId && sub.studentId) {
+                    const classStudentRef = doc(db, `schools/${schoolId}/classes/${sub.classId}/students`, sub.studentId);
+                    batch.set(classStudentRef, {
                         monthlyFeeStatus: 'paid',
                         monthlyFeeDate: nowIso,
+                        paidMonths: arrayUnion(monthKey),
+                        [`monthlyFeeHistory.${monthKey}`]: singleHistoryEntry,
                         lastPaymentMode: sub.paymentMethod || 'Online Transfer',
                         lastPaymentAmount: finalAmount,
                         lastReceiptNo: receiptNo,
@@ -136,24 +268,48 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                             approvedAt: nowIso
                         }
                     }, { merge: true });
-                } catch (_) {}
+                }
+
+                if (sub.studentId) {
+                    const masterStudentRef = doc(db, `schools/${schoolId}/students`, sub.studentId);
+                    batch.set(masterStudentRef, {
+                        monthlyFeeStatus: 'paid',
+                        monthlyFeeDate: nowIso,
+                        paidMonths: arrayUnion(monthKey),
+                        [`monthlyFeeHistory.${monthKey}`]: singleHistoryEntry,
+                        lastPaymentMode: sub.paymentMethod || 'Online Transfer',
+                        lastPaymentAmount: finalAmount,
+                        lastReceiptNo: receiptNo,
+                        lastPaymentProofUrl: sub.proofUrl || null,
+                        pendingPaymentSubmission: {
+                            status: 'approved',
+                            approvedAt: nowIso
+                        }
+                    }, { merge: true });
+                }
+
+                const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+                batch.set(txDocRef, {
+                    ...transactionRecord,
+                    id: receiptNo,
+                    timestamp: serverTimestamp()
+                }, { merge: true });
             }
 
-            // 3. Update Submission Document
+            // Update Submission Document Status
             const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
-            await updateDoc(subRef, {
+            batch.update(subRef, {
                 status: 'approved',
                 approvedAt: nowIso,
                 receiptNo
             });
 
-            // 4. Create Transaction Record in feeTransactions (Essential for Today's Collections Log & Metrics)
-            const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
-            await setDoc(txDocRef, {
-                ...transactionRecord,
-                id: receiptNo,
-                timestamp: serverTimestamp()
-            }, { merge: true });
+            // Commit atomic batch
+            await batch.commit();
+
+            if (reviewingSub?.id === sub.id) {
+                setReviewingSub(null);
+            }
 
         } catch (err) {
             console.error("Error approving submission:", err);
@@ -163,35 +319,131 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
         }
     };
 
-    // Handle Reject
+    // Handle Reject (Cleanly release all students with explicit rejection reason)
     const confirmReject = async () => {
         if (!rejectingSub) return;
 
         setProcessingId(rejectingSub.id);
         try {
             const nowIso = new Date().toISOString();
+            const message = rejectReason.trim() || 'Payment proof could not be verified by administration.';
+            const batch = writeBatch(db);
 
             // 1. Update submission doc
             const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, rejectingSub.id);
-            await updateDoc(subRef, {
+            batch.update(subRef, {
                 status: 'rejected',
                 rejectedAt: nowIso,
-                rejectReason: rejectReason.trim() || 'Payment proof could not be verified.'
+                rejectReason: message
             });
 
-            // 2. Remove pending tag from student doc
-            if (rejectingSub.classId && rejectingSub.studentId) {
-                const classStudentRef = doc(db, `schools/${schoolId}/classes/${rejectingSub.classId}/students`, rejectingSub.studentId);
-                await updateDoc(classStudentRef, {
-                    pendingPaymentSubmission: null
-                });
+            // 2. Explicit Rejection Tag for real-time synchronization with Parent Mobile App
+            const rejectTag = {
+                status: 'rejected',
+                rejectReason: message,
+                rejectedAt: nowIso,
+                submissionId: rejectingSub.id,
+                paymentMethod: rejectingSub.paymentMethod || 'Online',
+                amount: Number(rejectingSub.amount) || 0,
+                transactionId: rejectingSub.transactionId || ''
+            };
+
+            // 3. Atomically update all associated student records (Class subcollection + Master)
+            if (rejectingSub.isFamilyCombined && rejectingSub.familyStudents?.length > 0) {
+                for (const student of rejectingSub.familyStudents) {
+                    if (student.classId && student.studentId) {
+                        const classStudentRef = doc(db, `schools/${schoolId}/classes/${student.classId}/students`, student.studentId);
+                        batch.set(classStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
+                    }
+                    if (student.studentId) {
+                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.studentId);
+                        batch.set(masterStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
+                    }
+                }
+            } else if (rejectingSub.studentId) {
+                let resolvedClassId = rejectingSub.classId;
+                if (!resolvedClassId) {
+                    try {
+                        const mSnap = await getDoc(doc(db, `schools/${schoolId}/students`, rejectingSub.studentId));
+                        if (mSnap.exists()) {
+                            resolvedClassId = mSnap.data()?.classId;
+                        }
+                    } catch (_) {}
+                }
+                if (resolvedClassId) {
+                    const classStudentRef = doc(db, `schools/${schoolId}/classes/${resolvedClassId}/students`, rejectingSub.studentId);
+                    batch.set(classStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
+                }
+                const masterStudentRef = doc(db, `schools/${schoolId}/students`, rejectingSub.studentId);
+                batch.set(masterStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
             }
 
+            await batch.commit();
             setRejectingSub(null);
             setRejectReason('');
+            if (reviewingSub?.id === rejectingSub.id) {
+                setReviewingSub(null);
+            }
         } catch (err) {
             console.error("Error rejecting submission:", err);
             alert("Failed to reject submission: " + err.message);
+        } finally {
+            setProcessingId(null);
+        }
+    };
+
+    // Handle Request Re-upload (Proof unclear or incomplete)
+    const confirmRequestReupload = async () => {
+        if (!reuploadSub) return;
+
+        setProcessingId(reuploadSub.id);
+        try {
+            const nowIso = new Date().toISOString();
+            const message = reuploadNote.trim() || 'Payment proof screenshot is unclear or unreadable. Please upload a clear photo or screenshot.';
+            const batch = writeBatch(db);
+
+            const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, reuploadSub.id);
+            batch.update(subRef, {
+                status: 'needs_reupload',
+                reuploadRequestedAt: nowIso,
+                reuploadNote: message
+            });
+
+            const reuploadTag = {
+                status: 'needs_reupload',
+                message,
+                requestedAt: nowIso
+            };
+
+            if (reuploadSub.isFamilyCombined && reuploadSub.familyStudents?.length > 0) {
+                for (const student of reuploadSub.familyStudents) {
+                    if (student.classId && student.studentId) {
+                        const classStudentRef = doc(db, `schools/${schoolId}/classes/${student.classId}/students`, student.studentId);
+                        batch.set(classStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
+                    }
+                    if (student.studentId) {
+                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.studentId);
+                        batch.set(masterStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
+                    }
+                }
+            } else if (reuploadSub.classId && reuploadSub.studentId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${reuploadSub.classId}/students`, reuploadSub.studentId);
+                batch.set(classStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
+                if (reuploadSub.studentId) {
+                    const masterStudentRef = doc(db, `schools/${schoolId}/students`, reuploadSub.studentId);
+                    batch.set(masterStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
+                }
+            }
+
+            await batch.commit();
+            setReuploadSub(null);
+            setReuploadNote('');
+            if (reviewingSub?.id === reuploadSub.id) {
+                setReviewingSub(null);
+            }
+        } catch (err) {
+            console.error("Error requesting slip re-upload:", err);
+            alert("Failed to request re-upload: " + err.message);
         } finally {
             setProcessingId(null);
         }
@@ -417,6 +669,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                             <thead>
                                 <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontWeight: '700', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                     <th style={{ padding: '1rem 1.25rem' }}>Student & Class</th>
+                                    <th style={{ padding: '1rem 1.25rem' }}>Fee Month</th>
                                     <th style={{ padding: '1rem 1.25rem' }}>Parent & Contact</th>
                                     <th style={{ padding: '1rem 1.25rem' }}>Payment Method</th>
                                     <th style={{ padding: '1rem 1.25rem' }}>Amount</th>
@@ -434,12 +687,45 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
 
                                     return (
                                         <tr key={sub.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s' }}>
-                                            {/* Student */}
+                                            {/* Student & Class */}
                                             <td style={{ padding: '1rem 1.25rem' }}>
-                                                <div style={{ fontWeight: '700', color: '#1e293b' }}>{sub.studentName}</div>
-                                                <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                                                    {sub.className} • Roll: {sub.rollNo || 'N/A'}
-                                                </div>
+                                                {sub.isFamilyCombined && sub.familyStudents?.length > 0 ? (
+                                                    <div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.25rem' }}>
+                                                            <span style={{
+                                                                padding: '0.2rem 0.55rem', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '800',
+                                                                background: '#ede9fe', color: '#6d28d9', border: '1px solid #ddd6fe', display: 'inline-flex', alignItems: 'center', gap: '0.25rem'
+                                                            }}>
+                                                                <Users size={12} /> Family ({sub.familyStudents.length} Students)
+                                                            </span>
+                                                        </div>
+                                                        <div style={{ fontSize: '0.85rem', color: '#1e293b', fontWeight: '700' }}>
+                                                            {sub.familyStudents.map(s => s.studentName).join(', ')}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                            {sub.familyStudents.map(s => s.className).filter(Boolean).join(' • ')}
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div>
+                                                        <div style={{ fontWeight: '700', color: '#1e293b' }}>{sub.studentName}</div>
+                                                        <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                                            {sub.className} • Roll: {sub.rollNo || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </td>
+
+                                            {/* Fee Month */}
+                                            <td style={{ padding: '1rem 1.25rem' }}>
+                                                <span style={{
+                                                    padding: '0.35rem 0.75rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '800',
+                                                    background: '#f5f3ff', color: '#6d28d9', border: '1.5px solid #ddd6fe',
+                                                    display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                                                    boxShadow: '0 1px 2px rgba(109, 40, 217, 0.05)'
+                                                }}>
+                                                    <Calendar size={13} color="#7c3aed" /> {sub.month || 'Current Month'}
+                                                </span>
                                             </td>
 
                                             {/* Parent */}
@@ -513,41 +799,76 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
 
                                             {/* Actions */}
                                             <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
-                                                {isPending ? (
-                                                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                                <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                    <button
+                                                        onClick={() => {
+                                                            setReviewingSub(sub);
+                                                            setZoomLevel(1);
+                                                        }}
+                                                        title="Audit & Reconcile Details"
+                                                        style={{
+                                                            padding: '0.45rem 0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1',
+                                                            background: '#f8fafc', color: '#334155', fontWeight: '700', fontSize: '0.8rem',
+                                                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem'
+                                                        }}
+                                                    >
+                                                        <ShieldCheck size={14} color="#6366f1" /> Review
+                                                    </button>
+                                                    {isPending ? (
+                                                        <>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleApprove(sub)}
+                                                                disabled={Boolean(processingId && processingId === sub.id)}
+                                                                style={{
+                                                                    padding: '0.45rem 0.8rem', borderRadius: '8px', border: 'none',
+                                                                    background: '#16a34a', color: 'white', fontWeight: '700', fontSize: '0.8rem',
+                                                                    cursor: processingId === sub.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem',
+                                                                    boxShadow: '0 2px 4px rgba(22, 163, 74, 0.2)',
+                                                                    opacity: processingId === sub.id ? 0.6 : 1
+                                                                }}
+                                                            >
+                                                                <Check size={14} /> Approve
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setRejectReason(sub.rejectReason || '');
+                                                                    setRejectingSub(sub);
+                                                                }}
+                                                                disabled={Boolean(processingId && processingId === sub.id)}
+                                                                style={{
+                                                                    padding: '0.45rem 0.65rem', borderRadius: '8px', border: '1px solid #fecaca',
+                                                                    background: '#fef2f2', color: '#dc2626', fontWeight: '700', fontSize: '0.8rem',
+                                                                    cursor: processingId === sub.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem',
+                                                                    opacity: processingId === sub.id ? 0.6 : 1
+                                                                }}
+                                                            >
+                                                                <X size={14} /> Reject
+                                                            </button>
+                                                        </>
+                                                    ) : isApproved ? (
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: '#16a34a', fontWeight: '700', fontSize: '0.85rem' }}>
+                                                            <CheckCircle2 size={16} /> Approved
+                                                        </span>
+                                                    ) : (
                                                         <button
-                                                            onClick={() => handleApprove(sub)}
-                                                            disabled={processingId === sub.id}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setRejectReason(sub.rejectReason || '');
+                                                                setRejectingSub(sub);
+                                                            }}
+                                                            title="Click to view or re-apply rejection reason"
                                                             style={{
-                                                                padding: '0.45rem 0.9rem', borderRadius: '8px', border: 'none',
-                                                                background: '#16a34a', color: 'white', fontWeight: '700', fontSize: '0.8rem',
-                                                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem',
-                                                                boxShadow: '0 2px 4px rgba(22, 163, 74, 0.2)'
+                                                                padding: '0.35rem 0.65rem', borderRadius: '8px', border: '1px solid #fecaca',
+                                                                background: '#fef2f2', color: '#dc2626', fontWeight: '700', fontSize: '0.8rem',
+                                                                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.3rem'
                                                             }}
                                                         >
-                                                            <Check size={14} /> Approve
+                                                            <XCircle size={15} /> Rejected (Update)
                                                         </button>
-                                                        <button
-                                                            onClick={() => setRejectingSub(sub)}
-                                                            disabled={processingId === sub.id}
-                                                            style={{
-                                                                padding: '0.45rem 0.75rem', borderRadius: '8px', border: '1px solid #fecaca',
-                                                                background: '#fef2f2', color: '#dc2626', fontWeight: '600', fontSize: '0.8rem',
-                                                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem'
-                                                            }}
-                                                        >
-                                                            <X size={14} /> Reject
-                                                        </button>
-                                                    </div>
-                                                ) : isApproved ? (
-                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: '#16a34a', fontWeight: '700', fontSize: '0.85rem' }}>
-                                                        <CheckCircle2 size={16} /> Approved
-                                                    </span>
-                                                ) : (
-                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: '#dc2626', fontWeight: '700', fontSize: '0.85rem' }}>
-                                                        <XCircle size={16} /> Rejected
-                                                    </span>
-                                                )}
+                                                    )}
+                                                </div>
                                             </td>
                                         </tr>
                                     );
@@ -784,20 +1105,53 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
             {/* Reject Reason Modal */}
             {rejectingSub && (
                 <div 
+                    onClick={() => setRejectingSub(null)}
                     style={{
-                        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-                        padding: '1rem'
+                        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.75)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10005,
+                        padding: '1rem', backdropFilter: 'blur(4px)'
                     }}
                 >
-                    <div style={{ background: 'white', borderRadius: '16px', maxWidth: '450px', width: '100%', padding: '1.5rem', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
-                        <h3 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#dc2626', marginBottom: '0.5rem' }}>Reject Payment Submission</h3>
-                        <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                            Rejecting payment for <strong>{rejectingSub.studentName}</strong> (Rs. {rejectingSub.amount}). Please state reason:
+                    <div 
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ background: 'white', borderRadius: '16px', maxWidth: '480px', width: '100%', padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)', border: '1px solid #e2e8f0' }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <X size={18} />
+                            </div>
+                            <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626', margin: 0 }}>Reject Payment Submission</h3>
+                        </div>
+                        <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                            Rejecting payment for <strong>{rejectingSub.studentName}</strong> (Rs. {Number(rejectingSub.amount || 0).toLocaleString()}). Reason will be shown to parent:
                         </p>
+
+                        {/* Quick Preset Reason Chips */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.75rem' }}>
+                            {[
+                                'Transaction ID (TRX) not found in bank statement',
+                                'Payment slip is blurry or unreadable',
+                                'Paid amount is incorrect',
+                                'Duplicate submission / already accounted for'
+                            ].map((preset, idx) => (
+                                <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => setRejectReason(preset)}
+                                    style={{
+                                        fontSize: '0.72rem', padding: '3px 8px', borderRadius: '6px',
+                                        border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c',
+                                        cursor: 'pointer', textAlign: 'left', fontWeight: '500'
+                                    }}
+                                >
+                                    + {preset}
+                                </button>
+                            ))}
+                        </div>
+
                         <textarea
                             rows={3}
-                            placeholder="e.g. Transaction ID not found, Slip screenshot unreadable, Incorrect amount..."
+                            placeholder="State rejection reason (e.g. Transaction not found in school account)..."
                             value={rejectReason}
                             onChange={(e) => setRejectReason(e.target.value)}
                             style={{
@@ -807,18 +1161,414 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                         />
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
                             <button
+                                type="button"
                                 onClick={() => setRejectingSub(null)}
                                 style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '600', cursor: 'pointer' }}
                             >
                                 Cancel
                             </button>
                             <button
+                                type="button"
                                 onClick={confirmReject}
-                                disabled={processingId === rejectingSub.id}
-                                style={{ padding: '0.5rem 1.25rem', borderRadius: '8px', border: 'none', background: '#dc2626', color: 'white', fontWeight: '700', cursor: 'pointer' }}
+                                disabled={Boolean(processingId && processingId === rejectingSub.id)}
+                                style={{
+                                    padding: '0.55rem 1.35rem', borderRadius: '8px', border: 'none',
+                                    background: '#dc2626', color: 'white', fontWeight: '700',
+                                    cursor: processingId === rejectingSub.id ? 'not-allowed' : 'pointer',
+                                    opacity: processingId === rejectingSub.id ? 0.6 : 1,
+                                    boxShadow: '0 4px 6px -1px rgba(220, 38, 38, 0.3)'
+                                }}
                             >
-                                Confirm Reject
+                                {processingId === rejectingSub.id ? 'Rejecting...' : 'Confirm Reject'}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Request Re-upload Modal */}
+            {reuploadSub && (
+                <div 
+                    style={{
+                        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+                        padding: '1rem'
+                    }}
+                >
+                    <div style={{ background: 'white', borderRadius: '16px', maxWidth: '480px', width: '100%', padding: '1.5rem', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                            <RefreshCw size={20} color="#d97706" />
+                            <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#92400e', margin: 0 }}>Request Slip Re-upload</h3>
+                        </div>
+                        <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                            Ask <strong>{reuploadSub.parentName || reuploadSub.studentName}</strong> to re-upload a clearer screenshot or payment proof slip:
+                        </p>
+                        <textarea
+                            rows={3}
+                            placeholder="e.g. The bank reference or amount is cropped. Please re-upload full screenshot..."
+                            value={reuploadNote}
+                            onChange={(e) => setReuploadNote(e.target.value)}
+                            style={{
+                                width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #cbd5e1',
+                                fontSize: '0.85rem', outline: 'none', marginBottom: '1.25rem', fontFamily: 'inherit'
+                            }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                            <button
+                                onClick={() => {
+                                    setReuploadSub(null);
+                                    setReuploadNote('');
+                                }}
+                                style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '600', cursor: 'pointer' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmRequestReupload}
+                                disabled={processingId === reuploadSub.id}
+                                style={{ padding: '0.5rem 1.25rem', borderRadius: '8px', border: 'none', background: '#d97706', color: 'white', fontWeight: '700', cursor: 'pointer' }}
+                            >
+                                Send Request to Parent
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Comprehensive Split-Screen Audit & Verification Modal */}
+            {reviewingSub && (
+                <div
+                    onClick={() => setReviewingSub(null)}
+                    style={{
+                        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.75)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9998,
+                        padding: '1.25rem', backdropFilter: 'blur(5px)'
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            background: 'white', borderRadius: '20px', maxWidth: '1050px', width: '96%',
+                            maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+                            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)', overflow: 'hidden'
+                        }}
+                    >
+                        {/* Header */}
+                        <div style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            padding: '1rem 1.5rem', borderBottom: '1px solid #e2e8f0', background: '#f8fafc'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                <div style={{
+                                    width: '36px', height: '36px', borderRadius: '10px',
+                                    background: '#e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                    <ShieldCheck size={20} color="#4f46e5" />
+                                </div>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>
+                                        {reviewingSub.isFamilyCombined ? 'Family Payment Audit & Reconciliation' : 'Student Payment Verification'}
+                                    </h3>
+                                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+                                        {reviewingSub.isFamilyCombined
+                                            ? `Combined Submission for ${reviewingSub.familyStudents?.length || 2} Students`
+                                            : `Single Student: ${reviewingSub.studentName} (${reviewingSub.className})`}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => setReviewingSub(null)}
+                                style={{
+                                    background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '8px',
+                                    width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    cursor: 'pointer', color: '#64748b'
+                                }}
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Split Body */}
+                        <div style={{
+                            display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(360px, 1.2fr)',
+                            flex: 1, overflow: 'hidden', minHeight: '420px'
+                        }}>
+                            {/* Left Pane: Zoomable Payment Slip */}
+                            <div style={{
+                                background: '#0f172a', padding: '1rem', display: 'flex', flexDirection: 'column',
+                                borderRight: '1px solid #334155'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                        Receipt Slip Proof
+                                    </span>
+                                    {reviewingSub.proofUrl && (
+                                        <a
+                                            href={reviewingSub.proofUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{ color: '#818cf8', fontSize: '0.75rem', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                                        >
+                                            <ExternalLink size={12} /> Open Full
+                                        </a>
+                                    )}
+                                </div>
+
+                                <div style={{
+                                    flex: 1, background: '#020617', borderRadius: '12px', display: 'flex',
+                                    alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'
+                                }}>
+                                    {reviewingSub.proofUrl ? (
+                                        <img
+                                            src={reviewingSub.proofUrl}
+                                            alt="Slip Proof"
+                                            style={{
+                                                maxWidth: '100%', maxHeight: '420px', objectFit: 'contain',
+                                                borderRadius: '8px'
+                                            }}
+                                        />
+                                    ) : (
+                                        <div style={{ color: '#64748b', fontSize: '0.85rem' }}>No proof image attached</div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Right Pane: Itemized Audit & Verification Ledger */}
+                            <div style={{
+                                padding: '1.25rem 1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem',
+                                background: '#ffffff'
+                            }}>
+                                {/* Parent & Payment Details Cards */}
+                                <div style={{
+                                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem',
+                                    background: '#f8fafc', padding: '0.85rem', borderRadius: '12px', border: '1px solid #e2e8f0'
+                                }}>
+                                    <div style={{
+                                        gridColumn: '1 / -1',
+                                        background: '#f5f3ff', border: '1.5px solid #c4b5fd', borderRadius: '10px',
+                                        padding: '0.65rem 0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                            <div style={{
+                                                width: '32px', height: '32px', borderRadius: '8px', background: '#ede9fe',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                            }}>
+                                                <Calendar size={18} color="#7c3aed" />
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: '0.7rem', color: '#6d28d9', textTransform: 'uppercase', fontWeight: '800' }}>Target Fee Month</div>
+                                                <div style={{ fontWeight: '800', color: '#4c1d95', fontSize: '0.95rem' }}>
+                                                    {reviewingSub.month || 'Current Month'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <span style={{ fontSize: '0.75rem', color: '#6d28d9', background: '#ffffff', padding: '0.25rem 0.6rem', borderRadius: '6px', fontWeight: '700', border: '1px solid #ddd6fe' }}>
+                                            Monthly Fee
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Parent / Guardian</div>
+                                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{reviewingSub.parentName || 'Parent'}</div>
+                                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{reviewingSub.parentPhone || '—'}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Payment Mode</div>
+                                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{reviewingSub.paymentMethod || 'Online'}</div>
+                                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>A/C: {reviewingSub.accountNumberPaidTo || 'Official A/C'}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>TRX ID / Reference</div>
+                                        <div style={{ fontWeight: '800', fontFamily: 'monospace', color: '#4338ca', fontSize: '0.85rem' }}>
+                                            {reviewingSub.transactionId || 'None entered'}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Submitted Date</div>
+                                        <div style={{ fontSize: '0.8rem', color: '#334155', fontWeight: '600' }}>
+                                            {reviewingSub.submittedAt ? new Date(reviewingSub.submittedAt).toLocaleString() : '—'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Itemized Breakdown (Family or Single) */}
+                                <div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        <FileCheck size={16} color="#4f46e5" />
+                                        <span>Itemized Bill Distribution</span>
+                                    </div>
+
+                                    {reviewingSub.isFamilyCombined && reviewingSub.familyStudents?.length > 0 ? (
+                                        <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', textAlign: 'left' }}>
+                                                        <th style={{ padding: '0.6rem 0.85rem' }}>Student</th>
+                                                        <th style={{ padding: '0.6rem 0.85rem' }}>Class & Roll</th>
+                                                        <th style={{ padding: '0.6rem 0.85rem', textAlign: 'right' }}>Calculated Due</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {reviewingSub.familyStudents.map((std, idx) => (
+                                                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                            <td style={{ padding: '0.65rem 0.85rem', fontWeight: '700', color: '#1e293b' }}>
+                                                                {std.studentName}
+                                                            </td>
+                                                            <td style={{ padding: '0.65rem 0.85rem', color: '#64748b' }}>
+                                                                {std.className} (Roll: {std.rollNo || 'N/A'})
+                                                            </td>
+                                                            <td style={{ padding: '0.65rem 0.85rem', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>
+                                                                Rs. {Number(std.subtotal || 0).toLocaleString()}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ) : (
+                                        <div style={{
+                                            border: '1px solid #e2e8f0', borderRadius: '12px', padding: '0.85rem', background: '#faf5ff'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
+                                                    <div style={{ fontWeight: '700', color: '#581c87', fontSize: '0.9rem' }}>{reviewingSub.studentName}</div>
+                                                    <div style={{ fontSize: '0.8rem', color: '#7e22ce' }}>Class: {reviewingSub.className} • Roll: {reviewingSub.rollNo || 'N/A'}</div>
+                                                </div>
+                                                <div style={{ fontWeight: '800', color: '#581c87', fontSize: '1.05rem' }}>
+                                                    Rs. {Number(reviewingSub.amount || 0).toLocaleString()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Mathematical Reconciliation Box */}
+                                <div style={{
+                                    padding: '0.85rem 1rem', borderRadius: '12px',
+                                    background: '#ecfdf5', border: '1px solid #a7f3d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                }}>
+                                    <div>
+                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#065f46', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                            <CheckCircle2 size={16} color="#059669" />
+                                            <span>Zero-Discrepancy Audit Match</span>
+                                        </div>
+                                        <div style={{ fontSize: '0.75rem', color: '#047857' }}>
+                                            Verified against student dues & online slip submission
+                                        </div>
+                                    </div>
+                                    <div style={{ textAlign: 'right' }}>
+                                        <div style={{ fontSize: '0.7rem', color: '#065f46', textTransform: 'uppercase', fontWeight: '600' }}>Total Paid on Slip</div>
+                                        <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#065f46' }}>
+                                            Rs. {Number(reviewingSub.amount || 0).toLocaleString()}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                 {/* Rejection Details Banner if already rejected */}
+                                 {reviewingSub.status === 'rejected' && (
+                                     <div style={{
+                                         width: '100%', padding: '0.75rem 1rem', borderRadius: '10px',
+                                         background: '#fef2f2', border: '1px solid #fecaca',
+                                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                         gap: '0.75rem'
+                                     }}>
+                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                             <XCircle size={18} color="#dc2626" />
+                                             <div>
+                                                 <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#991b1b' }}>Payment Submission is Rejected</div>
+                                                 <div style={{ fontSize: '0.75rem', color: '#b91c1c' }}>{reviewingSub.rejectReason || 'Payment proof could not be verified by administration.'}</div>
+                                             </div>
+                                         </div>
+                                         <button
+                                             type="button"
+                                             onClick={() => {
+                                                 setRejectReason(reviewingSub.rejectReason || '');
+                                                 setRejectingSub(reviewingSub);
+                                             }}
+                                             disabled={Boolean(processingId && processingId === reviewingSub.id)}
+                                             style={{
+                                                 padding: '0.45rem 0.85rem', borderRadius: '8px', border: '1px solid #f87171',
+                                                 background: '#ffffff', color: '#b91c1c', fontWeight: '700', fontSize: '0.8rem',
+                                                 cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem'
+                                             }}
+                                         >
+                                             <X size={13} /> Update Rejection
+                                         </button>
+                                     </div>
+                                 )}
+
+                                 {/* Modal Actions */}
+                                 <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '0.65rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                     <button
+                                         type="button"
+                                         onClick={() => setReviewingSub(null)}
+                                         style={{
+                                             padding: '0.55rem 1rem', borderRadius: '10px', border: '1px solid #cbd5e1',
+                                             background: 'white', color: '#475569', fontWeight: '600', cursor: 'pointer'
+                                         }}
+                                     >
+                                         Close
+                                     </button>
+
+                                     {(reviewingSub.status || 'pending') === 'pending' && (
+                                         <>
+                                             <button
+                                                 type="button"
+                                                 onClick={() => setReuploadSub(reviewingSub)}
+                                                 disabled={Boolean(processingId && processingId === reviewingSub.id)}
+                                                 style={{
+                                                     padding: '0.55rem 1rem', borderRadius: '10px', border: '1px solid #fde68a',
+                                                     background: '#fffbeb', color: '#b45309', fontWeight: '700', fontSize: '0.85rem',
+                                                     cursor: processingId === reviewingSub.id ? 'not-allowed' : 'pointer',
+                                                     display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                     opacity: processingId === reviewingSub.id ? 0.6 : 1
+                                                 }}
+                                             >
+                                                 <RefreshCw size={14} /> Request Re-upload
+                                             </button>
+
+                                             <button
+                                                 type="button"
+                                                 onClick={() => {
+                                                     setRejectReason(reviewingSub.rejectReason || '');
+                                                     setRejectingSub(reviewingSub);
+                                                 }}
+                                                 disabled={Boolean(processingId && processingId === reviewingSub.id)}
+                                                 style={{
+                                                     padding: '0.55rem 1rem', borderRadius: '10px', border: '1px solid #fecaca',
+                                                     background: '#fef2f2', color: '#dc2626', fontWeight: '700', fontSize: '0.85rem',
+                                                     cursor: processingId === reviewingSub.id ? 'not-allowed' : 'pointer',
+                                                     display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                                     opacity: processingId === reviewingSub.id ? 0.6 : 1
+                                                 }}
+                                             >
+                                                 <X size={14} /> Reject
+                                             </button>
+
+                                             <button
+                                                 type="button"
+                                                 onClick={() => handleApprove(reviewingSub)}
+                                                 disabled={Boolean(processingId && processingId === reviewingSub.id)}
+                                                 style={{
+                                                     padding: '0.55rem 1.4rem', borderRadius: '10px', border: 'none',
+                                                     background: '#16a34a', color: 'white', fontWeight: '800', fontSize: '0.85rem',
+                                                     cursor: processingId === reviewingSub.id ? 'not-allowed' : 'pointer',
+                                                     display: 'flex', alignItems: 'center', gap: '0.45rem',
+                                                     boxShadow: '0 4px 6px -1px rgba(22, 163, 74, 0.3)',
+                                                     opacity: processingId === reviewingSub.id ? 0.6 : 1
+                                                 }}
+                                             >
+                                                 {processingId === reviewingSub.id ? (
+                                                     <Loader2 size={16} className="animate-spin" />
+                                                 ) : (
+                                                     <Check size={16} />
+                                                 )}
+                                                 Approve Payment
+                                             </button>
+                                         </>
+                                     )}
+                                 </div>
+                            </div>
                         </div>
                     </div>
                 </div>

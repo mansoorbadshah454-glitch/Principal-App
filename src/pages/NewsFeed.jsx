@@ -16,6 +16,7 @@ import { getDocFast } from '../utils/cacheUtils';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import CachedImage from '../components/CachedImage';
 import { compressImage } from '../utils/imageCompressor';
+import { cacheNewsFeedPosts, getCachedNewsFeedPosts } from '../utils/offlineDataEngine';
 
 const BACKGROUND_GRADIENTS = [
     { id: 0, colors: [], name: 'Default' },
@@ -253,22 +254,40 @@ const NewsFeed = () => {
         resolveAuth();
     }, []);
 
+    // Immediately hydrate cached posts for 0ms offline rendering
+    useEffect(() => {
+        if (!schoolId) return;
+        getCachedNewsFeedPosts(schoolId).then(cached => {
+            if (cached && cached.length > 0) {
+                setPosts(prev => prev.length === 0 ? cached : prev);
+            }
+        });
+    }, [schoolId]);
+
     // 2. Fetch School Profile
     useEffect(() => {
         if (!schoolId) return;
 
         const fetchProfile = async () => {
             try {
+                const localProf = localStorage.getItem(`cached_profile_${schoolId}`);
+                if (localProf) {
+                    setSchoolProfile(JSON.parse(localProf));
+                }
                 const docRef = doc(db, `schools/${schoolId}/settings`, 'profile');
                 const docSnap = await getDocFast(docRef);
                 if (docSnap.exists()) {
-                    setSchoolProfile({
+                    const profData = {
                         name: docSnap.data().name || 'Principal',
                         image: docSnap.data().profileImage || ''
-                    });
+                    };
+                    setSchoolProfile(profData);
+                    try {
+                        localStorage.setItem(`cached_profile_${schoolId}`, JSON.stringify(profData));
+                    } catch (_) {}
                 }
             } catch (err) {
-                console.error("Error fetching profile:", err);
+                console.warn("Notice fetching profile (offline-safe):", err);
             }
         };
         fetchProfile();
@@ -278,17 +297,15 @@ const NewsFeed = () => {
     useEffect(() => {
         if (!schoolId) return;
 
-
         const q = query(collection(db, `schools/${schoolId}/classes`));
         const unsubscribe = onSnapshot(q, (snapshot) => {
-
             const classesData = snapshot.docs.map(doc => ({
                 id: doc.id,
                 name: doc.data().name
             })).sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { numeric: true }));
             setClasses(classesData);
         }, (error) => {
-            console.error("NewsFeed: Error fetching classes", error);
+            console.warn("NewsFeed: Notice fetching classes (offline-safe):", error);
         });
 
         return () => unsubscribe();
@@ -307,9 +324,12 @@ const NewsFeed = () => {
                     id: doc.id,
                     ...doc.data()
                 }));
-                // Note: Client-side deletion of old posts is removed. 
-                // Firestore TTL (Time-To-Live) handles this automatically and cheaply on the backend.
                 setPosts(fetchedPosts);
+                if (fetchedPosts.length > 0) {
+                    cacheNewsFeedPosts(schoolId, fetchedPosts);
+                }
+            }, (error) => {
+                console.warn("NewsFeed: Snapshot notice (offline-safe):", error);
             });
             return () => unsubscribe();
         }

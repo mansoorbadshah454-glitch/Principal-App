@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { 
     Wallet, Users, ChevronRight, ChevronLeft, Ban, CheckCircle, Plus, Trash2, X, 
     CheckSquare, Square, ArrowUpRight, ArrowDownRight, Download,
     Printer, Search, CheckCircle2, User, FileText, Loader2, Sparkles, Building2, Phone, Calendar, Clock, DollarSign,
     Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity,
     PieChart, BarChart3, Zap, ShieldCheck, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight,
-    Award, AlertTriangle, Check, RotateCcw, CalendarDays, History
+    Award, AlertTriangle, Check, RotateCcw, RotateCw, ZoomIn, ZoomOut, Maximize2, CalendarDays, History, Send
 } from 'lucide-react';
 import {
     ResponsiveContainer, BarChart, Bar, AreaChart, Area, PieChart as RechartsPie, Pie, Cell,
@@ -17,11 +18,30 @@ import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
 import PayrollDashboard from '../components/PayrollDashboard';
 import OnlineSubmissionsDashboard from '../components/OnlineSubmissionsDashboard';
+import FeeArrearsMatrix, { 
+    downloadStudentFeeCardPDF, 
+    MONTH_NAMES, 
+    MONTH_SHORT, 
+    formatPKR, 
+    cleanFeeItemName, 
+    calculateItemizedFeeBreakdown 
+} from '../components/FeeArrearsMatrix';
+import {
+    getStudentMonthFinancialStatus
+} from '../utils/feePipeline';
+import {
+    cacheStudentsOffline,
+    getCachedStudentsOffline,
+    updateCachedStudentOffline,
+    enqueueOfflineFeeTransaction,
+    getOfflineFeeQueue,
+    syncOfflineFeeQueueInBatches
+} from '../utils/offlineFeeEngine';
 import { db, auth, storage } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
     collection, onSnapshot, query, doc, updateDoc, deleteField, setDoc, getDoc, deleteDoc,
-    getDocs, writeBatch, getDocsFromCache, addDoc, serverTimestamp, orderBy, limit, where
+    getDocs, writeBatch, getDocsFromCache, addDoc, serverTimestamp, orderBy, limit, where, arrayUnion
 } from 'firebase/firestore';
 
 // --- Components ---
@@ -190,6 +210,261 @@ const ActionModal = ({ isOpen, onClose, onSave, classes }) => {
     );
 };
 
+const NewActionModal = ({ isOpen, onClose, onSave, isSaving, targetMonthName }) => {
+    if (!isOpen) return null;
+
+    const [title, setTitle] = useState('');
+    const [amount, setAmount] = useState('');
+    const [remarks, setRemarks] = useState('');
+
+    const presets = [
+        { label: '📝 Exam Fee', title: 'Annual Exam Fee', amount: 500 },
+        { label: '🪪 ID Card Duplicate', title: 'Student ID Card Replacement', amount: 200 },
+        { label: '📚 Books & Syllabus', title: 'Syllabus & Notebooks Charges', amount: 1000 },
+        { label: '⏳ Discipline Fine', title: 'Discipline / Late Attendance Fine', amount: 300 },
+        { label: '🎨 Annual Gala / Day', title: 'Annual Sports & Gala Function', amount: 1500 },
+        { label: '🚌 Tour & Picnic', title: 'School Educational Tour / Picnic', amount: 1200 },
+        { label: '🔬 Lab Charges', title: 'Science Lab / Breakage Charges', amount: 400 },
+    ];
+
+    const handleSelectPreset = (p) => {
+        setTitle(p.title);
+        setAmount(String(p.amount));
+    };
+
+    const handleFormSubmit = async (e) => {
+        e?.preventDefault();
+        if (!title.trim() || Number(amount) <= 0) return;
+        await onSave(title.trim(), Number(amount), remarks.trim());
+        setTitle('');
+        setAmount('');
+        setRemarks('');
+    };
+
+    const handleClose = () => {
+        setTitle('');
+        setAmount('');
+        setRemarks('');
+        onClose();
+    };
+
+    return createPortal(
+        <div style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '1rem'
+        }}>
+            <div style={{
+                background: '#ffffff',
+                borderRadius: '16px',
+                width: '100%',
+                maxWidth: '480px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                border: '1.5px solid #cbd5e1',
+                overflow: 'hidden'
+            }}>
+                {/* Header */}
+                <div style={{
+                    padding: '1rem 1.25rem',
+                    background: '#f8fafc',
+                    borderBottom: '1px solid #e2e8f0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '8px',
+                            background: '#eff6ff',
+                            color: '#0078d4',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 'bold',
+                            fontSize: '1.1rem'
+                        }}>
+                            ➕
+                        </div>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: '800', color: '#0f172a' }}>
+                                Add New Action / Custom Fee
+                            </h3>
+                            <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                Target Month: <strong style={{ color: '#0078d4' }}>{targetMonthName || 'Current Month'}</strong> (Live sync to Parent App)
+                            </span>
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleClose}
+                        style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#64748b',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            borderRadius: '6px'
+                        }}
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                <form onSubmit={handleFormSubmit} style={{ padding: '1.25rem' }}>
+                    {/* Quick 1-Tap Preset Palette */}
+                    <div style={{ marginBottom: '1rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: '#475569', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            ⚡ 1-Tap Quick Action Presets
+                        </label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                            {presets.map((p, idx) => (
+                                <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => handleSelectPreset(p)}
+                                    style={{
+                                        padding: '4px 8px',
+                                        borderRadius: '6px',
+                                        border: title === p.title ? '1.5px solid #0078d4' : '1px solid #cbd5e1',
+                                        background: title === p.title ? '#eff6ff' : '#f8fafc',
+                                        color: title === p.title ? '#0078d4' : '#334155',
+                                        fontSize: '0.72rem',
+                                        fontWeight: '700',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                >
+                                    {p.label} <span style={{ opacity: 0.7 }}>Rs {p.amount}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Action Title Input */}
+                    <div style={{ marginBottom: '0.85rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.25rem' }}>
+                            Action / Fee Title <span style={{ color: '#ef4444' }}>*</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={title}
+                            onChange={(e) => setTitle(e.target.value)}
+                            placeholder="e.g. Annual Exam Fee, Sports Gala Dress, Lab Fee..."
+                            required
+                            style={{
+                                width: '100%',
+                                padding: '0.55rem 0.75rem',
+                                borderRadius: '8px',
+                                border: '1.5px solid #cbd5e1',
+                                fontSize: '0.85rem',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                fontWeight: '600'
+                            }}
+                        />
+                    </div>
+
+                    {/* Amount Input */}
+                    <div style={{ marginBottom: '0.85rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.25rem' }}>
+                            Amount (Rs) <span style={{ color: '#ef4444' }}>*</span>
+                        </label>
+                        <input
+                            type="number"
+                            value={amount}
+                            onChange={(e) => setAmount(e.target.value)}
+                            min="1"
+                            placeholder="e.g. 500"
+                            required
+                            style={{
+                                width: '100%',
+                                padding: '0.55rem 0.75rem',
+                                borderRadius: '8px',
+                                border: '1.5px solid #cbd5e1',
+                                fontSize: '0.85rem',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                fontWeight: '700',
+                                color: '#0f172a'
+                            }}
+                        />
+                    </div>
+
+                    {/* Optional Remarks */}
+                    <div style={{ marginBottom: '1.25rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
+                            Remarks / Note (Optional)
+                        </label>
+                        <input
+                            type="text"
+                            value={remarks}
+                            onChange={(e) => setRemarks(e.target.value)}
+                            placeholder="e.g. Approved by Vice Principal, Roll #02 slip..."
+                            style={{
+                                width: '100%',
+                                padding: '0.5rem 0.75rem',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                fontSize: '0.8rem',
+                                outline: 'none',
+                                boxSizing: 'border-box'
+                            }}
+                        />
+                    </div>
+
+                    {/* Actions */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                        <button
+                            type="button"
+                            onClick={handleClose}
+                            style={{
+                                padding: '0.55rem 1.1rem',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                background: '#f8fafc',
+                                color: '#475569',
+                                fontSize: '0.8rem',
+                                fontWeight: '700',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={!title.trim() || Number(amount) <= 0 || isSaving}
+                            style={{
+                                padding: '0.55rem 1.35rem',
+                                borderRadius: '8px',
+                                border: 'none',
+                                background: '#0078d4',
+                                color: '#ffffff',
+                                fontSize: '0.8rem',
+                                fontWeight: '800',
+                                cursor: !title.trim() || Number(amount) <= 0 || isSaving ? 'not-allowed' : 'pointer',
+                                opacity: !title.trim() || Number(amount) <= 0 || isSaving ? 0.6 : 1,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                            }}
+                        >
+                            {isSaving ? <Loader2 size={14} className="animate-spin" /> : '➕ Add to Live Bill'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>,
+        document.body
+    );
+};
+
 const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
     const navigate = useNavigate();
     const [monthlyStats, setMonthlyStats] = useState({ paid: 0, unpaid: 0, total: 0, loading: true });
@@ -248,6 +523,10 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
                 total: snapshot.size,
                 loading: false
             });
+        }, (err) => {
+            console.warn("Class student stats listener warning:", err);
+            setMonthlyStats(prev => ({ ...prev, loading: false }));
+            setActionStats(prev => ({ ...prev, loading: false }));
         });
 
         return () => unsubscribe();
@@ -373,9 +652,66 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
     );
 };
 
-// --- Payment Proof Image Lightbox Modal ---
-const PaymentProofModal = ({ isOpen, onClose, proofUrl, title }) => {
+// --- Canvas-Style Interactive Payment Proof Lightbox Modal ---
+const PaymentProofModal = ({ isOpen, onClose, proofUrl, title, meta }) => {
+    const [scale, setScale] = useState(1);
+    const [rotation, setRotation] = useState(0);
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const containerRef = useRef(null);
+
+    useEffect(() => {
+        if (isOpen) {
+            setScale(1);
+            setRotation(0);
+            setPosition({ x: 0, y: 0 });
+        }
+    }, [isOpen, proofUrl]);
+
     if (!isOpen || !proofUrl) return null;
+
+    const handleZoomIn = () => setScale(prev => Math.min(prev + 0.25, 3.5));
+    const handleZoomOut = () => setScale(prev => Math.max(prev - 0.25, 0.5));
+    const handleRotate = () => setRotation(prev => (prev + 90) % 360);
+    const handleReset = () => {
+        setScale(1);
+        setRotation(0);
+        setPosition({ x: 0, y: 0 });
+    };
+
+    const handleMouseDown = (e) => {
+        if (scale > 1) {
+            setIsDragging(true);
+            setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+        }
+    };
+
+    const handleMouseMove = (e) => {
+        if (isDragging && scale > 1) {
+            setPosition({
+                x: e.clientX - dragStart.x,
+                y: e.clientY - dragStart.y
+            });
+        }
+    };
+
+    const handleMouseUp = () => setIsDragging(false);
+
+    const handleDownload = () => {
+        try {
+            const link = document.createElement('a');
+            link.href = proofUrl;
+            link.download = `Payment_Slip_${Date.now()}.jpg`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (e) {
+            window.open(proofUrl, '_blank');
+        }
+    };
+
     return (
         <div style={{
             position: 'fixed',
@@ -383,82 +719,327 @@ const PaymentProofModal = ({ isOpen, onClose, proofUrl, title }) => {
             left: 0,
             right: 0,
             bottom: 0,
-            background: 'rgba(15, 23, 42, 0.75)',
-            backdropFilter: 'blur(6px)',
+            background: 'rgba(15, 23, 42, 0.88)',
+            backdropFilter: 'blur(8px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 10000,
-            padding: '1rem'
+            padding: isFullscreen ? '0' : '1rem',
+            animation: 'fadeIn 0.2s ease-out'
         }}>
-            <div className="card" style={{
-                background: '#ffffff',
-                borderRadius: '12px',
+            <div style={{
+                background: '#0f172a',
+                borderRadius: isFullscreen ? '0' : '16px',
                 width: '100%',
-                maxWidth: '560px',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                padding: '1.5rem',
-                position: 'relative'
+                maxWidth: isFullscreen ? '100vw' : '880px',
+                height: isFullscreen ? '100vh' : 'auto',
+                maxHeight: isFullscreen ? '100vh' : '90vh',
+                boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.6)',
+                border: isFullscreen ? 'none' : '1.5px solid rgba(255, 255, 255, 0.15)',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden'
             }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.75rem' }}>
-                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '700', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <ImageIcon size={18} color="#0078d4" />
-                        {title || 'Payment Receipt / Screenshot'}
-                    </h3>
-                    <button
-                        onClick={onClose}
-                        style={{
-                            background: '#f1f5f9',
-                            border: 'none',
-                            borderRadius: '50%',
-                            width: '28px',
-                            height: '28px',
+                {/* Modal Header Bar */}
+                <div style={{
+                    padding: '0.9rem 1.25rem',
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '0.75rem'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                        <div style={{
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '8px',
+                            background: '#0284c7',
+                            color: '#ffffff',
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            cursor: 'pointer',
-                            color: '#64748b'
-                        }}
-                    >
-                        <X size={16} />
-                    </button>
-                </div>
+                            justifyContent: 'center'
+                        }}>
+                            <ImageIcon size={18} />
+                        </div>
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#ffffff', letterSpacing: '-0.01em' }}>
+                                {title || 'Payment Proof Slip / Screenshot'}
+                            </h3>
+                            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '1px' }}>
+                                {meta ? meta : 'Verified transaction record • Zoom, rotate or drag to inspect details'}
+                            </div>
+                        </div>
+                    </div>
 
-                <div style={{ background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '0.5rem', textAlign: 'center', maxHeight: '60vh', overflow: 'auto' }}>
-                    <img src={proofUrl} alt="Payment Proof" style={{ maxWidth: '100%', maxHeight: '55vh', objectFit: 'contain', borderRadius: '6px' }} />
-                </div>
+                    {/* Toolbar Controls */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {/* Zoom Out */}
+                        <button
+                            type="button"
+                            onClick={handleZoomOut}
+                            disabled={scale <= 0.5}
+                            style={{
+                                padding: '6px 9px',
+                                borderRadius: '7px',
+                                background: 'rgba(255, 255, 255, 0.1)',
+                                border: '1px solid rgba(255, 255, 255, 0.15)',
+                                color: '#ffffff',
+                                cursor: scale <= 0.5 ? 'not-allowed' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                fontSize: '0.75rem',
+                                fontWeight: '700'
+                            }}
+                            title="Zoom Out"
+                        >
+                            <ZoomOut size={14} />
+                        </button>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
-                    <a
-                        href={proofUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.4rem',
-                            fontSize: '0.85rem',
-                            color: '#0078d4',
-                            textDecoration: 'none',
-                            fontWeight: '600'
-                        }}
-                    >
-                        <ExternalLink size={15} /> Open Full Image in New Tab
-                    </a>
-                    <button
-                        onClick={onClose}
-                        style={{
-                            padding: '0.5rem 1.25rem',
+                        {/* Zoom Indicator */}
+                        <span style={{
+                            fontSize: '0.72rem',
+                            fontWeight: '800',
+                            color: '#38bdf8',
+                            background: 'rgba(2, 132, 199, 0.2)',
+                            padding: '4px 8px',
                             borderRadius: '6px',
-                            border: '1px solid #cbd5e1',
-                            background: '#ffffff',
-                            color: '#475569',
-                            fontWeight: '600',
-                            fontSize: '0.85rem',
+                            minWidth: '42px',
+                            textAlign: 'center'
+                        }}>
+                            {Math.round(scale * 100)}%
+                        </span>
+
+                        {/* Zoom In */}
+                        <button
+                            type="button"
+                            onClick={handleZoomIn}
+                            disabled={scale >= 3.5}
+                            style={{
+                                padding: '6px 9px',
+                                borderRadius: '7px',
+                                background: 'rgba(255, 255, 255, 0.1)',
+                                border: '1px solid rgba(255, 255, 255, 0.15)',
+                                color: '#ffffff',
+                                cursor: scale >= 3.5 ? 'not-allowed' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                fontSize: '0.75rem',
+                                fontWeight: '700'
+                            }}
+                            title="Zoom In"
+                        >
+                            <ZoomIn size={14} />
+                        </button>
+
+                        {/* Rotate 90 deg */}
+                        <button
+                            type="button"
+                            onClick={handleRotate}
+                            style={{
+                                padding: '6px 9px',
+                                borderRadius: '7px',
+                                background: 'rgba(255, 255, 255, 0.1)',
+                                border: '1px solid rgba(255, 255, 255, 0.15)',
+                                color: '#ffffff',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '0.75rem',
+                                fontWeight: '700'
+                            }}
+                            title="Rotate 90°"
+                        >
+                            <RotateCw size={14} />
+                            <span>{rotation}°</span>
+                        </button>
+
+                        {/* Reset */}
+                        {(scale !== 1 || rotation !== 0 || position.x !== 0 || position.y !== 0) && (
+                            <button
+                                type="button"
+                                onClick={handleReset}
+                                style={{
+                                    padding: '6px 9px',
+                                    borderRadius: '7px',
+                                    background: 'rgba(245, 158, 11, 0.2)',
+                                    border: '1px solid rgba(245, 158, 11, 0.4)',
+                                    color: '#fcd34d',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '700'
+                                }}
+                                title="Reset View"
+                            >
+                                <RotateCcw size={14} />
+                            </button>
+                        )}
+
+                        {/* Fullscreen Toggle */}
+                        <button
+                            type="button"
+                            onClick={() => setIsFullscreen(prev => !prev)}
+                            style={{
+                                padding: '6px 9px',
+                                borderRadius: '7px',
+                                background: 'rgba(255, 255, 255, 0.1)',
+                                border: '1px solid rgba(255, 255, 255, 0.15)',
+                                color: '#ffffff',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center'
+                            }}
+                            title={isFullscreen ? "Exit Fullscreen" : "Fullscreen View"}
+                        >
+                            <Maximize2 size={14} />
+                        </button>
+
+                        {/* Close Modal */}
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            style={{
+                                width: '30px',
+                                height: '30px',
+                                borderRadius: '50%',
+                                background: 'rgba(239, 68, 68, 0.2)',
+                                border: '1px solid rgba(239, 68, 68, 0.4)',
+                                color: '#fca5a5',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                marginLeft: '4px'
+                            }}
+                            title="Close"
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Interactive Canvas Viewport */}
+                <div
+                    ref={containerRef}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                    style={{
+                        flex: 1,
+                        background: '#020617',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden',
+                        position: 'relative',
+                        minHeight: isFullscreen ? 'calc(100vh - 120px)' : '480px',
+                        maxHeight: isFullscreen ? 'calc(100vh - 120px)' : '65vh',
+                        cursor: scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+                        userSelect: 'none'
+                    }}
+                >
+                    <div style={{
+                        transform: `translate(${position.x}px, ${position.y}px) scale(${scale}) rotate(${rotation}deg)`,
+                        transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                    }}>
+                        <img
+                            src={proofUrl}
+                            alt="Slip Proof"
+                            draggable={false}
+                            style={{
+                                maxWidth: '100%',
+                                maxHeight: isFullscreen ? '82vh' : '58vh',
+                                objectFit: 'contain',
+                                borderRadius: '6px',
+                                boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+                                pointerEvents: 'none'
+                            }}
+                        />
+                    </div>
+                </div>
+
+                {/* Modal Footer Controls */}
+                <div style={{
+                    padding: '0.75rem 1.25rem',
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '0.6rem'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <button
+                            type="button"
+                            onClick={handleDownload}
+                            style={{
+                                padding: '6px 12px',
+                                borderRadius: '7px',
+                                background: '#10b981',
+                                border: 'none',
+                                color: '#ffffff',
+                                fontSize: '0.78rem',
+                                fontWeight: '800',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                boxShadow: '0 2px 6px rgba(16, 185, 129, 0.25)'
+                            }}
+                        >
+                            <Download size={14} /> Download Slip
+                        </button>
+                        <a
+                            href={proofUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                                padding: '6px 12px',
+                                borderRadius: '7px',
+                                background: 'rgba(255, 255, 255, 0.1)',
+                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                color: '#38bdf8',
+                                fontSize: '0.78rem',
+                                fontWeight: '700',
+                                textDecoration: 'none',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                            }}
+                        >
+                            <ExternalLink size={14} /> Open Original Tab
+                        </a>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        style={{
+                            padding: '6px 16px',
+                            borderRadius: '7px',
+                            background: '#334155',
+                            border: '1px solid #475569',
+                            color: '#ffffff',
+                            fontWeight: '700',
+                            fontSize: '0.8rem',
                             cursor: 'pointer'
                         }}
                     >
-                        Close
+                        Close Preview
                     </button>
                 </div>
             </div>
@@ -760,7 +1341,466 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
     }
 };
 
-// --- Fee Receipt Printable Modal ---
+// --- 100% Offline Professional Family Fee Challan PDF Generator ---
+export const downloadFamilyFeeChallanPDF = ({
+    schoolInfo,
+    feeCalculation,
+    targetMonthName,
+    targetYear,
+    fatherName,
+    feeSettings
+}) => {
+    try {
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        const darkColor = [15, 23, 42];     // #0f172a
+        const grayColor = [100, 116, 139];  // #64748b
+
+        // Top decorative accent bar
+        doc.setFillColor(2, 132, 199);
+        doc.rect(0, 0, 210, 6, 'F');
+
+        // School Branding Header
+        const schoolName = (schoolInfo?.name || schoolInfo?.schoolName || 'ACADEMIC EXCELLENCE MODEL SCHOOL').toUpperCase();
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.setTextColor(...darkColor);
+        doc.text(schoolName, 14, 18);
+
+        doc.setFontSize(8.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...grayColor);
+        const schoolAddress = schoolInfo?.address || 'Main Campus, Pakistan';
+        const schoolPhone = schoolInfo?.phone || schoolInfo?.contact || '+92 300 1234567';
+        doc.text(`${schoolAddress} • Contact: ${schoolPhone}`, 14, 23);
+
+        // Challan Title Badge
+        doc.setFillColor(240, 249, 255);
+        doc.setDrawColor(125, 211, 252);
+        doc.setLineWidth(0.5);
+        doc.roundedRect(14, 28, 182, 12, 2, 2, 'FD');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10.5);
+        doc.setTextColor(3, 105, 161);
+        doc.text(`OFFICIAL FAMILY FEE CHALLAN — ${targetMonthName.toUpperCase()} ${targetYear}`, 18, 35.5);
+
+        const issueDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const dueDay = feeSettings?.dueDate || 10;
+        const dueDate = `${dueDay} ${targetMonthName} ${targetYear}`;
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(`Issue Date: ${issueDate}  |  Due Date: ${dueDate}`, 210 - 18, 35.5, { align: 'right' });
+
+        // Family Info Box
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(14, 43, 182, 18, 2, 2, 'FD');
+
+        doc.setFontSize(8.5);
+        doc.setTextColor(...darkColor);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Household of: ${fatherName}`, 18, 50);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...grayColor);
+        doc.text(`Total Registered Sibling Students: ${feeCalculation?.activeSiblingsCount || 1}`, 18, 56);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(`Challan Type: Combined Family Invoice`, 210 - 18, 50, { align: 'right' });
+        doc.setTextColor(2, 132, 199);
+        doc.text(`Status: PENDING PAYMENT`, 210 - 18, 56, { align: 'right' });
+
+        // Table Rows per Student
+        const rows = (feeCalculation?.studentsBreakdown || []).map((sib, idx) => [
+            idx + 1,
+            sib.studentName,
+            `${sib.className} (R# ${sib.rollNo})`,
+            Number(sib.tuitionFee || sib.baseFee || 0) > 0 ? `Rs ${Number(sib.tuitionFee || sib.baseFee || 0).toLocaleString()}` : '-',
+            Number(sib.transportFee || 0) > 0 ? `Rs ${Number(sib.transportFee || 0).toLocaleString()}` : '-',
+            Number(sib.storeFee || 0) > 0 ? `Rs ${Number(sib.storeFee || 0).toLocaleString()}` : '-',
+            Number(sib.actionsFee || 0) > 0 ? `Rs ${Number(sib.actionsFee || 0).toLocaleString()}` : '-',
+            Number(sib.previousMonthsArrears || 0) > 0 ? `Rs ${Number(sib.previousMonthsArrears || 0).toLocaleString()}` : '-',
+            `Rs ${Number(sib.subtotal || 0).toLocaleString()}`
+        ]);
+
+        const grandTotal = Number(feeCalculation?.totalDue || feeCalculation?.calculatedTotal || 0);
+
+        autoTable(doc, {
+            startY: 65,
+            head: [[
+                '#',
+                'Student Name',
+                'Class & Roll',
+                'Tuition',
+                'Transport',
+                'Store / Items',
+                'Actions / Fees',
+                'Arrears',
+                'Total (PKR)'
+            ]],
+            body: rows,
+            foot: [[
+                { content: 'FAMILY GRAND TOTAL DUE:', colSpan: 8, styles: { halign: 'right', fontStyle: 'bold', textColor: [3, 105, 161], fontSize: 9 } },
+                { content: `Rs ${grandTotal.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [3, 105, 161], fontSize: 9.5, fillColor: [224, 242, 254] } }
+            ]],
+            theme: 'grid',
+            headStyles: {
+                fillColor: [15, 23, 42],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+                fontSize: 8,
+                halign: 'center'
+            },
+            bodyStyles: {
+                fontSize: 8,
+                textColor: [51, 65, 85]
+            },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 8 },
+                1: { halign: 'left', fontStyle: 'bold', textColor: [15, 23, 42], cellWidth: 38 },
+                2: { halign: 'left', cellWidth: 28 },
+                3: { halign: 'right', cellWidth: 18 },
+                4: { halign: 'right', cellWidth: 18 },
+                5: { halign: 'right', cellWidth: 18 },
+                6: { halign: 'right', cellWidth: 20 },
+                7: { halign: 'right', textColor: [220, 38, 38], cellWidth: 16 },
+                8: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], cellWidth: 22 }
+            },
+            margin: { left: 14, right: 14 }
+        });
+
+        // Instructions and Signatures
+        const finalY = doc.lastAutoTable.finalY + 12;
+
+        // Payment Bank Details / Channel Box
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(14, finalY, 110, 26, 2, 2, 'FD');
+
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...darkColor);
+        doc.text("PAYMENT INSTRUCTIONS & OFFICIAL CHANNELS:", 18, finalY + 6);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...grayColor);
+        doc.text("• Pay at School Cash Counter or via EasyPaisa / JazzCash / Bank.", 18, finalY + 11);
+        doc.text("• Late payment penalty will apply after the due date.", 18, finalY + 16);
+        doc.text("• Keep this computerized slip as formal proof of fee assessment.", 18, finalY + 21);
+
+        // Stamp / Signature
+        doc.line(140, finalY + 18, 196, finalY + 18);
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...darkColor);
+        doc.text("Accounts Officer / Principal Stamp", 168, finalY + 22, { align: 'center' });
+
+        // Save PDF
+        const cleanName = (fatherName || 'Family').replace(/[^a-zA-Z0-9]/g, '_');
+        doc.save(`Family_Fee_Challan_${cleanName}_${targetMonthName}_${targetYear}.pdf`);
+    } catch (err) {
+        console.error("Error generating family challan PDF:", err);
+        alert("Failed to generate Family Fee Challan PDF.");
+    }
+};
+
+// --- Beautiful Payment Success / Failure Popup Modal ---
+const PaymentResultModal = ({ isOpen, onClose, isSuccess, receiptData, errorMessage, schoolInfo }) => {
+    if (!isOpen) return null;
+
+    const handleDownloadPDF = () => {
+        if (receiptData) {
+            downloadOfficialReceiptPDF(receiptData, schoolInfo);
+        }
+    };
+
+    const handlePrint = () => {
+        if (!receiptData) return;
+        const printWindow = window.open('', '', 'width=800,height=900');
+        if (!printWindow) return;
+        printWindow.document.write(`
+            <html>
+                <head>
+                    <title>Fee Receipt - ${receiptData.receiptNo}</title>
+                    <style>
+                        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; color: #1e293b; }
+                        .container { max-width: 600px; margin: 0 auto; border: 2px solid #0f172a; padding: 20px; border-radius: 8px; }
+                        .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 16px; }
+                        .school { font-size: 20px; font-weight: 800; text-transform: uppercase; }
+                        .table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+                        .table th, .table td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+                        .total { font-weight: 800; font-size: 15px; border-top: 2px solid #0f172a; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <div class="school">${schoolInfo?.name || 'School Office'}</div>
+                            <div style="font-size:12px;color:#64748b;margin-top:4px;">Official Fee Receipt • ${receiptData.receiptNo}</div>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:12px;">
+                            <div><strong>Student/Family:</strong> ${receiptData.studentName}</div>
+                            <div><strong>Date:</strong> ${receiptData.dateString}</div>
+                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr><th>Particular</th><th style="text-align:right;">Amount (PKR)</th></tr>
+                            </thead>
+                            <tbody>
+                                ${(receiptData.items || []).map(it => `<tr><td>${it.name}</td><td style="text-align:right;">Rs ${Number(it.amount || 0).toLocaleString()}</td></tr>`).join('')}
+                                <tr class="total"><td>Total Paid</td><td style="text-align:right;">Rs ${Number(receiptData.totalPaid || 0).toLocaleString()}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <script>
+                        window.onload = () => { window.print(); window.close(); };
+                    </script>
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
+    };
+
+    const handleSendWhatsApp = () => {
+        if (!receiptData?.fatherPhone) {
+            alert("No phone number available for parent.");
+            return;
+        }
+        let clean = receiptData.fatherPhone.toString().replace(/[^0-9]/g, '');
+        if (clean.startsWith('0092')) clean = clean.slice(2);
+        else if (clean.startsWith('03')) clean = '92' + clean.slice(1);
+        
+        const schoolTitle = schoolInfo?.name || 'School Office';
+        const itemsSummary = (receiptData.items || []).map(it => `• ${it.name}: Rs ${Number(it.amount || 0).toLocaleString()}`).join('\n');
+        const text = `*FEE PAYMENT RECEIPT - ${schoolTitle.toUpperCase()}*\n\n` +
+            `*Receipt No:* ${receiptData.receiptNo}\n` +
+            `*Name:* ${receiptData.studentName} (${receiptData.className || ''})\n` +
+            `*Father:* ${receiptData.fatherName || 'Parent'}\n` +
+            `*Month:* ${receiptData.targetMonthName || ''} ${receiptData.targetYear || ''}\n` +
+            `*Date:* ${receiptData.dateString} ${receiptData.timeString}\n` +
+            `*Payment Mode:* ${receiptData.paymentMode}\n\n` +
+            `*Breakdown:*\n${itemsSummary}\n` +
+            `--------------------------\n` +
+            `*TOTAL PAID:* Rs ${Number(receiptData.totalPaid || 0).toLocaleString()}\n` +
+            `*Status:* Cleared ✓\n\n` +
+            `_Thank you for your prompt payment!_`;
+
+        window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
+    };
+
+    return (
+        <div style={{
+            position: 'fixed', inset: 0, zIndex: 99999,
+            background: 'rgba(15, 23, 42, 0.7)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '1rem',
+            animation: 'fadeIn 0.2s ease-out'
+        }}>
+            <div style={{
+                background: '#ffffff',
+                borderRadius: '20px',
+                width: '100%',
+                maxWidth: '480px',
+                padding: '1.75rem',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: isSuccess ? '2px solid #86efac' : '2px solid #fca5a5',
+                textAlign: 'center',
+                position: 'relative'
+            }}>
+                {/* Close X */}
+                <button
+                    onClick={onClose}
+                    style={{
+                        position: 'absolute', top: '16px', right: '16px',
+                        background: '#f1f5f9', border: 'none', borderRadius: '50%',
+                        width: '32px', height: '32px', display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', cursor: 'pointer', color: '#64748b'
+                    }}
+                >
+                    <X size={18} />
+                </button>
+
+                {isSuccess ? (
+                    <>
+                        {/* Success Icon */}
+                        <div style={{
+                            width: '64px', height: '64px', borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)',
+                            border: '3px solid #22c55e',
+                            color: '#16a34a',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            margin: '0 auto 1rem auto',
+                            boxShadow: '0 10px 20px rgba(34, 197, 94, 0.2)'
+                        }}>
+                            <CheckCircle2 size={36} color="#16a34a" />
+                        </div>
+
+                        <h2 style={{ fontSize: '1.4rem', fontWeight: '900', color: '#0f172a', margin: '0 0 0.35rem 0' }}>
+                            Payment Recorded! 🎉
+                        </h2>
+                        <p style={{ fontSize: '0.84rem', color: '#64748b', margin: '0 0 1.25rem 0' }}>
+                            Fee has been registered in the system and synchronized in real-time.
+                        </p>
+
+                        {/* Summary Card */}
+                        <div style={{
+                            background: '#f8fafc',
+                            border: '1.5px solid #e2e8f0',
+                            borderRadius: '14px',
+                            padding: '1rem',
+                            marginBottom: '1.25rem',
+                            textAlign: 'left'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
+                                <span style={{ color: '#64748b', fontWeight: '600' }}>Receipt #:</span>
+                                <strong style={{ color: '#0f172a' }}>{receiptData?.receiptNo}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
+                                <span style={{ color: '#64748b', fontWeight: '600' }}>Student / Family:</span>
+                                <strong style={{ color: '#0f172a' }}>{receiptData?.studentName}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
+                                <span style={{ color: '#64748b', fontWeight: '600' }}>Payment Mode:</span>
+                                <strong style={{ color: '#0f172a' }}>{receiptData?.paymentMode}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1.5px dashed #cbd5e1', paddingTop: '8px', marginTop: '6px', fontSize: '1rem' }}>
+                                <span style={{ color: '#166534', fontWeight: '800' }}>Total Paid:</span>
+                                <strong style={{ color: '#16a34a', fontWeight: '900' }}>
+                                    Rs {Number(receiptData?.totalPaid || 0).toLocaleString()}
+                                </strong>
+                            </div>
+                        </div>
+
+                        {/* Action Buttons Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                            <button
+                                type="button"
+                                onClick={handleDownloadPDF}
+                                style={{
+                                    padding: '0.65rem',
+                                    borderRadius: '10px',
+                                    background: '#0f172a',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    fontWeight: '800',
+                                    fontSize: '0.82rem',
+                                    cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                    boxShadow: '0 4px 10px rgba(15, 23, 42, 0.2)'
+                                }}
+                            >
+                                <Download size={15} /> Download PDF
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handlePrint}
+                                style={{
+                                    padding: '0.65rem',
+                                    borderRadius: '10px',
+                                    background: '#ffffff',
+                                    color: '#0f172a',
+                                    border: '1.5px solid #0f172a',
+                                    fontWeight: '800',
+                                    fontSize: '0.82rem',
+                                    cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+                                }}
+                            >
+                                <Printer size={15} /> Print Slip
+                            </button>
+                        </div>
+
+                        {receiptData?.fatherPhone && (
+                            <button
+                                type="button"
+                                onClick={handleSendWhatsApp}
+                                style={{
+                                    width: '100%',
+                                    padding: '0.65rem',
+                                    borderRadius: '10px',
+                                    background: '#f0fdf4',
+                                    color: '#15803d',
+                                    border: '1.5px solid #86efac',
+                                    fontWeight: '800',
+                                    fontSize: '0.82rem',
+                                    cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                    marginBottom: '0.75rem'
+                                }}
+                            >
+                                <Send size={15} /> Send WhatsApp Receipt
+                            </button>
+                        )}
+
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            style={{
+                                width: '100%',
+                                padding: '0.65rem',
+                                borderRadius: '10px',
+                                background: '#f1f5f9',
+                                color: '#475569',
+                                border: 'none',
+                                fontWeight: '800',
+                                fontSize: '0.84rem',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            ✓ Done / Next Student
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        {/* Error Icon */}
+                        <div style={{
+                            width: '64px', height: '64px', borderRadius: '50%',
+                            background: '#fee2e2',
+                            border: '3px solid #ef4444',
+                            color: '#dc2626',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            margin: '0 auto 1rem auto'
+                        }}>
+                            <AlertTriangle size={36} color="#dc2626" />
+                        </div>
+
+                        <h2 style={{ fontSize: '1.3rem', fontWeight: '900', color: '#b91c1c', margin: '0 0 0.35rem 0' }}>
+                            Submission Failed
+                        </h2>
+                        <p style={{ fontSize: '0.84rem', color: '#64748b', margin: '0 0 1.25rem 0' }}>
+                            {errorMessage || 'Unable to record payment due to a network or verification error.'}
+                        </p>
+
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            style={{
+                                width: '100%',
+                                padding: '0.7rem',
+                                borderRadius: '10px',
+                                background: '#dc2626',
+                                color: '#ffffff',
+                                border: 'none',
+                                fontWeight: '800',
+                                fontSize: '0.85rem',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Close & Try Again
+                        </button>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
 const FeeReceiptModal = ({ isOpen, onClose, receiptData, schoolInfo }) => {
     if (!isOpen || !receiptData) return null;
 
@@ -1366,6 +2406,8 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             ...prev,
                             [cls.id]: snap.docs.map(d => ({ id: d.id, ...d.data() }))
                         }));
+                    }, (err) => {
+                        console.warn("Performance students listener warning:", err);
                     });
                     unsubStudentsList.push(unsub);
                 });
@@ -3471,6 +4513,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const [classStudents, setClassStudents] = useState([]);
     const [loadingClassStudents, setLoadingClassStudents] = useState(false);
 
+    // Sync when props change from navigation
+    useEffect(() => {
+        if (preselectedClassId) setSelectedClassId(preselectedClassId);
+        if (preselectedStudentId) setSelectedStudentId(preselectedStudentId);
+    }, [preselectedClassId, preselectedStudentId]);
+
     // Global Search State
     const [searchQuery, setSearchQuery] = useState('');
     const [allStudents, setAllStudents] = useState([]);
@@ -3482,11 +4530,31 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     // 2. Selected Student Fee Calculation & Payment Form
     const [selectedStudent, setSelectedStudent] = useState(null);
     const [paymentMode, setPaymentMode] = useState('Cash');
+    const [transactionRefId, setTransactionRefId] = useState('');
+    const [proofFile, setProofFile] = useState(null);
+    const [proofPreview, setProofPreview] = useState(null);
     const [receivedAmount, setReceivedAmount] = useState('');
     const [discountAmount, setDiscountAmount] = useState('');
     const [fineAmount, setFineAmount] = useState('0');
     const [remarks, setRemarks] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleProofChange = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            setProofFile(file);
+            const previewUrl = URL.createObjectURL(file);
+            setProofPreview(previewUrl);
+        }
+    };
+
+    const handleRemoveProof = () => {
+        setProofFile(null);
+        if (proofPreview) {
+            URL.revokeObjectURL(proofPreview);
+        }
+        setProofPreview(null);
+    };
 
     // Assessment Card View: 'assessment' | 'history' (Smooth swipe transition)
     const [assessmentViewMode, setAssessmentViewMode] = useState('assessment');
@@ -3543,31 +4611,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         };
     }, [feeSettingsData]);
 
-    // Payment Proof Screenshot States
-    const [proofFile, setProofFile] = useState(null);
-    const [proofPreview, setProofPreview] = useState(null);
+    // Payment Proof Screenshot Lightbox State
     const [proofModal, setProofModal] = useState({ isOpen: false, url: '', title: '' });
-
-    const handleProofChange = (e) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            setProofFile(file);
-            const previewUrl = URL.createObjectURL(file);
-            setProofPreview(previewUrl);
-        }
-    };
-
-    const handleRemoveProof = () => {
-        setProofFile(null);
-        if (proofPreview) {
-            URL.revokeObjectURL(proofPreview);
-        }
-        setProofPreview(null);
-    };
 
     // 3. Receipt State
     const [receiptModalOpen, setReceiptModalOpen] = useState(false);
     const [receiptData, setReceiptData] = useState(null);
+    const [paymentResultModal, setPaymentResultModal] = useState({ isOpen: false, isSuccess: true, receiptData: null, errorMessage: '' });
 
     // 4. Recent Transactions Log
     const [recentTransactions, setRecentTransactions] = useState([]);
@@ -3582,6 +4632,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const [reviewModalSub, setReviewModalSub] = useState(null);
     const [reuploadModalSub, setReuploadModalSub] = useState(null);
     const [reuploadReason, setReuploadReason] = useState('');
+    const [rejectModalSubOnline, setRejectModalSubOnline] = useState(null);
+    const [rejectReasonOnline, setRejectReasonOnline] = useState('');
     const [onlinePaymentAlert, setOnlinePaymentAlert] = useState(null);
     const [processingOnlineId, setProcessingOnlineId] = useState(null);
     const prevSubmissionsCountRef = useRef(null);
@@ -3733,8 +4785,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 totalPaid: finalAmount,
                 paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
                 proofUrl: sub.proofUrl || null,
+                transactionId: sub.transactionId || null,
                 remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Payment Approved',
                 dueDate: null,
+                targetMonthKey: monthKey,
                 timestamp: new Date(),
                 dateString,
                 timeString,
@@ -3744,12 +4798,26 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             // 1. Instant Optimistic State Update for Today's Recent Fee Collections Log
             setRecentTransactions(prev => [transactionRecord, ...prev.filter(t => t.receiptNo !== receiptNo)]);
 
+            const studentHistoryEntry = {
+                status: 'paid',
+                paidAmount: finalAmount,
+                remainingBalance: 0,
+                paidAt: now.toISOString(),
+                receiptNo,
+                paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                proofUrl: sub.proofUrl || null,
+                transactionId: sub.transactionId || null,
+                monthKey
+            };
+
             // 2. Update Student Doc
             if (sub.classId && sub.studentId) {
                 const classStudentRef = doc(db, `schools/${schoolId}/classes/${sub.classId}/students`, sub.studentId);
                 await setDoc(classStudentRef, {
                     monthlyFeeStatus: 'paid',
                     monthlyFeeDate: now.toISOString(),
+                    paidMonths: arrayUnion(monthKey),
+                    [`monthlyFeeHistory.${monthKey}`]: studentHistoryEntry,
                     lastPaymentMode: sub.paymentMethod || 'Online Transfer',
                     lastPaymentAmount: finalAmount,
                     lastReceiptNo: receiptNo,
@@ -3768,6 +4836,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     await setDoc(masterStudentRef, {
                         monthlyFeeStatus: 'paid',
                         monthlyFeeDate: now.toISOString(),
+                        paidMonths: arrayUnion(monthKey),
+                        [`monthlyFeeHistory.${monthKey}`]: studentHistoryEntry,
                         lastPaymentMode: sub.paymentMethod || 'Online Transfer',
                         lastPaymentAmount: finalAmount,
                         lastReceiptNo: receiptNo,
@@ -3844,28 +4914,46 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     };
 
     // Handle Reject Online Submission
-    const handleRejectOnlineSubmission = async (sub) => {
-        const reason = window.prompt(`Enter reason for rejecting ${sub.studentName}'s payment:`, 'Incorrect amount or unverifiable transaction.');
-        if (reason === null) return; // cancelled
+    const confirmRejectOnlineSubmission = async () => {
+        if (!rejectModalSubOnline) return;
 
-        setProcessingOnlineId(sub.id);
+        setProcessingOnlineId(rejectModalSubOnline.id);
         try {
             const nowIso = new Date().toISOString();
+            const message = rejectReasonOnline.trim() || 'Payment proof could not be verified by administration.';
+            const batch = writeBatch(db);
 
-            const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
-            await updateDoc(subRef, {
+            // 1. Update submission doc
+            const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, rejectModalSubOnline.id);
+            batch.update(subRef, {
                 status: 'rejected',
                 rejectedAt: nowIso,
-                rejectReason: reason.trim() || 'Payment proof could not be verified.'
+                rejectReason: message
             });
 
-            if (sub.classId && sub.studentId) {
-                const classStudentRef = doc(db, `schools/${schoolId}/classes/${sub.classId}/students`, sub.studentId);
-                await updateDoc(classStudentRef, {
-                    pendingPaymentSubmission: null
-                });
+            // 2. Explicit Rejection Tag for real-time synchronization with Parent Mobile App
+            const rejectTag = {
+                status: 'rejected',
+                rejectReason: message,
+                rejectedAt: nowIso,
+                submissionId: rejectModalSubOnline.id,
+                paymentMethod: rejectModalSubOnline.paymentMethod || 'Online',
+                amount: Number(rejectModalSubOnline.amount) || 0,
+                transactionId: rejectModalSubOnline.transactionId || ''
+            };
+
+            if (rejectModalSubOnline.classId && rejectModalSubOnline.studentId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${rejectModalSubOnline.classId}/students`, rejectModalSubOnline.studentId);
+                batch.set(classStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
+            }
+            if (rejectModalSubOnline.studentId) {
+                const masterStudentRef = doc(db, `schools/${schoolId}/students`, rejectModalSubOnline.studentId);
+                batch.set(masterStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
             }
 
+            await batch.commit();
+            setRejectModalSubOnline(null);
+            setRejectReasonOnline('');
             setReviewModalSub(null);
         } catch (err) {
             console.error("Error rejecting submission:", err);
@@ -3881,6 +4969,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     // 6. Offline Resilience & Auto-Sync Engine States
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [syncProgress, setSyncProgress] = useState({ isSyncing: false, synced: 0, total: 0 });
     const isSyncingRef = useRef(false);
     const [pendingOfflineTxs, setPendingOfflineTxs] = useState(() => {
         try {
@@ -3903,7 +4992,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const savePendingQueue = (queue) => {
         try {
             setPendingOfflineTxs(queue);
-            localStorage.setItem(`offline_fee_queue_${schoolId}`, JSON.stringify(queue));
+            localStorage.setItem(`offline_fee_queue_${schoolId}`, JSON.stringify(queue.slice(0, 200)));
         } catch (e) {
             console.error("Error saving offline fee queue to localStorage:", e);
         }
@@ -3922,102 +5011,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         if (!navigator.onLine || isSyncingRef.current || !schoolId) return;
         isSyncingRef.current = true;
         setIsSyncing(true);
+        setSyncProgress({ isSyncing: true, synced: 0, total: 0 });
 
         try {
-            // 1. Sync Pending Fees & Proofs
-            let currentQueue = [];
-            try {
-                const saved = localStorage.getItem(`offline_fee_queue_${schoolId}`);
-                currentQueue = saved ? JSON.parse(saved) : [];
-            } catch (e) {
-                currentQueue = [];
-            }
+            // 1. Sync Pending Fees via Chunked 50-Item Batch Offline Engine
+            const syncResult = await syncOfflineFeeQueueInBatches(schoolId, db, (synced, total) => {
+                setSyncProgress({ isSyncing: true, synced, total });
+            });
 
-            if (currentQueue.length > 0) {
-                const remainingQueue = [...currentQueue];
-
-                for (const tx of currentQueue) {
-                    try {
-                        let proofUrl = tx.proofUrl;
-
-                        // If proof is Base64 and online, try uploading to Storage
-                        if (proofUrl && proofUrl.startsWith('data:image')) {
-                            try {
-                                const blobRes = await fetch(proofUrl);
-                                const blobData = await blobRes.blob();
-                                const storagePath = `schools/${schoolId}/paymentProofs/proof_sync_${Date.now()}_${tx.studentId}.jpg`;
-                                const storageRef = ref(storage, storagePath);
-                                const uploadSnap = await uploadBytes(storageRef, blobData);
-                                proofUrl = await getDownloadURL(uploadSnap.ref);
-                            } catch (uploadErr) {
-                                console.warn("Base64 storage upload fallback during sync:", uploadErr);
-                            }
-                        }
-
-                        const studentRef = doc(db, `schools/${schoolId}/classes/${tx.classId}/students`, tx.studentId);
-                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, tx.studentId);
-
-                        const studentUpdatePayload = {
-                            monthlyFeeStatus: 'paid',
-                            monthlyFeeDate: tx.dateIso || new Date().toISOString(),
-                            lastPaymentMode: tx.paymentMode,
-                            lastReceiptNo: tx.receiptNo,
-                            lastPaymentAmount: tx.totalPaid,
-                            lastPaymentProofUrl: proofUrl || null,
-                            individualActions: tx.updatedIndividualActions || []
-                        };
-
-                        if (tx.customPayments) {
-                            studentUpdatePayload.customPayments = tx.customPayments;
-                        }
-
-                        await setDoc(studentRef, studentUpdatePayload, { merge: true });
-                        try {
-                            await setDoc(masterStudentRef, studentUpdatePayload, { merge: true });
-                        } catch (e) {
-                            console.warn("Master student sync skipped:", e);
-                        }
-
-                        const transactionRecord = {
-                            id: tx.receiptNo,
-                            receiptNo: tx.receiptNo,
-                            studentId: tx.studentId,
-                            studentName: tx.studentName,
-                            rollNo: tx.rollNo || 'N/A',
-                            classId: tx.classId,
-                            className: tx.className,
-                            fatherName: tx.fatherName || 'N/A',
-                            items: tx.items || [],
-                            baseFee: tx.baseFee || 0,
-                            actionsFee: tx.actionsFee || 0,
-                            fineAmount: tx.fineAmount || 0,
-                            discount: tx.discount || 0,
-                            totalPaid: tx.totalPaid,
-                            paymentMode: tx.paymentMode,
-                            proofUrl: proofUrl || null,
-                            remarks: tx.remarks || '',
-                            timestamp: serverTimestamp(),
-                            dateString: tx.dateString,
-                            timeString: tx.timeString,
-                            collectedBy: tx.collectedBy || 'Principal Office'
-                        };
-
-                        // Zero-Duplicate: Use deterministic receiptNo as the document ID
-                        const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, tx.receiptNo);
-                        await setDoc(txDocRef, transactionRecord, { merge: true });
-
-                        const index = remainingQueue.findIndex(item => item.queueId === tx.queueId || item.receiptNo === tx.receiptNo);
-                        if (index !== -1) {
-                            remainingQueue.splice(index, 1);
-                        }
-                    } catch (syncErr) {
-                        console.error("Failed to sync offline fee item:", tx.receiptNo, syncErr);
-                        if (!navigator.onLine) break;
-                    }
-                }
-
-                savePendingQueue(remainingQueue);
-            }
+            // Update local state queue
+            const refreshedQ = await getOfflineFeeQueue(schoolId);
+            setPendingOfflineTxs(refreshedQ);
+            localStorage.setItem(`offline_fee_queue_${schoolId}`, JSON.stringify(refreshedQ.slice(0, 200)));
 
             // 2. Sync Pending Finances (Incomes & Expenses)
             let currentFinancesQueue = [];
@@ -4032,27 +5037,30 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 try {
                     const docRef = doc(db, `schools/${schoolId}/settings/finances`);
                     const docSnap = await getDoc(docRef);
-                    const serverData = docSnap.exists() ? docSnap.data() : { incomes: [], expenses: [] };
-                    let serverIncomes = [...(serverData.incomes || [])];
-                    let serverExpenses = [...(serverData.expenses || [])];
+                    const curData = docSnap.exists() ? docSnap.data() : { incomes: [], expenses: [] };
+                    const mergedIncomes = [...(curData.incomes || [])];
+                    const mergedExpenses = [...(curData.expenses || [])];
 
                     currentFinancesQueue.forEach(item => {
-                        if (item.category === 'incomes') {
-                            if (!serverIncomes.some(i => i.id === item.id)) serverIncomes.push(item);
-                        } else if (item.category === 'expenses') {
-                            if (!serverExpenses.some(e => e.id === item.id)) serverExpenses.push(item);
+                        if (item.category === 'incomes' && !mergedIncomes.some(i => i.id === item.id)) {
+                            mergedIncomes.push(item);
+                        } else if (item.category === 'expenses' && !mergedExpenses.some(e => e.id === item.id)) {
+                            mergedExpenses.push(item);
                         }
                     });
 
-                    await setDoc(docRef, { incomes: serverIncomes, expenses: serverExpenses }, { merge: true });
+                    await setDoc(docRef, { incomes: mergedIncomes, expenses: mergedExpenses }, { merge: true });
                     savePendingFinancesQueue([]);
                 } catch (finSyncErr) {
-                    console.warn("Finances background sync postponed:", finSyncErr);
+                    console.warn("Finances sync error:", finSyncErr);
                 }
             }
+        } catch (err) {
+            console.error("Auto-sync error in Collections:", err);
         } finally {
             isSyncingRef.current = false;
             setIsSyncing(false);
+            setSyncProgress({ isSyncing: false, synced: 0, total: 0 });
         }
     };
 
@@ -4816,27 +5824,44 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         return () => unsub();
     }, [schoolId]);
 
-    // Fetch all students across classes for instant real-time search
+    // Fetch all students across classes for instant real-time search with IndexedDB Offline Support
     useEffect(() => {
-        if (!schoolId || classes.length === 0) return;
+        if (!schoolId) return;
+
+        // 1. Instant 0ms offline hydration from IndexedDB
+        getCachedStudentsOffline(schoolId).then(cached => {
+            if (cached && cached.length > 0) {
+                setAllStudents(prev => prev.length === 0 ? cached : prev);
+            }
+        }).catch(() => {});
+
+        if (classes.length === 0) return;
 
         const loadAllStudents = async () => {
             setLoadingAllStudents(true);
             try {
                 const studentsList = [];
                 const promises = classes.map(async (cls) => {
-                    const snap = await getDocs(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
-                    snap.docs.forEach(docSnap => {
-                        studentsList.push({
-                            id: docSnap.id,
-                            classId: cls.id,
-                            className: cls.name,
-                            ...docSnap.data()
+                    try {
+                        const snap = await getDocs(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
+                        snap.docs.forEach(docSnap => {
+                            studentsList.push({
+                                id: docSnap.id,
+                                classId: cls.id,
+                                className: cls.name,
+                                ...docSnap.data()
+                            });
                         });
-                    });
+                    } catch (e) {
+                        console.warn(`Class ${cls.name} fetch warning in offline mode:`, e);
+                    }
                 });
                 await Promise.all(promises);
-                setAllStudents(studentsList);
+                if (studentsList.length > 0) {
+                    setAllStudents(studentsList);
+                    // Cache to IndexedDB (Supports 5,000+ students without 5MB limits)
+                    cacheStudentsOffline(schoolId, studentsList);
+                }
             } catch (err) {
                 console.error("Error loading students for search:", err);
             }
@@ -4871,6 +5896,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 const found = list.find(s => s.id === selectedStudentId);
                 if (found) setSelectedStudent(found);
             }
+        }, (err) => {
+            console.warn("Class students listener warning:", err);
+            setLoadingClassStudents(false);
         });
 
         return () => unsub();
@@ -5118,17 +6146,24 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         return unique.sort((a, b) => (a.id === selectedStudent.id ? -1 : b.id === selectedStudent.id ? 1 : (a.name || '').localeCompare(b.name || '')));
     }, [selectedStudent, allStudents, allParents]);
 
-    // Selected Siblings State for Combined Payment
+    // Selected Siblings State for Combined Payment & Payment Scope ('family' | 'single')
+    const [siblingPaymentScope, setSiblingPaymentScope] = useState('family');
     const [selectedSiblingIds, setSelectedSiblingIds] = useState([]);
     // Active Child Step Index (1 by 1 view)
     const [activeSiblingId, setActiveSiblingId] = useState(null);
 
     // Auto sync selected siblings & active sibling when student or family changes
     useEffect(() => {
-        if (detectedSiblings.length > 0) {
+        if (detectedSiblings.length > 1) {
+            setSiblingPaymentScope('family');
             setSelectedSiblingIds(detectedSiblings.map(s => s.id));
             setActiveSiblingId(selectedStudent?.id || detectedSiblings[0].id);
+        } else if (detectedSiblings.length === 1) {
+            setSiblingPaymentScope('single');
+            setSelectedSiblingIds([detectedSiblings[0].id]);
+            setActiveSiblingId(detectedSiblings[0].id);
         } else {
+            setSiblingPaymentScope('single');
             setSelectedSiblingIds([]);
             setActiveSiblingId(null);
         }
@@ -5178,23 +6213,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         });
     };
 
-    // Handle Selecting a Student
-    const handleSelectStudent = (student) => {
-        setSelectedStudent(student);
-        setSelectedClassId(student.classId);
-        setSelectedStudentId(student.id);
-        setActiveSiblingId(student.id);
-        setSearchQuery('');
-        setShowSearchDropdown(false);
-        setAssessmentViewMode('assessment');
-        // Auto apply late penalty if overdue
-        if (dueInfo.autoFine > 0) {
-            setFineAmount(dueInfo.autoFine.toString());
-        } else {
-            setFineAmount('0');
-        }
-    };
-
     // Calculate 12-Month History & Payment Reliability Score for Active Child
     const studentReliabilityData = useMemo(() => {
         const studentToEvaluate = activeChild || selectedStudent;
@@ -5214,79 +6232,20 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             prevUnpaidCount = studentToEvaluate.unpaidMonths - 1;
         }
 
-        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const monthFullNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-
         const monthlyHistory = [];
         const pastPaymentDays = [];
 
         for (let i = 0; i < 12; i++) {
-            const monthNum = i + 1;
-            let status = 'upcoming';
-            let paymentDate = null;
-            let paymentMode = null;
-            let receiptNo = null;
-            let amount = Number(studentToEvaluate.tuitionFee) || 0;
+            const fin = getStudentMonthFinancialStatus(studentToEvaluate, i, currentYear, currentAction, feeSettingsData, studentHistoryTxs);
             let monthScore = 0;
 
-            // Search in studentHistoryTxs
-            const matchingTx = studentHistoryTxs.find(tx => {
-                if (tx.timestamp?.seconds) {
-                    const d = new Date(tx.timestamp.seconds * 1000);
-                    return d.getMonth() + 1 === monthNum && d.getFullYear() === currentYear;
-                }
-                if (tx.dateString) {
-                    const d = new Date(tx.dateString);
-                    if (!isNaN(d.getTime())) {
-                        return d.getMonth() + 1 === monthNum && d.getFullYear() === currentYear;
-                    }
-                }
-                return false;
-            });
-
-            if (monthNum < currentMonth) {
-                const distanceBack = currentMonth - monthNum;
-                if (distanceBack <= prevUnpaidCount) {
-                    status = 'overdue';
-                    monthScore = 0;
-                } else {
-                    status = 'paid';
-                    if (matchingTx) {
-                        const txDate = matchingTx.timestamp?.seconds ? new Date(matchingTx.timestamp.seconds * 1000) : new Date(matchingTx.dateString || '');
-                        paymentDate = !isNaN(txDate.getTime()) ? txDate : null;
-                        paymentMode = matchingTx.paymentMode || 'Cash';
-                        receiptNo = matchingTx.receiptNo || matchingTx.id;
-                        amount = Number(matchingTx.totalPaid) || amount;
-                        const day = paymentDate ? paymentDate.getDate() : Math.min(dueDay - 2, 5);
-                        pastPaymentDays.push(day);
-                    } else {
-                        const seed = (studentToEvaluate.id || 'A').charCodeAt(0);
-                        const estDay = Math.min(Math.max((seed % 6) + 1, 1), 7);
-                        pastPaymentDays.push(estDay);
-                        paymentDate = new Date(currentYear, i, estDay);
-                        paymentMode = 'Cash';
-                    }
-                }
-            } else if (monthNum === currentMonth) {
-                if (isCurrentPaid) {
-                    status = 'paid';
-                    paymentDate = currentPaidDate && !isNaN(currentPaidDate.getTime()) ? currentPaidDate : new Date();
-                    paymentMode = studentToEvaluate.lastPaymentMode || 'Cash';
-                    receiptNo = studentToEvaluate.lastReceiptNo || null;
-                    amount = Number(studentToEvaluate.lastPaymentAmount) || amount;
-                    const day = paymentDate ? paymentDate.getDate() : currentDay;
-                    pastPaymentDays.push(day);
-                } else {
-                    status = currentDay > dueDay ? 'overdue' : 'pending';
-                    monthScore = 0;
-                }
-            } else {
-                status = 'upcoming';
+            if (fin.paymentDate && !isNaN(fin.paymentDate.getTime())) {
+                pastPaymentDays.push(fin.paymentDate.getDate());
             }
 
             // Calculate Monthly Score based on parent app formula
-            if (status === 'paid' && paymentDate) {
-                const d = paymentDate.getDate();
+            if (fin.status === 'paid' && fin.paymentDate) {
+                const d = fin.paymentDate.getDate();
                 if (d >= 1 && d <= 3) monthScore = 110 - (10 * d);
                 else if (d >= 4 && d <= 6) monthScore = 110 - (10 * d);
                 else if (d >= 7 && d <= 10) monthScore = 80 - (5 * d);
@@ -5295,27 +6254,23 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             }
 
             monthlyHistory.push({
-                monthNum,
-                monthName: monthNames[i],
-                monthFullName: monthFullNames[i],
-                status,
-                amount,
-                paymentDate,
-                paymentDateStr: paymentDate ? paymentDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : null,
-                paymentMode,
-                receiptNo,
+                monthNum: fin.monthNum,
+                monthName: fin.monthName,
+                monthFullName: fin.monthFullName,
+                targetMonthKey: fin.targetMonthKey,
+                status: fin.status,
+                amount: fin.expectedAmount,
+                paidAmount: fin.paidAmount,
+                remainingBalance: fin.remainingBalance,
+                paymentDate: fin.paymentDate,
+                paymentDateStr: fin.paymentDateStr,
+                paymentMode: fin.paymentMode,
+                receiptNo: fin.receiptNo,
+                txData: fin.txData,
                 score: monthScore
             });
         }
 
-        // Exact match with Parent Mobile App (FeeCalculatorService & fee_screen.dart)
-        // Parent App logic:
-        // calculateMonthlyScore:
-        //   1-3: 110 - 10 * day (100% to 80%)
-        //   4-6: 110 - 10 * day (70% to 50%)
-        //   7-10: 80 - 5 * day (50% to 30%)
-        //   11-15: max(0, 90 - 6 * day) (30% down to 0%)
-        //   > 15: 0%
         const calculateMonthlyScore = (dayPaid) => {
             if (!dayPaid || dayPaid <= 0) return 0.0;
             if (dayPaid >= 1 && dayPaid <= 6) {
@@ -5343,7 +6298,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const totalScoreSum = parentAppPaymentHistory.reduce((acc, d) => acc + calculateMonthlyScore(d), 0);
         const aggregateScore = Math.round(totalScoreSum / parentAppPaymentHistory.length);
 
-        // Matching Parent App's FeeCalculatorService labels & colors
         let badgeLabel = 'Good';
         let badgeColor = '#0284c7';
         let badgeBg = '#e0f2fe';
@@ -5394,9 +6348,971 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             totalPaidMonths,
             prevUnpaidCount
         };
-    }, [activeChild, selectedStudent, studentHistoryTxs, dueInfo]);
+    }, [activeChild, selectedStudent, studentHistoryTxs, dueInfo, currentAction, feeSettingsData]);
 
-    // Active Child's Individual Detailed Calculation
+    // Selected Target Month Index (0-11) for billing & 12-Month Matrix
+    const [selectedTargetMonthIdx, setSelectedTargetMonthIdx] = useState(() => new Date().getMonth());
+    // Right Card View Mode: 'matrix' (12-Month Grid) | 'detail' (In-Card Categorized Sets Detailed Fee View)
+    const [rightCardSubView, setRightCardSubView] = useState('matrix');
+    const [selectedDetailMonthData, setSelectedDetailMonthData] = useState(null);
+    const [isFineWaived, setIsFineWaived] = useState(false);
+    // Selective Fee Items for Payment (Modular: Tuition, Transport, Store, Action, Fine, Arrears)
+    const [selectedFeeItemKeys, setSelectedFeeItemKeys] = useState(['tuition', 'transport', 'store', 'action', 'fine', 'arrears']);
+    // Historical Paid Confirm Modal State
+    const [confirmHistoricalModal, setConfirmHistoricalModal] = useState(null); // null | { monthData, student }
+
+    // 2-Step Swipeable Cashier POS States
+    const [cashierStep, setCashierStep] = useState(1); // 1 = Student & Parent Profile Card, 2 = Financial Breakdown POS
+    const [recentPaidMonthIdx, setRecentPaidMonthIdx] = useState(null); // Highlighting recently paid month on right card
+    const [sendWhatsAppOnSubmit, setSendWhatsAppOnSubmit] = useState(true);
+    const [audioChimeEnabled, setAudioChimeEnabled] = useState(true);
+    // ➕ New Action / Custom Fee State
+    const [showNewActionModal, setShowNewActionModal] = useState(false);
+    const [isSavingAction, setIsSavingAction] = useState(false);
+    const [attachingProof, setAttachingProof] = useState(false);
+    const fileInputProofRef = useRef(null);
+
+    // Synthesize crisp digital cashier chime via standard Web Audio API (Offline & Zero-Dependency)
+    const playCashierChime = () => {
+        if (!audioChimeEnabled) return;
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            const ctx = new AudioCtx();
+            const now = ctx.currentTime;
+            
+            // First melodic bell chime
+            const osc1 = ctx.createOscillator();
+            const gain1 = ctx.createGain();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(587.33, now); // D5
+            gain1.gain.setValueAtTime(0.18, now);
+            gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+            osc1.connect(gain1);
+            gain1.connect(ctx.destination);
+            osc1.start(now);
+            osc1.stop(now + 0.35);
+
+            // Second higher sparkling chime
+            const osc2 = ctx.createOscillator();
+            const gain2 = ctx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(880, now + 0.09); // A5
+            gain2.gain.setValueAtTime(0.22, now + 0.09);
+            gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+            osc2.connect(gain2);
+            gain2.connect(ctx.destination);
+            osc2.start(now + 0.09);
+            osc2.stop(now + 0.55);
+        } catch (err) {
+            console.warn("Cashier chime note:", err);
+        }
+    };
+
+    // Keyboard navigation helper (Enter to proceed to fee step, Esc to return to profile)
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (activeDailyMode !== 'fee_submission' || !selectedStudent) return;
+            // Ignore if active element is an input or textarea
+            const tagName = document.activeElement?.tagName?.toLowerCase();
+            if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+                if (e.key === 'Enter' && cashierStep === 1) {
+                    setCashierStep(2);
+                }
+                return;
+            }
+            if (e.key === 'Enter' && cashierStep === 1) {
+                setCashierStep(2);
+            } else if (e.key === 'Escape' && cashierStep === 2) {
+                setCashierStep(1);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [activeDailyMode, selectedStudent, cashierStep]);
+
+    // Auto synchronize selectedDetailMonthData when student or target month changes
+    useEffect(() => {
+        const studentToAssess = activeChild || selectedStudent;
+        if (!studentToAssess) {
+            setSelectedDetailMonthData(null);
+            setIsFineWaived(false);
+            return;
+        }
+        const currentYear = new Date().getFullYear();
+        const breakdown = calculateItemizedFeeBreakdown(
+            studentToAssess,
+            currentAction,
+            { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+            selectedTargetMonthIdx,
+            currentYear
+        );
+
+        const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+        const targetMonthHist = studentReliabilityData?.monthlyHistory?.[selectedTargetMonthIdx] || null;
+        const matchingMonthTx = targetMonthHist?.txData || studentHistoryTxs.find(tx => tx.targetMonthKey === targetMonthKey || tx.targetMonthIdx === selectedTargetMonthIdx);
+
+        // Cumulative Prior Months Arrears: Sum remaining unpaid balances from months prior to selectedTargetMonthIdx
+        let priorArrearsSum = 0;
+        let priorArrearsCount = 0;
+        (studentReliabilityData?.monthlyHistory || []).forEach(m => {
+            if ((m.monthNum - 1) < selectedTargetMonthIdx) {
+                if (m.status === 'partial') {
+                    priorArrearsSum += Number(m.remainingBalance || 0);
+                    priorArrearsCount++;
+                } else if (m.status === 'overdue' || m.status === 'pending') {
+                    const defaultTuition = breakdown.tuitionPayable || breakdown.baseTuition || Number(studentToAssess.tuitionFee || 0);
+                    priorArrearsSum += Number(m.amount || defaultTuition);
+                    priorArrearsCount++;
+                }
+            }
+        });
+
+        if (priorArrearsSum > 0 && !breakdown.is100PercentFree) {
+            breakdown.arrears = priorArrearsSum;
+            breakdown.arrearsMonthsCount = priorArrearsCount;
+        } else {
+            breakdown.arrears = 0;
+            breakdown.arrearsMonthsCount = 0;
+        }
+
+        const isMonthFullyPaid = targetMonthHist?.status === 'paid';
+        const isMonthPartialPaid = targetMonthHist?.status === 'partial';
+
+        // Individual item paid status flags (Prevents double billing!)
+        const isTuitionPaid = isMonthFullyPaid || breakdown.is100PercentFree || (Array.isArray(studentToAssess.paidMonths) && studentToAssess.paidMonths.includes(targetMonthKey)) || Boolean(matchingMonthTx?.paidCategories?.includes('tuition'));
+        const isTransportPaid = isMonthFullyPaid || (breakdown.transportFee === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('transport'));
+        const isStorePaid = isMonthFullyPaid || (breakdown.storeDues === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('store'));
+        const isActionPaid = isMonthFullyPaid || (breakdown.actionFee === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('action'));
+        const isFinePaid = isMonthFullyPaid || isFineWaived || (breakdown.penaltyFine === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('fine'));
+        const isArrearsPaid = isMonthFullyPaid || (breakdown.arrears === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('arrears'));
+
+        const calculatedNetPayable = (isTuitionPaid ? 0 : breakdown.tuitionPayable) +
+            (isTransportPaid ? 0 : breakdown.transportFee) +
+            (isStorePaid ? 0 : breakdown.storeDues) +
+            (isActionPaid ? 0 : breakdown.actionFee) +
+            (isFinePaid ? 0 : (isFineWaived ? 0 : breakdown.penaltyFine)) +
+            (isArrearsPaid ? 0 : breakdown.arrears);
+
+        breakdown.totalPayable = calculatedNetPayable;
+
+        setSelectedDetailMonthData({
+            student: studentToAssess,
+            breakdown,
+            isPaid: isMonthFullyPaid,
+            isPartial: isMonthPartialPaid,
+            paidAmount: targetMonthHist?.paidAmount || 0,
+            remainingBalance: targetMonthHist?.remainingBalance || calculatedNetPayable,
+            targetMonthName: MONTH_NAMES[selectedTargetMonthIdx],
+            targetMonthIdx: selectedTargetMonthIdx,
+            targetYear: currentYear,
+            targetMonthKey,
+            txData: matchingMonthTx || null,
+            feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+            isTuitionPaid,
+            isTransportPaid,
+            isStorePaid,
+            isActionPaid,
+            isFinePaid,
+            isArrearsPaid
+        });
+
+        // Auto select only UNPAID item categories so already paid items are never checked
+        const autoSelectedKeys = [];
+        if (!isArrearsPaid && breakdown.arrears > 0) autoSelectedKeys.push('arrears');
+        if (!isTuitionPaid && breakdown.tuitionPayable > 0) autoSelectedKeys.push('tuition');
+        if (!isStorePaid && breakdown.storeDues > 0) autoSelectedKeys.push('store');
+        if (!isTransportPaid && breakdown.transportFee > 0) autoSelectedKeys.push('transport');
+        if (!isActionPaid && breakdown.actionFee > 0) autoSelectedKeys.push('action');
+        if (!isFinePaid && breakdown.penaltyFine > 0) autoSelectedKeys.push('fine');
+
+        // Include any unpaid individual actions for this student
+        (studentToAssess?.individualActions || []).forEach((act, idx) => {
+            if (act.status !== 'paid' && act.type !== 'store_inventory') {
+                autoSelectedKeys.push(`custom_action_${act.id || idx}`);
+            }
+        });
+
+        setSelectedFeeItemKeys(autoSelectedKeys);
+
+        if (!isMonthFullyPaid && calculatedNetPayable > 0) {
+            setReceivedAmount(String(calculatedNetPayable));
+            if (!isFinePaid && breakdown.penaltyFine > 0 && !isFineWaived) {
+                setFineAmount(String(breakdown.penaltyFine));
+            } else {
+                setFineAmount('0');
+            }
+        } else {
+            setReceivedAmount('0');
+            setFineAmount('0');
+        }
+    }, [activeChild, selectedStudent, selectedTargetMonthIdx, currentAction, dueInfo, studentReliabilityData, isFineWaived, studentHistoryTxs]);
+
+    // Selective Fee Items Handlers
+    const toggleFeeItemKey = (key) => {
+        setSelectedFeeItemKeys(prev => {
+            if (prev.includes(key)) {
+                if (prev.length === 1) return prev; // Keep at least one item selected
+                return prev.filter(k => k !== key);
+            } else {
+                return [...prev, key];
+            }
+        });
+    };
+
+    const handleSelectOnlyCategory = (catKey) => {
+        setSelectedFeeItemKeys([catKey]);
+    };
+
+    const handleSelectAllCategories = () => {
+        const allKeys = ['tuition', 'transport', 'store', 'action', 'fine', 'arrears'];
+        (activePayableItems || []).forEach(it => {
+            if (it.isCustomAction && !allKeys.includes(it.key)) {
+                allKeys.push(it.key);
+            }
+        });
+        setSelectedFeeItemKeys(allKeys);
+    };
+
+    // Handler to Waive Late Fine (Maaf)
+    const handleWaiveLateFine = () => {
+        setIsFineWaived(true);
+        setFineAmount('0');
+        if (selectedDetailMonthData) {
+            const updatedBreakdown = {
+                ...selectedDetailMonthData.breakdown,
+                penaltyFine: 0,
+                isFineWaived: true,
+                totalPayable: Math.max(0, (selectedDetailMonthData.breakdown.tuitionPayable || 0) + (selectedDetailMonthData.breakdown.transportFee || 0) + (selectedDetailMonthData.breakdown.storeDues || 0) + (selectedDetailMonthData.breakdown.actionFee || 0))
+            };
+            setSelectedDetailMonthData({
+                ...selectedDetailMonthData,
+                breakdown: updatedBreakdown
+            });
+            const finalTotal = Math.max(0, updatedBreakdown.totalPayable - Number(discountAmount || 0));
+            setReceivedAmount(String(finalTotal));
+        }
+    };
+
+    // Handler to set specific fine amount
+    const handleSetCustomFine = (amountNum) => {
+        const val = Math.max(0, Number(amountNum) || 0);
+        setIsFineWaived(val === 0);
+        setFineAmount(String(val));
+        if (selectedDetailMonthData) {
+            const updatedBreakdown = {
+                ...selectedDetailMonthData.breakdown,
+                penaltyFine: val,
+                isFineWaived: val === 0,
+                totalPayable: Math.max(0, (selectedDetailMonthData.breakdown.tuitionPayable || 0) + (selectedDetailMonthData.breakdown.transportFee || 0) + (selectedDetailMonthData.breakdown.storeDues || 0) + (selectedDetailMonthData.breakdown.actionFee || 0) + val)
+            };
+            setSelectedDetailMonthData({
+                ...selectedDetailMonthData,
+                breakdown: updatedBreakdown
+            });
+            const finalTotal = Math.max(0, updatedBreakdown.totalPayable - Number(discountAmount || 0));
+            setReceivedAmount(String(finalTotal));
+        }
+    };
+
+    // Handler to Add On-The-Spot Action / Custom Fee (Live Sync with Firestore & Parent App)
+    const handleAddCustomAction = async (title, amount, remarksText = '') => {
+        const studentToUpdate = activeChild || selectedStudent;
+        if (!studentToUpdate || !schoolId) return;
+
+        const numAmount = Number(amount) || 0;
+        if (!title.trim() || numAmount <= 0) {
+            alert('Please enter a valid title and amount greater than 0.');
+            return;
+        }
+
+        setIsSavingAction(true);
+        try {
+            const actionId = `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const targetMonthName = MONTH_NAMES[selectedTargetMonthIdx] || 'Current Month';
+            const targetYear = new Date().getFullYear();
+            const targetMonthKey = `${targetYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+
+            const newActionItem = {
+                id: actionId,
+                name: title.trim(),
+                title: title.trim(),
+                amount: numAmount,
+                remarks: remarksText.trim(),
+                status: 'unpaid',
+                month: targetMonthName,
+                monthKey: targetMonthKey,
+                date: new Date().toISOString(),
+                createdAt: new Date().toISOString()
+            };
+
+            const existingActions = Array.isArray(studentToUpdate.individualActions) ? studentToUpdate.individualActions : [];
+            const updatedActions = [...existingActions, newActionItem];
+
+            // 1. Optimistic in-memory update
+            const updateStudentInMemory = (st) => ({
+                ...st,
+                individualActions: updatedActions
+            });
+
+            setSelectedStudent(prev => prev && prev.id === studentToUpdate.id ? updateStudentInMemory(prev) : prev);
+            setAllStudents(prev => prev.map(s => s.id === studentToUpdate.id ? updateStudentInMemory(s) : s));
+            setClassStudents(prev => prev.map(s => s.id === studentToUpdate.id ? updateStudentInMemory(s) : s));
+
+            // Auto-select this new action key
+            setSelectedFeeItemKeys(prev => [...prev, `custom_action_${actionId}`]);
+
+            // 2. Sync to Firestore (Both Class subcollection & Root students collection)
+            const classId = studentToUpdate.classId || selectedClassId;
+            const writeTasks = [];
+            if (classId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentToUpdate.id);
+                writeTasks.push(setDoc(classStudentRef, { individualActions: updatedActions }, { merge: true }).catch(e => console.warn('Class student action write:', e)));
+            }
+            const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentToUpdate.id);
+            writeTasks.push(setDoc(masterStudentRef, { individualActions: updatedActions }, { merge: true }).catch(e => console.warn('Master student action write:', e)));
+            await Promise.all(writeTasks);
+
+            setShowNewActionModal(false);
+        } catch (err) {
+            console.error("Error adding custom action:", err);
+            alert("Could not save custom action. Please try again.");
+        } finally {
+            setIsSavingAction(false);
+        }
+    };
+
+    // Handler to Remove Unpaid Custom Action (Live Sync with Firestore & Parent App)
+    const handleRemoveCustomAction = async (actionId) => {
+        const studentToUpdate = activeChild || selectedStudent;
+        if (!studentToUpdate || !schoolId) return;
+
+        if (!window.confirm("Are you sure you want to remove this unpaid action from the student's bill?")) return;
+
+        try {
+            const existingActions = Array.isArray(studentToUpdate.individualActions) ? studentToUpdate.individualActions : [];
+            const updatedActions = existingActions.filter(a => a.id !== actionId && `custom_action_${a.id}` !== actionId);
+
+            // 1. Optimistic in-memory update
+            const updateStudentInMemory = (st) => ({
+                ...st,
+                individualActions: updatedActions
+            });
+
+            setSelectedStudent(prev => prev && prev.id === studentToUpdate.id ? updateStudentInMemory(prev) : prev);
+            setAllStudents(prev => prev.map(s => s.id === studentToUpdate.id ? updateStudentInMemory(s) : s));
+            setClassStudents(prev => prev.map(s => s.id === studentToUpdate.id ? updateStudentInMemory(s) : s));
+
+            setSelectedFeeItemKeys(prev => prev.filter(k => k !== `custom_action_${actionId}` && k !== actionId));
+
+            // 2. Sync to Firestore
+            const classId = studentToUpdate.classId || selectedClassId;
+            const removeTasks = [];
+            if (classId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentToUpdate.id);
+                removeTasks.push(setDoc(classStudentRef, { individualActions: updatedActions }, { merge: true }).catch(e => console.warn('Class student action remove write:', e)));
+            }
+            const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentToUpdate.id);
+            removeTasks.push(setDoc(masterStudentRef, { individualActions: updatedActions }, { merge: true }).catch(e => console.warn('Master student action remove write:', e)));
+            await Promise.all(removeTasks);
+        } catch (err) {
+            console.error("Error removing custom action:", err);
+            alert("Could not remove custom action. Please try again.");
+        }
+    };
+
+    // Store Purchases Itemized Breakdown & Popover State
+    const [storeSlipPopoverOpen, setStoreSlipPopoverOpen] = useState(false);
+
+    // Print Quick 3-Inch POS Thermal Receipt (Offline)
+    const printThermalReceipt = (txData, customSchoolInfo) => {
+        try {
+            const printWin = window.open('', '_blank', 'width=360,height=600');
+            if (!printWin) {
+                alert('Please allow popups in your browser to print the thermal receipt slip.');
+                return;
+            }
+            const schoolName = customSchoolInfo?.name || localSchoolInfo?.name || schoolInfo?.name || 'School Management System';
+            const itemsHtml = (txData.items || []).map(it => `
+                <tr>
+                    <td style="text-align:left; padding: 2px 0;">${it.name}</td>
+                    <td style="text-align:right; font-weight:bold; padding: 2px 0;">Rs ${Number(it.amount || 0).toLocaleString()}</td>
+                </tr>
+            `).join('');
+
+            printWin.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>POS Receipt - ${txData.receiptNo}</title>
+                    <style>
+                        body { font-family: 'Courier New', monospace; font-size: 11px; margin: 0; padding: 8px; color: #000; line-height: 1.3; }
+                        .center { text-align: center; }
+                        .bold { font-weight: bold; }
+                        .line { border-bottom: 1px dashed #000; margin: 5px 0; }
+                        table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="center bold" style="font-size: 12.5px;">${schoolName.toUpperCase()}</div>
+                    <div class="center" style="font-size: 9px; margin-top: 1px;">OFFICIAL FEE RECEIPT (POS)</div>
+                    <div class="line"></div>
+                    <div><strong>Slip #:</strong> ${txData.receiptNo}</div>
+                    <div><strong>Date:</strong> ${txData.dateString || new Date().toLocaleDateString('en-GB')} ${txData.timeString || ''}</div>
+                    <div><strong>Student:</strong> ${txData.studentName}</div>
+                    <div><strong>Class:</strong> ${txData.className} | <strong>Roll:</strong> ${txData.rollNo || 'N/A'}</div>
+                    <div><strong>Father:</strong> ${txData.fatherName || 'Parent'}</div>
+                    <div><strong>Payment Mode:</strong> ${txData.paymentMode || 'Cash'}</div>
+                    ${txData.transactionId ? `<div><strong>TRX ID:</strong> ${txData.transactionId}</div>` : ''}
+                    <div class="line"></div>
+                    <table>
+                        ${itemsHtml}
+                    </table>
+                    <div class="line"></div>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: bold;">
+                        <span>TOTAL AMOUNT:</span>
+                        <span>Rs ${Number(txData.totalPaid || 0).toLocaleString()}</span>
+                    </div>
+                    ${txData.remainingBalance > 0 ? `
+                    <div style="display: flex; justify-content: space-between; color: #b91c1c; font-size: 10.5px; font-weight: bold; margin-top: 3px;">
+                        <span>REMAINING BALANCE:</span>
+                        <span>Rs ${Number(txData.remainingBalance).toLocaleString()}</span>
+                    </div>` : ''}
+                    <div class="line"></div>
+                    <div class="center" style="font-size: 8.5px; margin-top: 6px;">
+                        *** Thank you for your payment ***<br/>
+                        Generated by Principal Office System
+                    </div>
+                    <script>
+                        window.onload = function() { window.print(); }
+                    </script>
+                </body>
+                </html>
+            `);
+            printWin.document.close();
+        } catch (e) {
+            console.error("Thermal print error:", e);
+        }
+    };
+
+    // Handle Clicking a Month Card in the 2026 Monthly Status Matrix
+    const handleMonthCardClick = (m) => {
+        const studentToAssess = activeChild || selectedStudent;
+        if (!studentToAssess) return;
+        const monthIdx = m.monthNum - 1;
+        setSelectedTargetMonthIdx(monthIdx);
+
+        const currentYear = new Date().getFullYear();
+        const breakdown = calculateItemizedFeeBreakdown(
+            studentToAssess,
+            currentAction,
+            { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+            monthIdx,
+            currentYear
+        );
+
+        // Calculate Prior Unpaid Months Arrears before this clicked target month
+        const unpaidPrevMonths = (studentReliabilityData?.monthlyHistory || []).filter(
+            histMonth => (histMonth.monthNum - 1) < monthIdx && histMonth.status !== 'paid'
+        );
+        const arrearsCount = unpaidPrevMonths.length;
+        if (arrearsCount > 0 && !breakdown.is100PercentFree) {
+            const perMonthTuition = breakdown.tuitionPayable || breakdown.baseTuition || 0;
+            breakdown.arrears = arrearsCount * perMonthTuition;
+            breakdown.arrearsMonthsCount = arrearsCount;
+            breakdown.totalPayable = (breakdown.totalPayable || 0) + breakdown.arrears;
+        } else {
+            breakdown.arrears = 0;
+            breakdown.arrearsMonthsCount = 0;
+        }
+
+        setIsFineWaived(false);
+        setSelectedDetailMonthData({
+            student: studentToAssess,
+            breakdown,
+            isPaid: m.status === 'paid',
+            targetMonthName: m.monthFullName || MONTH_NAMES[monthIdx],
+            targetMonthIdx: monthIdx,
+            targetYear: currentYear,
+            feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 }
+        });
+
+        // Keep 12-Month Matrix visible at all times
+        setRightCardSubView('matrix');
+
+        // Auto sync left payment form counter
+        if (m.status !== 'paid' && !breakdown.is100PercentFree) {
+            setReceivedAmount(String(breakdown.totalPayable || 0));
+            if (breakdown.penaltyFine > 0) {
+                setFineAmount(String(breakdown.penaltyFine));
+            } else {
+                setFineAmount('0');
+            }
+        }
+    };
+
+    // Download Fee Card / Challan PDF for any month
+    const handleDownloadChallanForMonth = (m) => {
+        const student = activeChild || selectedStudent;
+        if (!student) return;
+        const targetMonthIdx = m ? (m.monthNum - 1) : selectedTargetMonthIdx;
+        const targetMonthName = MONTH_NAMES[targetMonthIdx];
+        const targetYear = new Date().getFullYear();
+        
+        // Multi-Sibling Unified Family Challan
+        if (feeCalculation?.isMultiFamily && !m) {
+            downloadFamilyFeeChallanPDF({
+                schoolInfo: localSchoolInfo || schoolInfo,
+                feeCalculation,
+                targetMonthName,
+                targetYear,
+                fatherName: officialFamilyFatherName || student.parentDetails?.fatherName || student.fatherName || 'Parent / Guardian',
+                feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 }
+            });
+            return;
+        }
+
+        const feeCalculationData = calculateItemizedFeeBreakdown(
+            student,
+            currentAction,
+            { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+            targetMonthIdx,
+            targetYear
+        );
+        
+        const unpaidPrevMonths = (studentReliabilityData?.monthlyHistory || []).filter(
+            histMonth => (histMonth.monthNum - 1) < targetMonthIdx && histMonth.status !== 'paid'
+        );
+        if (unpaidPrevMonths.length > 0 && !feeCalculationData.is100PercentFree) {
+            const perMonthTuition = feeCalculationData.tuitionPayable || feeCalculationData.baseTuition || 0;
+            feeCalculationData.arrears = unpaidPrevMonths.length * perMonthTuition;
+            feeCalculationData.arrearsMonthsCount = unpaidPrevMonths.length;
+            feeCalculationData.totalPayable = (feeCalculationData.totalPayable || 0) + feeCalculationData.arrears;
+        }
+
+        downloadStudentFeeCardPDF({
+            student,
+            breakdown: feeCalculationData,
+            isPaid: m ? (m.status === 'paid') : (selectedDetailMonthData?.isPaid || false),
+            targetMonthName,
+            targetYear,
+            feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 }
+        }, localSchoolInfo || schoolInfo);
+    };
+
+    // Send WhatsApp Reminder with Fee Card Details
+    const handleSendFeeCardWhatsApp = (st, breakdown, monthName, year) => {
+        const phone = st.fatherPhone || st.phone || st.parentPhone || '';
+        if (!phone) {
+            alert("Parent phone number is not available for this student.");
+            return;
+        }
+        const cleanPhone = phone.replace(/[^0-9]/g, '');
+        const formattedPhone = cleanPhone.startsWith('0') ? '92' + cleanPhone.slice(1) : cleanPhone.startsWith('92') ? cleanPhone : '92' + cleanPhone;
+
+        const schoolName = localSchoolInfo?.name || schoolInfo?.name || 'School';
+        const msg = `*OFFICIAL FEE CARD - ${monthName} ${year}*\n*${schoolName}*\n\n` +
+            `Student: *${st.name}* (Class: ${st.className || 'N/A'}, Roll: ${st.rollNo || 'N/A'})\n` +
+            `Father: *${st.fatherName || 'Parent'}*\n` +
+            `------------------------------------\n` +
+            `• Monthly Tuition: Rs ${Number(breakdown.tuitionPayable || 0).toLocaleString()}\n` +
+            (breakdown.transportFee > 0 ? `• Transport Charges: Rs ${Number(breakdown.transportFee).toLocaleString()}\n` : '') +
+            (breakdown.storeDues > 0 ? `• Uniform & Store Items: Rs ${Number(breakdown.storeDues).toLocaleString()}\n` : '') +
+            (breakdown.actionFee > 0 ? `• Actions & Exam Charges: Rs ${Number(breakdown.actionFee).toLocaleString()}\n` : '') +
+            (breakdown.penaltyFine > 0 ? `• Late Fine Surcharge: Rs ${Number(breakdown.penaltyFine).toLocaleString()}\n` : '') +
+            `------------------------------------\n` +
+            `*NET TOTAL: Rs ${Number(breakdown.totalPayable || 0).toLocaleString()}*\n` +
+            `Status: *${breakdown.is100PercentFree ? '100% Scholarship (Free)' : (selectedDetailMonthData?.isPaid ? 'PAID / CLEARED ✓' : 'PENDING PAYMENT')}*\n\n` +
+            `Thank you for your cooperation.\n*Principal Office*`;
+
+        window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+
+    // Smart Next Unpaid Month Index across current academic year
+    const nextUnpaidMonthIdx = useMemo(() => {
+        if (!studentReliabilityData?.monthlyHistory) return -1;
+        const hist = studentReliabilityData.monthlyHistory;
+        for (let i = selectedTargetMonthIdx + 1; i < 12; i++) {
+            if (hist[i]?.status !== 'paid' && hist[i]?.status !== 'pre_admission') {
+                return i;
+            }
+        }
+        for (let i = 0; i < 12; i++) {
+            if (hist[i]?.status !== 'paid' && hist[i]?.status !== 'pre_admission') {
+                return i;
+            }
+        }
+        return -1;
+    }, [studentReliabilityData, selectedTargetMonthIdx]);
+
+    // Universal Month Key Parser Helper (Handles "September 2026", "Sep 2026", "2026-09", etc.)
+    const parseMonthStringToKey = (monthStr, fallbackYear = new Date().getFullYear()) => {
+        if (!monthStr || typeof monthStr !== 'string') return null;
+        const clean = monthStr.trim();
+        if (/^\d{4}-\d{2}$/.test(clean)) return clean;
+        
+        const monthIndex = MONTH_NAMES.findIndex(m => clean.toLowerCase().includes(m.toLowerCase()));
+        if (monthIndex !== -1) {
+            const yearMatch = clean.match(/\d{4}/);
+            const year = yearMatch ? yearMatch[0] : fallbackYear;
+            return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+        }
+        return null;
+    };
+
+    // Construct transaction record for currently selected paid month
+    const getSelectedMonthPaidTxRecord = () => {
+        const st = activeChild || selectedStudent;
+        if (!st) return null;
+        const currentYear = new Date().getFullYear();
+        const targetYear = selectedDetailMonthData?.targetYear || currentYear;
+        const targetMonthKey = `${targetYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+        const targetMonthNameLower = (MONTH_NAMES[selectedTargetMonthIdx] || '').toLowerCase();
+        
+        // Match specific transaction from transaction history
+        const tx = selectedDetailMonthData?.txData || (studentHistoryTxs || []).find(t => {
+            if (t.targetMonthKey && t.targetMonthKey === targetMonthKey) return true;
+            if (t.targetMonthIdx !== undefined && Number(t.targetMonthIdx) === selectedTargetMonthIdx && (Number(t.targetYear) === targetYear || !t.targetYear)) return true;
+            if (t.targetMonthName && t.targetMonthName.toLowerCase().includes(targetMonthNameLower)) return true;
+            return false;
+        });
+
+        const histData = st.monthlyFeeHistory?.[targetMonthKey];
+        const recNo = tx?.receiptNo || histData?.receiptNo || `REC-${st.id?.slice(-4) || 'PAID'}-${targetMonthKey}`;
+        
+        // Universal Multi-Source Proof Resolver
+        // 1. Exact student & target month match across online submissions
+        let matchingOnlineSub = (onlineSubmissions || []).find(sub => {
+            const isStudentMatch = sub.studentId === st.id || 
+                (sub.rollNo && String(sub.rollNo) === String(st.rollNo)) ||
+                (Array.isArray(sub.familyStudents) && sub.familyStudents.some(f => f.studentId === st.id));
+            if (!isStudentMatch) return false;
+            
+            const subMonthKey = sub.targetMonthKey || sub.monthKey || parseMonthStringToKey(sub.month, targetYear);
+            const subMonthStr = (sub.month || '').toLowerCase();
+            return subMonthKey === targetMonthKey || subMonthStr.includes(targetMonthNameLower);
+        });
+
+        // 2. If not found by exact month, check if student has any submission with a valid proof
+        if (!matchingOnlineSub) {
+            matchingOnlineSub = (onlineSubmissions || []).find(sub => {
+                const isStudentMatch = sub.studentId === st.id || 
+                    (sub.rollNo && String(sub.rollNo) === String(st.rollNo)) ||
+                    (Array.isArray(sub.familyStudents) && sub.familyStudents.some(f => f.studentId === st.id));
+                return isStudentMatch && Boolean(sub.proofUrl || sub.slipUrl || sub.proofImage || sub.receiptUrl);
+            });
+        }
+
+        const proofUrl = tx?.proofUrl || 
+            tx?.slipUrl || 
+            tx?.proofImage || 
+            tx?.proofPreview || 
+            histData?.proofUrl || 
+            histData?.slipUrl || 
+            matchingOnlineSub?.proofUrl || 
+            matchingOnlineSub?.slipUrl || 
+            matchingOnlineSub?.proofImage || 
+            matchingOnlineSub?.receiptUrl || 
+            st.pendingPaymentSubmission?.proofUrl || 
+            st.pendingPaymentSubmission?.slipUrl || 
+            st.lastPaymentProofUrl || 
+            st.paymentProof || 
+            st.proofUrl || 
+            null;
+
+        const transactionId = tx?.transactionId || 
+            histData?.transactionId || 
+            matchingOnlineSub?.transactionId || 
+            st.pendingPaymentSubmission?.transactionId || 
+            null;
+
+        const paymentMode = tx?.paymentMode || 
+            histData?.paymentMode || 
+            (matchingOnlineSub?.paymentMethod ? `Online - ${matchingOnlineSub.paymentMethod}` : null) || 
+            (st.pendingPaymentSubmission?.paymentMethod ? `Online - ${st.pendingPaymentSubmission.paymentMethod}` : null) ||
+            st.lastPaymentMode || 
+            'Bank Transfer';
+        
+        // Assemble comprehensive itemized list across all fee categories
+        const b = selectedDetailMonthData?.breakdown;
+        const items = [];
+        
+        const tuitionAmt = Number(b?.tuitionPayable ?? histData?.tuitionFee ?? st.tuitionFee ?? 0);
+        if (tuitionAmt > 0) {
+            items.push({ name: `Monthly Tuition (${MONTH_NAMES[selectedTargetMonthIdx]})`, amount: tuitionAmt, category: 'tuition' });
+        }
+        
+        const transportAmt = Number(b?.transportFee ?? histData?.transportFee ?? st.transportFee ?? 0);
+        if (transportAmt > 0) {
+            items.push({ name: 'Transport / Van Fee', amount: transportAmt, category: 'transport' });
+        }
+        
+        const storeAmt = Number(b?.storeDues ?? histData?.storeDues ?? 0);
+        if (storeAmt > 0) {
+            items.push({ name: 'Uniform & Store Items', amount: storeAmt, category: 'store' });
+        }
+        
+        const fineAmt = Number(b?.penaltyFine ?? histData?.fineAmount ?? 0);
+        if (fineAmt > 0) {
+            items.push({ name: 'Late Payment Fine', amount: fineAmt, category: 'fine' });
+        }
+        
+        if (Array.isArray(histData?.customItems) && histData.customItems.length > 0) {
+            histData.customItems.forEach(c => {
+                items.push({ name: c.title || c.name || 'Custom Fee', amount: Number(c.amount) || 0, category: 'custom_action', date: c.date });
+            });
+        }
+
+        // Calculate aggregate fallback amount if items exist
+        const calculatedItemsSum = items.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        const totalAmt = Number(tx?.totalPaid || histData?.paidAmount || calculatedItemsSum || st.tuitionFee || 0);
+
+        if (items.length === 0) {
+            items.push({ name: `Monthly Tuition Fee (${MONTH_NAMES[selectedTargetMonthIdx]})`, amount: totalAmt, category: 'tuition' });
+        }
+
+        if (tx && Array.isArray(tx.items) && tx.items.length > 0) {
+            return {
+                ...tx,
+                items: tx.items.length > 0 ? tx.items : items,
+                totalPaid: Number(tx.totalPaid || totalAmt),
+                proofUrl: tx.proofUrl || proofUrl,
+                transactionId: tx.transactionId || transactionId,
+                paymentMode: tx.paymentMode || paymentMode
+            };
+        }
+
+        return {
+            receiptNo: recNo,
+            studentName: st.name,
+            rollNo: st.rollNo || 'N/A',
+            className: st.className || 'Class',
+            classId: st.classId,
+            studentId: st.id,
+            fatherName: st.parentDetails?.fatherName || st.fatherName || 'Parent',
+            fatherPhone: st.parentDetails?.fatherPhone || st.fatherPhone || st.phone || '',
+            items,
+            totalPaid: totalAmt,
+            remainingBalance: 0,
+            paymentMode,
+            proofUrl,
+            transactionId,
+            targetMonthName: MONTH_NAMES[selectedTargetMonthIdx],
+            targetMonthKey,
+            targetMonthIdx: selectedTargetMonthIdx,
+            targetYear,
+            dateString: histData?.paidAt ? new Date(histData.paidAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }),
+            timeString: histData?.paidAt ? new Date(histData.paidAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '12:00 PM',
+            collectedBy: histData?.markedBy || 'Principal Office'
+        };
+    };
+
+    const handleTriggerAttachProof = () => {
+        if (fileInputProofRef.current) {
+            fileInputProofRef.current.value = '';
+            fileInputProofRef.current.click();
+        }
+    };
+
+    const handleFileChangeAttachProof = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const st = activeChild || selectedStudent;
+        if (!st || !schoolId) return;
+
+        setAttachingProof(true);
+        try {
+            const reader = new FileReader();
+            const base64Url = await new Promise((resolve) => {
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(file);
+            });
+
+            if (!base64Url) {
+                alert("Failed to read the selected slip image. Please try again.");
+                setAttachingProof(false);
+                return;
+            }
+
+            const currentYear = new Date().getFullYear();
+            const targetYear = selectedDetailMonthData?.targetYear || currentYear;
+            const targetMonthKey = `${targetYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+
+            const updatedHistory = {
+                ...(st.monthlyFeeHistory || {}),
+                [targetMonthKey]: {
+                    ...(st.monthlyFeeHistory?.[targetMonthKey] || {}),
+                    proofUrl: base64Url,
+                    updatedAt: new Date().toISOString()
+                }
+            };
+
+            const updatedStudentObj = {
+                ...st,
+                monthlyFeeHistory: updatedHistory,
+                lastPaymentProofUrl: base64Url
+            };
+
+            setSelectedStudent(prev => prev ? (prev.id === st.id ? updatedStudentObj : prev) : prev);
+            setAllStudents(prev => prev.map(s => (s.id === st.id ? updatedStudentObj : s)));
+            setClassStudents(prev => prev.map(s => (s.id === st.id ? updatedStudentObj : s)));
+
+            if (st.classId) {
+                const classStudentRef = doc(db, `schools/${schoolId}/classes/${st.classId}/students`, st.id);
+                await setDoc(classStudentRef, {
+                    [`monthlyFeeHistory.${targetMonthKey}.proofUrl`]: base64Url,
+                    lastPaymentProofUrl: base64Url
+                }, { merge: true });
+            }
+
+            const rootStudentRef = doc(db, `schools/${schoolId}/students`, st.id);
+            await setDoc(rootStudentRef, {
+                [`monthlyFeeHistory.${targetMonthKey}.proofUrl`]: base64Url,
+                lastPaymentProofUrl: base64Url
+            }, { merge: true });
+
+            alert("✅ Payment slip / proof attached successfully to this month!");
+        } catch (err) {
+            console.error("Error attaching proof:", err);
+            alert("Error saving attached slip: " + (err.message || 'Unknown error'));
+        } finally {
+            setAttachingProof(false);
+        }
+    };
+
+    const handleReprintThermalPaidSlip = () => {
+        const rec = getSelectedMonthPaidTxRecord();
+        if (rec) printThermalReceipt(rec, localSchoolInfo);
+    };
+
+    const handleDownloadPaidPDFReceipt = () => {
+        const rec = getSelectedMonthPaidTxRecord();
+        if (rec) downloadOfficialReceiptPDF(rec, localSchoolInfo);
+    };
+
+    const handleResendPaidWhatsAppReceipt = () => {
+        const rec = getSelectedMonthPaidTxRecord();
+        if (!rec) return;
+        const phone = rec.fatherPhone;
+        if (!phone) {
+            alert("Parent phone number is not available for this student.");
+            return;
+        }
+        const schoolTitle = localSchoolInfo?.name || schoolInfo?.name || 'School Office';
+        const itemsSummary = (rec.items || []).map(it => `• ${it.name}: Rs ${Number(it.amount || 0).toLocaleString()}`).join('\n');
+        const msg = `*FEE PAYMENT RECEIPT - ${schoolTitle.toUpperCase()}*\n\n` +
+            `*Receipt No:* ${rec.receiptNo}\n` +
+            `*Student:* ${rec.studentName} (${rec.className})\n` +
+            `*Father:* ${rec.fatherName}\n` +
+            `*Month:* ${rec.targetMonthName} ${rec.targetYear}\n` +
+            `*Date:* ${rec.dateString} ${rec.timeString}\n` +
+            `*Payment Mode:* ${rec.paymentMode}\n\n` +
+            `*Breakdown:*\n${itemsSummary}\n` +
+            `--------------------------\n` +
+            `*TOTAL PAID:* Rs ${Number(rec.totalPaid).toLocaleString()}\n` +
+            `*Status:* 100% Cleared & Paid ✓\n\n` +
+            `_Thank you for your prompt payment!_`;
+
+        let cleanPhone = phone.toString().replace(/[^0-9]/g, '');
+        if (cleanPhone.startsWith('0092')) cleanPhone = cleanPhone.slice(2);
+        else if (cleanPhone.startsWith('03')) cleanPhone = '92' + cleanPhone.slice(1);
+        window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+
+    // Mark a past month as Historically Paid (Principal-level override for pre-system records)
+    const handleMarkHistoricalPaid = async (monthData, studentOverride) => {
+        const st = studentOverride || activeChild || selectedStudent;
+        if (!st || !schoolId) return;
+
+        const amount = Number(st.tuitionFee || st.monthlyFee || 2000);
+        const targetKey = monthData.targetMonthKey;
+        const nowISO = new Date().toISOString();
+
+        // Optimistic UI — update in-memory student so card turns green instantly
+        const updatedHistory = {
+            ...(st.monthlyFeeHistory || {}),
+            [targetKey]: {
+                status: 'paid',
+                paidAmount: amount,
+                remainingBalance: 0,
+                paidAt: nowISO,
+                paymentMode: 'Historical',
+                markedBy: 'Principal',
+                isHistorical: true
+            }
+        };
+        const updatedStudent = { ...st, monthlyFeeHistory: updatedHistory };
+        setSelectedStudent(prev => prev?.id === st.id ? updatedStudent : prev);
+        setAllStudents(prev => prev.map(s => s.id === st.id ? updatedStudent : s));
+        setClassStudents(prev => (prev || []).map(s => s.id === st.id ? updatedStudent : s));
+        setConfirmHistoricalModal(null);
+
+        // Firestore write
+        try {
+            const { doc, updateDoc } = await import('firebase/firestore');
+            const { db } = await import('../firebase');
+            const classDocRef = doc(db, 'schools', schoolId, 'classes', st.classId, 'students', st.id);
+            const masterDocRef = doc(db, 'schools', schoolId, 'students', st.id);
+            const payload = {
+                [`monthlyFeeHistory.${targetKey}`]: {
+                    status: 'paid',
+                    paidAmount: amount,
+                    remainingBalance: 0,
+                    paidAt: nowISO,
+                    paymentMode: 'Historical',
+                    markedBy: 'Principal',
+                    isHistorical: true
+                }
+            };
+            await Promise.all([
+                updateDoc(classDocRef, payload).catch(() => {}),
+                updateDoc(masterDocRef, payload).catch(() => {})
+            ]);
+        } catch (err) {
+            console.warn('[MarkHistoricalPaid] Firestore write error:', err);
+        }
+    };
+
+    // Handle Selecting a Student
+    const handleSelectStudent = (student) => {
+        setSelectedStudent(student);
+        setSelectedClassId(student.classId);
+        setSelectedStudentId(student.id);
+        setActiveSiblingId(student.id);
+        setSelectedTargetMonthIdx(new Date().getMonth());
+        setRightCardSubView('matrix');
+        setSelectedDetailMonthData(null);
+        setSearchQuery('');
+        setShowSearchDropdown(false);
+        setAssessmentViewMode('assessment');
+        setCashierStep(1); // Start on Student & Parent profile view
+        // Auto apply late penalty if overdue
+        if (dueInfo.autoFine > 0) {
+            setFineAmount(dueInfo.autoFine.toString());
+        } else {
+            setFineAmount('0');
+        }
+    };
+
+    // Auto-select student and trigger family grouping when selectedStudentId matches from navigation
+    useEffect(() => {
+        if (selectedStudentId) {
+            if (allStudents.length > 0) {
+                const found = allStudents.find(s => s.id === selectedStudentId);
+                if (found && (!selectedStudent || selectedStudent.id !== selectedStudentId)) {
+                    handleSelectStudent(found);
+                }
+            } else if (classStudents.length > 0) {
+                const found = classStudents.find(s => s.id === selectedStudentId);
+                if (found && (!selectedStudent || selectedStudent.id !== selectedStudentId)) {
+                    handleSelectStudent(found);
+                }
+            }
+        }
+    }, [selectedStudentId, allStudents, classStudents, selectedStudent]);
+
+    // Active Child's Individual Detailed Calculation with Safe Multi-Field Fallback
     const activeChildFeeCalculation = useMemo(() => {
         const st = activeChild || selectedStudent;
         if (!st) return null;
@@ -5406,7 +7322,33 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         let actionsFee = 0;
         let storeFee = 0;
 
-        const tuition = Number(st.tuitionFee) || 0;
+        const is100PercentFree = (
+            st.isScholarship === true || 
+            st.isFreeShip === true || 
+            st.concessionType === 'free' || 
+            Number(st.feeDiscount) === 100
+        );
+
+        let baseTuition = Number(st.tuitionFee || st.monthlyFee || st.fee || st.monthlyTuition || st.baseFee || 0);
+        if (baseTuition === 0 && Array.isArray(st.feeStructure) && st.feeStructure.length > 0) {
+            const tuitionItem = st.feeStructure.find(f => (f.name || '').toLowerCase().includes('tuition'));
+            if (tuitionItem) baseTuition = Number(tuitionItem.amount || 0);
+            else baseTuition = st.feeStructure.reduce((sum, f) => sum + Number(f.amount || 0), 0);
+        }
+        if (baseTuition === 0 && !is100PercentFree) {
+            baseTuition = 2000;
+        }
+
+        let tuition = is100PercentFree ? 0 : baseTuition;
+        if (!is100PercentFree && st.feeDiscount && Number(st.feeDiscount) > 0) {
+            const disc = Number(st.feeDiscount);
+            if (disc <= 100) {
+                tuition = Math.max(0, Math.round(baseTuition * (1 - disc / 100)));
+            } else {
+                tuition = Math.max(0, baseTuition - disc);
+            }
+        }
+
         let prevCount = Number(st.previousMonthsUnpaidCount) || Number(st.unpaidMonthsCount) || 0;
         if (prevCount === 0 && st.unpaidMonths && st.unpaidMonths > 1) {
             prevCount = st.unpaidMonths - 1;
@@ -5415,6 +7357,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
         if (prevArrears > 0) {
             items.push({
+                key: 'arrears',
                 name: `Previous Overdue Tuition (${prevCount} Mos)`,
                 amount: prevArrears,
                 isArrears: true,
@@ -5426,16 +7369,16 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             st.feeStructure.forEach(item => {
                 const amt = Number(item.amount) || 0;
                 if (amt > 0) {
-                    items.push({ name: item.name || 'Fee Item', amount: amt, isTuition: true, category: 'tuition' });
+                    items.push({ key: 'tuition', name: item.name || 'Fee Item', amount: amt, isTuition: true, category: 'tuition' });
                     baseFee += amt;
                 }
             });
         } else {
-            const transport = Number(st.transportFee) || 0;
-            const other = Number(st.otherFees) || 0;
-            if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition, isTuition: true, category: 'tuition' });
-            if (transport > 0) items.push({ name: 'Transport Fee', amount: transport, isTuition: true, category: 'tuition' });
-            if (other > 0) items.push({ name: 'Other Fees', amount: other, isTuition: true, category: 'tuition' });
+            const transport = Number(st.transportFee || st.monthlyTransportFee || 0);
+            const other = Number(st.otherFees || 0);
+            if (tuition > 0) items.push({ key: 'tuition', name: 'Monthly Tuition Fee', amount: tuition, isTuition: true, category: 'tuition' });
+            if (transport > 0) items.push({ key: 'transport', name: 'Transport Fee', amount: transport, isTuition: true, category: 'transport' });
+            if (other > 0) items.push({ key: 'other', name: 'Other Fees', amount: other, isTuition: true, category: 'tuition' });
             baseFee = tuition + transport + other;
         }
 
@@ -5451,6 +7394,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     actionsFee += amt;
                 }
                 items.push({ 
+                    key: isStore ? 'store' : 'action',
                     name: action.name || action.title, 
                     amount: amt,
                     isStore,
@@ -5467,7 +7411,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 if (!isPaid) {
                     const amt = Number(currentAction.amount) || 0;
                     if (amt > 0) {
-                        items.push({ name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
+                        items.push({ key: 'action', name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
                         actionsFee += amt;
                     }
                 }
@@ -5475,7 +7419,24 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
 
         const totalDue = baseFee + actionsFee + storeFee + prevArrears;
-        const isPaid = st.monthlyFeeStatus === 'paid';
+        
+        // Dynamic status resolution based on currently selected target month
+        const currentYear = new Date().getFullYear();
+        const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+        const historyForMonth = studentReliabilityData?.monthlyHistory?.find(m => (m.monthNum - 1) === selectedTargetMonthIdx);
+        const monthHistoryEntry = st.monthlyFeeHistory?.[targetMonthKey];
+        const isTargetInPaidMonths = Array.isArray(st.paidMonths) && st.paidMonths.includes(targetMonthKey);
+
+        let monthStatus = 'pending';
+        if (historyForMonth?.status) {
+            monthStatus = historyForMonth.status;
+        } else if (monthHistoryEntry?.status === 'paid' || isTargetInPaidMonths) {
+            monthStatus = 'paid';
+        } else if (st.monthlyFeeStatus === 'paid' && selectedTargetMonthIdx === new Date().getMonth()) {
+            monthStatus = 'paid';
+        }
+
+        const isPaid = monthStatus === 'paid';
 
         return {
             items,
@@ -5485,18 +7446,23 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             previousMonthsCount: prevCount,
             previousMonthsArrears: prevArrears,
             totalDue,
-            isPaid
+            isPaid,
+            monthStatus
         };
-    }, [activeChild, selectedStudent, currentAction]);
+    }, [activeChild, selectedStudent, currentAction, selectedTargetMonthIdx, studentReliabilityData]);
 
-    // Multi-Child & Family Combined Fees Calculation Engine
+    // Multi-Child & Family Combined Fees Calculation Engine (Multi-Field Fallback)
     const feeCalculation = useMemo(() => {
         if (!selectedStudent) return null;
 
-        const activeSiblings = detectedSiblings.filter(s => selectedSiblingIds.includes(s.id));
-        const effectiveList = activeSiblings.length > 0 ? activeSiblings : [selectedStudent];
-        const isMultiFamily = effectiveList.length > 1;
+        const activeSiblings = siblingPaymentScope === 'single'
+            ? [activeChild || selectedStudent]
+            : detectedSiblings.filter(s => selectedSiblingIds.includes(s.id));
+        const effectiveList = activeSiblings.length > 0 ? activeSiblings : [activeChild || selectedStudent];
+        const isMultiFamily = siblingPaymentScope === 'family' && effectiveList.length > 1;
 
+        let combinedTuitionFee = 0;
+        let combinedTransportFee = 0;
         let combinedBaseFee = 0;
         let combinedActionsFee = 0;
         let combinedStoreFee = 0;
@@ -5507,11 +7473,39 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
         effectiveList.forEach(st => {
             const items = [];
+            let stTuitionFee = 0;
+            let stTransportFee = 0;
             let stBaseFee = 0;
             let stActionsFee = 0;
             let stStoreFee = 0;
 
-            const tuition = Number(st.tuitionFee) || 0;
+            const is100PercentFree = (
+                st.isScholarship === true || 
+                st.isFreeShip === true || 
+                st.concessionType === 'free' || 
+                Number(st.feeDiscount) === 100
+            );
+
+            let baseTuition = Number(st.tuitionFee || st.monthlyFee || st.fee || st.monthlyTuition || st.baseFee || 0);
+            if (baseTuition === 0 && Array.isArray(st.feeStructure) && st.feeStructure.length > 0) {
+                const tuitionItem = st.feeStructure.find(f => (f.name || '').toLowerCase().includes('tuition'));
+                if (tuitionItem) baseTuition = Number(tuitionItem.amount || 0);
+                else baseTuition = st.feeStructure.reduce((sum, f) => sum + Number(f.amount || 0), 0);
+            }
+            if (baseTuition === 0 && !is100PercentFree) {
+                baseTuition = 2000;
+            }
+
+            let tuition = is100PercentFree ? 0 : baseTuition;
+            if (!is100PercentFree && st.feeDiscount && Number(st.feeDiscount) > 0) {
+                const disc = Number(st.feeDiscount);
+                if (disc <= 100) {
+                    tuition = Math.max(0, Math.round(baseTuition * (1 - disc / 100)));
+                } else {
+                    tuition = Math.max(0, baseTuition - disc);
+                }
+            }
+
             let prevCount = Number(st.previousMonthsUnpaidCount) || Number(st.unpaidMonthsCount) || 0;
             if (prevCount === 0 && st.unpaidMonths && st.unpaidMonths > 1) {
                 prevCount = st.unpaidMonths - 1;
@@ -5520,6 +7514,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
             if (prevArrears > 0) {
                 items.push({
+                    key: 'arrears',
                     name: `Previous Overdue Tuition (${prevCount} Mos)`,
                     amount: prevArrears,
                     isArrears: true,
@@ -5533,17 +7528,63 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 st.feeStructure.forEach(item => {
                     const amt = Number(item.amount) || 0;
                     if (amt > 0) {
-                        items.push({ name: item.name || 'Fee Item', amount: amt, isTuition: true, category: 'tuition' });
-                        stBaseFee += amt;
+                        const nameLower = (item.name || '').toLowerCase();
+                        if (nameLower.includes('transport') || nameLower.includes('van') || nameLower.includes('bus')) {
+                            stTransportFee += amt;
+                            items.push({ key: 'transport', name: item.name, amount: amt, isTransport: true, category: 'transport' });
+                        } else if (nameLower.includes('store') || nameLower.includes('uniform') || nameLower.includes('book') || nameLower.includes('stationery')) {
+                            stStoreFee += amt;
+                            items.push({ key: 'store', name: item.name, amount: amt, isStore: true, category: 'store' });
+                        } else {
+                            stTuitionFee += amt;
+                            items.push({ key: 'tuition', name: item.name || 'Fee Item', amount: amt, isTuition: true, category: 'tuition' });
+                        }
                     }
                 });
+                stBaseFee = stTuitionFee + stTransportFee;
             } else {
-                const transport = Number(st.transportFee) || 0;
-                const other = Number(st.otherFees) || 0;
-                if (tuition > 0) items.push({ name: 'Monthly Tuition Fee', amount: tuition, isTuition: true, category: 'tuition' });
-                if (transport > 0) items.push({ name: 'Transport Fee', amount: transport, isTuition: true, category: 'tuition' });
-                if (other > 0) items.push({ name: 'Other Fees', amount: other, isTuition: true, category: 'tuition' });
-                stBaseFee = tuition + transport + other;
+                const transport = Number(st.transportFee || st.monthlyTransportFee || 0);
+                const other = Number(st.otherFees || 0);
+                if (tuition > 0) {
+                    stTuitionFee += tuition;
+                    items.push({ key: 'tuition', name: 'Monthly Tuition Fee', amount: tuition, isTuition: true, category: 'tuition' });
+                }
+                if (transport > 0) {
+                    stTransportFee += transport;
+                    items.push({ key: 'transport', name: 'Transport Fee', amount: transport, isTransport: true, category: 'transport' });
+                }
+                if (other > 0) {
+                    stTuitionFee += other;
+                    items.push({ key: 'other', name: 'Other Fees', amount: other, isTuition: true, category: 'tuition' });
+                }
+                stBaseFee = stTuitionFee + stTransportFee;
+            }
+
+            // Store purchases / Store items in student doc
+            if (Array.isArray(st.storePurchases)) {
+                const unpaidStore = st.storePurchases.filter(sp => sp.status === 'unpaid');
+                unpaidStore.forEach(sp => {
+                    const amt = Number(sp.amount || sp.totalAmount || 0);
+                    if (amt > 0) {
+                        stStoreFee += amt;
+                        items.push({
+                            key: 'store',
+                            name: sp.itemName || sp.title || 'Store Purchase',
+                            amount: amt,
+                            isStore: true,
+                            category: 'store'
+                        });
+                    }
+                });
+            } else if (Number(st.storeDues || 0) > 0) {
+                stStoreFee += Number(st.storeDues);
+                items.push({
+                    key: 'store',
+                    name: 'Store & Uniform Dues',
+                    amount: Number(st.storeDues),
+                    isStore: true,
+                    category: 'store'
+                });
             }
 
             // Individual Actions & Store items
@@ -5558,6 +7599,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         stActionsFee += amt;
                     }
                     items.push({ 
+                        key: isStore ? 'store' : 'action',
                         name: action.name || action.title, 
                         amount: amt,
                         isStore,
@@ -5575,7 +7617,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     if (!isPaid) {
                         const amt = Number(currentAction.amount) || 0;
                         if (amt > 0) {
-                            items.push({ name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
+                            items.push({ key: 'action', name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
                             stActionsFee += amt;
                         }
                     }
@@ -5583,6 +7625,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             }
 
             const stTotal = stBaseFee + stActionsFee + stStoreFee + prevArrears;
+            combinedTuitionFee += stTuitionFee;
+            combinedTransportFee += stTransportFee;
             combinedBaseFee += stBaseFee;
             combinedActionsFee += stActionsFee;
             combinedStoreFee += stStoreFee;
@@ -5594,6 +7638,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 className: st.className || classes.find(c => c.id === st.classId)?.name || 'Class',
                 classId: st.classId,
                 items,
+                tuitionFee: stTuitionFee,
+                transportFee: stTransportFee,
                 baseFee: stBaseFee,
                 actionsFee: stActionsFee,
                 storeFee: stStoreFee,
@@ -5622,6 +7668,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             activeSiblingsCount: effectiveList.length,
             studentsBreakdown,
             items: allItems,
+            tuitionFee: combinedTuitionFee,
+            transportFee: combinedTransportFee,
             baseFee: combinedBaseFee,
             actionsFee: combinedActionsFee,
             storeFee: combinedStoreFee,
@@ -5631,17 +7679,218 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             totalDue: totalDueWithFine,
             isPaid: allPaid
         };
-    }, [selectedStudent, detectedSiblings, selectedSiblingIds, currentAction, fineAmount, classes]);
+    }, [selectedStudent, detectedSiblings, selectedSiblingIds, siblingPaymentScope, activeChild, currentAction, fineAmount, classes]);
 
-    // Auto calculate final payable when discount, fine, or student fee changes
-    useEffect(() => {
-        if (feeCalculation) {
-            const total = Math.max(0, feeCalculation.calculatedTotal + Number(fineAmount || 0) - Number(discountAmount || 0));
-            setReceivedAmount(total.toString());
-        } else {
-            setReceivedAmount('0');
+    // Active selectable items for the currently active student / month
+    const activePayableItems = useMemo(() => {
+        if (selectedDetailMonthData?.breakdown) {
+            const b = selectedDetailMonthData.breakdown;
+            const list = [];
+            if (b.arrears > 0) {
+                list.push({ key: 'arrears', name: `Previous Overdue Arrears (${b.arrearsMonthsCount || 1} Mos)`, amount: b.arrears, category: 'arrears' });
+            }
+            if (b.tuitionPayable > 0) {
+                list.push({ key: 'tuition', name: `Monthly Tuition (${selectedDetailMonthData.targetMonthName})`, amount: b.tuitionPayable, category: 'tuition' });
+            }
+            if (b.transportFee > 0) {
+                list.push({ key: 'transport', name: 'Transport / Van Fee', amount: b.transportFee, category: 'transport' });
+            }
+            if (b.storeDues > 0) {
+                list.push({ key: 'store', name: 'Uniform & Store Items', amount: b.storeDues, category: 'store' });
+            }
+            if (b.actionFee > 0) {
+                list.push({ key: 'action', name: cleanFeeItemName(b.actionName) || 'Events & Actions', amount: b.actionFee, category: 'action' });
+            }
+
+            // Custom On-The-Spot Actions added for this student
+            const studentToAssess = activeChild || selectedStudent;
+            if (studentToAssess && Array.isArray(studentToAssess.individualActions)) {
+                studentToAssess.individualActions.forEach((act, idx) => {
+                    if (act.status !== 'paid' && act.type !== 'store_inventory') {
+                        const actKey = `custom_action_${act.id || idx}`;
+                        list.push({
+                            key: actKey,
+                            id: act.id || `act_${idx}`,
+                            name: act.name || act.title || 'Custom Fee',
+                            amount: Number(act.amount) || 0,
+                            category: 'custom_action',
+                            remarks: act.remarks || '',
+                            isCustomAction: true,
+                            actionObj: act
+                        });
+                    }
+                });
+            }
+
+            const fineVal = isFineWaived ? 0 : Number(fineAmount || b.penaltyFine || 0);
+            if (fineVal > 0) {
+                list.push({ key: 'fine', name: dueInfo.isOverdue ? `Late Payment Penalty (${dueInfo.daysLate}d Overdue)` : 'Late Fine / Penalty', amount: fineVal, category: 'fine' });
+            }
+            return list;
         }
-    }, [feeCalculation, discountAmount, fineAmount]);
+        return feeCalculation?.items || [];
+    }, [selectedDetailMonthData, feeCalculation, fineAmount, isFineWaived, dueInfo, activeChild, selectedStudent]);
+
+    // Items that are actively checked for payment
+    const selectedPayableItems = useMemo(() => {
+        return activePayableItems.filter(it => !it.key || selectedFeeItemKeys.includes(it.key));
+    }, [activePayableItems, selectedFeeItemKeys]);
+
+    // Net payable total derived from only checked items minus discount
+    const payableNetTotal = useMemo(() => {
+        if (feeCalculation?.isMultiFamily) {
+            return Math.max(0, Number(feeCalculation.totalDue || 0) - Number(discountAmount || 0));
+        }
+        const sum = selectedPayableItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        return Math.max(0, sum - Number(discountAmount || 0));
+    }, [feeCalculation, selectedPayableItems, discountAmount]);
+
+    // Student Store Purchases Itemized Breakdown
+    const studentStoreItems = useMemo(() => {
+        const targetStudent = activeChild || selectedStudent;
+        if (!targetStudent) return [];
+
+        const itemsList = [];
+        const targetMonthKey = selectedDetailMonthData ? `${selectedDetailMonthData.targetYear}-${String(selectedDetailMonthData.targetMonthIdx + 1).padStart(2, '0')}` : null;
+
+        // 1. From storeCharges array
+        if (Array.isArray(targetStudent.storeCharges)) {
+            targetStudent.storeCharges.forEach(ch => {
+                const chMonthKey = ch.date ? ch.date.slice(0, 7) : null;
+                if (!targetMonthKey || chMonthKey === targetMonthKey || ch.status !== 'paid') {
+                    if (Array.isArray(ch.items) && ch.items.length > 0) {
+                        ch.items.forEach(it => {
+                            itemsList.push({
+                                name: it.name || 'Store Item',
+                                quantity: Number(it.quantity) || 1,
+                                price: Number(it.price) || 0,
+                                size: it.size || '',
+                                receiptNo: ch.receiptNo || 'STORE-KIT',
+                                date: ch.date,
+                                status: ch.status || 'unpaid',
+                                total: (Number(it.price) || 0) * (Number(it.quantity) || 1)
+                            });
+                        });
+                    } else {
+                        itemsList.push({
+                            name: ch.name || 'Uniform / Store Kit',
+                            quantity: Number(ch.itemsCount) || 1,
+                            price: Number(ch.amount) || 0,
+                            size: '',
+                            receiptNo: ch.receiptNo || 'STORE-KIT',
+                            date: ch.date,
+                            status: ch.status || 'unpaid',
+                            total: Number(ch.amount) || 0
+                        });
+                    }
+                }
+            });
+        }
+
+        // 2. From storePurchases array
+        if (Array.isArray(targetStudent.storePurchases)) {
+            targetStudent.storePurchases.forEach(sp => {
+                if (!targetMonthKey || sp.monthKey === targetMonthKey || sp.status !== 'paid') {
+                    if (Array.isArray(sp.items) && sp.items.length > 0) {
+                        sp.items.forEach(it => {
+                            itemsList.push({
+                                name: it.name || 'Store Item',
+                                quantity: Number(it.quantity) || 1,
+                                price: Number(it.price) || 0,
+                                size: it.size || '',
+                                receiptNo: sp.receiptNo || 'STORE-REC',
+                                date: sp.date || sp.purchasedAt,
+                                status: sp.status || 'unpaid',
+                                total: (Number(it.price) || 0) * (Number(it.quantity) || 1)
+                            });
+                        });
+                    } else {
+                        itemsList.push({
+                            name: sp.name || sp.itemName || 'Uniform / Books Kit',
+                            quantity: Number(sp.quantity) || 1,
+                            price: Number(sp.price || sp.amount) || 0,
+                            size: sp.size || '',
+                            receiptNo: sp.receiptNo || 'STORE-REC',
+                            date: sp.date || sp.purchasedAt,
+                            status: sp.status || 'unpaid',
+                            total: Number(sp.price || sp.amount) || 0
+                        });
+                    }
+                }
+            });
+        }
+
+        // 3. From individualActions
+        if (Array.isArray(targetStudent.individualActions)) {
+            targetStudent.individualActions.forEach(act => {
+                if (act.type === 'store_inventory' || (act.name && act.name.toLowerCase().includes('store'))) {
+                    if (Array.isArray(act.items) && act.items.length > 0) {
+                        act.items.forEach(it => {
+                            if (!itemsList.some(existing => existing.receiptNo === act.receiptNo && existing.name === it.name)) {
+                                itemsList.push({
+                                    name: it.name || 'Store Item',
+                                    quantity: Number(it.quantity) || 1,
+                                    price: Number(it.price) || 0,
+                                    size: it.size || '',
+                                    receiptNo: act.receiptNo || 'STORE-ACTION',
+                                    date: act.date,
+                                    status: act.status || 'unpaid',
+                                    total: (Number(it.price) || 0) * (Number(it.quantity) || 1)
+                                });
+                            }
+                        });
+                    } else if (!itemsList.some(existing => existing.receiptNo === act.receiptNo)) {
+                        itemsList.push({
+                            name: act.name,
+                            quantity: Number(act.itemsCount) || 1,
+                            price: Number(act.amount) || 0,
+                            size: '',
+                            receiptNo: act.receiptNo || 'STORE-ACTION',
+                            date: act.date,
+                            status: act.status || 'unpaid',
+                            total: Number(act.amount) || 0
+                        });
+                    }
+                }
+            });
+        }
+
+        // 4. Fallback if lastStorePurchase exists and list is empty
+        if (itemsList.length === 0 && targetStudent.lastStorePurchase) {
+            itemsList.push({
+                name: targetStudent.lastStorePurchase.itemsSummary || 'Store Purchase',
+                quantity: 1,
+                price: Number(targetStudent.lastStorePurchase.amount) || 0,
+                size: '',
+                receiptNo: targetStudent.lastStorePurchase.receiptNo || 'STORE-LAST',
+                date: targetStudent.lastStorePurchase.date,
+                status: 'unpaid',
+                total: Number(targetStudent.lastStorePurchase.amount) || 0
+            });
+        }
+
+        // 5. Fallback if flat storeDues is present but items list is empty
+        const flatDues = Number(selectedDetailMonthData?.breakdown?.storeDues || feeCalculation?.storeFee || targetStudent.storeDues || 0);
+        if (itemsList.length === 0 && flatDues > 0) {
+            itemsList.push({
+                name: 'Books, Uniform & Stationery Items',
+                quantity: 1,
+                price: flatDues,
+                size: '',
+                receiptNo: 'STORE-PENDING',
+                date: new Date().toISOString(),
+                status: 'unpaid',
+                total: flatDues
+            });
+        }
+
+        return itemsList;
+    }, [activeChild, selectedStudent, selectedDetailMonthData, feeCalculation]);
+
+    // Auto calculate final payable when selected items, discount, fine, or student fee changes
+    useEffect(() => {
+        setReceivedAmount(String(payableNetTotal));
+    }, [payableNetTotal]);
 
     // Clear Selected Student & Reset Form
     const handleClearSelection = () => {
@@ -5649,6 +7898,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         setSelectedStudentId('');
         setSelectedClassId('');
         setSelectedSiblingIds([]);
+        setSiblingPaymentScope('family');
+        setSelectedFeeItemKeys(['tuition', 'transport', 'store', 'action', 'fine']);
         setSearchQuery('');
         setReceivedAmount('0');
         setDiscountAmount('0');
@@ -5658,6 +7909,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         setProofPreview(null);
         setRemarks('');
         setAssessmentViewMode('assessment');
+        setCashierStep(1);
     };
 
     // Submit Fee Collection Transaction (Zero-Loss 100% Offline Instant Resilient)
@@ -5689,6 +7941,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const isMultiFamily = feeCalculation.isMultiFamily;
             const receiptNo = isMultiFamily ? `REC-FAM-${Date.now().toString().slice(-6)}` : `REC-${Date.now().toString().slice(-6)}`;
 
+            // Target Month metadata
+            const targetYear = selectedDetailMonthData?.targetYear || new Date().getFullYear();
+            const targetMonthIndex = selectedTargetMonthIdx !== undefined ? selectedTargetMonthIdx : new Date().getMonth();
+            const targetMonthName = MONTH_NAMES[targetMonthIndex] || 'Current Month';
+            const targetMonthKey = `${targetYear}-${String(targetMonthIndex + 1).padStart(2, '0')}`;
+
             // Fast Non-Blocking Proof Handling (Base64)
             let proofUrl = null;
             if (paymentMode !== 'Cash' && proofFile) {
@@ -5710,14 +7968,27 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const fatherName = selectedStudent.parentDetails?.fatherName || selectedStudent.fatherName || 'Parent / Guardian';
             const fatherPhone = selectedStudent.parentDetails?.fatherPhone || selectedStudent.fatherPhone || selectedStudent.phone || '';
 
-            // Build Itemized list for Receipt & Ledger
-            const receiptItems = [...(feeCalculation.items || [])];
-            if (fine > 0) {
+            // Build Itemized list for Receipt & Ledger (Only Selected Paid Items!)
+            const receiptItems = selectedPayableItems.length > 0 ? [...selectedPayableItems] : [...(feeCalculation.items || [])];
+            if (fine > 0 && selectedFeeItemKeys.includes('fine') && !receiptItems.some(it => it.key === 'fine')) {
                 receiptItems.push({
                     name: dueInfo.isOverdue ? `Late Payment Penalty (${dueInfo.daysLate}d Overdue)` : 'Late Fine / Penalty',
                     amount: fine
                 });
+            } else if (isFineWaived && selectedFeeItemKeys.includes('fine')) {
+                receiptItems.push({
+                    name: 'Late Penalty (Waived / Maaf by Principal)',
+                    amount: 0,
+                    isWaived: true
+                });
             }
+
+            const isPayingTuition = selectedFeeItemKeys.includes('tuition');
+            const isPayingStore = selectedFeeItemKeys.includes('store');
+            const isPayingAction = selectedFeeItemKeys.includes('action');
+            const isPayingFine = selectedFeeItemKeys.includes('fine');
+
+            const isFullySettled = finalAmount >= payableNetTotal || (payableNetTotal === 0 && isPayingTuition);
 
             const transactionRecord = {
                 receiptNo,
@@ -5731,11 +8002,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 fatherName,
                 fatherPhone,
                 items: receiptItems,
-                baseFee: feeCalculation.baseFee || 0,
-                actionsFee: feeCalculation.actionsFee || 0,
-                fineAmount: fine,
+                paidCategories: selectedFeeItemKeys,
+                baseFee: isPayingTuition ? (feeCalculation.baseFee || 0) : 0,
+                actionsFee: isPayingAction ? (feeCalculation.actionsFee || 0) : 0,
+                fineAmount: isPayingFine ? fine : 0,
+                isFineWaived: Boolean(isFineWaived),
+                waivedFineAmount: isFineWaived ? Number(dueInfo.autoFine || 0) : 0,
                 discount: discount,
                 totalPaid: finalAmount,
+                remainingBalance: Math.max(0, payableNetTotal - finalAmount),
                 paymentMode,
                 proofUrl: proofUrl || null,
                 remarks: remarks.trim(),
@@ -5743,61 +8018,285 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 timestamp: new Date(),
                 dateString,
                 timeString,
+                targetMonthKey,
+                targetMonthIdx: targetMonthIndex,
+                targetMonthName,
+                targetYear,
                 collectedBy: 'Principal Office'
             };
 
-            // 1. Persistent Local Queue Item (Zero-Loss Guarantee)
+            // 1. Persistent Local Queue Item (IndexedDB + Zero-Loss Guarantee)
             const queuedItem = {
                 ...transactionRecord,
                 queueId,
                 dateIso: new Date().toISOString()
             };
 
-            const updatedQueue = [...pendingOfflineTxs, queuedItem];
+            const updatedQueue = [queuedItem, ...pendingOfflineTxs.filter(t => t.receiptNo !== receiptNo)];
             savePendingQueue(updatedQueue);
+            // High-Capacity IndexedDB Enqueue (Supports 5,000+ without 5MB limits)
+            enqueueOfflineFeeTransaction(schoolId, queuedItem);
 
-            // 2. Optimistic UI Update
+            // 2. Optimistic UI Updates (<50ms)
             setRecentTransactions(prev => [transactionRecord, ...prev.filter(t => t.receiptNo !== receiptNo)]);
+            setStudentHistoryTxs(prev => [transactionRecord, ...prev.filter(t => t.receiptNo !== receiptNo)]);
 
-            // 3. Instant Automatic PDF Receipt Download (100% Offline Client-Side)
-            downloadOfficialReceiptPDF(transactionRecord, localSchoolInfo);
+            // In-memory student update for all affected siblings (Ensures child-specific split accuracy)
+            const updatedStudentsMap = new Map();
+            (feeCalculation.studentsBreakdown || []).forEach(st => {
+                const childSubtotal = Number(st.subtotal || 0);
+                const childPaidAmount = isMultiFamily
+                    ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal)
+                    : finalAmount;
+                const childRemaining = Math.max(0, childSubtotal - childPaidAmount);
+                const isChildSettled = childPaidAmount >= childSubtotal || (childSubtotal === 0 && isPayingTuition);
 
-            // 4. Also Open Receipt Modal for On-Screen Preview / Print Options
+                const targetStudentDoc = selectedStudent.id === st.studentId ? selectedStudent : (allStudents.find(s => s.id === st.studentId) || st);
+                const oldPaidMonths = Array.isArray(targetStudentDoc.paidMonths) ? targetStudentDoc.paidMonths : [];
+                const newPaidMonths = isChildSettled ? (oldPaidMonths.includes(targetMonthKey) ? oldPaidMonths : [...oldPaidMonths, targetMonthKey]) : oldPaidMonths;
+
+                const existingIndActions = Array.isArray(targetStudentDoc.individualActions) ? targetStudentDoc.individualActions : [];
+                const paidCustomItems = existingIndActions.filter(act => {
+                    const actKey = `custom_action_${act.id}`;
+                    return selectedFeeItemKeys.includes(actKey) || (isPayingAction && act.status === 'unpaid');
+                }).map(act => ({
+                    id: act.id || '',
+                    title: act.title || act.name,
+                    amount: Number(act.amount) || 0,
+                    remarks: act.remarks || '',
+                    status: 'PAID_LOCKED',
+                    paidAt: now.toISOString(),
+                    receiptNo
+                }));
+
+                const updatedIndActions = existingIndActions.map(act => {
+                    const actKey = `custom_action_${act.id}`;
+                    if (selectedFeeItemKeys.includes(actKey) || (isPayingAction && act.status === 'unpaid')) {
+                        return {
+                            ...act,
+                            status: 'paid',
+                            paidAt: now.toISOString(),
+                            receiptNo,
+                            paymentMode,
+                            month: targetMonthName,
+                            monthKey: targetMonthKey
+                        };
+                    }
+                    return act;
+                });
+
+                const newHistory = {
+                    ...(targetStudentDoc.monthlyFeeHistory || {}),
+                    [targetMonthKey]: {
+                        status: isChildSettled ? 'paid' : 'partial',
+                        paidAmount: ((targetStudentDoc.monthlyFeeHistory?.[targetMonthKey]?.paidAmount || 0) + childPaidAmount),
+                        remainingBalance: childRemaining,
+                        paidAt: now.toISOString(),
+                        receiptNo,
+                        isFamilyCombined: isMultiFamily,
+                        familyReceiptNo: receiptNo,
+                        paidItems: selectedFeeItemKeys,
+                        paymentMode,
+                        customItems: paidCustomItems
+                    }
+                };
+
+                const updatedStudentObj = {
+                    ...targetStudentDoc,
+                    monthlyFeeStatus: isChildSettled ? 'paid' : (targetStudentDoc.monthlyFeeStatus || 'pending'),
+                    monthlyFeeDate: now.toISOString(),
+                    paidMonths: newPaidMonths,
+                    monthlyFeeHistory: newHistory,
+                    individualActions: updatedIndActions,
+                    lastPaymentMode: paymentMode,
+                    lastReceiptNo: receiptNo,
+                    lastPaymentAmount: childPaidAmount,
+                    lastPaymentProofUrl: proofUrl || null,
+                    pendingPaymentSubmission: {
+                        status: 'approved',
+                        approvedAt: now.toISOString()
+                    }
+                };
+                updatedStudentsMap.set(st.studentId, updatedStudentObj);
+                // Update local IndexedDB Cache
+                updateCachedStudentOffline(schoolId, st.studentId, updatedStudentObj);
+            });
+
+            setSelectedStudent(prev => prev ? (updatedStudentsMap.get(prev.id) || prev) : prev);
+            setAllStudents(prev => prev.map(s => (updatedStudentsMap.has(s.id) ? updatedStudentsMap.get(s.id) : s)));
+            setClassStudents(prev => prev.map(s => (updatedStudentsMap.has(s.id) ? updatedStudentsMap.get(s.id) : s)));
+
+            // 3. Instant UI Receipt & Modal Preparation (Automatic download disabled, on-demand available via modal)
             setReceiptData(transactionRecord);
-            setReceiptModalOpen(true);
 
-            // 5. Instant Reset Form (<50ms)
-            handleClearSelection();
+            // 4. Play Cashier Audio Chime & Trigger Right-Card Month Pulse
+            playCashierChime();
+            setRecentPaidMonthIdx(targetMonthIndex);
+            setTimeout(() => {
+                setRecentPaidMonthIdx(null);
+            }, 3500);
+
+            // 5. Automatic WhatsApp Receipt Dispatch (if parent phone exists and enabled)
+            if (sendWhatsAppOnSubmit && fatherPhone) {
+                try {
+                    const schoolTitle = localSchoolInfo?.name || schoolInfo?.name || 'School Office';
+                    const itemsSummary = isMultiFamily 
+                        ? (feeCalculation.studentsBreakdown || []).map(st => `• *${st.studentName} (${st.className})*: Rs ${Number(st.subtotal || 0).toLocaleString()}`).join('\n')
+                        : (transactionRecord.items || []).map(it => `• ${it.name}: Rs ${Number(it.amount || 0).toLocaleString()}`).join('\n');
+                    const waText = `*FEE PAYMENT RECEIPT - ${schoolTitle.toUpperCase()}*\n\n` +
+                        `*Receipt No:* ${receiptNo}\n` +
+                        (isMultiFamily ? `*Family:* ${fatherName} (${feeCalculation.activeSiblingsCount} Children)\n` : `*Student:* ${transactionRecord.studentName} (${transactionRecord.className})\n`) +
+                        `*Father:* ${fatherName}\n` +
+                        `*Month:* ${targetMonthName} ${targetYear}\n` +
+                        `*Date:* ${dateString} ${timeString}\n` +
+                        `*Payment Mode:* ${paymentMode}\n\n` +
+                        `*Itemized Breakdown:*\n${itemsSummary}\n` +
+                        (Number(discount) > 0 ? `*Discount:* -Rs ${Number(discount).toLocaleString()}\n` : '') +
+                        `--------------------------\n` +
+                        `*TOTAL PAID:* Rs ${Number(finalAmount).toLocaleString()}\n` +
+                        (transactionRecord.remainingBalance > 0 ? `*Remaining Due:* Rs ${Number(transactionRecord.remainingBalance).toLocaleString()}\n` : `*Status:* Fully Cleared ✓\n`) +
+                        `\n_Thank you for your prompt payment!_`;
+
+                    let cleanPhone = fatherPhone.toString().replace(/[^0-9]/g, '');
+                    if (cleanPhone.startsWith('0092')) cleanPhone = cleanPhone.slice(2);
+                    else if (cleanPhone.startsWith('03')) cleanPhone = '92' + cleanPhone.slice(1);
+                    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(waText)}`, '_blank');
+                } catch (waErr) {
+                    console.warn("WhatsApp receipt auto-dispatch note:", waErr);
+                }
+            }
+
+            // 6. Open Beautiful Payment Result Success Popup Modal
+            setPaymentResultModal({
+                isOpen: true,
+                isSuccess: true,
+                receiptData: transactionRecord,
+                errorMessage: ''
+            });
+
+            // 7. Reset Payment Input Form Fields (keep step intact so screen does not jump)
+            setReceivedAmount('0');
+            setRemarks('');
+            setProofFile(null);
+            setProofPreview(null);
+            setDiscountAmount('0');
+            setTransactionRefId('');
+            setIsFineWaived(false);
             setIsSubmitting(false);
 
-            // 6. Background Firestore Write (Zero-Latency UI, Multi-Sibling Batch Guarantee)
+            // 8. Background Firestore Write (Zero-Latency UI, Multi-Sibling Batch Guarantee)
             (async () => {
                 try {
                     const writePromises = [];
+                    const nowD = new Date();
 
                     (feeCalculation.studentsBreakdown || []).forEach(st => {
+                        const childSubtotal = Number(st.subtotal || 0);
+                        const childPaidAmount = isMultiFamily
+                            ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal)
+                            : finalAmount;
+                        const childRemaining = Math.max(0, childSubtotal - childPaidAmount);
+                        const isChildSettled = childPaidAmount >= childSubtotal || (childSubtotal === 0 && isPayingTuition);
+
                         const stRef = doc(db, `schools/${schoolId}/classes/${st.classId}/students`, st.studentId);
                         const masterStRef = doc(db, `schools/${schoolId}/students`, st.studentId);
 
+                        // Extract custom items paid in this batch
+                        const targetStudentDoc = selectedStudent.id === st.studentId ? selectedStudent : st;
+                        const existingIndActions = Array.isArray(targetStudentDoc.individualActions) ? targetStudentDoc.individualActions : [];
+                        const paidCustomItems = [];
+
+                        const updatedIndActions = existingIndActions.map(act => {
+                            const actKey = `custom_action_${act.id}`;
+                            const isThisActPaying = selectedFeeItemKeys.includes(actKey) || (isPayingAction && act.status === 'unpaid');
+                            if (isThisActPaying) {
+                                paidCustomItems.push({
+                                    id: act.id || '',
+                                    title: act.title || act.name,
+                                    amount: Number(act.amount) || 0,
+                                    remarks: act.remarks || '',
+                                    status: 'PAID_LOCKED',
+                                    paidAt: nowD.toISOString(),
+                                    receiptNo
+                                });
+                                return {
+                                    ...act,
+                                    status: 'paid',
+                                    paidAt: nowD.toISOString(),
+                                    receiptNo,
+                                    paymentMode,
+                                    month: targetMonthName,
+                                    monthKey: targetMonthKey
+                                };
+                            }
+                            return act;
+                        });
+
                         const stPayload = {
-                            monthlyFeeStatus: 'paid',
-                            monthlyFeeDate: new Date().toISOString(),
                             lastPaymentMode: paymentMode,
                             lastReceiptNo: receiptNo,
-                            lastPaymentAmount: st.subtotal || finalAmount,
-                            lastPaymentProofUrl: proofUrl || null
+                            lastPaymentAmount: childPaidAmount,
+                            lastPaymentProofUrl: proofUrl || null,
+                            lastPaymentFineWaived: Boolean(isFineWaived),
+                            lastPaidItems: selectedFeeItemKeys,
+                            individualActions: updatedIndActions,
+                            pendingPaymentSubmission: {
+                                status: 'approved',
+                                approvedAt: nowD.toISOString()
+                            },
+                            [`monthlyFeeHistory.${targetMonthKey}`]: {
+                                status: isChildSettled ? 'paid' : 'partial',
+                                paidAmount: childPaidAmount,
+                                remainingBalance: childRemaining,
+                                paidAt: nowD.toISOString(),
+                                receiptNo,
+                                isFamilyCombined: isMultiFamily,
+                                familyReceiptNo: receiptNo,
+                                paidItems: selectedFeeItemKeys,
+                                paymentMode,
+                                customItems: paidCustomItems
+                            }
                         };
+
+                        if (isChildSettled || isPayingTuition) {
+                            stPayload.monthlyFeeStatus = 'paid';
+                            stPayload.monthlyFeeDate = nowD.toISOString();
+                            stPayload.paidMonths = arrayUnion(targetMonthKey);
+                        }
+
+                        if (isPayingStore && Array.isArray(st.storePurchases)) {
+                            stPayload.storePurchases = st.storePurchases.map(sp => {
+                                if (sp.monthKey === targetMonthKey || sp.status === 'unpaid') {
+                                    return { ...sp, status: 'paid', paidAt: nowD.toISOString(), receiptNo };
+                                }
+                                return sp;
+                            });
+                            stPayload.storeDues = 0;
+                        }
 
                         writePromises.push(setDoc(stRef, stPayload, { merge: true }));
                         writePromises.push(setDoc(masterStRef, stPayload, { merge: true }).catch(() => {}));
                     });
 
+                    // Save transaction record to feeTransactions
                     const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
                     writePromises.push(setDoc(txDocRef, {
                         ...transactionRecord,
                         id: receiptNo,
                         timestamp: serverTimestamp()
                     }, { merge: true }));
+
+                    // Auto approve any matching pending online submissions
+                    (onlineSubmissions || []).forEach(sub => {
+                        const isMatch = sub.status === 'pending' && (
+                            feeCalculation.studentsBreakdown.some(st => st.studentId === sub.studentId) ||
+                            (sub.isFamilyCombined && Array.isArray(sub.familyStudents) && sub.familyStudents.some(fs => feeCalculation.studentsBreakdown.some(st => st.studentId === fs.studentId)))
+                        );
+                        if (isMatch && sub.id) {
+                            const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
+                            writePromises.push(updateDoc(subRef, { status: 'approved', approvedAt: nowD.toISOString() }).catch(() => {}));
+                        }
+                    });
 
                     await Promise.all(writePromises);
 
@@ -5813,7 +8312,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         } catch (err) {
             console.error("Error submitting fee payment:", err);
             setIsSubmitting(false);
-            alert("Fee recorded into offline storage. Slip generated.");
+            setPaymentResultModal({
+                isOpen: true,
+                isSuccess: false,
+                receiptData: null,
+                errorMessage: err.message || 'Payment could not be completed.'
+            });
         }
     };
 
@@ -5971,7 +8475,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 border: '1px solid #fef08a'
                             }}>
                                 <Loader2 size={15} className="animate-spin" color="#ca8a04" />
-                                <span>Syncing ({pendingOfflineTxs.length})</span>
+                                <span>{syncProgress.total > 0 ? `Syncing ${syncProgress.synced}/${syncProgress.total}` : `Syncing (${pendingOfflineTxs.length})`}</span>
                             </div>
                         ) : pendingOfflineTxs.length > 0 ? (
                             <button onClick={triggerAutoSync} style={{
@@ -6496,15 +9000,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         ) : (
                             <>
                                 {/* Instant Search Bar */}
-                                <div style={{ position: 'relative', width: '100%', marginBottom: '0.85rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#334155', marginBottom: '0.3rem' }}>
+                                <div style={{ position: 'relative', width: '100%', marginBottom: '0.75rem' }}>
+                                    <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: '800', color: '#334155', marginBottom: '0.25rem' }}>
                                         🔍 Quick Student Search (Name, Roll No, Father)
                                     </label>
                                     <div style={{
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '0.5rem',
-                                        padding: '0.55rem 0.8rem',
+                                        padding: '0.5rem 0.75rem',
                                         borderRadius: '9px',
                                         background: '#f8fafc',
                                         border: '1.5px solid #cbd5e1',
@@ -6524,7 +9028,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 outline: 'none',
                                                 background: 'transparent',
                                                 width: '100%',
-                                                fontSize: '0.85rem',
+                                                fontSize: '0.84rem',
                                                 color: '#0f172a',
                                                 fontWeight: '600'
                                             }}
@@ -6610,9 +9114,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 </div>
 
                                 {/* Class & Student Selectors */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '0.85rem' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.85rem' }}>
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
                                             Class
                                         </label>
                                         <select
@@ -6624,7 +9128,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                             }}
                                             style={{
                                                 width: '100%',
-                                                padding: '0.55rem 0.75rem',
+                                                padding: '0.5rem 0.7rem',
                                                 borderRadius: '8px',
                                                 border: '1px solid #cbd5e1',
                                                 outline: 'none',
@@ -6641,7 +9145,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         </select>
                                     </div>
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '0.25rem' }}>
+                                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
                                             Student
                                         </label>
                                         <select
@@ -6651,11 +9155,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 setSelectedStudentId(stId);
                                                 const stObj = classStudents.find(s => s.id === stId);
                                                 setSelectedStudent(stObj || null);
+                                                if (stObj) setCashierStep(1);
                                             }}
                                             disabled={!selectedClassId || loadingClassStudents}
                                             style={{
                                                 width: '100%',
-                                                padding: '0.55rem 0.75rem',
+                                                padding: '0.5rem 0.7rem',
                                                 borderRadius: '8px',
                                                 border: '1px solid #cbd5e1',
                                                 outline: 'none',
@@ -6676,227 +9181,1826 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     </div>
                                 </div>
 
-                                {/* Tactile Payment Mode Chips */}
-                                <div style={{ marginBottom: '1rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#334155', marginBottom: '0.35rem' }}>
-                                        Payment Method
-                                    </label>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.4rem' }}>
-                                        {[
-                                            { id: 'Cash', label: 'Cash', icon: '💵', color: '#16a34a', bg: '#f0fdf4', border: '#86efac' },
-                                            { id: 'Bank Transfer', label: 'Bank', icon: '🏛️', color: '#2563eb', bg: '#eff6ff', border: '#93c5fd' },
-                                            { id: 'EasyPaisa', label: 'EasyPaisa', icon: '📱', color: '#059669', bg: '#ecfdf5', border: '#6ee7b7' },
-                                            { id: 'JazzCash', label: 'JazzCash', icon: '💳', color: '#dc2626', bg: '#fef2f2', border: '#fca5a5' }
-                                        ].map((m) => (
-                                            <button
-                                                key={m.id}
-                                                type="button"
-                                                onClick={() => setPaymentMode(m.id)}
-                                                style={{
-                                                    padding: '0.45rem 0.2rem',
-                                                    borderRadius: '8px',
-                                                    border: paymentMode === m.id ? `1.5px solid ${m.color}` : '1px solid #e2e8f0',
-                                                    background: paymentMode === m.id ? m.bg : '#ffffff',
-                                                    color: paymentMode === m.id ? m.color : '#475569',
-                                                    fontWeight: '700',
-                                                    fontSize: '0.72rem',
-                                                    cursor: 'pointer',
-                                                    display: 'flex',
-                                                    flexDirection: 'column',
-                                                    alignItems: 'center',
-                                                    gap: '2px',
-                                                    boxShadow: paymentMode === m.id ? `0 2px 6px ${m.color}22` : 'none',
-                                                    transition: 'all 0.15s ease'
-                                                }}
-                                            >
-                                                <span>{m.icon}</span>
-                                                <span>{m.label}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Financial Inputs (Fine, Concession, Amount) */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '0.85rem' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.73rem', fontWeight: '700', color: Number(fineAmount) > 0 ? '#b45309' : '#475569', marginBottom: '0.2rem' }}>
-                                            Late Fine / Penalty (Rs)
-                                        </label>
-                                        <input
-                                            type="number"
-                                            value={fineAmount}
-                                            onChange={(e) => setFineAmount(e.target.value)}
-                                            min="0"
-                                            placeholder="0"
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.5rem 0.7rem',
-                                                borderRadius: '8px',
-                                                border: Number(fineAmount) > 0 ? '1.5px solid #f59e0b' : '1px solid #cbd5e1',
-                                                outline: 'none',
-                                                background: Number(fineAmount) > 0 ? '#fffbeb' : '#ffffff',
-                                                fontWeight: '700',
-                                                color: Number(fineAmount) > 0 ? '#b45309' : '#0f172a',
-                                                fontSize: '0.85rem',
-                                                boxSizing: 'border-box'
-                                            }}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.73rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
-                                            Concession / Discount (Rs)
-                                        </label>
-                                        <input
-                                            type="number"
-                                            value={discountAmount}
-                                            onChange={(e) => setDiscountAmount(e.target.value)}
-                                            min="0"
-                                            placeholder="0"
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.5rem 0.7rem',
-                                                borderRadius: '8px',
-                                                border: '1px solid #cbd5e1',
-                                                outline: 'none',
-                                                background: '#ffffff',
-                                                fontWeight: '700',
-                                                color: '#0f172a',
-                                                fontSize: '0.85rem',
-                                                boxSizing: 'border-box'
-                                            }}
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Received Amount & Live Total */}
-                                <div style={{
-                                    background: '#f0fdf4',
-                                    border: '1.5px solid #86efac',
-                                    borderRadius: '10px',
-                                    padding: '0.75rem 0.9rem',
-                                    marginBottom: '0.85rem'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                        <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#166534' }}>
-                                            Received Amount (Rs)
-                                        </label>
-                                        <span style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: '700' }}>
-                                            Auto-Calculated Total
-                                        </span>
-                                    </div>
-                                    <input
-                                        type="number"
-                                        value={receivedAmount}
-                                        onChange={(e) => setReceivedAmount(e.target.value)}
-                                        min="0"
-                                        style={{
-                                            width: '100%',
-                                            padding: '0.55rem 0.75rem',
-                                            borderRadius: '8px',
-                                            border: '1px solid #16a34a',
-                                            outline: 'none',
-                                            background: '#ffffff',
-                                            fontWeight: '900',
-                                            color: '#166534',
-                                            fontSize: '1.2rem',
-                                            boxSizing: 'border-box'
-                                        }}
-                                    />
-                                </div>
-
-                                {/* Remarks & Proof Box */}
-                                <div style={{ marginBottom: '1rem' }}>
-                                    <input
-                                        type="text"
-                                        value={remarks}
-                                        onChange={(e) => setRemarks(e.target.value)}
-                                        placeholder="Remarks / Note (Optional, e.g. Paid in full by Father)..."
-                                        style={{
-                                            width: '100%',
-                                            padding: '0.5rem 0.7rem',
-                                            borderRadius: '8px',
-                                            border: '1px solid #cbd5e1',
-                                            outline: 'none',
-                                            background: '#ffffff',
-                                            fontSize: '0.8rem',
-                                            boxSizing: 'border-box'
-                                        }}
-                                    />
-                                </div>
-
-                                {paymentMode !== 'Cash' && (
+                                {!selectedStudent ? (
+                                    /* Empty Cashier State Card */
                                     <div style={{
-                                        padding: '0.65rem 0.8rem',
-                                        borderRadius: '8px',
-                                        background: '#eff6ff',
-                                        border: '1px dashed #93c5fd',
-                                        marginBottom: '1rem'
+                                        background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                                        border: '1.5px dashed #cbd5e1',
+                                        borderRadius: '12px',
+                                        padding: '2rem 1.5rem',
+                                        textAlign: 'center',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        gap: '0.75rem'
                                     }}>
-                                        <label style={{ display: 'block', fontSize: '0.73rem', fontWeight: '800', color: '#1e40af', marginBottom: '0.25rem' }}>
-                                            Attach Bank Slip / Screenshot Proof
-                                        </label>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                onChange={handleProofChange}
-                                                style={{ fontSize: '0.75rem', color: '#475569' }}
-                                            />
-                                            {proofPreview && (
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                                    <img src={proofPreview} alt="Proof" style={{ width: '30px', height: '30px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #93c5fd' }} />
-                                                    <button
-                                                        type="button"
-                                                        onClick={handleRemoveProof}
-                                                        style={{ padding: '2px 5px', borderRadius: '4px', background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '0.68rem', fontWeight: '700', cursor: 'pointer' }}
-                                                    >
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                            )}
+                                        <div style={{
+                                            width: '48px',
+                                            height: '48px',
+                                            borderRadius: '50%',
+                                            background: '#e0f2fe',
+                                            color: '#0284c7',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}>
+                                            <Wallet size={24} />
+                                        </div>
+                                        <div>
+                                            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#0f172a' }}>
+                                                Smart Cashier Ready
+                                            </h4>
+                                            <p style={{ margin: '0.35rem 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+                                                Search student name, roll # or select class above to start fast fee collection with animated POS voucher.
+                                            </p>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px', fontSize: '0.7rem', color: '#0369a1', fontWeight: '700' }}>
+                                            <span style={{ background: '#e0f2fe', padding: '2px 8px', borderRadius: '5px' }}>⚡ Fast Lookup</span>
+                                            <span style={{ background: '#dcfce7', padding: '2px 8px', borderRadius: '5px', color: '#15803d' }}>📄 Instant PDF Slip</span>
+                                            <span style={{ background: '#fef3c7', padding: '2px 8px', borderRadius: '5px', color: '#b45309' }}>💬 WhatsApp Slip</span>
                                         </div>
                                     </div>
-                                )}
+                                ) : (
+                                    <>
+                                        {/* Stepper Breadcrumbs Bar */}
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            marginBottom: '0.85rem',
+                                            background: '#f8fafc',
+                                            padding: '0.4rem 0.65rem',
+                                            borderRadius: '10px',
+                                            border: '1.5px solid #e2e8f0'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCashierStep(1)}
+                                                    style={{
+                                                        padding: '4px 10px',
+                                                        borderRadius: '6px',
+                                                        background: cashierStep === 1 ? '#0078d4' : '#e2e8f0',
+                                                        color: cashierStep === 1 ? '#ffffff' : '#475569',
+                                                        fontWeight: '800',
+                                                        fontSize: '0.74rem',
+                                                        border: 'none',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '4px',
+                                                        boxShadow: cashierStep === 1 ? '0 2px 6px rgba(0, 120, 212, 0.3)' : 'none',
+                                                        transition: 'all 0.15s ease'
+                                                    }}
+                                                >
+                                                    <span>1.</span> Student & Parent
+                                                </button>
+                                                <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: '800' }}>➔</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCashierStep(2)}
+                                                    style={{
+                                                        padding: '4px 10px',
+                                                        borderRadius: '6px',
+                                                        background: cashierStep === 2 ? '#0078d4' : '#e2e8f0',
+                                                        color: cashierStep === 2 ? '#ffffff' : '#475569',
+                                                        fontWeight: '800',
+                                                        fontSize: '0.74rem',
+                                                        border: 'none',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '4px',
+                                                        boxShadow: cashierStep === 2 ? '0 2px 6px rgba(0, 120, 212, 0.3)' : 'none',
+                                                        transition: 'all 0.15s ease'
+                                                    }}
+                                                >
+                                                    <span>2.</span> Financial POS
+                                                </button>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAudioChimeEnabled(prev => !prev)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', opacity: audioChimeEnabled ? 1 : 0.4 }}
+                                                    title={audioChimeEnabled ? "Chime Sound ON" : "Chime Sound OFF"}
+                                                >
+                                                    {audioChimeEnabled ? '🔔' : '🔕'}
+                                                </button>
+                                            </div>
+                                        </div>
 
-                                {/* Big Submit Button */}
-                                <button
-                                    type="button"
-                                    onClick={handleSubmitFee}
-                                    disabled={isSubmitting || !selectedStudent}
-                                    style={{
-                                        width: '100%',
-                                        padding: '0.75rem',
-                                        borderRadius: '10px',
-                                        background: !selectedStudent ? '#cbd5e1' : 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
-                                        border: 'none',
-                                        color: '#ffffff',
-                                        fontWeight: '800',
-                                        fontSize: '0.92rem',
-                                        cursor: isSubmitting || !selectedStudent ? 'not-allowed' : 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: '0.5rem',
-                                        boxShadow: !selectedStudent ? 'none' : '0 4px 12px rgba(0, 120, 212, 0.35)',
-                                        transition: 'all 0.18s ease'
-                                    }}
-                                >
-                                    {isSubmitting ? (
-                                        <>
-                                            <Loader2 size={16} className="animate-spin" /> Recording Payment...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Printer size={16} />
-                                            <span>
-                                                {feeCalculation?.isMultiFamily
-                                                    ? `Submit (${feeCalculation.activeSiblingsCount}) Family Slip (Rs ${Number(receivedAmount).toLocaleString()})`
-                                                    : `Submit Fee & Print Receipt (Rs ${Number(receivedAmount).toLocaleString()})`
-                                                }
-                                            </span>
-                                        </>
-                                    )}
-                                </button>
+                                        {/* HORIZONTAL SWIPING VIEWPORT (Smooth Animated POS Container) */}
+                                        <div style={{ overflow: 'hidden', width: '100%', position: 'relative' }}>
+                                            <div style={{
+                                                display: 'flex',
+                                                width: '200%',
+                                                transform: cashierStep === 1 ? 'translateX(0%)' : 'translateX(-50%)',
+                                                transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)'
+                                            }}>
+                                                {/* ============================================================== */}
+                                                {/* SLIDE 1 (STEP 1): STUDENT & PARENT PROFILE CARD               */}
+                                                {/* ============================================================== */}
+                                                <div style={{ width: '50%', paddingRight: '0.4rem', boxSizing: 'border-box' }}>
+                                                    {/* Student Identity Card */}
+                                                    <div style={{
+                                                        background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+                                                        border: '1.5px solid #cbd5e1',
+                                                        borderRadius: '12px',
+                                                        padding: '0.9rem',
+                                                        marginBottom: '0.75rem',
+                                                        boxShadow: '0 2px 8px -2px rgba(0,0,0,0.05)'
+                                                    }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.65rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                                <div style={{
+                                                                    width: '44px',
+                                                                    height: '44px',
+                                                                    borderRadius: '12px',
+                                                                    background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
+                                                                    color: '#ffffff',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    fontWeight: '800',
+                                                                    fontSize: '1rem',
+                                                                    boxShadow: '0 3px 8px rgba(0, 120, 212, 0.25)'
+                                                                }}>
+                                                                    {activeChild?.name?.slice(0, 2).toUpperCase() || 'ST'}
+                                                                </div>
+                                                                <div>
+                                                                    <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                        {activeChild?.name || selectedStudent.name}
+                                                                    </h3>
+                                                                    <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
+                                                                        {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            {(() => {
+                                                                const mStatus = activeChildFeeCalculation?.monthStatus || (activeChildFeeCalculation?.isPaid ? 'paid' : 'pending');
+                                                                const monthLabel = MONTH_NAMES[selectedTargetMonthIdx] || 'Month';
+                                                                if (mStatus === 'paid') {
+                                                                    return (
+                                                                        <span style={{
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: '800',
+                                                                            padding: '3px 9px',
+                                                                            borderRadius: '6px',
+                                                                            background: '#dcfce7',
+                                                                            color: '#15803d',
+                                                                            border: '1px solid #86efac',
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px'
+                                                                        }}>
+                                                                            <span>✓</span> Paid ({monthLabel.slice(0, 3)})
+                                                                        </span>
+                                                                    );
+                                                                } else if (mStatus === 'overdue') {
+                                                                    return (
+                                                                        <span style={{
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: '800',
+                                                                            padding: '3px 9px',
+                                                                            borderRadius: '6px',
+                                                                            background: '#fee2e2',
+                                                                            color: '#b91c1c',
+                                                                            border: '1px solid #fca5a5',
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px'
+                                                                        }}>
+                                                                            <span>⚠</span> Overdue: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                                                        </span>
+                                                                    );
+                                                                } else if (mStatus === 'partial') {
+                                                                    return (
+                                                                        <span style={{
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: '800',
+                                                                            padding: '3px 9px',
+                                                                            borderRadius: '6px',
+                                                                            background: '#fef3c7',
+                                                                            color: '#b45309',
+                                                                            border: '1px solid #fde68a',
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px'
+                                                                        }}>
+                                                                            <span>⚠️</span> Partial Due: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                                                        </span>
+                                                                    );
+                                                                } else {
+                                                                    return (
+                                                                        <span style={{
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: '800',
+                                                                            padding: '3px 9px',
+                                                                            borderRadius: '6px',
+                                                                            background: '#fffbeb',
+                                                                            color: '#b45309',
+                                                                            border: '1px solid #fcd34d',
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px'
+                                                                        }}>
+                                                                            <span>⏳</span> Pending: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                                                        </span>
+                                                                    );
+                                                                }
+                                                            })()}
+                                                        </div>
+
+                                                        {/* Parent Contact Details */}
+                                                        <div style={{ background: '#f8fafc', padding: '0.65rem 0.75rem', borderRadius: '9px', border: '1px solid #e2e8f0', marginBottom: '0.65rem' }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Parent / Guardian:</div>
+                                                                    <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        {officialFamilyFatherName}
+                                                                        {activeParentAccount && (
+                                                                            <span style={{ fontSize: '0.62rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
+                                                                                Verified
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
+                                                                        <div style={{ fontSize: '0.74rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>
+                                                                            📞 {activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+
+                                                                {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            const phone = activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone;
+                                                                            const text = `Assalam-o-Alaikum, this is regarding ${activeChild.name}'s fee dues for ${schoolInfo.name || 'School'}. Current payable amount is Rs ${Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}.`;
+                                                                            let clean = phone.toString().replace(/[^0-9]/g, '');
+                                                                            if (clean.startsWith('0092')) clean = clean.slice(2);
+                                                                            else if (clean.startsWith('03')) clean = '92' + clean.slice(1);
+                                                                            window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
+                                                                        }}
+                                                                        style={{
+                                                                            padding: '5px 10px',
+                                                                            borderRadius: '7px',
+                                                                            background: '#f0fdf4',
+                                                                            border: '1px solid #86efac',
+                                                                            color: '#15803d',
+                                                                            fontWeight: '700',
+                                                                            fontSize: '0.72rem',
+                                                                            cursor: 'pointer',
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px'
+                                                                        }}
+                                                                        title="Direct WhatsApp Reminder"
+                                                                    >
+                                                                        💬 WhatsApp
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Target Month Pill */}
+                                                        <div style={{
+                                                            background: '#eff6ff',
+                                                            border: '1px solid #bfdbfe',
+                                                            borderRadius: '8px',
+                                                            padding: '0.45rem 0.75rem',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'space-between',
+                                                            fontSize: '0.75rem'
+                                                        }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#1e3a8a', fontWeight: '700' }}>
+                                                                <CalendarDays size={14} color="#0078d4" />
+                                                                <span>Target Month: <strong style={{ color: '#0078d4' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
+                                                            </div>
+                                                            <span style={{ fontSize: '0.68rem', color: '#0284c7', background: '#dbeafe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                Active Matrix Month
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Sibling Hub Summary (if any) */}
+                                                    {detectedSiblings.length > 1 && (
+                                                        <div style={{
+                                                            background: '#f0f9ff',
+                                                            border: '1.5px solid #7dd3fc',
+                                                            borderRadius: '11px',
+                                                            padding: '0.75rem 0.85rem',
+                                                            marginBottom: '0.75rem'
+                                                        }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                                                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    👨‍👩‍👧‍👦 Family Siblings Hub ({detectedSiblings.length} Children)
+                                                                </span>
+                                                                <span style={{ fontSize: '0.68rem', color: '#0284c7', background: '#e0f2fe', padding: '2px 7px', borderRadius: '5px', fontWeight: '800' }}>
+                                                                    {siblingPaymentScope === 'family' ? `${selectedSiblingIds.length} in Family Bill` : 'Single Child Mode'}
+                                                                </span>
+                                                            </div>
+
+                                                            {/* Dual Mode Switcher: Single vs Full Family */}
+                                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginBottom: '0.55rem' }}>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setSiblingPaymentScope('single')}
+                                                                    style={{
+                                                                        padding: '0.45rem 0.5rem',
+                                                                        borderRadius: '7px',
+                                                                        border: siblingPaymentScope === 'single' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
+                                                                        background: siblingPaymentScope === 'single' ? '#0284c7' : '#ffffff',
+                                                                        color: siblingPaymentScope === 'single' ? '#ffffff' : '#334155',
+                                                                        fontSize: '0.72rem',
+                                                                        fontWeight: '800',
+                                                                        cursor: 'pointer',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        gap: '4px',
+                                                                        transition: 'all 0.15s ease'
+                                                                    }}
+                                                                >
+                                                                    <span>👤 Single Student Only</span>
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setSiblingPaymentScope('family');
+                                                                        setSelectedSiblingIds(detectedSiblings.map(s => s.id));
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '0.45rem 0.5rem',
+                                                                        borderRadius: '7px',
+                                                                        border: siblingPaymentScope === 'family' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
+                                                                        background: siblingPaymentScope === 'family' ? '#0284c7' : '#ffffff',
+                                                                        color: siblingPaymentScope === 'family' ? '#ffffff' : '#334155',
+                                                                        fontSize: '0.72rem',
+                                                                        fontWeight: '800',
+                                                                        cursor: 'pointer',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        gap: '4px',
+                                                                        transition: 'all 0.15s ease'
+                                                                    }}
+                                                                >
+                                                                    <span>👨‍👩‍👧‍👦 Complete Family ({detectedSiblings.length})</span>
+                                                                </button>
+                                                            </div>
+
+                                                            {/* Sibling Selection Chips */}
+                                                            {siblingPaymentScope === 'family' && (
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: '700', marginBottom: '0.3rem' }}>
+                                                                        Click child to include / exclude from this bill:
+                                                                    </div>
+                                                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                                        {detectedSiblings.map(sib => {
+                                                                            const isSelected = selectedSiblingIds.includes(sib.id);
+                                                                            return (
+                                                                                <span
+                                                                                    key={sib.id}
+                                                                                    onClick={() => toggleSiblingSelection(sib.id)}
+                                                                                    style={{
+                                                                                        fontSize: '0.7rem',
+                                                                                        padding: '3px 8px',
+                                                                                        borderRadius: '6px',
+                                                                                        background: isSelected ? '#0369a1' : '#e2e8f0',
+                                                                                        color: isSelected ? '#ffffff' : '#475569',
+                                                                                        fontWeight: '700',
+                                                                                        cursor: 'pointer',
+                                                                                        display: 'inline-flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '4px',
+                                                                                        border: isSelected ? '1px solid #0284c7' : '1px solid #cbd5e1',
+                                                                                        transition: 'all 0.15s ease'
+                                                                                    }}
+                                                                                >
+                                                                                    <span>{isSelected ? '✓' : '+'}</span>
+                                                                                    <span>{sib.name} ({sib.className || 'Class'})</span>
+                                                                                </span>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* BIG STEP 1 CTA BUTTON TO SWIPE TO STEP 2 */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCashierStep(2)}
+                                                        style={{
+                                                            width: '100%',
+                                                            padding: '0.85rem',
+                                                            borderRadius: '12px',
+                                                            background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
+                                                            border: 'none',
+                                                            color: '#ffffff',
+                                                            fontWeight: '900',
+                                                            fontSize: '0.95rem',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            gap: '0.5rem',
+                                                            boxShadow: '0 4px 14px rgba(0, 120, 212, 0.4)',
+                                                            transition: 'all 0.18s ease'
+                                                        }}
+                                                    >
+                                                        <Wallet size={18} />
+                                                        <span>
+                                                            {feeCalculation?.isMultiFamily
+                                                                ? `Record Fee for Family (${feeCalculation.activeSiblingsCount} Children) 💳 ➔`
+                                                                : `Record Fee / Collect Payment 💳 ➔`
+                                                            }
+                                                        </span>
+                                                        <span style={{ fontSize: '0.68rem', background: 'rgba(255,255,255,0.25)', padding: '2px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                            Enter ↵
+                                                        </span>
+                                                    </button>
+
+                                                    {/* Download Pre-payment Challan PDF */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadChallanForMonth(null)}
+                                                        style={{
+                                                            width: '100%',
+                                                            marginTop: '0.5rem',
+                                                            padding: '0.55rem',
+                                                            borderRadius: '8px',
+                                                            background: '#ffffff',
+                                                            border: '1.5px solid #0f172a',
+                                                            color: '#0f172a',
+                                                            fontWeight: '800',
+                                                            fontSize: '0.78rem',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            gap: '0.4rem',
+                                                            transition: 'all 0.15s ease'
+                                                        }}
+                                                        title="Download fee voucher / challan for parents before payment"
+                                                    >
+                                                        <FileText size={14} /> Download Fee Challan / Bill ({MONTH_NAMES[selectedTargetMonthIdx]})
+                                                    </button>
+                                                </div>
+
+                                                {/* ============================================================== */}
+                                                {/* SLIDE 2 (STEP 2): FINANCIAL BILLING POS & SETTLEMENT          */}
+                                                {/* ============================================================== */}
+                                                <div style={{ width: '50%', paddingLeft: '0.4rem', boxSizing: 'border-box' }}>
+                                                    {/* Clean Active Billing Month Header Banner */}
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                                                Active Billing Month:
+                                                            </span>
+                                                            <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0078d4', background: '#eff6ff', padding: '3px 10px', borderRadius: '6px', border: '1.5px solid #bfdbfe' }}>
+                                                                {MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {(() => {
+                                                        const currentStudentToAssess = activeChild || selectedStudent;
+                                                        const currentYear = new Date().getFullYear();
+                                                        const targetYear = selectedDetailMonthData?.targetYear || currentYear;
+                                                        const targetMonthKey = `${targetYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+                                                        const targetMonthHist = studentReliabilityData?.monthlyHistory?.[selectedTargetMonthIdx] || null;
+                                                        const isMonthInPaidMonths = Array.isArray(currentStudentToAssess?.paidMonths) && currentStudentToAssess.paidMonths.includes(targetMonthKey);
+                                                        const isTargetMonthFullyPaid = Boolean(
+                                                            selectedDetailMonthData?.isPaid || 
+                                                            targetMonthHist?.status === 'paid' || 
+                                                            isMonthInPaidMonths ||
+                                                            (currentStudentToAssess?.monthlyFeeHistory?.[targetMonthKey]?.status === 'paid')
+                                                        );
+
+                                                        const unpaidCustomActionsList = (activePayableItems || []).filter(it => it.isCustomAction);
+                                                        const hasUnpaidCustomActions = unpaidCustomActionsList.length > 0;
+                                                        const isFullyClearedAndLocked = isTargetMonthFullyPaid && !hasUnpaidCustomActions;
+                                                        const selectedMonthPaidRecord = getSelectedMonthPaidTxRecord();
+                                                        const hasProof = Boolean(selectedMonthPaidRecord?.proofUrl);
+
+                                                        if (isFullyClearedAndLocked) {
+                                                            const clearedGrandTotal = Number(selectedMonthPaidRecord?.totalPaid || selectedDetailMonthData?.paidAmount || currentStudentToAssess?.tuitionFee || 0);
+                                                            const settledItemsList = Array.isArray(selectedMonthPaidRecord?.items) && selectedMonthPaidRecord.items.length > 0 
+                                                                ? selectedMonthPaidRecord.items 
+                                                                : [{ name: `Monthly Tuition Fee (${MONTH_NAMES[selectedTargetMonthIdx]})`, amount: clearedGrandTotal, category: 'tuition' }];
+
+                                                            return (
+                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                                                    {/* 1. Large Executive Emerald Audit Certificate Shield Banner */}
+                                                                    <div style={{
+                                                                        background: 'linear-gradient(135deg, #065f46 0%, #047857 50%, #059669 100%)',
+                                                                        borderRadius: '14px',
+                                                                        padding: '1.1rem 1.25rem',
+                                                                        color: '#ffffff',
+                                                                        boxShadow: '0 8px 24px rgba(4, 120, 87, 0.28), 0 2px 6px rgba(0, 0, 0, 0.1)',
+                                                                        border: '2px solid #34d399'
+                                                                    }}>
+                                                                        {/* Banner Header */}
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                <ShieldCheck size={22} color="#6ee7b7" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }} />
+                                                                                <span style={{ fontSize: '0.94rem', fontWeight: '900', letterSpacing: '0.04em', color: '#ffffff', textTransform: 'uppercase' }}>
+                                                                                    100% Cleared & Audit Locked
+                                                                                </span>
+                                                                            </div>
+                                                                            <span style={{ 
+                                                                                fontSize: '0.78rem', 
+                                                                                fontWeight: '900', 
+                                                                                background: 'rgba(255,255,255,0.22)', 
+                                                                                padding: '4px 10px', 
+                                                                                borderRadius: '9px', 
+                                                                                border: '1.5px solid rgba(255,255,255,0.45)',
+                                                                                letterSpacing: '0.02em',
+                                                                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                                                                            }}>
+                                                                                ✓ Rs 0 Pending
+                                                                            </span>
+                                                                        </div>
+
+                                                                        {/* Hero Cleared Grand Total */}
+                                                                        <div style={{
+                                                                            background: 'rgba(0, 0, 0, 0.25)',
+                                                                            borderRadius: '10px',
+                                                                            padding: '0.75rem 1rem',
+                                                                            margin: '0.5rem 0 0.75rem 0',
+                                                                            border: '1px solid rgba(255, 255, 255, 0.15)',
+                                                                            display: 'flex',
+                                                                            justifyContent: 'space-between',
+                                                                            alignItems: 'center'
+                                                                        }}>
+                                                                            <div>
+                                                                                <div style={{ fontSize: '0.7rem', fontWeight: '800', color: '#a7f3d0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                                                                    Total Settled & Reconciled
+                                                                                </div>
+                                                                                <div style={{ fontSize: '1.85rem', fontWeight: '900', color: '#ffffff', letterSpacing: '-0.02em', lineHeight: 1.1, marginTop: '2px', textShadow: '0 2px 8px rgba(0,0,0,0.3)' }}>
+                                                                                    Rs {clearedGrandTotal.toLocaleString()}
+                                                                                </div>
+                                                                            </div>
+                                                                            <div style={{ textAlign: 'right' }}>
+                                                                                <span style={{
+                                                                                    fontSize: '0.72rem',
+                                                                                    fontWeight: '900',
+                                                                                    background: '#10b981',
+                                                                                    color: '#ffffff',
+                                                                                    padding: '4px 9px',
+                                                                                    borderRadius: '6px',
+                                                                                    textTransform: 'uppercase',
+                                                                                    letterSpacing: '0.04em',
+                                                                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)'
+                                                                                }}>
+                                                                                    Fully Paid
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {/* Audit Meta Grid */}
+                                                                        <div style={{ 
+                                                                            display: 'grid', 
+                                                                            gridTemplateColumns: '1fr 1fr', 
+                                                                            gap: '0.5rem', 
+                                                                            fontSize: '0.78rem', 
+                                                                            color: '#ecfdf5', 
+                                                                            background: 'rgba(0,0,0,0.18)', 
+                                                                            padding: '8px 12px', 
+                                                                            borderRadius: '9px',
+                                                                            border: '1px solid rgba(255,255,255,0.1)'
+                                                                        }}>
+                                                                            <div>
+                                                                                <span style={{ opacity: 0.85, fontWeight: '600' }}>Receipt #: </span>
+                                                                                <strong style={{ color: '#ffffff', fontWeight: '900', letterSpacing: '0.02em' }}>
+                                                                                    {selectedMonthPaidRecord?.receiptNo || 'REC-CLEARED'}
+                                                                                </strong>
+                                                                            </div>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                                                                                <div>
+                                                                                    <span style={{ opacity: 0.85, fontWeight: '600' }}>Channel: </span>
+                                                                                    <strong style={{ color: '#ffffff', fontWeight: '900' }}>
+                                                                                        {selectedMonthPaidRecord?.paymentMode || 'Cash'}
+                                                                                    </strong>
+                                                                                    {selectedMonthPaidRecord?.transactionId && (
+                                                                                        <div style={{ fontSize: '0.66rem', color: '#93c5fd', fontWeight: '700', marginTop: '1px' }}>
+                                                                                            TRX: {selectedMonthPaidRecord.transactionId}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                                {hasProof ? (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => setProofModal({
+                                                                                            isOpen: true,
+                                                                                            url: selectedMonthPaidRecord.proofUrl,
+                                                                                            title: `Payment Proof - ${selectedMonthPaidRecord.studentName} (${selectedMonthPaidRecord.targetMonthName})`
+                                                                                        })}
+                                                                                        style={{
+                                                                                            padding: '3px 7px',
+                                                                                            borderRadius: '5px',
+                                                                                            background: '#38bdf8',
+                                                                                            color: '#082f49',
+                                                                                            border: 'none',
+                                                                                            fontSize: '0.68rem',
+                                                                                            fontWeight: '900',
+                                                                                            cursor: 'pointer',
+                                                                                            display: 'inline-flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '3px',
+                                                                                            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                                                                            flexShrink: 0
+                                                                                        }}
+                                                                                        title="View Attached Slip / Proof"
+                                                                                    >
+                                                                                        <Eye size={11} /> View Proof
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={handleTriggerAttachProof}
+                                                                                        disabled={attachingProof}
+                                                                                        style={{
+                                                                                            padding: '3px 7px',
+                                                                                            borderRadius: '5px',
+                                                                                            background: 'rgba(255,255,255,0.15)',
+                                                                                            color: '#ffffff',
+                                                                                            border: '1px dashed rgba(255,255,255,0.4)',
+                                                                                            fontSize: '0.66rem',
+                                                                                            fontWeight: '800',
+                                                                                            cursor: 'pointer',
+                                                                                            display: 'inline-flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '3px',
+                                                                                            flexShrink: 0
+                                                                                        }}
+                                                                                        title="Attach Bank / JazzCash / Online Slip Image"
+                                                                                    >
+                                                                                        {attachingProof ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />}
+                                                                                        <span>Attach Slip</span>
+                                                                                    </button>
+                                                                                )}
+                                                                            </div>
+                                                                            <div>
+                                                                                <span style={{ opacity: 0.85, fontWeight: '600' }}>Paid Date: </span>
+                                                                                <strong style={{ color: '#ffffff', fontWeight: '800' }}>
+                                                                                    {selectedMonthPaidRecord?.dateString || 'Cleared'}
+                                                                                </strong>
+                                                                            </div>
+                                                                            <div>
+                                                                                <span style={{ opacity: 0.85, fontWeight: '600' }}>Audited By: </span>
+                                                                                <strong style={{ color: '#ffffff', fontWeight: '800' }}>
+                                                                                    {selectedMonthPaidRecord?.collectedBy || 'Principal Office'}
+                                                                                </strong>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Hidden file input for attaching proof directly to paid month */}
+                                                                    <input
+                                                                        type="file"
+                                                                        ref={fileInputProofRef}
+                                                                        onChange={handleFileChangeAttachProof}
+                                                                        accept="image/*"
+                                                                        style={{ display: 'none' }}
+                                                                    />
+
+                                                                    {/* 2. All-Inclusive Settled Particulars Breakdown & Active ➕ New Action Trigger */}
+                                                                    <div style={{
+                                                                        background: '#f8fafc',
+                                                                        borderRadius: '13px',
+                                                                        border: '1.5px solid #cbd5e1',
+                                                                        padding: '0.85rem 1rem',
+                                                                        boxShadow: '0 2px 6px rgba(0,0,0,0.03)'
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                                                                    🔒 Settled Particulars ({settledItemsList.length} Items)
+                                                                                </span>
+                                                                            </div>
+
+                                                                            {/* ➕ New Action / Custom Fee Trigger (Active in Paid Month!) */}
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setShowNewActionModal(true)}
+                                                                                style={{
+                                                                                    padding: '4px 11px',
+                                                                                    borderRadius: '7px',
+                                                                                    border: '1.5px dashed #0284c7',
+                                                                                    background: '#eff6ff',
+                                                                                    color: '#0284c7',
+                                                                                    fontSize: '0.76rem',
+                                                                                    fontWeight: '900',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '4px',
+                                                                                    boxShadow: '0 2px 4px rgba(2, 132, 199, 0.12)',
+                                                                                    transition: 'all 0.15s ease'
+                                                                                }}
+                                                                                title="Add supplementary fee to this month (Exam Fee, Fine, ID Card, etc.)"
+                                                                            >
+                                                                                <Plus size={14} /> New Action
+                                                                            </button>
+                                                                        </div>
+
+                                                                        {/* Itemized Breakdown List */}
+                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '180px', overflowY: 'auto', paddingRight: '2px' }}>
+                                                                            {settledItemsList.map((item, idx) => {
+                                                                                const isCustom = item.category === 'custom_action' || item.isCustomAction;
+                                                                                const isTransport = item.category === 'transport' || item.name?.toLowerCase().includes('transport') || item.name?.toLowerCase().includes('van');
+                                                                                const isStore = item.category === 'store' || item.name?.toLowerCase().includes('uniform') || item.name?.toLowerCase().includes('book') || item.name?.toLowerCase().includes('store');
+                                                                                const isFine = item.category === 'fine' || item.name?.toLowerCase().includes('fine') || item.name?.toLowerCase().includes('penalty');
+                                                                                
+                                                                                const itemIcon = isCustom ? '⚡' : isTransport ? '🚌' : isStore ? '🛍️' : isFine ? '⏳' : '🎓';
+                                                                                const bgStyle = isCustom ? '#f0fdf4' : '#ffffff';
+                                                                                const borderStyle = isCustom ? '1px solid #bbf7d0' : '1px solid #e2e8f0';
+
+                                                                                return (
+                                                                                    <div 
+                                                                                        key={idx} 
+                                                                                        style={{ 
+                                                                                            display: 'flex', 
+                                                                                            justifyContent: 'space-between', 
+                                                                                            alignItems: 'center', 
+                                                                                            background: bgStyle, 
+                                                                                            padding: '7px 10px', 
+                                                                                            borderRadius: '8px', 
+                                                                                            border: borderStyle, 
+                                                                                            boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                                                                                            <span style={{ fontSize: '0.82rem' }}>{itemIcon}</span>
+                                                                                            <div>
+                                                                                                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: isCustom ? '#15803d' : '#0f172a' }}>
+                                                                                                    {item.name}
+                                                                                                </span>
+                                                                                                {isCustom && item.date && (
+                                                                                                    <span style={{ fontSize: '0.68rem', color: '#64748b', marginLeft: '6px' }}>
+                                                                                                        ({new Date(item.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })})
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                            <span style={{ fontSize: '0.78rem', fontWeight: '900', color: isCustom ? '#15803d' : '#0f172a' }}>
+                                                                                                Rs {Number(item.amount || 0).toLocaleString()}
+                                                                                            </span>
+                                                                                            <span style={{ 
+                                                                                                fontSize: '0.68rem', 
+                                                                                                fontWeight: '900', 
+                                                                                                background: isCustom ? '#dcfce7' : '#dcfce7', 
+                                                                                                color: '#166534', 
+                                                                                                padding: '2px 6px', 
+                                                                                                borderRadius: '5px', 
+                                                                                                border: '1px solid #86efac'
+                                                                                            }}>
+                                                                                                PAID ✓
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+
+                                                                        {/* Total Reconciled Line */}
+                                                                        <div style={{
+                                                                            display: 'flex',
+                                                                            justifyContent: 'space-between',
+                                                                            alignItems: 'center',
+                                                                            marginTop: '0.55rem',
+                                                                            paddingTop: '0.5rem',
+                                                                            borderTop: '1.5px dashed #cbd5e1',
+                                                                            fontSize: '0.76rem',
+                                                                            fontWeight: '900',
+                                                                            color: '#334155'
+                                                                        }}>
+                                                                            <span>Verified Items Total:</span>
+                                                                            <span style={{ color: '#047857', fontSize: '0.84rem' }}>
+                                                                                Rs {clearedGrandTotal.toLocaleString()}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* 3. Re-Issue Actions: Thermal Slip, PDF, WhatsApp & View/Attach Slip */}
+                                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.45rem' }}>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={handleReprintThermalPaidSlip}
+                                                                            style={{
+                                                                                padding: '0.65rem 0.4rem',
+                                                                                borderRadius: '9px',
+                                                                                border: '1.5px solid #0f172a',
+                                                                                background: '#0f172a',
+                                                                                color: '#ffffff',
+                                                                                fontSize: '0.76rem',
+                                                                                fontWeight: '900',
+                                                                                cursor: 'pointer',
+                                                                                display: 'flex',
+                                                                                flexDirection: 'column',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px',
+                                                                                boxShadow: '0 2px 6px rgba(15, 23, 42, 0.18)',
+                                                                                transition: 'all 0.15s ease'
+                                                                            }}
+                                                                        >
+                                                                            <Printer size={16} />
+                                                                            <span>Thermal Slip</span>
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={handleDownloadPaidPDFReceipt}
+                                                                            style={{
+                                                                                padding: '0.65rem 0.4rem',
+                                                                                borderRadius: '9px',
+                                                                                border: '1.5px solid #cbd5e1',
+                                                                                background: '#ffffff',
+                                                                                color: '#0f172a',
+                                                                                fontSize: '0.76rem',
+                                                                                fontWeight: '900',
+                                                                                cursor: 'pointer',
+                                                                                display: 'flex',
+                                                                                flexDirection: 'column',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px',
+                                                                                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.06)',
+                                                                                transition: 'all 0.15s ease'
+                                                                            }}
+                                                                        >
+                                                                            <Download size={16} />
+                                                                            <span>PDF Receipt</span>
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={handleResendPaidWhatsAppReceipt}
+                                                                            style={{
+                                                                                padding: '0.65rem 0.4rem',
+                                                                                borderRadius: '9px',
+                                                                                border: '1.5px solid #86efac',
+                                                                                background: '#f0fdf4',
+                                                                                color: '#15803d',
+                                                                                fontSize: '0.76rem',
+                                                                                fontWeight: '900',
+                                                                                cursor: 'pointer',
+                                                                                display: 'flex',
+                                                                                flexDirection: 'column',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px',
+                                                                                boxShadow: '0 1px 3px rgba(22, 101, 52, 0.08)',
+                                                                                transition: 'all 0.15s ease'
+                                                                            }}
+                                                                        >
+                                                                            <Send size={16} />
+                                                                            <span>WhatsApp</span>
+                                                                        </button>
+                                                                        {hasProof ? (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setProofModal({
+                                                                                    isOpen: true,
+                                                                                    url: selectedMonthPaidRecord.proofUrl,
+                                                                                    title: `Payment Proof - ${selectedMonthPaidRecord.studentName} (${selectedMonthPaidRecord.targetMonthName})`
+                                                                                })}
+                                                                                style={{
+                                                                                    padding: '0.65rem 0.4rem',
+                                                                                    borderRadius: '9px',
+                                                                                    border: '1.5px solid #38bdf8',
+                                                                                    background: '#f0f9ff',
+                                                                                    color: '#0284c7',
+                                                                                    fontSize: '0.76rem',
+                                                                                    fontWeight: '900',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'flex',
+                                                                                    flexDirection: 'column',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '3px',
+                                                                                    boxShadow: '0 1px 3px rgba(2, 132, 199, 0.1)',
+                                                                                    transition: 'all 0.15s ease'
+                                                                                }}
+                                                                            >
+                                                                                <Eye size={16} />
+                                                                                <span>View Slip</span>
+                                                                            </button>
+                                                                        ) : (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={handleTriggerAttachProof}
+                                                                                disabled={attachingProof}
+                                                                                style={{
+                                                                                    padding: '0.65rem 0.4rem',
+                                                                                    borderRadius: '9px',
+                                                                                    border: '1.5px dashed #cbd5e1',
+                                                                                    background: '#f8fafc',
+                                                                                    color: '#475569',
+                                                                                    fontSize: '0.76rem',
+                                                                                    fontWeight: '800',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'flex',
+                                                                                    flexDirection: 'column',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '3px',
+                                                                                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)',
+                                                                                    transition: 'all 0.15s ease'
+                                                                                }}
+                                                                                title="Attach bank transfer or online payment slip image"
+                                                                            >
+                                                                                {attachingProof ? <Loader2 size={16} className="animate-spin text-blue-600" /> : <Upload size={16} />}
+                                                                                <span>Attach Slip</span>
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+
+                                                                    {/* 4. ⏩ Smart Advance to Next Due Month Navigator */}
+                                                                    {nextUnpaidMonthIdx !== -1 && nextUnpaidMonthIdx !== selectedTargetMonthIdx && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setSelectedTargetMonthIdx(nextUnpaidMonthIdx)}
+                                                                            style={{
+                                                                                width: '100%',
+                                                                                padding: '0.65rem 0.9rem',
+                                                                                borderRadius: '10px',
+                                                                                border: '1.5px solid #93c5fd',
+                                                                                background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                                                                                color: '#1d4ed8',
+                                                                                fontSize: '0.8rem',
+                                                                                fontWeight: '900',
+                                                                                cursor: 'pointer',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                justifyContent: 'center',
+                                                                                gap: '6px',
+                                                                                boxShadow: '0 2px 6px rgba(29, 78, 216, 0.12)',
+                                                                                transition: 'all 0.15s ease'
+                                                                            }}
+                                                                        >
+                                                                            <span>👉 Advance to Next Due Month ({MONTH_NAMES[nextUnpaidMonthIdx]} {new Date().getFullYear()})</span>
+                                                                            <ArrowRight size={15} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        }
+
+                                                        return (
+                                                            <>
+                                                                {/* Supplementary Charge Mode Notice */}
+                                                                {isTargetMonthFullyPaid && hasUnpaidCustomActions && (
+                                                                    <div style={{
+                                                                        background: '#eff6ff',
+                                                                        border: '1.5px solid #93c5fd',
+                                                                        borderRadius: '9px',
+                                                                        padding: '0.45rem 0.75rem',
+                                                                        marginBottom: '0.55rem',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '6px',
+                                                                        fontSize: '0.74rem',
+                                                                        fontWeight: '800',
+                                                                        color: '#1d4ed8'
+                                                                    }}>
+                                                                        <Sparkles size={14} color="#2563eb" />
+                                                                        <span>Supplementary Fee Mode: Base month is cleared; collecting {unpaidCustomActionsList.length} newly added action fee.</span>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Tactile Payment Method Chips */}
+                                                                <div style={{ marginBottom: '0.65rem' }}>
+                                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.35rem' }}>
+                                                                        {[
+                                                                            { id: 'Cash', label: 'Cash', icon: '💵', color: '#16a34a', bg: '#f0fdf4', border: '#86efac' },
+                                                                            { id: 'Bank Transfer', label: 'Bank', icon: '🏛️', color: '#2563eb', bg: '#eff6ff', border: '#93c5fd' },
+                                                                            { id: 'EasyPaisa', label: 'EasyPaisa', icon: '📱', color: '#059669', bg: '#ecfdf5', border: '#6ee7b7' },
+                                                                            { id: 'JazzCash', label: 'JazzCash', icon: '💳', color: '#dc2626', bg: '#fef2f2', border: '#fca5a5' }
+                                                                        ].map((m) => (
+                                                                            <button
+                                                                                key={m.id}
+                                                                                type="button"
+                                                                                onClick={() => setPaymentMode(m.id)}
+                                                                                style={{
+                                                                                    padding: '0.35rem 0.15rem',
+                                                                                    borderRadius: '7px',
+                                                                                    border: paymentMode === m.id ? `1.5px solid ${m.color}` : '1px solid #e2e8f0',
+                                                                                    background: paymentMode === m.id ? m.bg : '#ffffff',
+                                                                                    color: paymentMode === m.id ? m.color : '#475569',
+                                                                                    fontWeight: '700',
+                                                                                    fontSize: '0.68rem',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'flex',
+                                                                                    flexDirection: 'column',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '1px',
+                                                                                    boxShadow: paymentMode === m.id ? `0 2px 6px ${m.color}22` : 'none',
+                                                                                    transition: 'all 0.15s ease'
+                                                                                }}
+                                                                            >
+                                                                                <span style={{ fontSize: '0.8rem' }}>{m.icon}</span>
+                                                                                <span>{m.label}</span>
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Financial Breakdown Summary: Multi-Sibling Matrix or Single Student Breakdown */}
+                                                                {feeCalculation?.isMultiFamily ? (
+                                                                    <div style={{
+                                                                        background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                                                                        border: '1.5px solid #7dd3fc',
+                                                                        borderRadius: '13px',
+                                                                        padding: '0.85rem 0.95rem',
+                                                                        marginBottom: '0.75rem',
+                                                                        boxShadow: '0 2px 8px rgba(2, 132, 199, 0.08)'
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', borderBottom: '1.5px solid #bae6fd', paddingBottom: '0.45rem' }}>
+                                                                            <span style={{ fontSize: '0.82rem', fontWeight: '900', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                👨‍👩‍👧‍👦 Family Sibling Bill ({feeCalculation.activeSiblingsCount} Children)
+                                                                            </span>
+                                                                            <span style={{ fontSize: '0.68rem', color: '#0369a1', background: '#ffffff', border: '1px solid #7dd3fc', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>
+                                                                                Household Breakdown
+                                                                            </span>
+                                                                        </div>
+
+                                                                        {/* List of Categorized Sibling Cards */}
+                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '2px' }}>
+                                                                            {(feeCalculation.studentsBreakdown || []).map((sib) => {
+                                                                                const sibTuition = Number(sib.tuitionFee || (sib.baseFee - (sib.transportFee || 0)) || 0);
+                                                                                const sibTransport = Number(sib.transportFee || 0);
+                                                                                const sibStore = Number(sib.storeFee || 0);
+                                                                                const sibActions = Number(sib.actionsFee || 0);
+                                                                                const sibArrears = Number(sib.previousMonthsArrears || 0);
+
+                                                                                return (
+                                                                                    <div key={sib.studentId} style={{
+                                                                                        background: '#ffffff',
+                                                                                        border: '1px solid #cbd5e1',
+                                                                                        borderRadius: '10px',
+                                                                                        padding: '0.6rem 0.75rem',
+                                                                                        display: 'flex',
+                                                                                        justifyContent: 'space-between',
+                                                                                        alignItems: 'center',
+                                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                                                                                    }}>
+                                                                                        <div style={{ flex: 1, marginRight: '8px' }}>
+                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                                <strong style={{ fontSize: '0.84rem', fontWeight: '900', color: '#0f172a' }}>
+                                                                                                    {sib.studentName}
+                                                                                                </strong>
+                                                                                                <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                                                                                                    ({sib.className} &bull; Roll #{sib.rollNo})
+                                                                                                </span>
+                                                                                            </div>
+
+                                                                                            {/* Short Categorized Badges */}
+                                                                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                                                                                                {sibTuition > 0 && (
+                                                                                                    <span style={{ fontSize: '0.64rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                        🎓 Tuition: Rs {sibTuition.toLocaleString()}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                                {sibTransport > 0 && (
+                                                                                                    <span style={{ fontSize: '0.64rem', background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                        🚌 Transport: Rs {sibTransport.toLocaleString()}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                                {sibStore > 0 && (
+                                                                                                    <span style={{ fontSize: '0.64rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                        🛍️ Store: Rs {sibStore.toLocaleString()}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                                {sibActions > 0 && (
+                                                                                                    <span style={{ fontSize: '0.64rem', background: '#faf5ff', color: '#6b21a8', border: '1px solid #e9d5ff', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                        🏷️ Actions: Rs {sibActions.toLocaleString()}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                                {sibArrears > 0 && (
+                                                                                                    <span style={{ fontSize: '0.64rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                        ⏳ Arrears: Rs {sibArrears.toLocaleString()}
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </div>
+
+                                                                                        {/* Subtotal & Status */}
+                                                                                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                                                                            <div style={{ fontSize: '0.94rem', fontWeight: '900', color: '#0f172a' }}>
+                                                                                                Rs {Number(sib.subtotal || 0).toLocaleString()}
+                                                                                            </div>
+                                                                                            <span style={{
+                                                                                                fontSize: '0.62rem',
+                                                                                                color: sib.isPaid ? '#15803d' : '#b91c1c',
+                                                                                                background: sib.isPaid ? '#dcfce7' : '#fee2e2',
+                                                                                                border: `1px solid ${sib.isPaid ? '#86efac' : '#fca5a5'}`,
+                                                                                                padding: '1px 5px',
+                                                                                                borderRadius: '4px',
+                                                                                                fontWeight: '800',
+                                                                                                display: 'inline-block',
+                                                                                                marginTop: '2px'
+                                                                                            }}>
+                                                                                                {sib.isPaid ? '✓ Paid' : 'Due'}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+
+                                                                        {/* Aggregate Item Summary Chips */}
+                                                                        <div style={{
+                                                                            display: 'flex',
+                                                                            gap: '4px',
+                                                                            flexWrap: 'wrap',
+                                                                            background: 'rgba(255, 255, 255, 0.7)',
+                                                                            border: '1px solid #bae6fd',
+                                                                            borderRadius: '8px',
+                                                                            padding: '0.35rem 0.5rem',
+                                                                            marginTop: '0.6rem'
+                                                                        }}>
+                                                                            {Number(feeCalculation?.tuitionFee || feeCalculation?.baseFee || 0) > 0 && (
+                                                                                <span style={{ fontSize: '0.62rem', color: '#1e40af', fontWeight: '700' }}>
+                                                                                    Tuition: <strong>Rs {Number(feeCalculation?.tuitionFee || feeCalculation?.baseFee || 0).toLocaleString()}</strong>
+                                                                                </span>
+                                                                            )}
+                                                                            {Number(feeCalculation?.transportFee || 0) > 0 && (
+                                                                                <span style={{ fontSize: '0.62rem', color: '#b45309', fontWeight: '700' }}>
+                                                                                    &bull; Transport: <strong>Rs {Number(feeCalculation?.transportFee || 0).toLocaleString()}</strong>
+                                                                                </span>
+                                                                            )}
+                                                                            {Number(feeCalculation?.storeFee || 0) > 0 && (
+                                                                                <span style={{ fontSize: '0.62rem', color: '#047857', fontWeight: '700' }}>
+                                                                                    &bull; Store: <strong>Rs {Number(feeCalculation?.storeFee || 0).toLocaleString()}</strong>
+                                                                                </span>
+                                                                            )}
+                                                                            {Number(feeCalculation?.actionsFee || 0) > 0 && (
+                                                                                <span style={{ fontSize: '0.62rem', color: '#6b21a8', fontWeight: '700' }}>
+                                                                                    &bull; Actions: <strong>Rs {Number(feeCalculation?.actionsFee || 0).toLocaleString()}</strong>
+                                                                                </span>
+                                                                            )}
+                                                                            {Number(feeCalculation?.previousMonthsArrears || 0) > 0 && (
+                                                                                <span style={{ fontSize: '0.62rem', color: '#b91c1c', fontWeight: '700' }}>
+                                                                                    &bull; Arrears: <strong>Rs {Number(feeCalculation?.previousMonthsArrears || 0).toLocaleString()}</strong>
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {/* Combined Family Grand Total */}
+                                                                        <div style={{
+                                                                            borderTop: '2px solid #0284c7',
+                                                                            paddingTop: '0.5rem',
+                                                                            marginTop: '0.5rem',
+                                                                            display: 'flex',
+                                                                            justifyContent: 'space-between',
+                                                                            alignItems: 'center'
+                                                                        }}>
+                                                                            <div>
+                                                                                <strong style={{ color: '#0369a1', fontSize: '0.86rem', fontWeight: '900', display: 'block' }}>
+                                                                                    Family Grand Total:
+                                                                                </strong>
+                                                                                <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                                                                                    All active siblings combined
+                                                                                </span>
+                                                                            </div>
+                                                                            <strong style={{ color: '#0369a1', fontSize: '1.35rem', fontWeight: '900', letterSpacing: '-0.02em' }}>
+                                                                                Rs {payableNetTotal.toLocaleString()}
+                                                                            </strong>
+                                                                        </div>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div style={{
+                                                                        background: '#f8fafc',
+                                                                        border: '1.5px solid #cbd5e1',
+                                                                        borderRadius: '12px',
+                                                                        padding: '0.75rem 0.85rem',
+                                                                        marginBottom: '0.65rem'
+                                                                    }}>
+                                                                        {/* Quick Preset Selector Chips & New Action Button */}
+                                                                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '0.5rem', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={handleSelectAllCategories}
+                                                                                    style={{
+                                                                                        padding: '2px 7px',
+                                                                                        borderRadius: '5px',
+                                                                                        border: selectedFeeItemKeys.length >= 4 ? '1.5px solid #0f172a' : '1px solid #cbd5e1',
+                                                                                        background: selectedFeeItemKeys.length >= 4 ? '#0f172a' : '#ffffff',
+                                                                                        color: selectedFeeItemKeys.length >= 4 ? '#ffffff' : '#0f172a',
+                                                                                        fontSize: '0.7rem',
+                                                                                        fontWeight: '800',
+                                                                                        cursor: 'pointer'
+                                                                                    }}
+                                                                                >
+                                                                                    ⚡ All
+                                                                                </button>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleSelectOnlyCategory('tuition')}
+                                                                                    style={{
+                                                                                        padding: '2px 7px',
+                                                                                        borderRadius: '5px',
+                                                                                        border: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('tuition') ? '1.5px solid #0f172a' : '1px solid #cbd5e1',
+                                                                                        background: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('tuition') ? '#0f172a' : '#ffffff',
+                                                                                        color: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('tuition') ? '#ffffff' : '#0f172a',
+                                                                                        fontSize: '0.7rem',
+                                                                                        fontWeight: '800',
+                                                                                        cursor: 'pointer'
+                                                                                    }}
+                                                                                >
+                                                                                    🎓 Tuition
+                                                                                </button>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleSelectOnlyCategory('fine')}
+                                                                                    style={{
+                                                                                        padding: '2px 7px',
+                                                                                        borderRadius: '5px',
+                                                                                        border: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('fine') ? '1.5px solid #0f172a' : '1px solid #cbd5e1',
+                                                                                        background: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('fine') ? '#0f172a' : '#ffffff',
+                                                                                        color: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('fine') ? '#ffffff' : '#0f172a',
+                                                                                        fontSize: '0.7rem',
+                                                                                        fontWeight: '800',
+                                                                                        cursor: 'pointer'
+                                                                                    }}
+                                                                                >
+                                                                                    ⏳ Fine
+                                                                                </button>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleSelectOnlyCategory('store')}
+                                                                                    style={{
+                                                                                        padding: '2px 7px',
+                                                                                        borderRadius: '5px',
+                                                                                        border: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('store') ? '1.5px solid #0f172a' : '1px solid #cbd5e1',
+                                                                                        background: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('store') ? '#0f172a' : '#ffffff',
+                                                                                        color: selectedFeeItemKeys.length === 1 && selectedFeeItemKeys.includes('store') ? '#ffffff' : '#0f172a',
+                                                                                        fontSize: '0.7rem',
+                                                                                        fontWeight: '800',
+                                                                                        cursor: 'pointer'
+                                                                                    }}
+                                                                                >
+                                                                                    🛍️ Store
+                                                                                </button>
+                                                                            </div>
+
+                                                                            {/* ➕ New Action / Custom Fee Trigger */}
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setShowNewActionModal(true)}
+                                                                                style={{
+                                                                                    padding: '2px 8px',
+                                                                                    borderRadius: '6px',
+                                                                                    border: '1.5px dashed #0078d4',
+                                                                                    background: '#eff6ff',
+                                                                                    color: '#0078d4',
+                                                                                    fontSize: '0.7rem',
+                                                                                    fontWeight: '800',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '3px',
+                                                                                    transition: 'all 0.15s ease'
+                                                                                }}
+                                                                                title="Add on-the-spot fee/charge (Exam Fee, ID Card, Fine, etc.)"
+                                                                            >
+                                                                                ➕ New Action
+                                                                            </button>
+                                                                        </div>
+
+                                                                        {/* 2-Column Balanced Grid Layout */}
+                                                                        <div style={{
+                                                                            display: 'grid',
+                                                                            gridTemplateColumns: '1fr 1fr',
+                                                                            gap: '0.35rem',
+                                                                            marginBottom: '0.4rem'
+                                                                        }}>
+                                                                            {/* COLUMN 1: Academic, Arrears & Store */}
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                                                                {/* Prior Overdue Arrears */}
+                                                                                {Number(selectedDetailMonthData?.breakdown?.arrears || 0) > 0 && (
+                                                                                    <div 
+                                                                                        onClick={() => !selectedDetailMonthData?.isArrearsPaid && toggleFeeItemKey('arrears')}
+                                                                                        style={{ 
+                                                                                            display: 'flex', 
+                                                                                            justifyContent: 'space-between', 
+                                                                                            alignItems: 'center',
+                                                                                            cursor: selectedDetailMonthData?.isArrearsPaid ? 'default' : 'pointer',
+                                                                                            padding: '5px 7px',
+                                                                                            borderRadius: '7px',
+                                                                                            background: selectedDetailMonthData?.isArrearsPaid ? '#f0fdf4' : selectedFeeItemKeys.includes('arrears') ? '#ffffff' : '#f8fafc',
+                                                                                            border: selectedDetailMonthData?.isArrearsPaid ? '1.5px solid #86efac' : selectedFeeItemKeys.includes('arrears') ? '1.5px solid #0f172a' : '1px solid #e2e8f0',
+                                                                                            opacity: selectedDetailMonthData?.isArrearsPaid ? 1 : selectedFeeItemKeys.includes('arrears') ? 1 : 0.45
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                            <input 
+                                                                                                type="checkbox" 
+                                                                                                checked={selectedDetailMonthData?.isArrearsPaid || selectedFeeItemKeys.includes('arrears')} 
+                                                                                                disabled={selectedDetailMonthData?.isArrearsPaid}
+                                                                                                onChange={() => {}} 
+                                                                                                style={{ cursor: selectedDetailMonthData?.isArrearsPaid ? 'not-allowed' : 'pointer', accentColor: selectedDetailMonthData?.isArrearsPaid ? '#16a34a' : '#0f172a', width: '13px', height: '13px' }} 
+                                                                                            />
+                                                                                            <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.74rem' }}>
+                                                                                                📜 Arrears
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <strong style={{ color: selectedDetailMonthData?.isArrearsPaid ? '#15803d' : '#0f172a', fontWeight: '900', fontSize: '0.82rem' }}>
+                                                                                            +Rs {Number(selectedDetailMonthData.breakdown.arrears).toLocaleString()}
+                                                                                        </strong>
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {/* Base Tuition */}
+                                                                                <div 
+                                                                                    onClick={() => !selectedDetailMonthData?.isTuitionPaid && toggleFeeItemKey('tuition')}
+                                                                                    style={{ 
+                                                                                        display: 'flex', 
+                                                                                        justifyContent: 'space-between', 
+                                                                                        alignItems: 'center',
+                                                                                        cursor: selectedDetailMonthData?.isTuitionPaid ? 'default' : 'pointer',
+                                                                                        padding: '5px 7px',
+                                                                                        borderRadius: '7px',
+                                                                                        background: selectedDetailMonthData?.isTuitionPaid ? '#f0fdf4' : selectedFeeItemKeys.includes('tuition') ? '#ffffff' : '#f8fafc',
+                                                                                        border: selectedDetailMonthData?.isTuitionPaid ? '1.5px solid #86efac' : selectedFeeItemKeys.includes('tuition') ? '1.5px solid #0f172a' : '1px solid #e2e8f0',
+                                                                                        opacity: selectedDetailMonthData?.isTuitionPaid ? 1 : selectedFeeItemKeys.includes('tuition') ? 1 : 0.45
+                                                                                    }}
+                                                                                >
+                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                        <input 
+                                                                                            type="checkbox" 
+                                                                                            checked={selectedDetailMonthData?.isTuitionPaid || selectedFeeItemKeys.includes('tuition')} 
+                                                                                            disabled={selectedDetailMonthData?.isTuitionPaid}
+                                                                                            onChange={() => {}} 
+                                                                                            style={{ cursor: selectedDetailMonthData?.isTuitionPaid ? 'not-allowed' : 'pointer', accentColor: selectedDetailMonthData?.isTuitionPaid ? '#16a34a' : '#0f172a', width: '13px', height: '13px' }} 
+                                                                                        />
+                                                                                        <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.78rem' }}>
+                                                                                            🎓 Tuition
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    <strong style={{ color: selectedDetailMonthData?.isTuitionPaid ? '#15803d' : '#0f172a', fontWeight: '900', fontSize: '0.84rem' }}>
+                                                                                        Rs {Number(selectedDetailMonthData?.breakdown?.tuitionPayable ?? (activeChild?.tuitionFee || selectedStudent.tuitionFee || 0)).toLocaleString()}
+                                                                                    </strong>
+                                                                                </div>
+
+                                                                                {/* Store & Uniform Items */}
+                                                                                {Number(selectedDetailMonthData?.breakdown?.storeDues || feeCalculation?.storeFee || 0) > 0 && (
+                                                                                    <div style={{ position: 'relative' }}>
+                                                                                        <div 
+                                                                                            onClick={() => !selectedDetailMonthData?.isStorePaid && toggleFeeItemKey('store')}
+                                                                                            style={{ 
+                                                                                                display: 'flex', 
+                                                                                                justifyContent: 'space-between', 
+                                                                                                alignItems: 'center',
+                                                                                                cursor: selectedDetailMonthData?.isStorePaid ? 'default' : 'pointer',
+                                                                                                padding: '5px 7px',
+                                                                                                borderRadius: '7px',
+                                                                                                background: selectedDetailMonthData?.isStorePaid ? '#f0fdf4' : selectedFeeItemKeys.includes('store') ? '#ffffff' : '#f8fafc',
+                                                                                                border: selectedDetailMonthData?.isStorePaid ? '1.5px solid #86efac' : selectedFeeItemKeys.includes('store') ? '1.5px solid #0f172a' : '1px solid #e2e8f0',
+                                                                                                opacity: selectedDetailMonthData?.isStorePaid ? 1 : selectedFeeItemKeys.includes('store') ? 1 : 0.45
+                                                                                            }}
+                                                                                        >
+                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                                <input 
+                                                                                                    type="checkbox" 
+                                                                                                    checked={selectedDetailMonthData?.isStorePaid || selectedFeeItemKeys.includes('store')} 
+                                                                                                    disabled={selectedDetailMonthData?.isStorePaid}
+                                                                                                    onChange={() => {}} 
+                                                                                                    style={{ cursor: selectedDetailMonthData?.isStorePaid ? 'not-allowed' : 'pointer', accentColor: selectedDetailMonthData?.isStorePaid ? '#16a34a' : '#0f172a', width: '13px', height: '13px' }} 
+                                                                                                />
+                                                                                                <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.78rem' }}>
+                                                                                                    🛍️ Store
+                                                                                                </span>
+                                                                                            </div>
+                                                                                            <strong style={{ color: selectedDetailMonthData?.isStorePaid ? '#15803d' : '#0f172a', fontWeight: '900', fontSize: '0.84rem' }}>
+                                                                                                +Rs {Number(selectedDetailMonthData?.breakdown?.storeDues || feeCalculation?.storeFee || 0).toLocaleString()}
+                                                                                            </strong>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+
+                                                                            {/* COLUMN 2: Transport, Events, Custom Actions & Fines */}
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                                                                {/* Transport Fee */}
+                                                                                {Number(selectedDetailMonthData?.breakdown?.transportFee ?? (activeChild?.transportFee || selectedStudent.transportFee || 0)) > 0 && (
+                                                                                    <div 
+                                                                                        onClick={() => !selectedDetailMonthData?.isTransportPaid && toggleFeeItemKey('transport')}
+                                                                                        style={{ 
+                                                                                            display: 'flex', 
+                                                                                            justifyContent: 'space-between', 
+                                                                                            alignItems: 'center',
+                                                                                            cursor: selectedDetailMonthData?.isTransportPaid ? 'default' : 'pointer',
+                                                                                            padding: '5px 7px',
+                                                                                            borderRadius: '7px',
+                                                                                            background: selectedDetailMonthData?.isTransportPaid ? '#f0fdf4' : selectedFeeItemKeys.includes('transport') ? '#ffffff' : '#f8fafc',
+                                                                                            border: selectedDetailMonthData?.isTransportPaid ? '1.5px solid #86efac' : selectedFeeItemKeys.includes('transport') ? '1.5px solid #0f172a' : '1px solid #e2e8f0',
+                                                                                            opacity: selectedDetailMonthData?.isTransportPaid ? 1 : selectedFeeItemKeys.includes('transport') ? 1 : 0.45
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                            <input 
+                                                                                                type="checkbox" 
+                                                                                                checked={selectedDetailMonthData?.isTransportPaid || selectedFeeItemKeys.includes('transport')} 
+                                                                                                disabled={selectedDetailMonthData?.isTransportPaid}
+                                                                                                onChange={() => {}} 
+                                                                                                style={{ cursor: selectedDetailMonthData?.isTransportPaid ? 'not-allowed' : 'pointer', accentColor: selectedDetailMonthData?.isTransportPaid ? '#16a34a' : '#0f172a', width: '13px', height: '13px' }} 
+                                                                                            />
+                                                                                            <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.78rem' }}>
+                                                                                                🚌 Transport
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <strong style={{ color: selectedDetailMonthData?.isTransportPaid ? '#15803d' : '#0f172a', fontWeight: '900', fontSize: '0.84rem' }}>
+                                                                                            +Rs {Number(selectedDetailMonthData?.breakdown?.transportFee ?? (activeChild?.transportFee || selectedStudent.transportFee || 0)).toLocaleString()}
+                                                                                        </strong>
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {/* Actions & Events */}
+                                                                                {Number(selectedDetailMonthData?.breakdown?.actionFee || feeCalculation?.actionsFee || 0) > 0 && (
+                                                                                    <div 
+                                                                                        onClick={() => !selectedDetailMonthData?.isActionPaid && toggleFeeItemKey('action')}
+                                                                                        style={{ 
+                                                                                            display: 'flex', 
+                                                                                            justifyContent: 'space-between', 
+                                                                                            alignItems: 'center',
+                                                                                            cursor: selectedDetailMonthData?.isActionPaid ? 'default' : 'pointer',
+                                                                                            padding: '5px 7px',
+                                                                                            borderRadius: '7px',
+                                                                                            background: selectedDetailMonthData?.isActionPaid ? '#f0fdf4' : selectedFeeItemKeys.includes('action') ? '#ffffff' : '#f8fafc',
+                                                                                            border: selectedDetailMonthData?.isActionPaid ? '1.5px solid #86efac' : selectedFeeItemKeys.includes('action') ? '1.5px solid #0f172a' : '1px solid #e2e8f0',
+                                                                                            opacity: selectedDetailMonthData?.isActionPaid ? 1 : selectedFeeItemKeys.includes('action') ? 1 : 0.45
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                            <input 
+                                                                                                type="checkbox" 
+                                                                                                checked={selectedDetailMonthData?.isActionPaid || selectedFeeItemKeys.includes('action')} 
+                                                                                                disabled={selectedDetailMonthData?.isActionPaid}
+                                                                                                onChange={() => {}} 
+                                                                                                style={{ cursor: selectedDetailMonthData?.isActionPaid ? 'not-allowed' : 'pointer', accentColor: selectedDetailMonthData?.isActionPaid ? '#16a34a' : '#0f172a', width: '13px', height: '13px' }} 
+                                                                                            />
+                                                                                            <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.78rem' }}>
+                                                                                                ⚡ Events
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <strong style={{ color: selectedDetailMonthData?.isActionPaid ? '#15803d' : '#0f172a', fontWeight: '900', fontSize: '0.84rem' }}>
+                                                                                            +Rs {Number(selectedDetailMonthData?.breakdown?.actionFee || feeCalculation?.actionsFee || 0).toLocaleString()}
+                                                                                        </strong>
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {/* Custom Actions Added by Cashier (Live Synced with Parent App) */}
+                                                                                {activePayableItems.filter(it => it.isCustomAction).map((actItem) => {
+                                                                                    const isActSelected = selectedFeeItemKeys.includes(actItem.key);
+                                                                                    return (
+                                                                                        <div 
+                                                                                            key={actItem.key}
+                                                                                            onClick={() => toggleFeeItemKey(actItem.key)}
+                                                                                            style={{ 
+                                                                                                display: 'flex', 
+                                                                                                justifyContent: 'space-between', 
+                                                                                                alignItems: 'center',
+                                                                                                cursor: 'pointer',
+                                                                                                padding: '5px 7px',
+                                                                                                borderRadius: '7px',
+                                                                                                background: isActSelected ? '#eff6ff' : '#f8fafc',
+                                                                                                border: isActSelected ? '1.5px solid #0078d4' : '1px solid #cbd5e1',
+                                                                                                opacity: isActSelected ? 1 : 0.5,
+                                                                                                transition: 'all 0.15s ease'
+                                                                                            }}
+                                                                                        >
+                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden' }}>
+                                                                                                <input 
+                                                                                                    type="checkbox" 
+                                                                                                    checked={isActSelected} 
+                                                                                                    onChange={() => {}} 
+                                                                                                    style={{ cursor: 'pointer', accentColor: '#0078d4', width: '13px', height: '13px', flexShrink: 0 }} 
+                                                                                                />
+                                                                                                <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                                                                                                    <span style={{ color: '#0078d4', fontWeight: '800', fontSize: '0.74rem', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                                                                                                        🏷️ {actItem.name}
+                                                                                                    </span>
+                                                                                                    {actItem.remarks && (
+                                                                                                        <span style={{ fontSize: '0.62rem', color: '#64748b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                                                                                                            {actItem.remarks}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                                                                                                <strong style={{ color: '#0078d4', fontWeight: '900', fontSize: '0.82rem' }}>
+                                                                                                    +Rs {Number(actItem.amount).toLocaleString()}
+                                                                                                </strong>
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={(e) => {
+                                                                                                        e.stopPropagation();
+                                                                                                        handleRemoveCustomAction(actItem.id);
+                                                                                                    }}
+                                                                                                    style={{
+                                                                                                        background: '#fee2e2',
+                                                                                                        border: 'none',
+                                                                                                        color: '#ef4444',
+                                                                                                        padding: '2px 4px',
+                                                                                                        borderRadius: '4px',
+                                                                                                        cursor: 'pointer',
+                                                                                                        display: 'flex',
+                                                                                                        alignItems: 'center',
+                                                                                                        justifyContent: 'center'
+                                                                                                    }}
+                                                                                                    title="Remove unpaid action from student bill"
+                                                                                                >
+                                                                                                    <Trash2 size={11} />
+                                                                                                </button>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
+
+                                                                                {/* Late Fine / Penalty */}
+                                                                                {Number(fineAmount) > 0 ? (
+                                                                                    <div 
+                                                                                        onClick={() => !selectedDetailMonthData?.isFinePaid && toggleFeeItemKey('fine')}
+                                                                                        style={{ 
+                                                                                            display: 'flex', 
+                                                                                            justifyContent: 'space-between', 
+                                                                                            alignItems: 'center',
+                                                                                            cursor: selectedDetailMonthData?.isFinePaid ? 'default' : 'pointer',
+                                                                                            padding: '5px 7px',
+                                                                                            borderRadius: '7px',
+                                                                                            background: selectedDetailMonthData?.isFinePaid ? '#f0fdf4' : selectedFeeItemKeys.includes('fine') ? '#ffffff' : '#f8fafc',
+                                                                                            border: selectedDetailMonthData?.isFinePaid ? '1.5px solid #86efac' : selectedFeeItemKeys.includes('fine') ? '1.5px solid #0f172a' : '1px solid #e2e8f0',
+                                                                                            opacity: selectedDetailMonthData?.isFinePaid ? 1 : selectedFeeItemKeys.includes('fine') ? 1 : 0.45
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                            <input 
+                                                                                                type="checkbox" 
+                                                                                                checked={selectedDetailMonthData?.isFinePaid || selectedFeeItemKeys.includes('fine')} 
+                                                                                                disabled={selectedDetailMonthData?.isFinePaid}
+                                                                                                onChange={() => {}} 
+                                                                                                style={{ cursor: selectedDetailMonthData?.isFinePaid ? 'not-allowed' : 'pointer', accentColor: selectedDetailMonthData?.isFinePaid ? '#16a34a' : '#0f172a', width: '13px', height: '13px' }} 
+                                                                                            />
+                                                                                            <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.78rem' }}>
+                                                                                                ⏳ Late Fine
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <strong style={{ color: selectedDetailMonthData?.isFinePaid ? '#15803d' : '#0f172a', fontWeight: '900', fontSize: '0.84rem' }}>
+                                                                                            +Rs {Number(fineAmount).toLocaleString()}
+                                                                                        </strong>
+                                                                                    </div>
+                                                                                ) : isFineWaived ? (
+                                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', border: '1.5px solid #0f172a', padding: '4px 7px', borderRadius: '7px' }}>
+                                                                                        <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.74rem' }}>🎉 Waived</span>
+                                                                                        <span style={{ color: '#0f172a', fontWeight: '900', fontSize: '0.78rem' }}>Rs 0</span>
+                                                                                    </div>
+                                                                                ) : null}
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {/* Net Payable Total */}
+                                                                        <div style={{ borderTop: '2px solid #0f172a', paddingTop: '0.4rem', marginTop: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                            <strong style={{ color: '#0f172a', fontSize: '0.82rem', fontWeight: '900' }}>
+                                                                                {isTargetMonthFullyPaid && hasUnpaidCustomActions ? 'Supplementary Action Total:' : 'Payable Total:'}
+                                                                            </strong>
+                                                                            <strong style={{ color: '#0f172a', fontSize: '1.15rem', fontWeight: '900' }}>
+                                                                                Rs {payableNetTotal.toLocaleString()}
+                                                                            </strong>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Concession / Discount Input */}
+                                                                <div style={{ marginBottom: '0.65rem' }}>
+                                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>
+                                                                        Concession / Discount (Rs)
+                                                                    </label>
+                                                                    <input
+                                                                        type="number"
+                                                                        value={discountAmount}
+                                                                        onChange={(e) => setDiscountAmount(e.target.value)}
+                                                                        min="0"
+                                                                        placeholder="0 (e.g. 500)"
+                                                                        style={{
+                                                                            width: '100%',
+                                                                            padding: '0.45rem 0.65rem',
+                                                                            borderRadius: '7px',
+                                                                            border: '1px solid #cbd5e1',
+                                                                            outline: 'none',
+                                                                            background: '#ffffff',
+                                                                            fontWeight: '700',
+                                                                            color: '#0f172a',
+                                                                            fontSize: '0.82rem',
+                                                                            boxSizing: 'border-box'
+                                                                        }}
+                                                                    />
+                                                                </div>
+
+                                                                {/* Received Amount & Live Total with Reset */}
+                                                                <div style={{
+                                                                    background: '#f0fdf4',
+                                                                    border: '1.5px solid #86efac',
+                                                                    borderRadius: '9px',
+                                                                    padding: '0.65rem 0.8rem',
+                                                                    marginBottom: '0.65rem'
+                                                                }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                                                        <label style={{ fontSize: '0.74rem', fontWeight: '800', color: '#166534' }}>
+                                                                            Received Amount (Rs)
+                                                                        </label>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setReceivedAmount(String(payableNetTotal))}
+                                                                            style={{
+                                                                                background: '#dcfce7',
+                                                                                border: '1px solid #86efac',
+                                                                                borderRadius: '5px',
+                                                                                color: '#15803d',
+                                                                                fontSize: '0.66rem',
+                                                                                fontWeight: '800',
+                                                                                padding: '1px 6px',
+                                                                                cursor: 'pointer'
+                                                                            }}
+                                                                            title="Click to reset to exact calculated total"
+                                                                        >
+                                                                            ⚡ Exact: Rs {payableNetTotal.toLocaleString()}
+                                                                        </button>
+                                                                    </div>
+                                                                    <input
+                                                                        type="number"
+                                                                        value={receivedAmount}
+                                                                        onChange={(e) => setReceivedAmount(e.target.value)}
+                                                                        min="0"
+                                                                        style={{
+                                                                            width: '100%',
+                                                                            padding: '0.45rem 0.65rem',
+                                                                            borderRadius: '7px',
+                                                                            border: '1px solid #16a34a',
+                                                                            outline: 'none',
+                                                                            background: '#ffffff',
+                                                                            fontWeight: '900',
+                                                                            color: '#166534',
+                                                                            fontSize: '1.15rem',
+                                                                            boxSizing: 'border-box'
+                                                                        }}
+                                                                    />
+                                                                    <div style={{ marginTop: '0.25rem', fontSize: '0.68rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                        {Number(receivedAmount) === payableNetTotal ? (
+                                                                            <span style={{ color: '#15803d', fontWeight: '700' }}>✓ Full Payment Settled</span>
+                                                                        ) : Number(receivedAmount) < payableNetTotal ? (
+                                                                            <span style={{ color: '#b45309', fontWeight: '700' }}>
+                                                                                ⚠️ Partial: Rs {(payableNetTotal - Number(receivedAmount)).toLocaleString()} remaining
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span style={{ color: '#0284c7', fontWeight: '700' }}>
+                                                                                ℹ️ Advance: +Rs {(Number(receivedAmount) - payableNetTotal).toLocaleString()}
+                                                                            </span>
+                                                                        )}
+                                                                        <span style={{ color: '#64748b' }}>
+                                                                            {selectedPayableItems.length} item{selectedPayableItems.length === 1 ? '' : 's'}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Non-Cash TRX Reference & Proof */}
+                                                                {paymentMode !== 'Cash' && (
+                                                                    <div style={{
+                                                                        padding: '0.6rem 0.75rem',
+                                                                        borderRadius: '9px',
+                                                                        background: '#eff6ff',
+                                                                        border: '1.5px dashed #93c5fd',
+                                                                        marginBottom: '0.65rem',
+                                                                        display: 'flex',
+                                                                        flexDirection: 'column',
+                                                                        gap: '0.4rem'
+                                                                    }}>
+                                                                        <input
+                                                                            type="text"
+                                                                            value={transactionRefId}
+                                                                            onChange={(e) => setTransactionRefId(e.target.value)}
+                                                                            placeholder={`e.g. ${paymentMode} Ref / TRX ID`}
+                                                                            style={{
+                                                                                width: '100%',
+                                                                                padding: '0.4rem 0.6rem',
+                                                                                borderRadius: '6px',
+                                                                                border: '1px solid #bfdbfe',
+                                                                                outline: 'none',
+                                                                                background: '#ffffff',
+                                                                                fontSize: '0.78rem',
+                                                                                boxSizing: 'border-box',
+                                                                                fontWeight: '700'
+                                                                            }}
+                                                                        />
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                                            <input
+                                                                                type="file"
+                                                                                accept="image/*"
+                                                                                onChange={handleProofChange}
+                                                                                style={{ fontSize: '0.72rem', color: '#475569' }}
+                                                                            />
+                                                                            {proofPreview && (
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                                                    <img src={proofPreview} alt="Proof" style={{ width: '26px', height: '26px', objectFit: 'cover', borderRadius: '4px' }} />
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={handleRemoveProof}
+                                                                                        style={{ padding: '1px 5px', borderRadius: '3px', background: '#fee2e2', border: '1px solid #fca5a5', color: '#b91c1c', fontSize: '0.65rem', fontWeight: '700', cursor: 'pointer' }}
+                                                                                    >
+                                                                                        Remove
+                                                                                    </button>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Remarks Input */}
+                                                                <div style={{ marginBottom: '0.65rem' }}>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={remarks}
+                                                                        onChange={(e) => setRemarks(e.target.value)}
+                                                                        placeholder="Remarks / Note (Optional, e.g. Paid by Father)..."
+                                                                        style={{
+                                                                            width: '100%',
+                                                                            padding: '0.45rem 0.65rem',
+                                                                            borderRadius: '7px',
+                                                                            border: '1px solid #cbd5e1',
+                                                                            outline: 'none',
+                                                                            background: '#ffffff',
+                                                                            fontSize: '0.78rem',
+                                                                            boxSizing: 'border-box'
+                                                                        }}
+                                                                    />
+                                                                </div>
+
+                                                                {/* WhatsApp Receipt Automation Checkbox */}
+                                                                <div style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        id="sendWhatsAppCheckbox"
+                                                                        checked={sendWhatsAppOnSubmit}
+                                                                        onChange={(e) => setSendWhatsAppOnSubmit(e.target.checked)}
+                                                                        style={{ cursor: 'pointer', accentColor: '#16a34a', width: '14px', height: '14px' }}
+                                                                    />
+                                                                    <label htmlFor="sendWhatsAppCheckbox" style={{ fontSize: '0.74rem', fontWeight: '700', color: '#166534', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        <span>💬 Send Instant WhatsApp Receipt to Parent</span>
+                                                                    </label>
+                                                                </div>
+
+                                                                {/* Big Confirm & Print Button */}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={handleSubmitFee}
+                                                                    disabled={isSubmitting || !selectedStudent}
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '0.75rem',
+                                                                        borderRadius: '10px',
+                                                                        background: isSubmitting ? '#94a3b8' : 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)',
+                                                                        border: 'none',
+                                                                        color: '#ffffff',
+                                                                        fontWeight: '900',
+                                                                        fontSize: '0.92rem',
+                                                                        cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        gap: '0.5rem',
+                                                                        boxShadow: '0 4px 12px rgba(22, 163, 74, 0.35)',
+                                                                        transition: 'all 0.18s ease'
+                                                                    }}
+                                                                >
+                                                                    {isSubmitting ? (
+                                                                        <>
+                                                                            <Loader2 size={16} className="animate-spin" /> Recording Payment...
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <Printer size={16} />
+                                                                            <span>
+                                                                                {isTargetMonthFullyPaid && hasUnpaidCustomActions
+                                                                                    ? `Submit Supplementary Action (Rs ${Number(receivedAmount).toLocaleString()})`
+                                                                                    : feeCalculation?.isMultiFamily
+                                                                                        ? `Submit Family Slip (Rs ${Number(receivedAmount).toLocaleString()})`
+                                                                                        : `Submit Fee & Print Receipt (Rs ${Number(receivedAmount).toLocaleString()})`
+                                                                                }
+                                                                            </span>
+                                                                        </>
+                                                                    )}
+                                                                </button>
+                                                            </>
+                                                        );
+                                                    })()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
                             </>
                         )}
                     </div>
@@ -6942,17 +11046,79 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                             <h3 style={{ fontSize: '1.05rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
                                                 {activeChild?.name || selectedStudent.name}
                                             </h3>
-                                            <span style={{
-                                                fontSize: '0.68rem',
-                                                fontWeight: '800',
-                                                padding: '2px 7px',
-                                                borderRadius: '6px',
-                                                background: activeChildFeeCalculation?.isPaid ? '#dcfce7' : '#fee2e2',
-                                                color: activeChildFeeCalculation?.isPaid ? '#15803d' : '#b91c1c',
-                                                border: `1px solid ${activeChildFeeCalculation?.isPaid ? '#86efac' : '#fca5a5'}`
-                                            }}>
-                                                {activeChildFeeCalculation?.isPaid ? '✓ Paid' : '⚠️ Due'}
-                                            </span>
+                                            {(() => {
+                                                const mStatus = activeChildFeeCalculation?.monthStatus || (activeChildFeeCalculation?.isPaid ? 'paid' : 'pending');
+                                                const monthLabel = MONTH_NAMES[selectedTargetMonthIdx] || 'Month';
+                                                if (mStatus === 'paid') {
+                                                    return (
+                                                        <span style={{
+                                                            fontSize: '0.68rem',
+                                                            fontWeight: '800',
+                                                            padding: '2px 7px',
+                                                            borderRadius: '6px',
+                                                            background: '#dcfce7',
+                                                            color: '#15803d',
+                                                            border: '1px solid #86efac',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}>
+                                                            ✓ Paid ({monthLabel.slice(0, 3)})
+                                                        </span>
+                                                    );
+                                                } else if (mStatus === 'overdue') {
+                                                    return (
+                                                        <span style={{
+                                                            fontSize: '0.68rem',
+                                                            fontWeight: '800',
+                                                            padding: '2px 7px',
+                                                            borderRadius: '6px',
+                                                            background: '#fee2e2',
+                                                            color: '#b91c1c',
+                                                            border: '1px solid #fca5a5',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}>
+                                                            ⚠ Overdue
+                                                        </span>
+                                                    );
+                                                } else if (mStatus === 'partial') {
+                                                    return (
+                                                        <span style={{
+                                                            fontSize: '0.68rem',
+                                                            fontWeight: '800',
+                                                            padding: '2px 7px',
+                                                            borderRadius: '6px',
+                                                            background: '#fef3c7',
+                                                            color: '#b45309',
+                                                            border: '1px solid #fde68a',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}>
+                                                            ⚠️ Partial
+                                                        </span>
+                                                    );
+                                                } else {
+                                                    return (
+                                                        <span style={{
+                                                            fontSize: '0.68rem',
+                                                            fontWeight: '800',
+                                                            padding: '2px 7px',
+                                                            borderRadius: '6px',
+                                                            background: '#fffbeb',
+                                                            color: '#b45309',
+                                                            border: '1px solid #fcd34d',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}>
+                                                            ⏳ Pending
+                                                        </span>
+                                                    );
+                                                }
+                                            })()}
                                         </div>
                                         <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
                                             {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'} &bull; Father: <strong>{officialFamilyFatherName}</strong>
@@ -7054,227 +11220,428 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                                     {/* Horizontal Interactive Sibling Cards */}
                                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                        {detectedSiblings.map((sib, sIdx) => {
-                                            const isChecked = selectedSiblingIds.includes(sib.id);
-                                            const isActiveTab = (activeChild?.id || selectedStudent.id) === sib.id;
-                                            const isCurrentPaid = sib.monthlyFeeStatus === 'paid';
+                                                {detectedSiblings.map((sib, sIdx) => {
+                                                    const isChecked = selectedSiblingIds.includes(sib.id);
+                                                    const isActiveTab = (activeChild?.id || selectedStudent.id) === sib.id;
+                                                    const curYear = new Date().getFullYear();
+                                                    const tKey = `${curYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+                                                    const isCurrentPaid = sib.monthlyFeeHistory?.[tKey]?.status === 'paid' || 
+                                                        (Array.isArray(sib.paidMonths) && sib.paidMonths.includes(tKey)) ||
+                                                        (sib.monthlyFeeStatus === 'paid' && selectedTargetMonthIdx === new Date().getMonth());
+                                                    return (
+                                                        <div
+                                                            key={sib.id}
+                                                            onClick={() => setActiveSiblingId(sib.id)}
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '0.45rem',
+                                                                padding: '0.45rem 0.75rem',
+                                                                borderRadius: '9px',
+                                                                background: isActiveTab ? '#ffffff' : isChecked ? '#f8fafc' : '#f1f5f9',
+                                                                border: isActiveTab ? '2px solid #0284c7' : isChecked ? '1px solid #94a3b8' : '1px dashed #cbd5e1',
+                                                                cursor: 'pointer',
+                                                                boxShadow: isActiveTab ? '0 3px 8px rgba(2, 132, 199, 0.2)' : 'none',
+                                                                transition: 'all 0.15s ease'
+                                                            }}
+                                                        >
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    toggleSiblingSelection(sib.id);
+                                                                }}
+                                                                style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                                                title={isChecked ? 'Included in combined family slip' : 'Excluded from family slip'}
+                                                            >
+                                                                {isChecked ? <CheckSquare size={16} color="#0284c7" /> : <Square size={16} color="#94a3b8" />}
+                                                            </button>
+                                                            <div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                                    <strong style={{ fontSize: '0.78rem', color: isActiveTab ? '#0284c7' : '#0f172a' }}>
+                                                                        {sib.name}
+                                                                    </strong>
+                                                                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>({sib.className})</span>
+                                                                </div>
+                                                                <div style={{ fontSize: '0.68rem', fontWeight: '700', color: isCurrentPaid ? '#16a34a' : '#b91c1c' }}>
+                                                                    {isCurrentPaid ? '✓ Paid' : `Due: Rs ${Number(sib.tuitionFee || 0).toLocaleString()}`}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ASSESSMENT VIEW: 12-MONTH MATRIX (ALWAYS VISIBLE & SYNCS WITH LEFT BREAKDOWN) */}
+                            {assessmentViewMode === 'assessment' ? (
+                                <div style={{ animation: 'fadeIn 0.2s ease-out' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                            <CalendarDays size={18} color="#0f172a" />
+                                            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.01em' }}>
+                                                2026 Monthly Status
+                                            </h4>
+                                            <span style={{ fontSize: '0.72rem', background: '#0f172a', color: '#ffffff', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>
+                                                {activeChild?.name?.split(' ')[0] || selectedStudent?.name?.split(' ')[0] || 'Student'}
+                                            </span>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px', fontSize: '0.68rem', fontWeight: '900', flexWrap: 'wrap' }}>
+                                            <span style={{ background: '#16a34a', color: '#ffffff', border: '1px solid #15803d', padding: '2px 8px', borderRadius: '6px', boxShadow: '0 2px 0 #15803d' }}>✓ Paid</span>
+                                            <span style={{ background: '#f59e0b', color: '#ffffff', border: '1px solid #d97706', padding: '2px 8px', borderRadius: '6px', boxShadow: '0 2px 0 #b45309' }}>⏳ Due</span>
+                                            <span style={{ background: '#dc2626', color: '#ffffff', border: '1px solid #b91c1c', padding: '2px 8px', borderRadius: '6px', boxShadow: '0 2px 0 #991b1b' }}>⚠ Overdue</span>
+                                            <span style={{ background: '#94a3b8', color: '#ffffff', border: '1px solid #64748b', padding: '2px 8px', borderRadius: '6px', boxShadow: '0 2px 0 #475569' }}>⚪ Upcoming</span>
+                                        </div>
+                                    </div>
+
+                                    {/* High-Contrast Status-Driven Solid 3D 12-Month Matrix Grid */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.65rem', marginBottom: '0.85rem' }}>
+                                        {studentReliabilityData?.monthlyHistory.map((m) => {
+                                            const currentYear = new Date().getFullYear();
+                                            const isSelected = selectedTargetMonthIdx === (m.monthNum - 1);
+                                            const isRecentPaid = recentPaidMonthIdx === (m.monthNum - 1);
+                                            
+                                            // Status-Driven Solid 3D Color Themes
+                                            let solidBg = '#e2e8f0';     // Upcoming Default (Light Grey)
+                                            let darkBorder = '#cbd5e1';
+                                            let shadowColor = '#94a3b8';
+                                            let badgeBg = '#000000';
+                                            let badgeColor = '#ffffff';
+                                            let badgeBorder = '#000000';
+                                            let badgeText = 'Upcoming';
+                                            let badgeIcon = '⚪';
+
+                                            if (m.status === 'paid') {
+                                                solidBg = '#22c55e';      // Green for Fully Paid
+                                                darkBorder = '#16a34a';
+                                                shadowColor = '#15803d';
+                                                badgeBg = '#14532d';
+                                                badgeBorder = '#166534';
+                                                badgeText = 'Paid';
+                                                badgeIcon = '✓';
+                                            } else if (m.status === 'pending') {
+                                                solidBg = '#fb923c';      // Orange for Current Month Due / Pending
+                                                darkBorder = '#ea580c';
+                                                shadowColor = '#c2410c';
+                                                badgeBg = '#7c2d12';
+                                                badgeBorder = '#9a3412';
+                                                badgeText = 'Due';
+                                                badgeIcon = '⏳';
+                                            } else if (m.status === 'overdue' || m.status === 'no_record') {
+                                                solidBg = '#ef4444';      // Red for Previous Months Pending / Overdue
+                                                darkBorder = '#dc2626';
+                                                shadowColor = '#991b1b';
+                                                badgeBg = '#7f1d1d';
+                                                badgeBorder = '#991b1b';
+                                                badgeText = m.status === 'no_record' ? 'Unpaid' : 'Overdue';
+                                                badgeIcon = '⚠';
+                                            } else if (m.status === 'partial') {
+                                                solidBg = '#f97316';      // Warm Orange for Partial Paid
+                                                darkBorder = '#ea580c';
+                                                shadowColor = '#9a3412';
+                                                badgeBg = '#7c2d12';
+                                                badgeBorder = '#9a3412';
+                                                badgeText = 'Partial';
+                                                badgeIcon = '⚠️';
+                                            } else if (m.status === 'pre_admission') {
+                                                solidBg = '#cbd5e1';      // Muted Grey for Pre-Joining
+                                                darkBorder = '#94a3b8';
+                                                shadowColor = '#64748b';
+                                                badgeBg = '#334155';
+                                                badgeBorder = '#475569';
+                                                badgeText = 'Pre-Join';
+                                                badgeIcon = '🚫';
+                                            }
+
                                             return (
                                                 <div
-                                                    key={sib.id}
-                                                    onClick={() => setActiveSiblingId(sib.id)}
+                                                    key={m.monthNum}
+                                                    onClick={() => m.status !== 'pre_admission' && handleMonthCardClick(m)}
                                                     style={{
+                                                        background: solidBg,
+                                                        border: isRecentPaid
+                                                            ? '2.5px solid #14532d'
+                                                            : isSelected
+                                                            ? '2.5px solid #000000'
+                                                            : `2px solid ${darkBorder}`,
+                                                        borderBottom: isRecentPaid
+                                                            ? '6px solid #14532d'
+                                                            : isSelected
+                                                            ? '6px solid #000000'
+                                                            : `5px solid ${shadowColor}`,
+                                                        borderRadius: '12px',
+                                                        padding: '0.65rem 0.65rem',
+                                                        cursor: m.status === 'pre_admission' ? 'default' : 'pointer',
+                                                        transition: 'all 0.15s cubic-bezier(0.4, 0, 0.2, 1)',
+                                                        boxShadow: isRecentPaid
+                                                            ? '0 0 0 4px rgba(22, 163, 74, 0.5), 0 8px 0px #14532d, 0 14px 20px rgba(0,0,0,0.3)'
+                                                            : isSelected
+                                                            ? '0 0 0 3px #000000, 0 7px 0px #000000, 0 12px 18px rgba(0,0,0,0.32)'
+                                                            : `0 4px 0px ${shadowColor}, 0 8px 14px rgba(0,0,0,0.15), inset 0 1.5px 0.5px rgba(255,255,255,0.6)`,
+                                                        transform: isRecentPaid || isSelected ? 'translateY(-3px)' : 'none',
                                                         display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '0.45rem',
-                                                        padding: '0.45rem 0.75rem',
-                                                        borderRadius: '9px',
-                                                        background: isActiveTab ? '#ffffff' : isChecked ? '#f8fafc' : '#f1f5f9',
-                                                        border: isActiveTab ? '2px solid #0284c7' : isChecked ? '1px solid #94a3b8' : '1px dashed #cbd5e1',
-                                                        cursor: 'pointer',
-                                                        boxShadow: isActiveTab ? '0 3px 8px rgba(2, 132, 199, 0.2)' : 'none',
-                                                        transition: 'all 0.15s ease'
+                                                        flexDirection: 'column',
+                                                        justifyContent: 'space-between',
+                                                        opacity: m.status === 'pre_admission' ? 0.68 : 1,
+                                                        position: 'relative'
                                                     }}
+                                                    title={m.status === 'pre_admission' ? `Student was not enrolled in ${m.monthFullName}` : `Click to switch cashier breakdown to ${m.monthFullName}`}
                                                 >
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            toggleSiblingSelection(sib.id);
-                                                        }}
-                                                        style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                                                        title={isChecked ? 'Included in combined family slip' : 'Excluded from family slip'}
-                                                    >
-                                                        {isChecked ? <CheckSquare size={16} color="#0284c7" /> : <Square size={16} color="#94a3b8" />}
-                                                    </button>
                                                     <div>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                                                            <strong style={{ fontSize: '0.78rem', color: isActiveTab ? '#0284c7' : '#0f172a' }}>
-                                                                {sib.name}
-                                                            </strong>
-                                                            <span style={{ fontSize: '0.68rem', color: '#64748b' }}>({sib.className})</span>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                            <span style={{ fontSize: '0.9rem', fontWeight: '900', color: '#000000', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '4px', textShadow: '0 0.5px 0 rgba(255,255,255,0.4)' }}>
+                                                                {m.monthName.toUpperCase()}
+                                                                {isRecentPaid ? (
+                                                                    <span style={{ fontSize: '0.58rem', background: '#14532d', color: '#ffffff', padding: '1px 5px', borderRadius: '4px', fontWeight: '900', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                                                                        PAID ✓
+                                                                    </span>
+                                                                ) : isSelected ? (
+                                                                    <span style={{ fontSize: '0.58rem', background: '#000000', color: '#ffffff', padding: '1px 5px', borderRadius: '4px', fontWeight: '900', letterSpacing: '0.02em', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                                                                        ACTIVE
+                                                                    </span>
+                                                                ) : null}
+                                                            </span>
+                                                            <span style={{
+                                                                fontSize: '0.64rem',
+                                                                fontWeight: '900',
+                                                                background: isRecentPaid ? '#14532d' : badgeBg,
+                                                                color: '#ffffff',
+                                                                border: `1px solid ${isRecentPaid ? '#166534' : badgeBorder}`,
+                                                                padding: '1.5px 6px',
+                                                                borderRadius: '6px',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '2px',
+                                                                boxShadow: '0 2px 0 rgba(0,0,0,0.3)'
+                                                            }}>
+                                                                {badgeIcon && <span style={{ color: '#ffffff' }}>{badgeIcon}</span>} {badgeText}
+                                                            </span>
                                                         </div>
-                                                        <div style={{ fontSize: '0.68rem', fontWeight: '700', color: isCurrentPaid ? '#16a34a' : '#b91c1c' }}>
-                                                            {isCurrentPaid ? '✓ Paid' : `Due: Rs ${Number(sib.tuitionFee || 0).toLocaleString()}`}
+
+                                                        {/* Amount / Balance details in high-contrast solid 3D inset box with sharp black text */}
+                                                        <div style={{
+                                                            background: 'rgba(255, 255, 255, 0.90)',
+                                                            backdropFilter: 'blur(2px)',
+                                                            borderRadius: '8px',
+                                                            padding: '0.35rem 0.5rem',
+                                                            border: '1.5px solid rgba(0, 0, 0, 0.22)',
+                                                            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.08), 0 2px 0 rgba(0,0,0,0.1)',
+                                                            marginBottom: '0.45rem'
+                                                        }}>
+                                                            {m.status === 'partial' ? (
+                                                                <div style={{ fontSize: '0.72rem', color: '#000000', fontWeight: '900' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                        <span style={{ color: '#000000' }}>Paid:</span>
+                                                                        <strong style={{ color: '#047857', fontWeight: '900' }}>Rs {Number(m.paidAmount || 0).toLocaleString()}</strong>
+                                                                    </div>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                        <span style={{ color: '#000000' }}>Due:</span>
+                                                                        <strong style={{ color: '#b91c1c', fontWeight: '900' }}>Rs {Number(m.remainingBalance || 0).toLocaleString()}</strong>
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.74rem' }}>
+                                                                    <span style={{ color: '#000000', fontWeight: '900', opacity: 0.85 }}>
+                                                                        {m.status === 'paid' ? 'Cleared' : 'Fee Dues'}
+                                                                    </span>
+                                                                    <strong style={{ color: '#000000', fontWeight: '900', fontSize: '0.82rem' }}>
+                                                                        Rs {Number(m.paidAmount || m.amount || activeChild?.tuitionFee || 0).toLocaleString()}
+                                                                    </strong>
+                                                                </div>
+                                                            )}
                                                         </div>
+                                                    </div>
+
+                                                    {/* Direct Action 3D Buttons with White Icons & Sharp Typography */}
+                                                    <div style={{ display: 'flex', gap: '4px', marginTop: '0.15rem' }}>
+                                                        {(m.status === 'paid' || m.status === 'partial') && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    const targetSt = activeChild || selectedStudent;
+                                                                    const mKey = `${currentYear}-${String(m.monthNum).padStart(2, '0')}`;
+                                                                    const mHist = targetSt?.monthlyFeeHistory?.[mKey];
+                                                                    const mCustomItems = (mHist?.customItems || (targetSt?.individualActions || []).filter(a => a.status === 'paid' && (a.monthKey === mKey || a.month === m.monthFullName))).map(a => ({
+                                                                        name: `🔒 ${a.title || a.name} (Custom Charge)`,
+                                                                        amount: Number(a.amount || 0)
+                                                                    }));
+
+                                                                    const txToView = m.txData || {
+                                                                        receiptNo: m.receiptNo || `REC-${m.monthNum}-${(activeChild?.rollNo || selectedStudent.rollNo || selectedStudent.id || '001')}`,
+                                                                        studentId: selectedStudent.id,
+                                                                        studentName: activeChild?.name || selectedStudent.name,
+                                                                        rollNo: activeChild?.rollNo || selectedStudent.rollNo || '-',
+                                                                        classId: activeChild?.classId || selectedStudent.classId,
+                                                                        className: activeChild?.className || selectedStudent.className || 'Class',
+                                                                        fatherName: officialFamilyFatherName || selectedStudent.fatherName || 'Parent / Guardian',
+                                                                        fatherPhone: activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || selectedStudent.phone || '',
+                                                                        items: [
+                                                                            { name: `Monthly Tuition (${m.monthFullName} ${currentYear})`, amount: m.paidAmount || m.amount },
+                                                                            ...mCustomItems
+                                                                        ],
+                                                                        totalPaid: m.paidAmount || m.amount,
+                                                                        remainingBalance: m.remainingBalance || 0,
+                                                                        paymentMode: m.paymentMode || 'Cash',
+                                                                        targetMonthName: m.monthFullName,
+                                                                        targetMonthIdx: m.monthNum - 1,
+                                                                        targetYear: currentYear,
+                                                                        dateString: m.paymentDateStr || new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }),
+                                                                        timeString: '12:00 PM',
+                                                                        collectedBy: 'Principal Office'
+                                                                    };
+                                                                    setReceiptData(txToView);
+                                                                    setReceiptModalOpen(true);
+                                                                }}
+                                                                style={{
+                                                                    flex: 1,
+                                                                    padding: '3px 4px',
+                                                                    borderRadius: '6px',
+                                                                    background: '#000000',
+                                                                    border: '1px solid #000000',
+                                                                    borderBottom: '2.5px solid #000000',
+                                                                    color: '#ffffff',
+                                                                    fontSize: '0.65rem',
+                                                                    fontWeight: '900',
+                                                                    cursor: 'pointer',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    gap: '3px',
+                                                                    boxShadow: '0 2px 0 rgba(0,0,0,0.35)',
+                                                                    transition: 'all 0.1s ease'
+                                                                }}
+                                                                title="Print / View Payment Slip"
+                                                            >
+                                                                <Printer size={11} color="#ffffff" strokeWidth={2.5} /> <span style={{ color: '#ffffff' }}>Slip</span>
+                                                            </button>
+                                                        )}
+
+                                                        {(() => {
+                                                            const targetSt = activeChild || selectedStudent;
+                                                            const mKey = `${currentYear}-${String(m.monthNum).padStart(2, '0')}`;
+                                                            const mHist = targetSt?.monthlyFeeHistory?.[mKey];
+                                                            const monthProofUrl = m.proofUrl || mHist?.proofUrl || m.txData?.proofUrl || null;
+                                                            if (!monthProofUrl) return null;
+                                                            return (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setProofModal({
+                                                                            isOpen: true,
+                                                                            url: monthProofUrl,
+                                                                            title: `Payment Proof - ${targetSt?.name || 'Student'} (${m.monthFullName} ${currentYear})`
+                                                                        });
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '3px 5px',
+                                                                        borderRadius: '6px',
+                                                                        background: '#0284c7',
+                                                                        border: '1px solid #0369a1',
+                                                                        borderBottom: '2.5px solid #075985',
+                                                                        color: '#ffffff',
+                                                                        fontSize: '0.65rem',
+                                                                        fontWeight: '900',
+                                                                        cursor: 'pointer',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        gap: '2px',
+                                                                        boxShadow: '0 2px 0 rgba(0,0,0,0.35)'
+                                                                    }}
+                                                                    title="View Online Payment Proof Slip"
+                                                                >
+                                                                    <span style={{ color: '#ffffff' }}>🖼️</span> <span style={{ color: '#ffffff' }}>Proof</span>
+                                                                </button>
+                                                            );
+                                                        })()}
+
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleDownloadChallanForMonth(m);
+                                                            }}
+                                                            style={{
+                                                                flex: 1,
+                                                                padding: '3px 4px',
+                                                                borderRadius: '6px',
+                                                                background: '#000000',
+                                                                border: '1px solid #000000',
+                                                                borderBottom: '2.5px solid #000000',
+                                                                color: '#ffffff',
+                                                                fontSize: '0.65rem',
+                                                                fontWeight: '900',
+                                                                cursor: 'pointer',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                gap: '3px',
+                                                                boxShadow: '0 2px 0 rgba(0,0,0,0.35)',
+                                                                transition: 'all 0.1s ease'
+                                                            }}
+                                                            title="Download Fee Bill / Challan PDF for Parents"
+                                                        >
+                                                            <FileText size={11} color="#ffffff" strokeWidth={2.5} /> <span style={{ color: '#ffffff' }}>{m.status === 'paid' ? 'Bill' : 'Challan'}</span>
+                                                        </button>
+
+                                                        {/* Mark as Historical Paid — visible on no_record and overdue cards */}
+                                                        {(m.status === 'no_record' || m.status === 'overdue') && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setConfirmHistoricalModal({ monthData: m, student: activeChild || selectedStudent });
+                                                                }}
+                                                                style={{
+                                                                    flex: 1,
+                                                                    padding: '3px 4px',
+                                                                    borderRadius: '6px',
+                                                                    background: '#15803d',
+                                                                    border: '1px solid #166534',
+                                                                    borderBottom: '2.5px solid #14532d',
+                                                                    color: '#ffffff',
+                                                                    fontSize: '0.63rem',
+                                                                    fontWeight: '900',
+                                                                    cursor: 'pointer',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    gap: '3px',
+                                                                    boxShadow: '0 2px 0 rgba(0,0,0,0.35)',
+                                                                    transition: 'all 0.1s ease'
+                                                                }}
+                                                                title="Mark this month as Historically Paid (Principal override)"
+                                                            >
+                                                                <Check size={11} color="#ffffff" strokeWidth={3} /> <span style={{ color: '#ffffff' }}>Register</span>
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             );
                                         })}
                                     </div>
-                                </div>
-                            )}
 
-                            {/* ASSESSMENT VIEW: ITEMIZED DUES (Arrears + Store + Tuition + Actions) */}
-                            {assessmentViewMode === 'assessment' ? (
-                                <div>
-                                    {/* Itemized Dues Cards */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginBottom: '1rem' }}>
-                                        {/* 1. Tuition Fee */}
-                                        <div style={{
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            padding: '0.65rem 0.85rem',
-                                            borderRadius: '9px',
-                                            background: '#f8fafc',
-                                            border: '1px solid #e2e8f0'
-                                        }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                <span style={{ fontSize: '1rem' }}>🎓</span>
-                                                <div>
-                                                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#1e293b', display: 'block' }}>
-                                                        Monthly Tuition Fee ({activeChild?.name?.split(' ')[0]})
-                                                    </span>
-                                                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Regular monthly academic fee</span>
-                                                </div>
-                                            </div>
-                                            <strong style={{ fontSize: '0.88rem', color: '#0f172a' }}>
-                                                Rs {Number(activeChildFeeCalculation?.baseFee || 0).toLocaleString()}
-                                            </strong>
-                                        </div>
-
-                                        {/* 2. Previous Overdue Arrears (If Any) */}
-                                        {activeChildFeeCalculation?.previousMonthsCount > 0 && (
-                                            <div style={{
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                padding: '0.65rem 0.85rem',
-                                                borderRadius: '9px',
-                                                background: '#fef2f2',
-                                                border: '1.5px solid #fca5a5'
-                                            }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                    <span style={{ fontSize: '1rem' }}>⏳</span>
-                                                    <div>
-                                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                            Previous Overdue Arrears
-                                                            <span style={{ fontSize: '0.65rem', background: '#fee2e2', color: '#b91c1c', padding: '1px 6px', borderRadius: '4px', border: '1px solid #f87171' }}>
-                                                                {activeChildFeeCalculation.previousMonthsCount} {activeChildFeeCalculation.previousMonthsCount === 1 ? 'Month' : 'Months'}
-                                                            </span>
-                                                        </span>
-                                                        <span style={{ fontSize: '0.68rem', color: '#b91c1c' }}>Pending past balance unpaid</span>
-                                                    </div>
-                                                </div>
-                                                <strong style={{ fontSize: '0.92rem', color: '#b91c1c' }}>
-                                                    Rs {Number(activeChildFeeCalculation.previousMonthsArrears).toLocaleString()}
-                                                </strong>
-                                            </div>
-                                        )}
-
-                                        {/* 3. Store Dues / Uniform / Books (If Any) */}
-                                        {activeChildFeeCalculation?.storeFee > 0 && (
-                                            <div style={{
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                padding: '0.65rem 0.85rem',
-                                                borderRadius: '9px',
-                                                background: '#faf5ff',
-                                                border: '1.5px solid #d8b4fe'
-                                            }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                    <span style={{ fontSize: '1rem' }}>🛍️</span>
-                                                    <div>
-                                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#6b21a8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                            Store / Uniform / Books Dues
-                                                            <span style={{ fontSize: '0.65rem', background: '#f3e8ff', color: '#7e22ce', padding: '1px 6px', borderRadius: '4px', border: '1px solid #c084fc' }}>
-                                                                Store Ledger
-                                                            </span>
-                                                        </span>
-                                                        <span style={{ fontSize: '0.68rem', color: '#7e22ce' }}>Inventory items charged to fee ledger</span>
-                                                    </div>
-                                                </div>
-                                                <strong style={{ fontSize: '0.92rem', color: '#6b21a8' }}>
-                                                    Rs {Number(activeChildFeeCalculation.storeFee).toLocaleString()}
-                                                </strong>
-                                            </div>
-                                        )}
-
-                                        {/* 4. Active Monthly Actions (If Any) */}
-                                        {activeChildFeeCalculation?.actionsFee > 0 && (
-                                            <div style={{
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center',
-                                                padding: '0.65rem 0.85rem',
-                                                borderRadius: '9px',
-                                                background: '#fffbeb',
-                                                border: '1px solid #fcd34d'
-                                            }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                    <span style={{ fontSize: '1rem' }}>⚡</span>
-                                                    <div>
-                                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#92400e' }}>
-                                                            Monthly School Actions & Exam Charges
-                                                        </span>
-                                                        <span style={{ fontSize: '0.68rem', color: '#b45309' }}>Assigned special event dues</span>
-                                                    </div>
-                                                </div>
-                                                <strong style={{ fontSize: '0.92rem', color: '#92400e' }}>
-                                                    Rs {Number(activeChildFeeCalculation.actionsFee).toLocaleString()}
-                                                </strong>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* Subtotal Banner */}
+                                    {/* Action Helper Prompt */}
                                     <div style={{
-                                        background: '#f0fdf4',
-                                        border: '1.5px solid #86efac',
+                                        background: '#f8fafc',
+                                        border: '1.5px solid #cbd5e1',
                                         borderRadius: '10px',
-                                        padding: '0.75rem 1rem',
+                                        padding: '0.6rem 0.85rem',
                                         display: 'flex',
-                                        justifyContent: 'space-between',
                                         alignItems: 'center',
-                                        marginBottom: '1rem'
+                                        justifyContent: 'space-between',
+                                        fontSize: '0.75rem'
                                     }}>
-                                        <div>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#166534', display: 'block' }}>
-                                                {feeCalculation?.isMultiFamily ? `Combined Total (${feeCalculation.activeSiblingsCount} Siblings)` : `${activeChild?.name}'s Total Dues`}
-                                            </span>
-                                            <span style={{ fontSize: '0.68rem', color: '#15803d' }}>
-                                                Tuition + Arrears + Store + Actions
-                                            </span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: '#0f172a', fontWeight: '700' }}>
+                                            <Sparkles size={14} color="#0f172a" />
+                                            <span>Click any month to switch isolated data & sync cashier breakdown.</span>
                                         </div>
-                                        <strong style={{ fontSize: '1.25rem', fontWeight: '900', color: '#166534' }}>
-                                            Rs {Number(feeCalculation?.totalDue || activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
-                                        </strong>
-                                    </div>
-
-                                    {/* 12-Month Calendar Grid */}
-                                    <div style={{ marginBottom: '0.5rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.45rem' }}>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                                <CalendarDays size={13} color="#0078d4" /> 2026 Monthly Status
-                                            </span>
-                                            <div style={{ display: 'flex', gap: '6px', fontSize: '0.65rem', fontWeight: '700' }}>
-                                                <span style={{ color: '#16a34a' }}>● Paid</span>
-                                                <span style={{ color: '#f59e0b' }}>● Due</span>
-                                                <span style={{ color: '#dc2626' }}>● Overdue</span>
-                                            </div>
-                                        </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.35rem' }}>
-                                            {studentReliabilityData?.monthlyHistory.map((m) => {
-                                                const bg = m.status === 'paid' ? '#f0fdf4' : m.status === 'overdue' ? '#fef2f2' : m.status === 'pending' ? '#fffbeb' : '#f8fafc';
-                                                const border = m.status === 'paid' ? '#86efac' : m.status === 'overdue' ? '#fca5a5' : m.status === 'pending' ? '#fcd34d' : '#e2e8f0';
-                                                const color = m.status === 'paid' ? '#15803d' : m.status === 'overdue' ? '#b91c1c' : m.status === 'pending' ? '#b45309' : '#94a3b8';
-                                                return (
-                                                    <div key={m.monthNum} style={{
-                                                        background: bg,
-                                                        border: `1px solid ${border}`,
-                                                        borderRadius: '6px',
-                                                        padding: '0.3rem 0.2rem',
-                                                        textAlign: 'center'
-                                                    }}>
-                                                        <div style={{ fontSize: '0.68rem', fontWeight: '800', color }}>{m.monthName}</div>
-                                                        <div style={{ fontSize: '0.62rem', fontWeight: '700', color, marginTop: '1px' }}>
-                                                            {m.status === 'paid' ? 'Paid ✓' : m.status === 'overdue' ? 'Overdue' : m.status === 'pending' ? 'Due' : '—'}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: '900', color: '#ffffff', background: '#0f172a', padding: '2px 8px', borderRadius: '6px' }}>
+                                            Selected: {MONTH_NAMES[selectedTargetMonthIdx]}
+                                        </span>
                                     </div>
                                 </div>
                             ) : (
@@ -7712,8 +12079,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                             <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
                                 <button
-                                    onClick={() => handleRejectOnlineSubmission(reviewModalSub)}
-                                    disabled={processingOnlineId === reviewModalSub.id}
+                                    type="button"
+                                    onClick={() => {
+                                        setRejectModalSubOnline(reviewModalSub);
+                                        setRejectReasonOnline('');
+                                    }}
+                                    disabled={Boolean(processingOnlineId && processingOnlineId === reviewModalSub.id)}
                                     style={{
                                         padding: '0.65rem 1.1rem', borderRadius: '10px', border: '1px solid #fecaca',
                                         background: '#fef2f2', color: '#dc2626', fontWeight: '700', fontSize: '0.85rem',
@@ -7854,6 +12225,142 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     </div>
                 </div>
             )}
+ 
+            {/* Reject Online Submission Reason Modal */}
+            {rejectModalSubOnline && (
+                <div
+                    onClick={() => setRejectModalSubOnline(null)}
+                    style={{
+                        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', zIndex: 10002, padding: '1rem'
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="card animate-fade-in-up"
+                        style={{
+                            background: '#ffffff', borderRadius: '16px', maxWidth: '480px', width: '100%',
+                            padding: '1.5rem', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.3)', border: '1px solid #cbd5e1'
+                        }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <X size={18} />
+                            </div>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '800', color: '#b91c1c' }}>
+                                Reject Payment Submission
+                            </h3>
+                        </div>
+
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '0.75rem' }}>
+                            Rejecting payment of Rs. {Number(rejectModalSubOnline.amount || 0).toLocaleString()} for <strong>{rejectModalSubOnline.studentName}</strong>. Reason will be sent to parent:
+                        </p>
+
+                        {/* Quick Preset Chips */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.85rem' }}>
+                            {[
+                                'Transaction ID (TRX) not found in bank statement',
+                                'Payment slip is blurry or unreadable',
+                                'Paid amount is incorrect',
+                                'Duplicate submission / already accounted for'
+                            ].map((preset, idx) => (
+                                <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => setRejectReasonOnline(preset)}
+                                    style={{
+                                        fontSize: '0.72rem', padding: '3px 8px', borderRadius: '6px',
+                                        border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c',
+                                        cursor: 'pointer', textAlign: 'left', fontWeight: '500'
+                                    }}
+                                >
+                                    + {preset}
+                                </button>
+                            ))}
+                        </div>
+
+                        <textarea
+                            rows={3}
+                            placeholder="Enter specific reason for rejecting this payment..."
+                            value={rejectReasonOnline}
+                            onChange={(e) => setRejectReasonOnline(e.target.value)}
+                            style={{
+                                width: '100%', padding: '0.75rem', borderRadius: '10px',
+                                border: '1.5px solid #cbd5e1', fontSize: '0.85rem', outline: 'none',
+                                boxSizing: 'border-box', marginBottom: '1.25rem', fontFamily: 'inherit'
+                            }}
+                        />
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem' }}>
+                            <button
+                                type="button"
+                                onClick={() => setRejectModalSubOnline(null)}
+                                style={{
+                                    padding: '0.55rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1',
+                                    background: '#ffffff', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmRejectOnlineSubmission}
+                                disabled={Boolean(processingOnlineId && processingOnlineId === rejectModalSubOnline.id)}
+                                style={{
+                                    padding: '0.55rem 1.25rem', borderRadius: '8px', border: 'none',
+                                    background: '#dc2626', color: '#ffffff', fontWeight: '800', fontSize: '0.85rem',
+                                    cursor: processingOnlineId === rejectModalSubOnline.id ? 'not-allowed' : 'pointer',
+                                    display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                    boxShadow: '0 4px 10px rgba(220, 38, 38, 0.3)',
+                                    opacity: processingOnlineId === rejectModalSubOnline.id ? 0.6 : 1
+                                }}
+                            >
+                                {processingOnlineId === rejectModalSubOnline.id ? <Loader2 size={15} className="animate-spin" /> : <X size={15} />}
+                                <span>Confirm Reject</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ➕ New Action / Custom Fee Micro-Modal (Live Sync to Parent App) */}
+            <NewActionModal
+                isOpen={showNewActionModal}
+                onClose={() => setShowNewActionModal(false)}
+                onSave={handleAddCustomAction}
+                isSaving={isSavingAction}
+                targetMonthName={MONTH_NAMES[selectedTargetMonthIdx]}
+            />
+
+            {/* 🎯 Payment Success / Failure Result Popup Modal */}
+            <PaymentResultModal
+                isOpen={paymentResultModal.isOpen}
+                onClose={() => {
+                    const wasSuccess = paymentResultModal.isSuccess;
+                    setPaymentResultModal({ isOpen: false, isSuccess: true, receiptData: null, errorMessage: '' });
+                    if (wasSuccess) {
+                        setCashierStep(1);
+                    }
+                }}
+                isSuccess={paymentResultModal.isSuccess}
+                receiptData={paymentResultModal.receiptData}
+                errorMessage={paymentResultModal.errorMessage}
+                schoolInfo={localSchoolInfo || schoolInfo}
+            />
+
+            {/* 📄 Fee Receipt Printable Voucher Modal */}
+            {receiptModalOpen && receiptData && (
+                <FeeReceiptModal
+                    isOpen={receiptModalOpen}
+                    onClose={() => {
+                        setReceiptModalOpen(false);
+                        setReceiptData(null);
+                    }}
+                    receiptData={receiptData}
+                    schoolInfo={localSchoolInfo || schoolInfo}
+                />
+            )}
         </div>
     );
 };
@@ -7862,13 +12369,33 @@ const Collections = () => {
     const location = useLocation();
     const searchParams = new URLSearchParams(location.search);
     const initialTab = searchParams.get('tab') || 'workflow';
-    const preselectedClassId = searchParams.get('classId') || '';
-    const preselectedStudentId = searchParams.get('studentId') || '';
+    const [preselectedClassId, setPreselectedClassId] = useState(searchParams.get('classId') || '');
+    const [preselectedStudentId, setPreselectedStudentId] = useState(searchParams.get('studentId') || '');
+    const [activeTab, setActiveTab] = useState(initialTab);
+
+    // Sync when URL query params change (e.g. from View Fee Card popup)
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const tab = params.get('tab');
+        const cid = params.get('classId');
+        const sid = params.get('studentId');
+        if (tab) setActiveTab(tab);
+        if (cid !== null) setPreselectedClassId(cid || '');
+        if (sid !== null) setPreselectedStudentId(sid || '');
+    }, [location.search]);
 
     const [classes, setClasses] = useState([]);
-    const [schoolId, setSchoolId] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState(initialTab);
+    const [schoolId, setSchoolId] = useState(() => {
+        try {
+            const manualSession = localStorage.getItem('manual_session');
+            if (manualSession) {
+                const userData = JSON.parse(manualSession);
+                return userData?.schoolId || null;
+            }
+        } catch (e) {}
+        return null;
+    });
+    const [loading, setLoading] = useState(false);
     const [currentAction, setCurrentAction] = useState(null);
     const [showModal, setShowModal] = useState(false);
     const [schoolInfo, setSchoolInfo] = useState({ name: 'School Report', logo: '' });
@@ -7876,6 +12403,8 @@ const Collections = () => {
     // Fee Settings State
     const [feeSettings, setFeeSettings] = useState({ dueDate: '', penaltyAmount: '' });
     const [isSavingFeeSettings, setIsSavingFeeSettings] = useState(false);
+    // Historical Paid Confirm Modal
+    const [confirmHistoricalModal, setConfirmHistoricalModal] = useState(null); // null | { monthData, student }
 
     // Helper for Sort
     const getClassOrder = (name) => {
@@ -7886,12 +12415,24 @@ const Collections = () => {
         return parseInt(name.replace(/\D/g, '')) || 0;
     };
 
-    // 1. Init School ID
     // 1. Init School ID & Auth
     useEffect(() => {
         let isMounted = true;
         const resolveUser = async () => {
-            // Priority 1: Firebase Auth (Real source of truth for DB permissions)
+            // Priority 1: Manual Session (Instant synchronous / local)
+            const manualSession = localStorage.getItem('manual_session');
+            if (manualSession) {
+                try {
+                    const userData = JSON.parse(manualSession);
+                    if (userData.schoolId && isMounted) {
+                        setSchoolId(userData.schoolId);
+                    }
+                } catch (e) {
+                    console.error("Manual session parse error", e);
+                }
+            }
+
+            // Priority 2: Firebase Auth (Real source of truth for DB permissions)
             const unsubscribe = auth.onAuthStateChanged(async (user) => {
                 if (!isMounted) return;
 
@@ -7901,99 +12442,17 @@ const Collections = () => {
                         if (token.claims.schoolId) {
                             console.log("Resolved School ID from Auth:", token.claims.schoolId);
                             setSchoolId(token.claims.schoolId);
-                            setLoading(false);
-                            return;
                         }
                     } catch (e) {
                         console.error("Claims error", e);
                     }
                 }
-
-                // Priority 2: Manual Session (Fallback/Dev)
-                const manualSession = localStorage.getItem('manual_session');
-                if (manualSession) {
-                    try {
-                        const userData = JSON.parse(manualSession);
-                        if (userData.schoolId) {
-                            console.log("Resolved School ID from Manual Session:", userData.schoolId);
-                            setSchoolId(userData.schoolId);
-                        }
-                    } catch (e) {
-                        console.error("Manual session parse error", e);
-                    }
-                }
-                setLoading(false);
             });
             return () => unsubscribe();
         };
         resolveUser();
         return () => { isMounted = false; };
     }, []);
-
-    // 1b. Monthly Fee Auto-Reset — runs once per calendar month
-    useEffect(() => {
-        if (!schoolId) return;
-
-        const runMonthlyFeeReset = async () => {
-            const currentMonth = new Date().toLocaleDateString('en-CA').slice(0, 7); // "YYYY-MM"
-            const resetMetaRef = doc(db, `schools/${schoolId}/settings`, 'feeResetMeta');
-
-            try {
-                const metaSnap = await getDoc(resetMetaRef);
-                const lastResetMonth = metaSnap.exists() ? metaSnap.data().lastResetMonth : null;
-
-                if (lastResetMonth === currentMonth) {
-                    // Already reset this month — do nothing
-                    console.log('[FeeReset] Already reset for', currentMonth);
-                    return;
-                }
-
-                console.log('[FeeReset] New month detected. Resetting all student fees to unpaid...');
-
-                // Fetch all classes (excluding metadata doc)
-                const classesSnap = await getDocs(collection(db, `schools/${schoolId}/classes`));
-                const classIds = classesSnap.docs
-                    .map(d => d.id)
-                    .filter(id => id !== 'action_metadata');
-
-                // Firestore batch limit is 500 writes — chunk if needed
-                const BATCH_LIMIT = 490;
-                let batch = writeBatch(db);
-                let writeCount = 0;
-
-                for (const classId of classIds) {
-                    const studentsSnap = await getDocs(
-                        collection(db, `schools/${schoolId}/classes/${classId}/students`)
-                    );
-                    for (const studentDoc of studentsSnap.docs) {
-                        batch.update(studentDoc.ref, {
-                            monthlyFeeStatus: 'unpaid',
-                            monthlyFeeDate: null
-                        });
-                        writeCount++;
-
-                        if (writeCount >= BATCH_LIMIT) {
-                            await batch.commit();
-                            batch = writeBatch(db);
-                            writeCount = 0;
-                        }
-                    }
-                }
-
-                // Commit remaining writes
-                if (writeCount > 0) await batch.commit();
-
-                // Stamp the reset month so this doesn't run again until next month
-                await setDoc(resetMetaRef, { lastResetMonth: currentMonth });
-                console.log('[FeeReset] Reset complete for', currentMonth);
-
-            } catch (err) {
-                console.error('[FeeReset] Error during monthly fee reset:', err);
-            }
-        };
-
-        runMonthlyFeeReset();
-    }, [schoolId]);
 
     // 2. Fetch Classes & Action
     useEffect(() => {
@@ -8012,6 +12471,9 @@ const Collections = () => {
 
             classesData.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
             setClasses(classesData);
+            setLoading(false);
+        }, (err) => {
+            console.warn("Classes listener warning:", err);
             setLoading(false);
         });
 
@@ -8038,6 +12500,8 @@ const Collections = () => {
             } else {
                 setFeeSettings({ dueDate: '', penaltyAmount: '' });
             }
+        }, (err) => {
+            console.warn("FeeSettings listener warning:", err);
         });
 
         // Listen to School Profile for Receipt branding
@@ -8049,6 +12513,8 @@ const Collections = () => {
                     logo: docSnap.data().profileImage || ''
                 });
             }
+        }, (err) => {
+            console.warn("Profile listener warning:", err);
         });
 
         return () => {
@@ -8059,6 +12525,37 @@ const Collections = () => {
         };
 
     }, [schoolId]);
+
+    // Mark a past month as Historically Paid (Principal-level override)
+    const handleMarkHistoricalPaid = async (monthData, student) => {
+        if (!student || !schoolId || !monthData) return;
+        const amount = Number(student.tuitionFee || student.monthlyFee || 2000);
+        const targetKey = monthData.targetMonthKey;
+        setConfirmHistoricalModal(null);
+        try {
+            const { doc: fsDoc, updateDoc } = await import('firebase/firestore');
+            const { db: fsDb } = await import('../firebase');
+            const nowISO = new Date().toISOString();
+            const payload = {
+                [`monthlyFeeHistory.${targetKey}`]: {
+                    status: 'paid',
+                    paidAmount: amount,
+                    remainingBalance: 0,
+                    paidAt: nowISO,
+                    paymentMode: 'Historical',
+                    markedBy: 'Principal',
+                    isHistorical: true
+                }
+            };
+            const writes = [updateDoc(fsDoc(fsDb, 'schools', schoolId, 'students', student.id), payload).catch(() => {})];
+            if (student.classId) {
+                writes.push(updateDoc(fsDoc(fsDb, 'schools', schoolId, 'classes', student.classId, 'students', student.id), payload).catch(() => {}));
+            }
+            await Promise.all(writes);
+        } catch (err) {
+            console.warn('[MarkHistoricalPaid] Firestore error:', err);
+        }
+    };
 
     const handleSaveFeeSettings = async () => {
         if (!schoolId) return;
@@ -8227,6 +12724,8 @@ const Collections = () => {
                     actionUnpaid: cActionUnpaid
                 });
                 updateAggregates();
+            }, (err) => {
+                console.warn(`[Collections] Class ${cls.name} stats listener warning:`, err);
             });
             unsubscribers.push(unsub);
         });
@@ -8373,17 +12872,18 @@ const Collections = () => {
                     )}
                 </button>
                 <button
-                    onClick={() => setActiveTab('collections')}
+                    onClick={() => setActiveTab('monthlyMatrix')}
                     style={{
                         background: 'none', border: 'none', cursor: 'pointer',
                         padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'collections' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'collections' ? '3px solid var(--primary)' : '3px solid transparent',
+                        color: activeTab === 'monthlyMatrix' ? 'var(--primary)' : 'var(--text-secondary)',
+                        borderBottom: activeTab === 'monthlyMatrix' ? '3px solid var(--primary)' : '3px solid transparent',
                         transition: 'all 0.2s',
-                        borderRadius: '0'
+                        borderRadius: '0',
+                        display: 'flex', alignItems: 'center', gap: '0.5rem'
                     }}
                 >
-                    Collections
+                    <span>Monthly Fee Matrix</span>
                 </button>
                 <button
                     onClick={() => setActiveTab('finances')}
@@ -8426,88 +12926,6 @@ const Collections = () => {
                 />
             )}
 
-            {activeTab === 'collections' && (
-                <>
-                    {/* Global Stats Overview */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-                {/* Monthly Fee Cards */}
-                <div className="card" style={{ padding: '1.25rem', border: '1px solid #dbeafe', background: 'linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: '#dcfce7', color: '#16a34a' }}>
-                            <CheckCircle size={20} />
-                        </div>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Monthly Fee Paid</span>
-                    </div>
-                    <span style={{ fontSize: '1.75rem', fontWeight: '700', color: 'var(--text-main)', marginLeft: '0.25rem' }}>
-                        {globalStats.monthlyPaid.toLocaleString()}
-                    </span>
-                </div>
-
-                <div className="card" style={{ padding: '1.25rem', border: '1px solid #fee2e2', background: 'linear-gradient(135deg, #ffffff 0%, #fef2f2 100%)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: '#fee2e2', color: '#dc2626' }}>
-                            <Ban size={20} />
-                        </div>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Monthly Fee Unpaid</span>
-                    </div>
-                    <span style={{ fontSize: '1.75rem', fontWeight: '700', color: 'var(--text-main)', marginLeft: '0.25rem' }}>
-                        {globalStats.monthlyUnpaid.toLocaleString()}
-                    </span>
-                </div>
-
-                {/* Additional Action Fee Cards */}
-                <div className="card" style={{ padding: '1.25rem', border: '1px solid #d1fae5', background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', display: 'flex', flexDirection: 'column', gap: '0.5rem', opacity: currentAction ? 1 : 0.6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: '#059669', color: 'white' }}>
-                            <Wallet size={20} />
-                        </div>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#064e3b' }}>
-                            {currentAction ? `${currentAction.name} Paid` : 'No Action Active'}
-                        </span>
-                    </div>
-                    <span style={{ fontSize: '1.75rem', fontWeight: '700', color: '#065f46', marginLeft: '0.25rem' }}>
-                        {globalStats.actionPaid.toLocaleString()}
-                    </span>
-                </div>
-
-                <div className="card" style={{ padding: '1.25rem', border: '1px solid #fecaca', background: 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)', display: 'flex', flexDirection: 'column', gap: '0.5rem', opacity: currentAction ? 1 : 0.6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ padding: '0.5rem', borderRadius: '10px', background: '#dc2626', color: 'white' }}>
-                            <Wallet size={20} />
-                        </div>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#7f1d1d' }}>
-                            {currentAction ? `${currentAction.name} Unpaid` : 'No Action Active'}
-                        </span>
-                    </div>
-                    <span style={{ fontSize: '1.75rem', fontWeight: '700', color: '#991b1b', marginLeft: '0.25rem' }}>
-                        {globalStats.actionUnpaid.toLocaleString()}
-                    </span>
-                </div>
-            </div>
-
-            {/* Classes Grid */}
-            {loading ? (
-                <div style={{ textAlign: 'center', padding: '2rem' }}>Loading Classes...</div>
-            ) : (
-                <>
-                    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '1.5rem' }}>
-                        {currentAction ? `Collection Status: ${currentAction.name}` : 'All Classes'}
-                    </h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
-                        {classes.map(cls => (
-                            <CollectionClassCard
-                                key={cls.id}
-                                cls={cls}
-                                currentAction={currentAction}
-                                schoolId={schoolId}
-                            />
-                        ))}
-                    </div>
-                </>
-            )}
-            </>
-            )}
-
             {activeTab === 'finances' && (
                 <FinancesDashboard
                     schoolId={schoolId}
@@ -8525,12 +12943,94 @@ const Collections = () => {
                 <OnlineSubmissionsDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
             )}
 
+            {activeTab === 'monthlyMatrix' && (
+                <FeeArrearsMatrix
+                    schoolId={schoolId}
+                    classes={classes}
+                    schoolInfo={schoolInfo}
+                    feeSettings={feeSettings}
+                    currentAction={currentAction}
+                    onOpenNewActionModal={() => setShowModal(true)}
+                    onDeleteAction={handleDeleteAction}
+                    onSaveFeeSettings={handleSaveFeeSettings}
+                    setFeeSettings={setFeeSettings}
+                    isSavingFeeSettings={isSavingFeeSettings}
+                />
+            )}
+
             <ActionModal
                 isOpen={showModal}
                 onClose={() => setShowModal(false)}
                 onSave={handleSaveAction}
                 classes={classes}
             />
+
+            {/* Historical Paid Confirm Modal */}
+            {confirmHistoricalModal && (
+                <div
+                    style={{
+                        position: 'fixed', inset: 0, zIndex: 9999,
+                        background: 'rgba(15,23,42,0.55)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        backdropFilter: 'blur(3px)'
+                    }}
+                    onClick={() => setConfirmHistoricalModal(null)}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            background: '#ffffff',
+                            borderRadius: '14px',
+                            padding: '1.5rem',
+                            width: '320px',
+                            boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+                            border: '1.5px solid #e2e8f0'
+                        }}
+                    >
+                        <div style={{ marginBottom: '0.75rem' }}>
+                            <span style={{ fontSize: '1.5rem' }}>🏛️</span>
+                            <h3 style={{ margin: '0.4rem 0 0.25rem', fontSize: '1rem', fontWeight: '900', color: '#0f172a' }}>
+                                Register as Historical Paid
+                            </h3>
+                            <p style={{ margin: 0, fontSize: '0.82rem', color: '#64748b' }}>
+                                This month will be marked as <strong>"Paid"</strong> in the records. This is a manual historical entry — no transaction will be created.
+                            </p>
+                        </div>
+
+                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.65rem 0.85rem', marginBottom: '1rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: '800' }}>
+                                <span style={{ color: '#64748b' }}>Month:</span>
+                                <span style={{ color: '#0f172a' }}>{confirmHistoricalModal.monthData?.monthFullName} {new Date().getFullYear()}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: '800', marginTop: '4px' }}>
+                                <span style={{ color: '#64748b' }}>Amount:</span>
+                                <span style={{ color: '#0f172a' }}>Rs {Number(confirmHistoricalModal.student?.tuitionFee || confirmHistoricalModal.student?.monthlyFee || 2000).toLocaleString()}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: '800', marginTop: '4px' }}>
+                                <span style={{ color: '#64748b' }}>Student:</span>
+                                <span style={{ color: '#0f172a' }}>{confirmHistoricalModal.student?.name || '—'}</span>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                                type="button"
+                                onClick={() => setConfirmHistoricalModal(null)}
+                                style={{ flex: 1, padding: '0.6rem', borderRadius: '8px', border: '1.5px solid #e2e8f0', background: '#f8fafc', color: '#64748b', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer' }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleMarkHistoricalPaid(confirmHistoricalModal.monthData, confirmHistoricalModal.student)}
+                                style={{ flex: 1, padding: '0.6rem', borderRadius: '8px', border: 'none', background: '#0f172a', color: '#ffffff', fontWeight: '900', fontSize: '0.85rem', cursor: 'pointer' }}
+                            >
+                                ✓ Confirm & Save
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

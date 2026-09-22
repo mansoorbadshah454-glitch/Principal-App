@@ -14,51 +14,135 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
     console.log('[firebase-messaging-sw.js] Received background message ', payload);
-    const notificationTitle = payload.notification.title;
+    const notificationTitle = payload.notification?.title || 'School Notification';
     const notificationOptions = {
-        body: payload.notification.body,
-        icon: '/vite.svg'
+        body: payload.notification?.body || '',
+        icon: '/favicon.png'
     };
     self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
-// --- OFFLINE CACHE FOR FIREBASE STORAGE ---
-const CACHE_NAME = 'firebase-storage-cache-v1';
+// --- ENTERPRISE OFFLINE APP SHELL & STORAGE CACHES ---
+const APP_SHELL_CACHE = 'school-v5-shell-v1';
+const STORAGE_CACHE = 'firebase-storage-cache-v1';
+
+const STATIC_PRECACHE_URLS = [
+    '/',
+    '/index.html',
+    '/favicon.png',
+    '/favicon.svg',
+    'https://cdn.tailwindcss.com',
+    'https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;600;700&family=Noto+Sans+Arabic:wght@400;600;700&display=swap'
+];
+
+self.addEventListener('install', (event) => {
+    self.skipWaiting();
+    event.waitUntil(
+        caches.open(APP_SHELL_CACHE).then((cache) => {
+            return Promise.allSettled(
+                STATIC_PRECACHE_URLS.map((url) =>
+                    fetch(url, { mode: 'no-cors' })
+                        .then((response) => {
+                            if (response) return cache.put(url, response);
+                        })
+                        .catch((err) => console.warn('[SW] Precache skip:', url, err))
+                )
+            );
+        })
+    );
+});
+
+self.addEventListener('activate', (event) => {
+    event.waitUntil(
+        caches.keys().then((keys) => {
+            return Promise.all(
+                keys.map((key) => {
+                    if (key !== APP_SHELL_CACHE && key !== STORAGE_CACHE) {
+                        return caches.delete(key);
+                    }
+                })
+            );
+        }).then(() => self.clients.claim())
+    );
+});
 
 self.addEventListener('fetch', (event) => {
-    // Only intercept GET requests to Firebase Storage
-    if (event.request.method === 'GET' && event.request.url.includes('firebasestorage.googleapis.com')) {
-        event.respondWith(
-            caches.match(event.request).then((cachedResponse) => {
-                if (cachedResponse) {
-                    // Return cached image, but also fetch an update in the background (stale-while-revalidate)
-                    event.waitUntil(
-                        fetch(event.request).then((networkResponse) => {
-                            if (networkResponse && networkResponse.status === 200) {
-                                caches.open(CACHE_NAME).then((cache) => {
-                                    cache.put(event.request, networkResponse);
-                                });
-                            }
-                        }).catch(() => { /* Ignore background fetch errors */ })
-                    );
-                    return cachedResponse;
-                }
+    const { request } = event;
+    const url = new URL(request.url);
 
-                // If not in cache, fetch from network and cache it
-                return fetch(event.request).then((networkResponse) => {
-                    // Cache only valid responses or opaque responses (type === 'opaque')
-                    if (!networkResponse || (networkResponse.status !== 200 && networkResponse.type !== 'opaque')) {
-                        return networkResponse;
+    // 1. Only handle GET requests
+    if (request.method !== 'GET') return;
+
+    // 2. Navigation requests (HTML page loads / refreshes) -> Network first, fallback to cached index.html
+    if (request.mode === 'navigate') {
+        event.respondWith(
+            fetch(request)
+                .then((networkResponse) => {
+                    if (networkResponse && networkResponse.status === 200) {
+                        const copy = networkResponse.clone();
+                        caches.open(APP_SHELL_CACHE).then((cache) => cache.put(request, copy));
                     }
-                    const responseToCache = networkResponse.clone();
-                    caches.open(CACHE_NAME).then((cache) => {
-                        cache.put(event.request, responseToCache);
-                    });
                     return networkResponse;
-                }).catch((error) => {
-                    console.error('[SW] Fetch failed for storage:', error);
-                    // You could optionally return a fallback placeholder image here
-                });
+                })
+                .catch(async () => {
+                    const cached = await caches.match(request);
+                    if (cached) return cached;
+                    const indexCached = await caches.match('/index.html');
+                    if (indexCached) return indexCached;
+                    return caches.match('/');
+                })
+        );
+        return;
+    }
+
+    // 3. Firebase Storage Images
+    if (url.hostname.includes('firebasestorage.googleapis.com')) {
+        event.respondWith(
+            caches.match(request).then((cachedResponse) => {
+                const fetchPromise = fetch(request)
+                    .then((networkResponse) => {
+                        if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
+                            const clone = networkResponse.clone();
+                            caches.open(STORAGE_CACHE).then((cache) => cache.put(request, clone));
+                        }
+                        return networkResponse;
+                    })
+                    .catch((err) => {
+                        console.warn('[SW] Storage fetch offline:', err);
+                        return cachedResponse;
+                    });
+                return cachedResponse || fetchPromise;
+            })
+        );
+        return;
+    }
+
+    // 4. Static JS, CSS, CDN, and local assets (Stale-While-Revalidate / Cache-First)
+    const isStaticAsset = (
+        url.origin === self.location.origin ||
+        url.hostname.includes('cdn.tailwindcss.com') ||
+        url.hostname.includes('fonts.googleapis.com') ||
+        url.hostname.includes('fonts.gstatic.com') ||
+        url.pathname.match(/\.(js|jsx|css|png|jpg|jpeg|svg|webp|woff2|woff|ttf|ico|json)$/)
+    );
+
+    if (isStaticAsset) {
+        event.respondWith(
+            caches.match(request).then((cachedResponse) => {
+                const networkFetch = fetch(request)
+                    .then((networkResponse) => {
+                        if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
+                            const clone = networkResponse.clone();
+                            caches.open(APP_SHELL_CACHE).then((cache) => cache.put(request, clone));
+                        }
+                        return networkResponse;
+                    })
+                    .catch((err) => {
+                        return cachedResponse;
+                    });
+
+                // If cached, return immediately in 0ms, else wait for network
+                return cachedResponse || networkFetch;
             })
         );
     }

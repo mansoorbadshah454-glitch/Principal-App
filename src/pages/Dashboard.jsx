@@ -8,6 +8,7 @@ import {
 import { db, auth, functions } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, setDoc, doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { cacheDashboardStats, getCachedDashboardStats } from '../utils/offlineDataEngine';
 import {
     ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
     CartesianGrid, Tooltip, BarChart, Bar, Cell, LineChart, Line, RadialBarChart, RadialBar, Legend
@@ -90,9 +91,20 @@ const Dashboard = () => {
     const [fetchedClasses, setFetchedClasses] = useState([]);
     const [messages, setMessages] = useState([]);
     const [teachers, setTeachers] = useState([]);
-    const [collectionStats, setCollectionStats] = useState({ paid: 0, unpaid: 0, total: 0 });
-    const [attendanceStats, setAttendanceStats] = useState({ present: 0, absent: 0 });
-    const [statsLoaded, setStatsLoaded] = useState(false);
+    
+    const cachedInitialStats = useMemo(() => {
+        try {
+            const manualSession = localStorage.getItem('manual_session');
+            const sid = manualSession ? JSON.parse(manualSession)?.schoolId : null;
+            return getCachedDashboardStats(sid);
+        } catch (_) {
+            return null;
+        }
+    }, []);
+
+    const [collectionStats, setCollectionStats] = useState(() => cachedInitialStats?.collectionStats || { paid: 0, unpaid: 0, total: 0 });
+    const [attendanceStats, setAttendanceStats] = useState(() => cachedInitialStats?.attendanceStats || { present: 0, absent: 0 });
+    const [statsLoaded, setStatsLoaded] = useState(() => Boolean(cachedInitialStats?.collectionStats));
 
     // 2. UI State
     const [selectedTeacher, setSelectedTeacher] = useState(null);
@@ -307,7 +319,7 @@ const Dashboard = () => {
     const overviewStats = [
         {
             label: 'Total Students',
-            value: statsLoaded ? (atomicCounts.studentCount ?? collectionStats.total).toLocaleString() : 'Loading...',
+            value: statsLoaded ? (collectionStats.total || atomicCounts.studentCount || 0).toLocaleString() : 'Loading...',
             icon: Users,
             gradient: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
             shadow: 'rgba(99, 102, 241, 0.4)',
@@ -555,8 +567,17 @@ const Dashboard = () => {
             });
 
             console.log(`[Dashboard] Aggregated - Students: ${totalStudents}, Paid: ${totalPaid}, Present: ${totalPresent}`);
-            setCollectionStats({ paid: totalPaid, unpaid: totalUnpaid, total: totalStudents });
-            setAttendanceStats({ present: totalPresent, absent: totalAbsent });
+            const newColStats = { paid: totalPaid, unpaid: totalUnpaid, total: totalStudents };
+            const newAttStats = { present: totalPresent, absent: totalAbsent };
+            setCollectionStats(newColStats);
+            setAttendanceStats(newAttStats);
+
+            if (schoolId) {
+                cacheDashboardStats(schoolId, {
+                    collectionStats: newColStats,
+                    attendanceStats: newAttStats
+                });
+            }
 
             // Update the map state for Charts to use
             setAllClassesData(new Map(classDataMap));
