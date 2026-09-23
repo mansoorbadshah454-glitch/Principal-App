@@ -18,6 +18,7 @@ import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
 import PayrollDashboard from '../components/PayrollDashboard';
 import OnlineSubmissionsDashboard from '../components/OnlineSubmissionsDashboard';
+import FinancesDashboard from '../components/FinancesDashboard';
 import FeeArrearsMatrix, { 
     downloadStudentFeeCardPDF, 
     MONTH_NAMES, 
@@ -1047,8 +1048,26 @@ const PaymentProofModal = ({ isOpen, onClose, proofUrl, title, meta }) => {
     );
 };
 
+// --- Helper to convert image URL to base64 for PDF rendering ---
+const fetchBase64ImageSafe = async (imageUrl) => {
+    if (!imageUrl) return null;
+    try {
+        const response = await fetch(imageUrl);
+        const blob = await response.blob();
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+        });
+    } catch (e) {
+        console.warn("PDF image load note:", e);
+        return null;
+    }
+};
+
 // --- Reusable 100% Offline Professional Fee Receipt PDF Generator ---
-export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
+export const downloadOfficialReceiptPDF = async (receiptData, schoolInfo) => {
     try {
         if (!receiptData) return false;
         const doc = new jsPDF({
@@ -1066,182 +1085,234 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
         doc.setFillColor(0, 120, 212);
         doc.rect(0, 0, 210, 5, 'F');
 
-        // 1. School Header & Title
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(17);
-        doc.setTextColor(...darkColor);
+        // 1. School Header & Logo
+        let hasLogo = false;
+        const logoUrl = schoolInfo?.logo || schoolInfo?.logoUrl || '';
+        if (logoUrl) {
+            const base64Img = await fetchBase64ImageSafe(logoUrl);
+            if (base64Img) {
+                try {
+                    doc.addImage(base64Img, 'PNG', 14, 9, 20, 20);
+                    hasLogo = true;
+                } catch (err) {
+                    console.warn("Receipt logo addImage fallback:", err);
+                }
+            }
+        }
+
+        const headerTextX = hasLogo ? 38 : 14;
         const schoolTitle = (schoolInfo?.name && schoolInfo.name !== 'School Name' && schoolInfo.name !== 'School Report' 
             ? schoolInfo.name 
             : 'OFFICIAL SCHOOL RECEIPT').toUpperCase();
-        doc.text(schoolTitle, 14, 18);
 
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(15);
+        doc.setTextColor(...darkColor);
+        doc.text(schoolTitle, headerTextX, 15);
+
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...grayColor);
+        const schoolAddress = schoolInfo?.address || 'Main Campus, Pakistan';
+        const schoolPhone = schoolInfo?.phone || schoolInfo?.contact || '+92 300 1234567';
+        doc.text(`${schoolAddress} • Contact: ${schoolPhone}`, headerTextX, 20);
+
+        // Receipt Type Tag
         doc.setFillColor(...primaryColor);
-        doc.roundedRect(14, 22, isMultiFamily ? 68 : 54, 6.5, 1.5, 1.5, 'F');
-        doc.setFontSize(8.5);
+        doc.roundedRect(headerTextX, 23, isMultiFamily ? 64 : 52, 5.5, 1.2, 1.2, 'F');
+        doc.setFontSize(7.5);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(255, 255, 255);
-        doc.text(isMultiFamily ? 'FAMILY FEE PAYMENT VOUCHER' : 'FEE PAYMENT VOUCHER', 16, 26.5);
+        doc.text(isMultiFamily ? 'FAMILY FEE PAYMENT RECEIPT' : 'FEE PAYMENT RECEIPT', headerTextX + 2, 27);
 
         // Receipt Meta (Right Aligned)
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8);
+        doc.setFontSize(7.5);
         doc.setTextColor(...grayColor);
-        doc.text('RECEIPT NO:', 196, 16, { align: 'right' });
+        doc.text('RECEIPT NO:', 196, 14, { align: 'right' });
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(12);
+        doc.setFontSize(11);
         doc.setTextColor(...primaryColor);
-        doc.text(receiptData.receiptNo || 'N/A', 196, 21.5, { align: 'right' });
+        doc.text(receiptData.receiptNo || 'N/A', 196, 19, { align: 'right' });
 
-        doc.setFontSize(8);
+        doc.setFontSize(7.5);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
-        doc.text(`Issue Date: ${receiptData.dateString || ''} ${receiptData.timeString || ''}`, 196, 26.5, { align: 'right' });
+        doc.text(`Date: ${receiptData.dateString || ''} ${receiptData.timeString || ''}`, 196, 24, { align: 'right' });
         if (receiptData.dueDate) {
-            doc.text(`Fee Due Date: ${receiptData.dueDate}`, 196, 30.5, { align: 'right' });
+            doc.text(`Due Date: ${receiptData.dueDate}`, 196, 28, { align: 'right' });
         }
 
-        // Horizontal Line
+        // Horizontal Separator Line
         doc.setDrawColor(226, 232, 240);
         doc.setLineWidth(0.5);
-        doc.line(14, 34, 196, 34);
+        doc.line(14, 32, 196, 32);
 
-        // 2. Student / Family Info Box
+        // 2. Student / Household Information Card
+        let infoBoxHeight = 28;
+        let studentsListLines = [];
+
+        if (isMultiFamily) {
+            const namesSummary = (receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className || 'Class'})`).join(', ');
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'bold');
+            studentsListLines = doc.splitTextToSize(namesSummary, 142);
+            const extraLines = Math.max(0, studentsListLines.length - 1);
+            infoBoxHeight = 28 + (extraLines * 4);
+        }
+
         doc.setFillColor(248, 250, 252);
-        doc.roundedRect(14, 37, 182, 33, 2, 2, 'F');
+        doc.roundedRect(14, 34, 182, infoBoxHeight, 2, 2, 'F');
         doc.setDrawColor(226, 232, 240);
-        doc.roundedRect(14, 37, 182, 33, 2, 2, 'S');
+        doc.roundedRect(14, 34, 182, infoBoxHeight, 2, 2, 'S');
 
-        doc.setFontSize(8.5);
+        doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
 
+        const cashierName = receiptData.collectedBy || auth?.currentUser?.displayName || 'Principal Office';
+
         if (isMultiFamily) {
-            doc.text('Father / Parent Name:', 18, 44);
+            doc.text('Father / Parent Name:', 18, 40);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            doc.text(receiptData.fatherName || 'Parent / Guardian', 52, 44);
+            doc.text(receiptData.fatherName || 'Parent / Guardian', 52, 40);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Enrolled Children:', 120, 44);
+            doc.text('Household Children:', 120, 40);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...primaryColor);
-            doc.text(`${receiptData.familyStudents?.length || 0} Students Combined`, 150, 44);
+            doc.text(`${receiptData.familyStudents?.length || 0} Students in Household`, 150, 40);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Students List:', 18, 53);
+            doc.text('Children List:', 18, 46.5);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            const namesSummary = (receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className || 'Class'})`).join(', ');
-            doc.text(namesSummary.length > 55 ? namesSummary.slice(0, 52) + '...' : namesSummary, 45, 53);
+            doc.setFontSize(7.5);
+            doc.text(studentsListLines, 38, 46.5);
 
+            const bottomRowY = 46.5 + (Math.max(1, studentsListLines.length) * 4) + 2.5;
+            doc.setFontSize(8);
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Payment Mode:', 18, 62);
+            doc.text('Payment Mode:', 18, bottomRowY);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(22, 163, 74);
-            doc.text(receiptData.paymentMode || 'Cash', 46, 62);
+            doc.text(receiptData.paymentMode || 'Cash', 44, bottomRowY);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Collected By:', 120, 62);
+            doc.text('Cashier / Incharge:', 120, bottomRowY);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            doc.text(receiptData.collectedBy || 'Principal Office', 142, 62);
+            doc.text(cashierName, 150, bottomRowY);
         } else {
-            doc.text('Student Name:', 18, 44);
+            doc.text('Student Name:', 18, 40);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            doc.text(receiptData.studentName || 'N/A', 46, 44);
+            doc.text(receiptData.studentName || 'N/A', 46, 40);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Roll No:', 120, 44);
+            doc.text('Roll No:', 120, 40);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            doc.text(String(receiptData.rollNo || 'N/A'), 142, 44);
+            doc.text(String(receiptData.rollNo || 'N/A'), 142, 40);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Class & Sec:', 18, 53);
+            doc.text('Class & Section:', 18, 48);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            doc.text(receiptData.className || 'N/A', 46, 53);
+            doc.text(receiptData.className || 'N/A', 46, 48);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Father Name:', 120, 53);
+            doc.text('Father Name:', 120, 48);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            doc.text(receiptData.fatherName || 'N/A', 142, 53);
+            doc.text(receiptData.fatherName || 'N/A', 142, 48);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Payment Mode:', 18, 62);
+            doc.text('Payment Mode:', 18, 56);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(22, 163, 74);
-            doc.text(receiptData.paymentMode || 'Cash', 46, 62);
+            doc.text(receiptData.paymentMode || 'Cash', 46, 56);
 
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text('Collected By:', 120, 62);
+            doc.text('Cashier / Incharge:', 120, 56);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(...darkColor);
-            doc.text(receiptData.collectedBy || 'Principal Office', 142, 62);
+            doc.text(cashierName, 150, 56);
         }
 
-        // 3. Fee Breakdown Table
+        // 3. Fee Breakdown Table (Clean Multi-Child Sets Organization)
         let tableHead = [];
         let tableRows = [];
 
         if (isMultiFamily) {
-            tableHead = [['#', 'Student / Child', 'Class & Roll', 'Particulars / Fee Breakdown', 'Subtotal (PKR)']];
+            tableHead = [['#', 'Student Name', 'Class & Roll', 'Particulars / Fee Breakdown', 'Subtotal', 'Payment Status']];
+            
+            let householdGrandTotal = 0;
+            let totalPaidInReceipt = Number(receiptData.totalPaid || 0);
+
             (receiptData.familyStudents || []).forEach((st, idx) => {
-                const itemsStr = (st.items || []).map(it => `${it.name} (Rs ${Number(it.amount).toLocaleString()})`).join(', ') || 'Monthly Tuition Fee';
+                const itemsList = Array.isArray(st.items) && st.items.length > 0 ? st.items : [];
+                const calculatedItemsSum = itemsList.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+                const childSubtotal = Number(st.subtotal || st.totalDue || calculatedItemsSum || 0);
+                householdGrandTotal += childSubtotal;
+
+                const isChildPaying = st.isPaying !== false; // Default true unless explicitly excluded
+                const isChildPaid = st.isPaid || isChildPaying;
+
+                let itemsStr = itemsList.map(it => `${it.name || it.title || 'Fee'} (Rs ${Number(it.amount || 0).toLocaleString()})`).join(', ');
+                if (!itemsStr) {
+                    itemsStr = `Monthly Tuition Fee (Rs ${childSubtotal.toLocaleString()})`;
+                }
+
                 tableRows.push([
                     idx + 1,
-                    st.studentName,
-                    `${st.className || 'Class'} (Roll: ${st.rollNo || 'N/A'})`,
+                    st.studentName || 'Student',
+                    `${st.className || 'Class'}\n(R# ${st.rollNo || 'N/A'})`,
                     itemsStr,
-                    `Rs ${Number(st.totalDue || st.amount || 0).toLocaleString()}`
+                    `Rs ${childSubtotal.toLocaleString()}`,
+                    isChildPaying ? 'PAID ✓' : 'PENDING / DUE ⏳'
                 ]);
             });
 
             if (Number(receiptData.fineAmount) > 0) {
                 tableRows.push([
                     '-',
-                    'Late Fine / Penalty',
+                    'Late Fine Surcharge',
                     '-',
-                    'Late Payment Surcharge',
-                    `Rs ${Number(receiptData.fineAmount).toLocaleString()}`
+                    'Late Payment Penalty',
+                    `Rs ${Number(receiptData.fineAmount).toLocaleString()}`,
+                    'PAID ✓'
                 ]);
             }
 
             if (Number(receiptData.discount) > 0) {
                 tableRows.push([
                     '-',
-                    'Family Concession / Discount',
+                    'Family Concession',
                     '-',
-                    'Special Sibling / Family Concession',
-                    `- Rs ${Number(receiptData.discount).toLocaleString()}`
+                    'Special Sibling / Concession Discount',
+                    `- Rs ${Number(receiptData.discount).toLocaleString()}`,
+                    'DISCOUNT'
                 ]);
             }
-
-            tableRows.push([
-                '',
-                '',
-                'TOTAL FAMILY NET PAID',
-                '',
-                `Rs ${Number(receiptData.totalPaid).toLocaleString()}`
-            ]);
         } else {
-            tableHead = [['#', 'Fee Description / Particulars', 'Amount (PKR)']];
+            tableHead = [['#', 'Fee Description / Particulars', 'Amount (PKR)', 'Status']];
             (receiptData.items || []).forEach((item, idx) => {
                 tableRows.push([
                     idx + 1,
                     item.name,
-                    `Rs ${Number(item.amount).toLocaleString()}`
+                    `Rs ${Number(item.amount).toLocaleString()}`,
+                    item.isWaived ? 'WAIVED' : 'PAID ✓'
                 ]);
             });
 
@@ -1249,19 +1320,14 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
                 tableRows.push([
                     '-',
                     'Discount / Concession Granted',
-                    `- Rs ${Number(receiptData.discount).toLocaleString()}`
+                    `- Rs ${Number(receiptData.discount).toLocaleString()}`,
+                    'DISCOUNT'
                 ]);
             }
-
-            tableRows.push([
-                '',
-                'TOTAL NET PAID',
-                `Rs ${Number(receiptData.totalPaid).toLocaleString()}`
-            ]);
         }
 
         autoTable(doc, {
-            startY: 74,
+            startY: 34 + infoBoxHeight + 4,
             head: tableHead,
             body: tableRows,
             theme: 'grid',
@@ -1269,68 +1335,113 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
                 fillColor: [15, 23, 42],
                 textColor: [255, 255, 255],
                 fontStyle: 'bold',
-                fontSize: 9,
+                fontSize: 8,
                 halign: 'left'
             },
             columnStyles: isMultiFamily ? {
-                0: { halign: 'center', cellWidth: 10 },
-                1: { halign: 'left', fontStyle: 'bold', cellWidth: 35 },
-                2: { halign: 'left', cellWidth: 30 },
+                0: { halign: 'center', cellWidth: 8 },
+                1: { halign: 'left', fontStyle: 'bold', cellWidth: 32 },
+                2: { halign: 'left', cellWidth: 26 },
                 3: { halign: 'left' },
-                4: { halign: 'right', fontStyle: 'bold', cellWidth: 35 }
+                4: { halign: 'right', fontStyle: 'bold', cellWidth: 26 },
+                5: { halign: 'center', fontStyle: 'bold', cellWidth: 26 }
             } : {
-                0: { halign: 'center', cellWidth: 15 },
+                0: { halign: 'center', cellWidth: 12 },
                 1: { halign: 'left' },
-                2: { halign: 'right', fontStyle: 'bold', cellWidth: 48 }
+                2: { halign: 'right', fontStyle: 'bold', cellWidth: 38 },
+                3: { halign: 'center', fontStyle: 'bold', cellWidth: 26 }
             },
             styles: {
                 font: 'helvetica',
-                fontSize: 8.5,
-                cellPadding: 3.5,
+                fontSize: 8,
+                cellPadding: 3,
                 lineColor: [226, 232, 240]
             },
             didParseCell: function(data) {
-                if (data.row.index === tableRows.length - 1) {
-                    data.cell.styles.fontStyle = 'bold';
-                    data.cell.styles.fillColor = [240, 253, 244];
-                    data.cell.styles.textColor = [22, 101, 52];
-                    data.cell.styles.fontSize = 9.5;
-                }
-                if (receiptData.discount > 0 && data.row.index === tableRows.length - 2) {
-                    data.cell.styles.textColor = [22, 163, 74];
-                    data.cell.styles.fontStyle = 'bold';
+                if (data.section === 'body') {
+                    const statusVal = isMultiFamily ? data.row.raw[5] : data.row.raw[3];
+                    if (statusVal === 'PAID ✓') {
+                        if ((isMultiFamily && data.column.index === 5) || (!isMultiFamily && data.column.index === 3)) {
+                            data.cell.styles.textColor = [22, 163, 74];
+                            data.cell.styles.fillColor = [240, 253, 244];
+                        }
+                    } else if (statusVal === 'PENDING / DUE ⏳') {
+                        if (data.column.index === 5) {
+                            data.cell.styles.textColor = [220, 38, 38];
+                            data.cell.styles.fillColor = [254, 242, 242];
+                        }
+                    }
                 }
             }
         });
 
-        const finalY = doc.lastAutoTable?.finalY || 130;
+        const finalY = doc.lastAutoTable?.finalY || 120;
+
+        // 4. Financial Reconciliation Summary Box
+        const reconY = finalY + 4;
+        const totalPaidAmt = Number(receiptData.totalPaid || 0);
+        const remainingBal = Number(receiptData.remainingBalance || 0);
+        const totalBilled = totalPaidAmt + remainingBal;
+
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(14, reconY, 182, 16, 2, 2, 'F');
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(14, reconY, 182, 16, 2, 2, 'S');
+
+        // Total Billed Block
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...grayColor);
+        doc.text('TOTAL BILLED:', 20, reconY + 6);
+        doc.setFontSize(9.5);
+        doc.setTextColor(...darkColor);
+        doc.text(`Rs ${totalBilled.toLocaleString()}`, 20, reconY + 12);
+
+        // Total Paid Block
+        doc.setFontSize(7);
+        doc.setTextColor(22, 163, 74);
+        doc.text('AMOUNT PAID NOW:', 85, reconY + 6);
+        doc.setFontSize(10.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(22, 163, 74);
+        doc.text(`Rs ${totalPaidAmt.toLocaleString()}`, 85, reconY + 12);
+
+        // Remaining Balance Block
+        doc.setFontSize(7);
+        doc.setTextColor(remainingBal > 0 ? [220, 38, 38] : [100, 116, 139]);
+        doc.text('REMAINING BALANCE DUE:', 145, reconY + 6);
+        doc.setFontSize(9.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(remainingBal > 0 ? [220, 38, 38] : [22, 163, 74]);
+        doc.text(remainingBal > 0 ? `Rs ${remainingBal.toLocaleString()}` : 'Rs 0 (Fully Cleared ✓)', 145, reconY + 12);
 
         if (receiptData.remarks) {
-            doc.setFontSize(8.5);
+            doc.setFontSize(7.5);
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(...grayColor);
-            doc.text(`Remarks / Notes: ${receiptData.remarks}`, 14, finalY + 8);
+            doc.text(`Remarks / Notes: ${receiptData.remarks}`, 14, reconY + 22);
         }
 
-        // 4. Footer & Signature
-        const footerY = Math.max(finalY + 22, 155);
+        // 5. Footer & Signature
+        const footerY = Math.max(reconY + (receiptData.remarks ? 28 : 22), 150);
         doc.setDrawColor(203, 213, 225);
         doc.setLineDashPattern([2, 2], 0);
         doc.line(14, footerY, 196, footerY);
         doc.setLineDashPattern([], 0);
 
-        doc.setFontSize(7.5);
+        doc.setFontSize(7);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
-        doc.text('* Official computer-generated fee receipt. Valid without physical stamp.', 14, footerY + 8);
+        doc.text(`* Official computer-generated fee receipt. Verified by Cashier: ${cashierName}`, 14, footerY + 6);
+        doc.text('Valid without physical stamp. Retain this computerized voucher for your records.', 14, footerY + 10);
 
         doc.setDrawColor(148, 163, 184);
         doc.setLineWidth(0.5);
-        doc.line(145, footerY + 16, 196, footerY + 16);
+        doc.line(145, footerY + 14, 196, footerY + 14);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8.5);
+        doc.setFontSize(8);
         doc.setTextColor(...darkColor);
-        doc.text('Authorized Signature & Stamp', 170.5, footerY + 21, { align: 'center' });
+        doc.text('Authorized Signature & Stamp', 170.5, footerY + 19, { align: 'center' });
 
         const safeName = (isMultiFamily ? (receiptData.fatherName || 'Family') : (receiptData.studentName || 'Student')).replace(/[^a-zA-Z0-9_-]/g, '_');
         doc.save(`Fee_Receipt_${receiptData.receiptNo}_${safeName}.pdf`);
@@ -1342,13 +1453,14 @@ export const downloadOfficialReceiptPDF = (receiptData, schoolInfo) => {
 };
 
 // --- 100% Offline Professional Family Fee Challan PDF Generator ---
-export const downloadFamilyFeeChallanPDF = ({
+export const downloadFamilyFeeChallanPDF = async ({
     schoolInfo,
     feeCalculation,
     targetMonthName,
     targetYear,
     fatherName,
-    feeSettings
+    feeSettings,
+    cashierName
 }) => {
     try {
         const doc = new jsPDF({
@@ -1359,154 +1471,243 @@ export const downloadFamilyFeeChallanPDF = ({
 
         const darkColor = [15, 23, 42];     // #0f172a
         const grayColor = [100, 116, 139];  // #64748b
+        const primaryColor = [2, 132, 199]; // Sky-600
 
         // Top decorative accent bar
-        doc.setFillColor(2, 132, 199);
-        doc.rect(0, 0, 210, 6, 'F');
+        doc.setFillColor(...primaryColor);
+        doc.rect(0, 0, 210, 5, 'F');
+
+        // School Logo
+        let hasLogo = false;
+        const logoUrl = schoolInfo?.logo || schoolInfo?.logoUrl || '';
+        if (logoUrl) {
+            const base64Img = await fetchBase64ImageSafe(logoUrl);
+            if (base64Img) {
+                try {
+                    doc.addImage(base64Img, 'PNG', 14, 9, 20, 20);
+                    hasLogo = true;
+                } catch (err) {
+                    console.warn("Challan logo addImage fallback:", err);
+                }
+            }
+        }
 
         // School Branding Header
+        const textX = hasLogo ? 38 : 14;
         const schoolName = (schoolInfo?.name || schoolInfo?.schoolName || 'ACADEMIC EXCELLENCE MODEL SCHOOL').toUpperCase();
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(16);
+        doc.setFontSize(15);
         doc.setTextColor(...darkColor);
-        doc.text(schoolName, 14, 18);
+        doc.text(schoolName, textX, 15);
 
-        doc.setFontSize(8.5);
+        doc.setFontSize(7.5);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
         const schoolAddress = schoolInfo?.address || 'Main Campus, Pakistan';
         const schoolPhone = schoolInfo?.phone || schoolInfo?.contact || '+92 300 1234567';
-        doc.text(`${schoolAddress} • Contact: ${schoolPhone}`, 14, 23);
+        doc.text(`${schoolAddress} • Contact: ${schoolPhone}`, textX, 20);
 
         // Challan Title Badge
         doc.setFillColor(240, 249, 255);
         doc.setDrawColor(125, 211, 252);
         doc.setLineWidth(0.5);
-        doc.roundedRect(14, 28, 182, 12, 2, 2, 'FD');
+        doc.roundedRect(14, 25, 182, 11, 2, 2, 'FD');
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10.5);
+        doc.setFontSize(9.5);
         doc.setTextColor(3, 105, 161);
-        doc.text(`OFFICIAL FAMILY FEE CHALLAN — ${targetMonthName.toUpperCase()} ${targetYear}`, 18, 35.5);
+        doc.text(`OFFICIAL FAMILY FEE CHALLAN & ASSESSMENT — ${targetMonthName.toUpperCase()} ${targetYear}`, 18, 32);
 
         const issueDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
         const dueDay = feeSettings?.dueDate || 10;
         const dueDate = `${dueDay} ${targetMonthName} ${targetYear}`;
 
-        doc.setFontSize(8);
+        doc.setFontSize(7.5);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(15, 23, 42);
-        doc.text(`Issue Date: ${issueDate}  |  Due Date: ${dueDate}`, 210 - 18, 35.5, { align: 'right' });
+        doc.text(`Issue Date: ${issueDate}  |  Due Date: ${dueDate}`, 210 - 18, 32, { align: 'right' });
 
         // Family Info Box
         doc.setFillColor(248, 250, 252);
         doc.setDrawColor(226, 232, 240);
-        doc.roundedRect(14, 43, 182, 18, 2, 2, 'FD');
+        doc.roundedRect(14, 39, 182, 16, 2, 2, 'FD');
 
-        doc.setFontSize(8.5);
+        const activeCashier = cashierName || auth?.currentUser?.displayName || 'Principal Office';
+
+        doc.setFontSize(8);
         doc.setTextColor(...darkColor);
         doc.setFont('helvetica', 'bold');
-        doc.text(`Household of: ${fatherName}`, 18, 50);
+        doc.text(`Household of: ${fatherName}`, 18, 45.5);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
-        doc.text(`Total Registered Sibling Students: ${feeCalculation?.activeSiblingsCount || 1}`, 18, 56);
+        doc.text(`Total Registered Sibling Students: ${feeCalculation?.activeSiblingsCount || feeCalculation?.studentsBreakdown?.length || 1} Children`, 18, 51);
 
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(15, 23, 42);
-        doc.text(`Challan Type: Combined Family Invoice`, 210 - 18, 50, { align: 'right' });
+        doc.text(`Operator: ${activeCashier}`, 210 - 18, 45.5, { align: 'right' });
         doc.setTextColor(2, 132, 199);
-        doc.text(`Status: PENDING PAYMENT`, 210 - 18, 56, { align: 'right' });
+        doc.text(`Voucher Type: Combined Family Assessment`, 210 - 18, 51, { align: 'right' });
 
-        // Table Rows per Student
-        const rows = (feeCalculation?.studentsBreakdown || []).map((sib, idx) => [
-            idx + 1,
-            sib.studentName,
-            `${sib.className} (R# ${sib.rollNo})`,
-            Number(sib.tuitionFee || sib.baseFee || 0) > 0 ? `Rs ${Number(sib.tuitionFee || sib.baseFee || 0).toLocaleString()}` : '-',
-            Number(sib.transportFee || 0) > 0 ? `Rs ${Number(sib.transportFee || 0).toLocaleString()}` : '-',
-            Number(sib.storeFee || 0) > 0 ? `Rs ${Number(sib.storeFee || 0).toLocaleString()}` : '-',
-            Number(sib.actionsFee || 0) > 0 ? `Rs ${Number(sib.actionsFee || 0).toLocaleString()}` : '-',
-            Number(sib.previousMonthsArrears || 0) > 0 ? `Rs ${Number(sib.previousMonthsArrears || 0).toLocaleString()}` : '-',
-            `Rs ${Number(sib.subtotal || 0).toLocaleString()}`
-        ]);
+        // Table Rows per Student (Modular Categorized Sets: Tuition/Transport, Store, Actions, Arrears, Subtotal, Status)
+        let totalHouseholdBilled = 0;
+        let totalVoucherPaying = 0;
+        let totalRemainingPending = 0;
 
-        const grandTotal = Number(feeCalculation?.totalDue || feeCalculation?.calculatedTotal || 0);
+        const rows = (feeCalculation?.studentsBreakdown || []).map((sib, idx) => {
+            const tuitionTransport = (Number(sib.tuitionFee || sib.baseFee || 0));
+            const storeAmt = Number(sib.storeFee || 0);
+            const actionsAmt = Number(sib.actionsFee || 0);
+            const arrearsAmt = Number(sib.previousMonthsArrears || 0);
+            const childTotal = Number(sib.subtotal || (tuitionTransport + storeAmt + actionsAmt + arrearsAmt) || 0);
+            
+            totalHouseholdBilled += childTotal;
+
+            const isPaying = sib.isPaying !== false;
+            if (isPaying) {
+                totalVoucherPaying += childTotal;
+            } else {
+                totalRemainingPending += childTotal;
+            }
+
+            const statusText = sib.isPaid ? 'PAID ✓' : isPaying ? 'PAYING NOW' : 'PENDING / DUE ⏳';
+
+            return [
+                idx + 1,
+                sib.studentName,
+                `${sib.className} (R# ${sib.rollNo})`,
+                tuitionTransport > 0 ? `Rs ${tuitionTransport.toLocaleString()}` : '-',
+                storeAmt > 0 ? `Rs ${storeAmt.toLocaleString()}` : '-',
+                actionsAmt > 0 ? `Rs ${actionsAmt.toLocaleString()}` : '-',
+                arrearsAmt > 0 ? `Rs ${arrearsAmt.toLocaleString()}` : '-',
+                `Rs ${childTotal.toLocaleString()}`,
+                statusText
+            ];
+        });
 
         autoTable(doc, {
-            startY: 65,
+            startY: 58,
             head: [[
                 '#',
                 'Student Name',
                 'Class & Roll',
-                'Tuition',
-                'Transport',
+                'Tuition & Bus',
                 'Store / Items',
                 'Actions / Fees',
                 'Arrears',
-                'Total (PKR)'
+                'Total Due',
+                'Status'
             ]],
             body: rows,
-            foot: [[
-                { content: 'FAMILY GRAND TOTAL DUE:', colSpan: 8, styles: { halign: 'right', fontStyle: 'bold', textColor: [3, 105, 161], fontSize: 9 } },
-                { content: `Rs ${grandTotal.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [3, 105, 161], fontSize: 9.5, fillColor: [224, 242, 254] } }
-            ]],
             theme: 'grid',
             headStyles: {
                 fillColor: [15, 23, 42],
                 textColor: [255, 255, 255],
                 fontStyle: 'bold',
-                fontSize: 8,
+                fontSize: 7.5,
                 halign: 'center'
             },
             bodyStyles: {
-                fontSize: 8,
-                textColor: [51, 65, 85]
+                fontSize: 7.5,
+                textColor: [51, 65, 85],
+                cellPadding: 2.8
             },
             columnStyles: {
                 0: { halign: 'center', cellWidth: 8 },
-                1: { halign: 'left', fontStyle: 'bold', textColor: [15, 23, 42], cellWidth: 38 },
-                2: { halign: 'left', cellWidth: 28 },
-                3: { halign: 'right', cellWidth: 18 },
-                4: { halign: 'right', cellWidth: 18 },
-                5: { halign: 'right', cellWidth: 18 },
-                6: { halign: 'right', cellWidth: 20 },
-                7: { halign: 'right', textColor: [220, 38, 38], cellWidth: 16 },
-                8: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], cellWidth: 22 }
+                1: { halign: 'left', fontStyle: 'bold', textColor: [15, 23, 42], cellWidth: 36 },
+                2: { halign: 'left', cellWidth: 26 },
+                3: { halign: 'right', cellWidth: 22 },
+                4: { halign: 'right', cellWidth: 20 },
+                5: { halign: 'right', cellWidth: 20 },
+                6: { halign: 'right', textColor: [220, 38, 38], cellWidth: 18 },
+                7: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], cellWidth: 20 },
+                8: { halign: 'center', fontStyle: 'bold', cellWidth: 22 }
+            },
+            didParseCell: function(data) {
+                if (data.section === 'body' && data.column.index === 8) {
+                    const val = data.row.raw[8];
+                    if (val === 'PAID ✓' || val === 'PAYING NOW') {
+                        data.cell.styles.textColor = [22, 163, 74];
+                        data.cell.styles.fillColor = [240, 253, 244];
+                    } else if (val === 'PENDING / DUE ⏳') {
+                        data.cell.styles.textColor = [220, 38, 38];
+                        data.cell.styles.fillColor = [254, 242, 242];
+                    }
+                }
             },
             margin: { left: 14, right: 14 }
         });
 
+        const finalY = doc.lastAutoTable.finalY + 4;
+
+        // Financial Reconciliation Summary Box
+        doc.setFillColor(240, 249, 255);
+        doc.setDrawColor(125, 211, 252);
+        doc.roundedRect(14, finalY, 182, 16, 2, 2, 'FD');
+
+        // Total Household Billing
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...grayColor);
+        doc.text('TOTAL HOUSEHOLD DUE:', 20, finalY + 6);
+        doc.setFontSize(9.5);
+        doc.setTextColor(3, 105, 161);
+        doc.text(`Rs ${totalHouseholdBilled.toLocaleString()}`, 20, finalY + 12);
+
+        // Voucher Payable
+        doc.setFontSize(7);
+        doc.setTextColor(22, 163, 74);
+        doc.text('PAYING IN THIS VOUCHER:', 85, finalY + 6);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(22, 163, 74);
+        doc.text(`Rs ${totalVoucherPaying.toLocaleString()}`, 85, finalY + 12);
+
+        // Remaining Household Balance
+        doc.setFontSize(7);
+        doc.setTextColor(totalRemainingPending > 0 ? [220, 38, 38] : [100, 116, 139]);
+        doc.text('REMAINING HOUSEHOLD DUE:', 145, finalY + 6);
+        doc.setFontSize(9.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(totalRemainingPending > 0 ? [220, 38, 38] : [22, 163, 74]);
+        doc.text(totalRemainingPending > 0 ? `Rs ${totalRemainingPending.toLocaleString()}` : 'Rs 0 (All Paying ✓)', 145, finalY + 12);
+
         // Instructions and Signatures
-        const finalY = doc.lastAutoTable.finalY + 12;
+        const instrY = finalY + 20;
 
         // Payment Bank Details / Channel Box
         doc.setFillColor(248, 250, 252);
         doc.setDrawColor(203, 213, 225);
-        doc.roundedRect(14, finalY, 110, 26, 2, 2, 'FD');
+        doc.roundedRect(14, instrY, 110, 24, 2, 2, 'FD');
 
-        doc.setFontSize(7.5);
+        doc.setFontSize(7);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(...darkColor);
-        doc.text("PAYMENT INSTRUCTIONS & OFFICIAL CHANNELS:", 18, finalY + 6);
+        doc.text("OFFICIAL PAYMENT INSTRUCTIONS & VERIFICATION:", 18, instrY + 5.5);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
-        doc.text("• Pay at School Cash Counter or via EasyPaisa / JazzCash / Bank.", 18, finalY + 11);
-        doc.text("• Late payment penalty will apply after the due date.", 18, finalY + 16);
-        doc.text("• Keep this computerized slip as formal proof of fee assessment.", 18, finalY + 21);
+        doc.text("• Pay at School Cash Counter or via EasyPaisa / JazzCash / Bank.", 18, instrY + 10.5);
+        doc.text("• Unpaid sibling balances will carry forward into the next month statement.", 18, instrY + 15);
+        doc.text("• Keep this computerized slip as formal proof of fee assessment.", 18, instrY + 19.5);
 
         // Stamp / Signature
-        doc.line(140, finalY + 18, 196, finalY + 18);
+        doc.line(140, instrY + 15, 196, instrY + 15);
         doc.setFontSize(7.5);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(...darkColor);
-        doc.text("Accounts Officer / Principal Stamp", 168, finalY + 22, { align: 'center' });
+        doc.text("Accounts Officer / Principal Stamp", 168, instrY + 19, { align: 'center' });
+        doc.setFontSize(6.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...grayColor);
+        doc.text(`Cashier: ${activeCashier}`, 168, instrY + 23, { align: 'center' });
 
         // Save PDF
         const cleanName = (fatherName || 'Family').replace(/[^a-zA-Z0-9]/g, '_');
         doc.save(`Family_Fee_Challan_${cleanName}_${targetMonthName}_${targetYear}.pdf`);
+        return true;
     } catch (err) {
         console.error("Error generating family challan PDF:", err);
         alert("Failed to generate Family Fee Challan PDF.");
+        return false;
     }
 };
 
@@ -2245,9 +2446,9 @@ const FeeReceiptModal = ({ isOpen, onClose, receiptData, schoolInfo }) => {
 };
 
 // ==========================================
-// --- UPGRADED FINANCES DASHBOARD COMPONENT ---
+// --- DEPRECATED INLINE FINANCES DASHBOARD (Modularized to ../components/FinancesDashboard.jsx) ---
 // ==========================================
-const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolInfo, classes = [] }) => {
+const _DeprecatedOldFinances = ({ schoolId, currentAction, schoolInfo: parentSchoolInfo, classes = [] }) => {
     const [loading, setLoading] = useState(true);
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
@@ -6366,6 +6567,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const [recentPaidMonthIdx, setRecentPaidMonthIdx] = useState(null); // Highlighting recently paid month on right card
     const [sendWhatsAppOnSubmit, setSendWhatsAppOnSubmit] = useState(true);
     const [audioChimeEnabled, setAudioChimeEnabled] = useState(true);
+    // 🔍 Class-Filtered Student Search Bar inside Student Dropdown
+    const [studentDropdownSearch, setStudentDropdownSearch] = useState('');
+    const [studentDropdownOpen, setStudentDropdownOpen] = useState(false);
+    const studentDropdownRef = useRef(null);
     // ➕ New Action / Custom Fee State
     const [showNewActionModal, setShowNewActionModal] = useState(false);
     const [isSavingAction, setIsSavingAction] = useState(false);
@@ -6409,27 +6614,39 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
     };
 
-    // Keyboard navigation helper (Enter to proceed to fee step, Esc to return to profile)
+    // Keyboard navigation helper (Enter to proceed to fee step, Esc to return to profile, Left/Right for siblings)
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (activeDailyMode !== 'fee_submission' || !selectedStudent) return;
             // Ignore if active element is an input or textarea
             const tagName = document.activeElement?.tagName?.toLowerCase();
             if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
-                if (e.key === 'Enter' && cashierStep === 1) {
+                if (e.key === 'Enter' && cashierStep === 1 && !feeCalculation?.isPaid) {
                     setCashierStep(2);
                 }
                 return;
             }
             if (e.key === 'Enter' && cashierStep === 1) {
-                setCashierStep(2);
+                if (!feeCalculation?.isPaid) {
+                    setCashierStep(2);
+                }
             } else if (e.key === 'Escape' && cashierStep === 2) {
                 setCashierStep(1);
+            } else if (cashierStep === 1 && detectedSiblings.length > 1) {
+                if (e.key === 'ArrowLeft') {
+                    const currentIdx = detectedSiblings.findIndex(s => s.id === (activeChild?.id || selectedStudent?.id));
+                    const newIdx = currentIdx > 0 ? currentIdx - 1 : detectedSiblings.length - 1;
+                    setActiveSiblingId(detectedSiblings[newIdx].id);
+                } else if (e.key === 'ArrowRight') {
+                    const currentIdx = detectedSiblings.findIndex(s => s.id === (activeChild?.id || selectedStudent?.id));
+                    const newIdx = currentIdx < detectedSiblings.length - 1 ? currentIdx + 1 : 0;
+                    setActiveSiblingId(detectedSiblings[newIdx].id);
+                }
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [activeDailyMode, selectedStudent, cashierStep]);
+    }, [activeDailyMode, selectedStudent, cashierStep, detectedSiblings, activeChild]);
 
     // Auto synchronize selectedDetailMonthData when student or target month changes
     useEffect(() => {
@@ -6526,8 +6743,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         if (!isActionPaid && breakdown.actionFee > 0) autoSelectedKeys.push('action');
         if (!isFinePaid && breakdown.penaltyFine > 0) autoSelectedKeys.push('fine');
 
-        // Include any unpaid individual actions for this student
+        // Include any unpaid individual actions for this student (applicable to target month)
+        const targetYearMonthKey = `${new Date().getFullYear()}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
         (studentToAssess?.individualActions || []).forEach((act, idx) => {
+            const actMonthKey = act.monthKey || (act.createdAt ? act.createdAt.slice(0, 7) : (act.date ? act.date.slice(0, 7) : targetYearMonthKey));
+            if (targetYearMonthKey < actMonthKey) return;
             if (act.status !== 'paid' && act.type !== 'store_inventory') {
                 autoSelectedKeys.push(`custom_action_${act.id || idx}`);
             }
@@ -6682,42 +6902,46 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
     };
 
-    // Handler to Remove Unpaid Custom Action (Live Sync with Firestore & Parent App)
+    // Handler to Remove Unpaid Custom Action / Store Charge (Live Sync with Firestore & Parent App)
     const handleRemoveCustomAction = async (actionId) => {
         const studentToUpdate = activeChild || selectedStudent;
         if (!studentToUpdate || !schoolId) return;
 
-        if (!window.confirm("Are you sure you want to remove this unpaid action from the student's bill?")) return;
+        if (!window.confirm("Are you sure you want to remove this charge from the student's bill?")) return;
 
         try {
             const existingActions = Array.isArray(studentToUpdate.individualActions) ? studentToUpdate.individualActions : [];
-            const updatedActions = existingActions.filter(a => a.id !== actionId && `custom_action_${a.id}` !== actionId);
+            const updatedActions = existingActions.filter(a => a.id !== actionId && `custom_action_${a.id}` !== actionId && a.name !== actionId);
+
+            const existingStoreCharges = Array.isArray(studentToUpdate.storeCharges) ? studentToUpdate.storeCharges : [];
+            const updatedStoreCharges = existingStoreCharges.filter(a => a.id !== actionId && `store_${a.id}` !== actionId && a.name !== actionId);
 
             // 1. Optimistic in-memory update
             const updateStudentInMemory = (st) => ({
                 ...st,
-                individualActions: updatedActions
+                individualActions: updatedActions,
+                storeCharges: updatedStoreCharges
             });
 
             setSelectedStudent(prev => prev && prev.id === studentToUpdate.id ? updateStudentInMemory(prev) : prev);
             setAllStudents(prev => prev.map(s => s.id === studentToUpdate.id ? updateStudentInMemory(s) : s));
             setClassStudents(prev => prev.map(s => s.id === studentToUpdate.id ? updateStudentInMemory(s) : s));
 
-            setSelectedFeeItemKeys(prev => prev.filter(k => k !== `custom_action_${actionId}` && k !== actionId));
+            setSelectedFeeItemKeys(prev => prev.filter(k => k !== `custom_action_${actionId}` && k !== actionId && k !== `store_${actionId}`));
 
             // 2. Sync to Firestore
             const classId = studentToUpdate.classId || selectedClassId;
             const removeTasks = [];
             if (classId) {
                 const classStudentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentToUpdate.id);
-                removeTasks.push(setDoc(classStudentRef, { individualActions: updatedActions }, { merge: true }).catch(e => console.warn('Class student action remove write:', e)));
+                removeTasks.push(setDoc(classStudentRef, { individualActions: updatedActions, storeCharges: updatedStoreCharges }, { merge: true }).catch(e => console.warn('Class student action remove write:', e)));
             }
             const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentToUpdate.id);
-            removeTasks.push(setDoc(masterStudentRef, { individualActions: updatedActions }, { merge: true }).catch(e => console.warn('Master student action remove write:', e)));
+            removeTasks.push(setDoc(masterStudentRef, { individualActions: updatedActions, storeCharges: updatedStoreCharges }, { merge: true }).catch(e => console.warn('Master student action remove write:', e)));
             await Promise.all(removeTasks);
         } catch (err) {
-            console.error("Error removing custom action:", err);
-            alert("Could not remove custom action. Please try again.");
+            console.error("Error removing charge:", err);
+            alert("Could not remove charge. Please try again.");
         }
     };
 
@@ -6867,7 +7091,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 targetMonthName,
                 targetYear,
                 fatherName: officialFamilyFatherName || student.parentDetails?.fatherName || student.fatherName || 'Parent / Guardian',
-                feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 }
+                feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+                cashierName: auth?.currentUser?.displayName || auth?.currentUser?.email?.split('@')[0] || 'Principal Office'
             });
             return;
         }
@@ -7382,47 +7607,34 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             baseFee = tuition + transport + other;
         }
 
-        // Store charges & Individual Actions
-        const pendingActions = (st.individualActions || []).filter(a => a.status === 'unpaid');
-        pendingActions.forEach(action => {
-            const amt = Number(action.amount) || 0;
-            if (amt > 0) {
-                const isStore = action.type === 'store_inventory' || (action.id && String(action.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(action.name || action.title || '');
-                if (isStore) {
-                    storeFee += amt;
-                } else {
-                    actionsFee += amt;
-                }
-                items.push({ 
-                    key: isStore ? 'store' : 'action',
-                    name: action.name || action.title, 
-                    amount: amt,
-                    isStore,
-                    isAction: !isStore,
-                    category: isStore ? 'store' : 'action'
-                });
+        // Store charges & Individual Actions (1-Time Count Rule with Target Month Filter & Carry-Forward)
+        const currentYear = new Date().getFullYear();
+        const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+        
+        const rawActionsList = [
+            ...(Array.isArray(st.individualActions) ? st.individualActions : []),
+            ...(Array.isArray(st.storeCharges) ? st.storeCharges : [])
+        ];
+        const seenActionIds = new Set();
+        const combinedActionsList = [];
+        rawActionsList.forEach(act => {
+            const actId = act.id || `${act.name}_${act.amount}_${act.date || act.createdAt}`;
+            if (!seenActionIds.has(actId)) {
+                seenActionIds.add(actId);
+                combinedActionsList.push(act);
             }
         });
 
-        if (currentAction) {
-            const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(st.classId));
-            if (isTargeted) {
-                const isPaid = st.customPayments?.[currentAction.name]?.status === 'paid';
-                if (!isPaid) {
-                    const amt = Number(currentAction.amount) || 0;
-                    if (amt > 0) {
-                        items.push({ key: 'action', name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
-                        actionsFee += amt;
-                    }
-                }
+        const pendingActions = combinedActionsList.filter(action => {
+            const actMonthKey = action.monthKey || (action.createdAt ? action.createdAt.slice(0, 7) : (action.date ? action.date.slice(0, 7) : targetMonthKey));
+            if (targetMonthKey < actMonthKey) return false;
+            if (action.status === 'paid') {
+                const paidMonthKey = action.paidMonthKey || action.monthKey || (action.paidAt ? action.paidAt.slice(0, 7) : actMonthKey);
+                return targetMonthKey === paidMonthKey;
             }
-        }
-
-        const totalDue = baseFee + actionsFee + storeFee + prevArrears;
-        
+            return targetMonthKey >= actMonthKey;
+        });
         // Dynamic status resolution based on currently selected target month
-        const currentYear = new Date().getFullYear();
-        const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
         const historyForMonth = studentReliabilityData?.monthlyHistory?.find(m => (m.monthNum - 1) === selectedTargetMonthIdx);
         const monthHistoryEntry = st.monthlyFeeHistory?.[targetMonthKey];
         const isTargetInPaidMonths = Array.isArray(st.paidMonths) && st.paidMonths.includes(targetMonthKey);
@@ -7436,18 +7648,93 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             monthStatus = 'paid';
         }
 
-        const isPaid = monthStatus === 'paid';
+        const isBasePaid = monthStatus === 'paid';
+
+        pendingActions.forEach(action => {
+            const amt = Number(action.amount) || 0;
+            if (amt > 0) {
+                const isStore = action.type === 'store_inventory' || (action.id && String(action.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(action.name || action.title || '');
+                if (isStore) {
+                    storeFee += amt;
+                } else {
+                    actionsFee += amt;
+                }
+                const isItemPaid = action.status === 'paid' || action.isPaid === true;
+                items.push({ 
+                    id: action.id,
+                    key: isStore ? 'store' : `custom_action_${action.id}`,
+                    name: action.name || action.title, 
+                    amount: amt,
+                    isStore,
+                    isAction: !isStore,
+                    category: isStore ? 'store' : 'action',
+                    status: isItemPaid ? 'paid' : 'pending',
+                    isPaid: isItemPaid,
+                    actionObj: action
+                });
+            }
+        });
+
+        if (currentAction) {
+            const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(st.classId));
+            if (isTargeted) {
+                const isPaid = st.customPayments?.[currentAction.name]?.status === 'paid';
+                if (!isPaid) {
+                    const amt = Number(currentAction.amount) || 0;
+                    if (amt > 0) {
+                        items.push({ key: 'action', name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action', isPaid: false, status: 'pending' });
+                        actionsFee += amt;
+                    }
+                }
+            }
+        }
+
+        const totalDue = baseFee + actionsFee + storeFee + prevArrears;
+
+        const permanentItems = items.filter(it => it.isTuition || it.category === 'tuition' || it.category === 'transport').map(it => ({ ...it, isPaid: isBasePaid, status: isBasePaid ? 'paid' : 'pending' }));
+        const actionItems = items.filter(it => it.isAction || it.category === 'action');
+        const storeItems = items.filter(it => it.isStore || it.category === 'store');
+        const arrearsItems = items.filter(it => it.isArrears || it.category === 'arrears').map(it => ({ ...it, isPaid: isBasePaid, status: isBasePaid ? 'paid' : 'pending' }));
+
+        const set1PermanentTotal = permanentItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        const set2ActionsTotal = actionItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        const set3StoreTotal = storeItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        const set4ArrearsTotal = arrearsItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+
+        const unpaidPermanentTotal = isBasePaid ? 0 : set1PermanentTotal;
+        const unpaidActionsTotal = actionItems.filter(it => !it.isPaid).reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        const unpaidStoreTotal = storeItems.filter(it => !it.isPaid).reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        const unpaidArrearsTotal = isBasePaid ? 0 : set4ArrearsTotal;
+
+        const pendingDue = unpaidPermanentTotal + unpaidActionsTotal + unpaidStoreTotal + unpaidArrearsTotal;
+        const isFullyPaid = (pendingDue === 0 && (isBasePaid || totalDue === 0));
+        const isPartiallyPaid = (isBasePaid && pendingDue > 0) || (pendingDue > 0 && pendingDue < totalDue);
 
         return {
             items,
+            permanentItems,
+            actionItems,
+            storeItems,
+            arrearsItems,
+            set1PermanentTotal,
+            set2ActionsTotal,
+            set3StoreTotal,
+            set4ArrearsTotal,
+            unpaidPermanentTotal,
+            unpaidActionsTotal,
+            unpaidStoreTotal,
+            unpaidArrearsTotal,
             baseFee,
             actionsFee,
             storeFee,
             previousMonthsCount: prevCount,
             previousMonthsArrears: prevArrears,
             totalDue,
-            isPaid,
-            monthStatus
+            pendingDue,
+            isPaid: isFullyPaid,
+            isFullyPaid,
+            isPartiallyPaid,
+            monthStatus: isFullyPaid ? 'paid' : isPartiallyPaid ? 'partial' : monthStatus
         };
     }, [activeChild, selectedStudent, currentAction, selectedTargetMonthIdx, studentReliabilityData]);
 
@@ -7455,11 +7742,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const feeCalculation = useMemo(() => {
         if (!selectedStudent) return null;
 
-        const activeSiblings = siblingPaymentScope === 'single'
-            ? [activeChild || selectedStudent]
-            : detectedSiblings.filter(s => selectedSiblingIds.includes(s.id));
-        const effectiveList = activeSiblings.length > 0 ? activeSiblings : [activeChild || selectedStudent];
-        const isMultiFamily = siblingPaymentScope === 'family' && effectiveList.length > 1;
+        const isMultiFamily = siblingPaymentScope === 'family' && detectedSiblings.length > 1;
+        const allFamilyList = isMultiFamily ? detectedSiblings : [activeChild || selectedStudent];
 
         let combinedTuitionFee = 0;
         let combinedTransportFee = 0;
@@ -7467,11 +7751,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         let combinedActionsFee = 0;
         let combinedStoreFee = 0;
         let combinedPreviousArrears = 0;
+        let combinedPendingDue = 0;
         let totalPreviousMonthsCount = 0;
+        let householdGrandTotal = 0;
+        let householdTotalPendingDue = 0;
+        let payingSiblingsCount = 0;
         const studentsBreakdown = [];
         const allItems = [];
 
-        effectiveList.forEach(st => {
+        allFamilyList.forEach(st => {
+            const isPaying = isMultiFamily ? selectedSiblingIds.includes(st.id) : true;
+            if (isPaying) payingSiblingsCount++;
+
             const items = [];
             let stTuitionFee = 0;
             let stTransportFee = 0;
@@ -7520,8 +7811,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     isArrears: true,
                     category: 'arrears'
                 });
-                combinedPreviousArrears += prevArrears;
-                totalPreviousMonthsCount += prevCount;
             }
 
             if (st.feeStructure && st.feeStructure.length > 0) {
@@ -7587,8 +7876,33 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 });
             }
 
-            // Individual Actions & Store items
-            const pendingActions = (st.individualActions || []).filter(a => a.status === 'unpaid');
+            // Individual Actions & Store items (1-Time Count Rule with Target Month Filter & Carry-Forward)
+            const currentYear = new Date().getFullYear();
+            const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+            
+            const rawActionsList = [
+                ...(Array.isArray(st.individualActions) ? st.individualActions : []),
+                ...(Array.isArray(st.storeCharges) ? st.storeCharges : [])
+            ];
+            const seenActionIds = new Set();
+            const combinedActionsList = [];
+            rawActionsList.forEach(act => {
+                const actId = act.id || `${act.name}_${act.amount}_${act.date || act.createdAt}`;
+                if (!seenActionIds.has(actId)) {
+                    seenActionIds.add(actId);
+                    combinedActionsList.push(act);
+                }
+            });
+
+            const pendingActions = combinedActionsList.filter(action => {
+                const actMonthKey = action.monthKey || (action.createdAt ? action.createdAt.slice(0, 7) : (action.date ? action.date.slice(0, 7) : targetMonthKey));
+                if (targetMonthKey < actMonthKey) return false;
+                if (action.status === 'paid') {
+                    const paidMonthKey = action.paidMonthKey || action.monthKey || (action.paidAt ? action.paidAt.slice(0, 7) : actMonthKey);
+                    return targetMonthKey === paidMonthKey;
+                }
+                return targetMonthKey >= actMonthKey;
+            });
             pendingActions.forEach(action => {
                 const amt = Number(action.amount) || 0;
                 if (amt > 0) {
@@ -7598,13 +7912,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     } else {
                         stActionsFee += amt;
                     }
+                    const isItemPaid = action.status === 'paid' || action.isPaid === true;
                     items.push({ 
-                        key: isStore ? 'store' : 'action',
+                        id: action.id,
+                        key: isStore ? 'store' : `custom_action_${action.id}`,
                         name: action.name || action.title, 
                         amount: amt,
                         isStore,
                         isAction: !isStore,
-                        category: isStore ? 'store' : 'action'
+                        category: isStore ? 'store' : 'action',
+                        status: isItemPaid ? 'paid' : 'pending',
+                        isPaid: isItemPaid,
+                        actionObj: action
                     });
                 }
             });
@@ -7617,19 +7936,38 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     if (!isPaid) {
                         const amt = Number(currentAction.amount) || 0;
                         if (amt > 0) {
-                            items.push({ key: 'action', name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action' });
+                            items.push({ key: 'action', name: `Global: ${currentAction.name}`, amount: amt, isAction: true, category: 'action', isPaid: false, status: 'pending' });
                             stActionsFee += amt;
                         }
                     }
                 }
             }
 
+            const stHist = st.monthlyFeeHistory?.[targetMonthKey];
+            const stBasePaid = stHist?.status === 'paid' ||
+                               (Array.isArray(st.paidMonths) && st.paidMonths.includes(targetMonthKey)) ||
+                               (st.monthlyFeeStatus === 'paid' && selectedTargetMonthIdx === new Date().getMonth());
+
+            const stUnpaidBase = stBasePaid ? 0 : stBaseFee;
+            const stUnpaidArrears = stBasePaid ? 0 : prevArrears;
+            const stUnpaidActions = items.filter(it => it.isAction && !it.isPaid).reduce((acc, it) => acc + Number(it.amount || 0), 0);
+            const stUnpaidStore = items.filter(it => it.isStore && !it.isPaid).reduce((acc, it) => acc + Number(it.amount || 0), 0);
+            const stPendingDue = stUnpaidBase + stUnpaidArrears + stUnpaidActions + stUnpaidStore;
             const stTotal = stBaseFee + stActionsFee + stStoreFee + prevArrears;
-            combinedTuitionFee += stTuitionFee;
-            combinedTransportFee += stTransportFee;
-            combinedBaseFee += stBaseFee;
-            combinedActionsFee += stActionsFee;
-            combinedStoreFee += stStoreFee;
+
+            householdGrandTotal += stTotal;
+            householdTotalPendingDue += stPendingDue;
+
+            if (isPaying) {
+                combinedTuitionFee += stTuitionFee;
+                combinedTransportFee += stTransportFee;
+                combinedBaseFee += stBaseFee;
+                combinedActionsFee += stActionsFee;
+                combinedStoreFee += stStoreFee;
+                combinedPreviousArrears += prevArrears;
+                combinedPendingDue += stPendingDue;
+                totalPreviousMonthsCount += prevCount;
+            }
 
             studentsBreakdown.push({
                 studentId: st.id,
@@ -7646,26 +7984,43 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 previousMonthsCount: prevCount,
                 previousMonthsArrears: prevArrears,
                 subtotal: stTotal,
-                isPaid: st.monthlyFeeStatus === 'paid'
+                pendingDue: stPendingDue,
+                isPaying,
+                isPaid: stPendingDue === 0 && (stBasePaid || stTotal === 0)
             });
 
-            items.forEach(it => {
-                allItems.push({
-                    ...it,
-                    studentName: st.name,
-                    className: st.className || 'Class',
-                    name: isMultiFamily ? `${st.name} (${st.className || 'Class'}): ${it.name}` : it.name
+            if (isPaying) {
+                items.forEach(it => {
+                    allItems.push({
+                        ...it,
+                        studentName: st.name,
+                        className: st.className || 'Class',
+                        name: isMultiFamily ? `${st.name} (${st.className || 'Class'}): ${it.name}` : it.name
+                    });
                 });
-            });
+            }
         });
 
         const calculatedTotal = combinedBaseFee + combinedActionsFee + combinedStoreFee + combinedPreviousArrears;
         const totalDueWithFine = calculatedTotal + Number(fineAmount || 0);
-        const allPaid = effectiveList.every(s => s.monthlyFeeStatus === 'paid');
+        
+        const currentYear = new Date().getFullYear();
+        const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
+        const allPaid = allFamilyList.every(s => {
+            const hist = s.monthlyFeeHistory?.[targetMonthKey];
+            return hist?.status === 'paid' ||
+                   (Array.isArray(s.paidMonths) && s.paidMonths.includes(targetMonthKey)) ||
+                   (s.monthlyFeeStatus === 'paid' && selectedTargetMonthIdx === new Date().getMonth());
+        });
+
+        const totalPendingDue = combinedPendingDue + (combinedPendingDue > 0 ? Number(fineAmount || 0) : 0);
+        const allFullyPaid = totalPendingDue === 0 && (allPaid || calculatedTotal === 0);
+        const isPartiallyPaid = (allPaid && totalPendingDue > 0) || (totalPendingDue > 0 && totalPendingDue < totalDueWithFine);
 
         return {
             isMultiFamily,
-            activeSiblingsCount: effectiveList.length,
+            activeSiblingsCount: allFamilyList.length,
+            payingSiblingsCount: payingSiblingsCount || allFamilyList.length,
             studentsBreakdown,
             items: allItems,
             tuitionFee: combinedTuitionFee,
@@ -7677,9 +8032,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             previousMonthsArrears: combinedPreviousArrears,
             calculatedTotal,
             totalDue: totalDueWithFine,
-            isPaid: allPaid
+            pendingDue: totalPendingDue,
+            householdGrandTotal,
+            householdTotalPendingDue,
+            isPaid: allFullyPaid,
+            isFullyPaid: allFullyPaid,
+            isPartiallyPaid
         };
-    }, [selectedStudent, detectedSiblings, selectedSiblingIds, siblingPaymentScope, activeChild, currentAction, fineAmount, classes]);
+    }, [selectedStudent, detectedSiblings, selectedSiblingIds, siblingPaymentScope, activeChild, currentAction, fineAmount, classes, selectedTargetMonthIdx]);
 
     // Active selectable items for the currently active student / month
     const activePayableItems = useMemo(() => {
@@ -7702,10 +8062,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 list.push({ key: 'action', name: cleanFeeItemName(b.actionName) || 'Events & Actions', amount: b.actionFee, category: 'action' });
             }
 
-            // Custom On-The-Spot Actions added for this student
+            // Custom On-The-Spot Actions added for this student (1-Time Month Filter)
             const studentToAssess = activeChild || selectedStudent;
+            const currentYear = new Date().getFullYear();
+            const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
             if (studentToAssess && Array.isArray(studentToAssess.individualActions)) {
                 studentToAssess.individualActions.forEach((act, idx) => {
+                    const actMonthKey = act.monthKey || (act.createdAt ? act.createdAt.slice(0, 7) : (act.date ? act.date.slice(0, 7) : targetMonthKey));
+                    if (targetMonthKey < actMonthKey) return;
+                    if (act.status === 'paid') {
+                        const paidMonthKey = act.paidMonthKey || act.monthKey || (act.paidAt ? act.paidAt.slice(0, 7) : actMonthKey);
+                        if (targetMonthKey !== paidMonthKey) return;
+                    }
                     if (act.status !== 'paid' && act.type !== 'store_inventory') {
                         const actKey = `custom_action_${act.id || idx}`;
                         list.push({
@@ -7739,9 +8107,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     // Net payable total derived from only checked items minus discount
     const payableNetTotal = useMemo(() => {
         if (feeCalculation?.isMultiFamily) {
-            return Math.max(0, Number(feeCalculation.totalDue || 0) - Number(discountAmount || 0));
+            const due = feeCalculation.pendingDue !== undefined ? feeCalculation.pendingDue : (feeCalculation.totalDue || 0);
+            return Math.max(0, Number(due) - Number(discountAmount || 0));
         }
-        const sum = selectedPayableItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+        const unpaidSelected = selectedPayableItems.filter(it => !it.isPaid);
+        const sum = unpaidSelected.length > 0
+            ? unpaidSelected.reduce((acc, it) => acc + (Number(it.amount) || 0), 0)
+            : selectedPayableItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
         return Math.max(0, sum - Number(discountAmount || 0));
     }, [feeCalculation, selectedPayableItems, discountAmount]);
 
@@ -7989,6 +8361,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const isPayingFine = selectedFeeItemKeys.includes('fine');
 
             const isFullySettled = finalAmount >= payableNetTotal || (payableNetTotal === 0 && isPayingTuition);
+            const activeCashierName = auth?.currentUser?.displayName || auth?.currentUser?.email?.split('@')[0] || 'Principal Office';
 
             const transactionRecord = {
                 receiptNo,
@@ -8022,7 +8395,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 targetMonthIdx: targetMonthIndex,
                 targetMonthName,
                 targetYear,
-                collectedBy: 'Principal Office'
+                collectedBy: activeCashierName
             };
 
             // 1. Persistent Local Queue Item (IndexedDB + Zero-Loss Guarantee)
@@ -8044,21 +8417,23 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             // In-memory student update for all affected siblings (Ensures child-specific split accuracy)
             const updatedStudentsMap = new Map();
             (feeCalculation.studentsBreakdown || []).forEach(st => {
-                const childSubtotal = Number(st.subtotal || 0);
+                const childSubtotal = Number(st.pendingDue !== undefined ? st.pendingDue : (st.subtotal || 0));
+                const isThisChildPaying = st.isPaying !== false;
                 const childPaidAmount = isMultiFamily
-                    ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal)
+                    ? (isThisChildPaying ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal) : 0)
                     : finalAmount;
                 const childRemaining = Math.max(0, childSubtotal - childPaidAmount);
-                const isChildSettled = childPaidAmount >= childSubtotal || (childSubtotal === 0 && isPayingTuition);
+                const isChildSettled = isThisChildPaying && (childPaidAmount >= childSubtotal || (childSubtotal === 0 && isPayingTuition));
 
                 const targetStudentDoc = selectedStudent.id === st.studentId ? selectedStudent : (allStudents.find(s => s.id === st.studentId) || st);
                 const oldPaidMonths = Array.isArray(targetStudentDoc.paidMonths) ? targetStudentDoc.paidMonths : [];
                 const newPaidMonths = isChildSettled ? (oldPaidMonths.includes(targetMonthKey) ? oldPaidMonths : [...oldPaidMonths, targetMonthKey]) : oldPaidMonths;
 
                 const existingIndActions = Array.isArray(targetStudentDoc.individualActions) ? targetStudentDoc.individualActions : [];
-                const paidCustomItems = existingIndActions.filter(act => {
+                const paidCustomItems = isThisChildPaying ? existingIndActions.filter(act => {
                     const actKey = `custom_action_${act.id}`;
-                    return selectedFeeItemKeys.includes(actKey) || (isPayingAction && act.status === 'unpaid');
+                    const isStore = act.type === 'store_inventory' || (act.id && String(act.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(act.name || act.title || '');
+                    return selectedFeeItemKeys.includes(actKey) || (isPayingStore && isStore && act.status !== 'paid') || (isPayingAction && !isStore && act.status !== 'paid') || (act.status !== 'paid');
                 }).map(act => ({
                     id: act.id || '',
                     title: act.title || act.name,
@@ -8067,11 +8442,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     status: 'PAID_LOCKED',
                     paidAt: now.toISOString(),
                     receiptNo
-                }));
+                })) : [];
 
                 const updatedIndActions = existingIndActions.map(act => {
                     const actKey = `custom_action_${act.id}`;
-                    if (selectedFeeItemKeys.includes(actKey) || (isPayingAction && act.status === 'unpaid')) {
+                    const isStore = act.type === 'store_inventory' || (act.id && String(act.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(act.name || act.title || '');
+                    const isThisActPaying = isThisChildPaying && (selectedFeeItemKeys.includes(actKey) || (isPayingStore && isStore && act.status !== 'paid') || (isPayingAction && !isStore && act.status !== 'paid') || (act.status !== 'paid'));
+                    if (isThisActPaying) {
                         return {
                             ...act,
                             status: 'paid',
@@ -8191,7 +8568,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     const nowD = new Date();
 
                     (feeCalculation.studentsBreakdown || []).forEach(st => {
-                        const childSubtotal = Number(st.subtotal || 0);
+                        const childSubtotal = Number(st.pendingDue !== undefined ? st.pendingDue : (st.subtotal || 0));
                         const childPaidAmount = isMultiFamily
                             ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal)
                             : finalAmount;
@@ -8208,7 +8585,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                         const updatedIndActions = existingIndActions.map(act => {
                             const actKey = `custom_action_${act.id}`;
-                            const isThisActPaying = selectedFeeItemKeys.includes(actKey) || (isPayingAction && act.status === 'unpaid');
+                            const isStore = act.type === 'store_inventory' || (act.id && String(act.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(act.name || act.title || '');
+                            const isThisActPaying = selectedFeeItemKeys.includes(actKey) || (isPayingStore && isStore && act.status !== 'paid') || (isPayingAction && !isStore && act.status !== 'paid') || (act.status !== 'paid');
                             if (isThisActPaying) {
                                 paidCustomItems.push({
                                     id: act.id || '',
@@ -8842,8 +9220,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     {activeDailyMode === 'fee_submission' ? <Wallet size={18} /> : <TrendingUp size={18} />}
                                 </div>
                                 <div>
-                                    <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-                                        {activeDailyMode === 'fee_submission' ? 'Fee Cashier Counter' : 'Income & Expense Book'}
+                                    <h3 style={{ fontSize: '1rem', fontWeight: '900', color: '#0f172a', margin: 0, letterSpacing: '0.04em' }}>
+                                        {activeDailyMode === 'fee_submission' ? 'FEE COUNTER' : 'Income & Expense Book'}
                                     </h3>
                                     <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
                                         {activeDailyMode === 'fee_submission' ? 'Quick student lookup & instant receipt' : 'Add manual daily income & bills'}
@@ -9125,6 +9503,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 setSelectedClassId(e.target.value);
                                                 setSelectedStudentId('');
                                                 setSelectedStudent(null);
+                                                setStudentDropdownSearch('');
+                                                setStudentDropdownOpen(false);
                                             }}
                                             style={{
                                                 width: '100%',
@@ -9144,40 +9524,136 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                             ))}
                                         </select>
                                     </div>
-                                    <div>
+                                    <div ref={studentDropdownRef} style={{ position: 'relative' }}>
                                         <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
                                             Student
                                         </label>
-                                        <select
-                                            value={selectedStudentId}
-                                            onChange={(e) => {
-                                                const stId = e.target.value;
-                                                setSelectedStudentId(stId);
-                                                const stObj = classStudents.find(s => s.id === stId);
-                                                setSelectedStudent(stObj || null);
-                                                if (stObj) setCashierStep(1);
-                                            }}
-                                            disabled={!selectedClassId || loadingClassStudents}
+                                        {/* Custom Searchable Student Dropdown */}
+                                        <div
                                             style={{
                                                 width: '100%',
-                                                padding: '0.5rem 0.7rem',
                                                 borderRadius: '8px',
-                                                border: '1px solid #cbd5e1',
-                                                outline: 'none',
+                                                border: studentDropdownOpen ? '1.5px solid #0078d4' : '1px solid #cbd5e1',
                                                 background: !selectedClassId ? '#f1f5f9' : '#ffffff',
-                                                fontWeight: '600',
-                                                color: !selectedClassId ? '#94a3b8' : '#0f172a',
-                                                fontSize: '0.82rem',
-                                                cursor: !selectedClassId ? 'not-allowed' : 'pointer'
+                                                boxSizing: 'border-box',
+                                                boxShadow: studentDropdownOpen ? '0 0 0 2px rgba(0,120,212,0.12)' : 'none',
+                                                transition: 'border 0.15s, box-shadow 0.15s',
+                                                opacity: !selectedClassId ? 0.65 : 1,
+                                                cursor: !selectedClassId ? 'not-allowed' : 'default',
                                             }}
                                         >
-                                            <option value="">-- Choose Student --</option>
-                                            {classStudents.map(s => (
-                                                <option key={s.id} value={s.id}>
-                                                    {s.name} ({s.rollNo ? `Roll ${s.rollNo}` : 'No Roll'}) {s.monthlyFeeStatus === 'paid' ? '✓' : '✗'}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            {/* Search Input Row */}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0.42rem 0.7rem' }}>
+                                                <Search size={13} color={!selectedClassId ? '#94a3b8' : '#0078d4'} style={{ flexShrink: 0 }} />
+                                                <input
+                                                    type="text"
+                                                    placeholder={
+                                                        !selectedClassId
+                                                            ? 'Select class first...'
+                                                            : loadingClassStudents
+                                                            ? 'Loading...'
+                                                            : selectedStudent
+                                                            ? selectedStudent.name
+                                                            : 'Search name, roll no, father...'
+                                                    }
+                                                    value={studentDropdownSearch}
+                                                    disabled={!selectedClassId || loadingClassStudents}
+                                                    onChange={(e) => {
+                                                        setStudentDropdownSearch(e.target.value);
+                                                        setStudentDropdownOpen(true);
+                                                    }}
+                                                    onFocus={() => { if (selectedClassId && !loadingClassStudents) setStudentDropdownOpen(true); }}
+                                                    onBlur={() => { setTimeout(() => setStudentDropdownOpen(false), 180); }}
+                                                    style={{
+                                                        border: 'none',
+                                                        outline: 'none',
+                                                        background: 'transparent',
+                                                        width: '100%',
+                                                        fontSize: '0.82rem',
+                                                        fontWeight: '600',
+                                                        color: !selectedClassId ? '#94a3b8' : '#0f172a',
+                                                        cursor: !selectedClassId ? 'not-allowed' : 'text',
+                                                    }}
+                                                />
+                                                {studentDropdownSearch && (
+                                                    <button
+                                                        type="button"
+                                                        onMouseDown={(e) => {
+                                                            e.preventDefault();
+                                                            setStudentDropdownSearch('');
+                                                            setSelectedStudentId('');
+                                                            setSelectedStudent(null);
+                                                            setStudentDropdownOpen(false);
+                                                        }}
+                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0, display: 'flex', alignItems: 'center' }}
+                                                    >
+                                                        <X size={13} />
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {/* Filtered Dropdown List */}
+                                            {studentDropdownOpen && selectedClassId && !loadingClassStudents && (() => {
+                                                const q = studentDropdownSearch.trim().toLowerCase();
+                                                const filtered = classStudents.filter(s => {
+                                                    if (!q) return true;
+                                                    const name = (s.name || '').toLowerCase();
+                                                    const roll = String(s.rollNo || '').toLowerCase();
+                                                    const father = (s.parentDetails?.fatherName || s.fatherName || '').toLowerCase();
+                                                    return name.includes(q) || roll.includes(q) || father.includes(q);
+                                                });
+                                                return (
+                                                    <div style={{
+                                                        position: 'absolute',
+                                                        top: '100%',
+                                                        left: 0,
+                                                        right: 0,
+                                                        background: '#ffffff',
+                                                        border: '1.5px solid #0078d4',
+                                                        borderTop: '1px solid #e2e8f0',
+                                                        borderRadius: '0 0 10px 10px',
+                                                        zIndex: 60,
+                                                        maxHeight: '200px',
+                                                        overflowY: 'auto',
+                                                        boxShadow: '0 8px 20px -4px rgba(0,0,0,0.15)',
+                                                    }}>
+                                                        {filtered.length === 0 ? (
+                                                            <div style={{ padding: '0.65rem 0.8rem', fontSize: '0.78rem', color: '#94a3b8', textAlign: 'center' }}>
+                                                                No student found
+                                                            </div>
+                                                        ) : filtered.map(s => (
+                                                            <div
+                                                                key={s.id}
+                                                                onMouseDown={() => {
+                                                                    setSelectedStudentId(s.id);
+                                                                    setSelectedStudent(s);
+                                                                    setCashierStep(1);
+                                                                    setStudentDropdownSearch('');
+                                                                    setStudentDropdownOpen(false);
+                                                                }}
+                                                                style={{
+                                                                    padding: '0.5rem 0.8rem',
+                                                                    cursor: 'pointer',
+                                                                    borderBottom: '1px solid #f1f5f9',
+                                                                    background: selectedStudentId === s.id ? '#eff6ff' : 'transparent',
+                                                                    transition: 'background 0.1s'
+                                                                }}
+                                                                onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
+                                                                onMouseLeave={e => e.currentTarget.style.background = selectedStudentId === s.id ? '#eff6ff' : 'transparent'}
+                                                            >
+                                                                <div style={{ fontWeight: '700', fontSize: '0.8rem', color: '#0f172a' }}>{s.name}</div>
+                                                                <div style={{ fontSize: '0.69rem', color: '#64748b' }}>
+                                                                    Roll: {s.rollNo || 'N/A'} &nbsp;·&nbsp; {s.parentDetails?.fatherName || s.fatherName || 'Parent'} &nbsp;
+                                                                    <span style={{ fontWeight: '800', color: s.monthlyFeeStatus === 'paid' ? '#16a34a' : '#b91c1c' }}>
+                                                                        {s.monthlyFeeStatus === 'paid' ? '✓ Paid' : '✗ Unpaid'}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
                                     </div>
                                 </div>
 
@@ -9299,207 +9775,455 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)'
                                             }}>
                                                 {/* ============================================================== */}
-                                                {/* SLIDE 1 (STEP 1): STUDENT & PARENT PROFILE CARD               */}
+                                                {/* SLIDE 1 (STEP 1): STUDENT & PARENT PROFILE CARD / SIBLING DECK */}
                                                 {/* ============================================================== */}
                                                 <div style={{ width: '50%', paddingRight: '0.4rem', boxSizing: 'border-box' }}>
-                                                    {/* Student Identity Card */}
-                                                    <div style={{
-                                                        background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
-                                                        border: '1.5px solid #cbd5e1',
-                                                        borderRadius: '12px',
-                                                        padding: '0.9rem',
-                                                        marginBottom: '0.75rem',
-                                                        boxShadow: '0 2px 8px -2px rgba(0,0,0,0.05)'
-                                                    }}>
-                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.65rem' }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                                                <div style={{
-                                                                    width: '44px',
-                                                                    height: '44px',
-                                                                    borderRadius: '12px',
-                                                                    background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
-                                                                    color: '#ffffff',
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    justifyContent: 'center',
-                                                                    fontWeight: '800',
-                                                                    fontSize: '1rem',
-                                                                    boxShadow: '0 3px 8px rgba(0, 120, 212, 0.25)'
-                                                                }}>
-                                                                    {activeChild?.name?.slice(0, 2).toUpperCase() || 'ST'}
+                                                    {detectedSiblings.length > 1 && siblingPaymentScope === 'family' ? (
+                                                        /* MULTI-CHILD 1-BY-1 SIBLING SWIPER DECK */
+                                                        <div style={{
+                                                            background: 'linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%)',
+                                                            border: '1.5px solid #7dd3fc',
+                                                            borderRadius: '14px',
+                                                            padding: '0.9rem',
+                                                            marginBottom: '0.75rem',
+                                                            boxShadow: '0 4px 14px -2px rgba(2, 132, 199, 0.12)',
+                                                            position: 'relative'
+                                                        }}>
+                                                            {/* Deck Navigation Top Bar */}
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', borderBottom: '1.5px solid #bae6fd', paddingBottom: '0.55rem' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                    <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        👨‍👩‍👧‍👦 Child {activeSiblingIndex + 1} of {detectedSiblings.length}
+                                                                    </span>
+                                                                    <span style={{ fontSize: '0.65rem', background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                        Swipeable Card
+                                                                    </span>
                                                                 </div>
-                                                                <div>
-                                                                    <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#0f172a' }}>
-                                                                        {activeChild?.name || selectedStudent.name}
-                                                                    </h3>
-                                                                    <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
-                                                                        {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                            {(() => {
-                                                                const mStatus = activeChildFeeCalculation?.monthStatus || (activeChildFeeCalculation?.isPaid ? 'paid' : 'pending');
-                                                                const monthLabel = MONTH_NAMES[selectedTargetMonthIdx] || 'Month';
-                                                                if (mStatus === 'paid') {
-                                                                    return (
-                                                                        <span style={{
-                                                                            fontSize: '0.72rem',
-                                                                            fontWeight: '800',
-                                                                            padding: '3px 9px',
-                                                                            borderRadius: '6px',
-                                                                            background: '#dcfce7',
-                                                                            color: '#15803d',
-                                                                            border: '1px solid #86efac',
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '4px'
-                                                                        }}>
-                                                                            <span>✓</span> Paid ({monthLabel.slice(0, 3)})
-                                                                        </span>
-                                                                    );
-                                                                } else if (mStatus === 'overdue') {
-                                                                    return (
-                                                                        <span style={{
-                                                                            fontSize: '0.72rem',
-                                                                            fontWeight: '800',
-                                                                            padding: '3px 9px',
-                                                                            borderRadius: '6px',
-                                                                            background: '#fee2e2',
-                                                                            color: '#b91c1c',
-                                                                            border: '1px solid #fca5a5',
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '4px'
-                                                                        }}>
-                                                                            <span>⚠</span> Overdue: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
-                                                                        </span>
-                                                                    );
-                                                                } else if (mStatus === 'partial') {
-                                                                    return (
-                                                                        <span style={{
-                                                                            fontSize: '0.72rem',
-                                                                            fontWeight: '800',
-                                                                            padding: '3px 9px',
-                                                                            borderRadius: '6px',
-                                                                            background: '#fef3c7',
-                                                                            color: '#b45309',
-                                                                            border: '1px solid #fde68a',
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '4px'
-                                                                        }}>
-                                                                            <span>⚠️</span> Partial Due: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
-                                                                        </span>
-                                                                    );
-                                                                } else {
-                                                                    return (
-                                                                        <span style={{
-                                                                            fontSize: '0.72rem',
-                                                                            fontWeight: '800',
-                                                                            padding: '3px 9px',
-                                                                            borderRadius: '6px',
-                                                                            background: '#fffbeb',
-                                                                            color: '#b45309',
-                                                                            border: '1px solid #fcd34d',
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '4px'
-                                                                        }}>
-                                                                            <span>⏳</span> Pending: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
-                                                                        </span>
-                                                                    );
-                                                                }
-                                                            })()}
-                                                        </div>
 
-                                                        {/* Parent Contact Details */}
-                                                        <div style={{ background: '#f8fafc', padding: '0.65rem 0.75rem', borderRadius: '9px', border: '1px solid #e2e8f0', marginBottom: '0.65rem' }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                                <div>
-                                                                    <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Parent / Guardian:</div>
-                                                                    <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                        {officialFamilyFatherName}
-                                                                        {activeParentAccount && (
-                                                                            <span style={{ fontSize: '0.62rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
-                                                                                Verified
-                                                                            </span>
-                                                                        )}
+                                                            </div>
+
+                                                            {/* Quick Sibling Selector Jump Tabs */}
+                                                            <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '0.65rem' }}>
+                                                                {detectedSiblings.map((sib, sIdx) => {
+                                                                    const isCurrentActive = sib.id === (activeChild?.id || selectedStudent?.id);
+                                                                    const isIncluded = selectedSiblingIds.includes(sib.id);
+                                                                    return (
+                                                                        <button
+                                                                            key={sib.id}
+                                                                            type="button"
+                                                                            onClick={() => setActiveSiblingId(sib.id)}
+                                                                            style={{
+                                                                                padding: '3px 8px',
+                                                                                borderRadius: '6px',
+                                                                                border: isCurrentActive ? '1.5px solid #0284c7' : isIncluded ? '1px solid #bfdbfe' : '1px dashed #cbd5e1',
+                                                                                background: isCurrentActive ? '#0284c7' : isIncluded ? '#eff6ff' : '#f8fafc',
+                                                                                color: isCurrentActive ? '#ffffff' : isIncluded ? '#1e40af' : '#64748b',
+                                                                                fontSize: '0.69rem',
+                                                                                fontWeight: '800',
+                                                                                cursor: 'pointer',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '4px',
+                                                                                whiteSpace: 'nowrap',
+                                                                                boxShadow: isCurrentActive ? '0 2px 6px rgba(2, 132, 199, 0.25)' : 'none',
+                                                                                transition: 'all 0.15s ease'
+                                                                            }}
+                                                                        >
+                                                                            <span>{isIncluded ? '✓' : '✗'}</span>
+                                                                            <span>{sIdx + 1}. {sib.name.split(' ')[0]} ({sib.className || 'Class'})</span>
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+
+                                                            {/* Active Child Student Identity Row */}
+                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem', background: '#ffffff', padding: '0.6rem 0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                                    <div style={{
+                                                                        width: '42px',
+                                                                        height: '42px',
+                                                                        borderRadius: '10px',
+                                                                        background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
+                                                                        color: '#ffffff',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        fontWeight: '800',
+                                                                        fontSize: '0.95rem',
+                                                                        boxShadow: '0 3px 8px rgba(0, 120, 212, 0.25)'
+                                                                    }}>
+                                                                        {activeChild?.name?.slice(0, 2).toUpperCase() || 'ST'}
                                                                     </div>
-                                                                    {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
-                                                                        <div style={{ fontSize: '0.74rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>
-                                                                            📞 {activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone}
+                                                                    <div>
+                                                                        <h3 style={{ margin: 0, fontSize: '0.94rem', fontWeight: '900', color: '#0f172a' }}>
+                                                                            {activeChild?.name || selectedStudent.name}
+                                                                        </h3>
+                                                                        <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '1px' }}>
+                                                                            {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}
                                                                         </div>
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Status Badge */}
+                                                                {(() => {
+                                                                    const monthLabel = MONTH_NAMES[selectedTargetMonthIdx] || 'Month';
+                                                                    const shortMonth = monthLabel.slice(0, 3);
+                                                                    if (activeChildFeeCalculation?.isFullyPaid) {
+                                                                        return (
+                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '900', padding: '3px 9px', borderRadius: '6px', background: '#16a34a', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '3px', boxShadow: '0 2px 4px rgba(22, 163, 74, 0.3)' }}>
+                                                                                <span style={{ fontWeight: '900' }}>✓</span> Paid ({shortMonth})
+                                                                            </span>
+                                                                        );
+                                                                    } else if (activeChildFeeCalculation?.isPartiallyPaid) {
+                                                                        return (
+                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '900', padding: '3px 9px', borderRadius: '6px', background: '#d97706', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '3px', boxShadow: '0 2px 4px rgba(217, 119, 6, 0.3)' }}>
+                                                                                <span>⚠️</span> Partial (Pending: Rs {Number(activeChildFeeCalculation.pendingDue || 0).toLocaleString()})
+                                                                            </span>
+                                                                        );
+                                                                    } else {
+                                                                        return (
+                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '900', padding: '3px 9px', borderRadius: '6px', background: '#dc2626', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '3px', boxShadow: '0 2px 4px rgba(220, 38, 38, 0.3)' }}>
+                                                                                <span style={{ fontWeight: '900' }}>✗</span> Unpaid ({shortMonth})
+                                                                            </span>
+                                                                        );
+                                                                    }
+                                                                })()}
+                                                            </div>
+
+                                                            {/* Included / Excluded in Family Bill Toggle Bar */}
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                justifyContent: 'space-between',
+                                                                alignItems: 'center',
+                                                                marginBottom: '0.65rem',
+                                                                background: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '#f0fdf4' : '#fff1f2',
+                                                                padding: '0.4rem 0.65rem',
+                                                                borderRadius: '8px',
+                                                                border: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '1px solid #bbf7d0' : '1px solid #fecdd3'
+                                                            }}>
+                                                                <span style={{ fontSize: '0.72rem', fontWeight: '800', color: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '#166534' : '#9f1239' }}>
+                                                                    {selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '✓ Included in Current Bill' : '✗ Excluded from Current Bill'}
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => toggleSiblingSelection(activeChild?.id || selectedStudent?.id)}
+                                                                    style={{
+                                                                        padding: '2px 8px',
+                                                                        borderRadius: '5px',
+                                                                        border: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '1px solid #86efac' : '1px solid #f87171',
+                                                                        background: '#ffffff',
+                                                                        color: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '#15803d' : '#dc2626',
+                                                                        fontSize: '0.68rem',
+                                                                        fontWeight: '800',
+                                                                        cursor: 'pointer'
+                                                                    }}
+                                                                >
+                                                                    {selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? 'Exclude -' : 'Include +'}
+                                                                </button>
+                                                            </div>
+
+                                                            {/* Categorized Fee Sets for This Child */}
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.65rem' }}>
+                                                                {/* Set 1: Permanent Monthly Fees */}
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <span>🎓</span> Permanent Monthly Fees
+                                                                        </span>
+                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                            Rs {Number(activeChildFeeCalculation?.set1PermanentTotal || 0).toLocaleString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    {(activeChildFeeCalculation?.permanentItems || []).length === 0 ? (
+                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No permanent monthly fees set.</div>
+                                                                    ) : (
+                                                                        (activeChildFeeCalculation?.permanentItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0', borderBottom: iIdx < (activeChildFeeCalculation.permanentItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>{it.category === 'transport' ? '🚌' : '•'}</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <span style={{ color: '#334155', fontWeight: '700' }}>
+                                                                                    Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                </span>
+                                                                            </div>
+                                                                        ))
                                                                     )}
                                                                 </div>
 
-                                                                {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            const phone = activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone;
-                                                                            const text = `Assalam-o-Alaikum, this is regarding ${activeChild.name}'s fee dues for ${schoolInfo.name || 'School'}. Current payable amount is Rs ${Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}.`;
-                                                                            let clean = phone.toString().replace(/[^0-9]/g, '');
-                                                                            if (clean.startsWith('0092')) clean = clean.slice(2);
-                                                                            else if (clean.startsWith('03')) clean = '92' + clean.slice(1);
-                                                                            window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
-                                                                        }}
-                                                                        style={{
-                                                                            padding: '5px 10px',
-                                                                            borderRadius: '7px',
-                                                                            background: '#f0fdf4',
-                                                                            border: '1px solid #86efac',
-                                                                            color: '#15803d',
-                                                                            fontWeight: '700',
-                                                                            fontSize: '0.72rem',
-                                                                            cursor: 'pointer',
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '4px'
-                                                                        }}
-                                                                        title="Direct WhatsApp Reminder"
-                                                                    >
-                                                                        💬 WhatsApp
-                                                                    </button>
+                                                                {/* Set 2: Individual Actions & Fines (One-Off) */}
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b45309', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <span>⚡</span> Individual Actions & Fines
+                                                                        </span>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setShowNewActionModal(true)}
+                                                                                style={{
+                                                                                    padding: '1px 6px',
+                                                                                    borderRadius: '4px',
+                                                                                    background: '#fef3c7',
+                                                                                    border: '1px solid #fde047',
+                                                                                    color: '#92400e',
+                                                                                    fontSize: '0.65rem',
+                                                                                    fontWeight: '800',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '2px'
+                                                                                }}
+                                                                                title="Add Fine, Exam Fee, Uniform, Tour, etc."
+                                                                            >
+                                                                                + Add Item / Fine
+                                                                            </button>
+                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b45309' }}>
+                                                                                Rs {Number(activeChildFeeCalculation?.set2ActionsTotal || 0).toLocaleString()}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+                                                                    {(activeChildFeeCalculation?.actionItems || []).length === 0 ? (
+                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No actions or fines for this month.</div>
+                                                                    ) : (
+                                                                        (activeChildFeeCalculation?.actionItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.actionItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>⚡</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                    {it.isPaid ? (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                            ✓ Paid
+                                                                                        </span>
+                                                                                    ) : (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                            Unpaid
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                        Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                    </span>
+                                                                                    {!it.isPaid && it.id && (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => handleRemoveCustomAction(it.id)}
+                                                                                            title="Remove this charge"
+                                                                                            style={{
+                                                                                                border: 'none',
+                                                                                                background: '#fee2e2',
+                                                                                                color: '#ef4444',
+                                                                                                borderRadius: '4px',
+                                                                                                width: '16px',
+                                                                                                height: '16px',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                justifyContent: 'center',
+                                                                                                cursor: 'pointer',
+                                                                                                fontSize: '0.62rem',
+                                                                                                padding: 0
+                                                                                            }}
+                                                                                        >
+                                                                                            ✕
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        ))
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Set 3: Store & Inventory Items */}
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#047857', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <span>🛍️</span> Store & Inventory Items
+                                                                        </span>
+                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#047857' }}>
+                                                                            Rs {Number(activeChildFeeCalculation?.set3StoreTotal || 0).toLocaleString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    {(activeChildFeeCalculation?.storeItems || []).length === 0 ? (
+                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No store purchases recorded.</div>
+                                                                    ) : (
+                                                                        (activeChildFeeCalculation?.storeItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.storeItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>🛍️</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                    {it.isPaid ? (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                            ✓ Paid
+                                                                                        </span>
+                                                                                    ) : (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                            Unpaid
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                        Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                    </span>
+                                                                                    {!it.isPaid && it.id && (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => handleRemoveCustomAction(it.id)}
+                                                                                            title="Remove this store charge"
+                                                                                            style={{
+                                                                                                border: 'none',
+                                                                                                background: '#fee2e2',
+                                                                                                color: '#ef4444',
+                                                                                                borderRadius: '4px',
+                                                                                                width: '16px',
+                                                                                                height: '16px',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                justifyContent: 'center',
+                                                                                                cursor: 'pointer',
+                                                                                                fontSize: '0.62rem',
+                                                                                                padding: 0
+                                                                                            }}
+                                                                                        >
+                                                                                            ✕
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        ))
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Set 4: Previous Dues & Arrears (Only if present) */}
+                                                                {((activeChildFeeCalculation?.arrearsItems || []).length > 0 || (activeChildFeeCalculation?.set4ArrearsTotal || 0) > 0) && (
+                                                                    <div style={{ background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', padding: '0.5rem 0.7rem' }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                <span>⏳</span> Previous Dues / Arrears
+                                                                            </span>
+                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b91c1c' }}>
+                                                                                Rs {Number(activeChildFeeCalculation?.set4ArrearsTotal || 0).toLocaleString()}
+                                                                            </span>
+                                                                        </div>
+                                                                        {(activeChildFeeCalculation?.arrearsItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0' }}>
+                                                                                <span style={{ color: '#991b1b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>⏳</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <span style={{ color: '#b91c1c', fontWeight: '800' }}>
+                                                                                    Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                </span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
                                                                 )}
-                                                            </div>
-                                                        </div>
 
-                                                        {/* Target Month Pill */}
-                                                        <div style={{
-                                                            background: '#eff6ff',
-                                                            border: '1px solid #bfdbfe',
-                                                            borderRadius: '8px',
-                                                            padding: '0.45rem 0.75rem',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'space-between',
-                                                            fontSize: '0.75rem'
-                                                        }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#1e3a8a', fontWeight: '700' }}>
-                                                                <CalendarDays size={14} color="#0078d4" />
-                                                                <span>Target Month: <strong style={{ color: '#0078d4' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
+                                                                {/* Child Subtotal Line */}
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}>
+                                                                    <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0f172a' }}>Child Subtotal:</span>
+                                                                    <div style={{ textAlign: 'right' }}>
+                                                                        <strong style={{ fontSize: '0.96rem', fontWeight: '900', color: activeChildFeeCalculation?.isFullyPaid ? '#15803d' : activeChildFeeCalculation?.isPartiallyPaid ? '#d97706' : '#0284c7' }}>
+                                                                            {activeChildFeeCalculation?.isFullyPaid
+                                                                                ? '✓ Paid'
+                                                                                : activeChildFeeCalculation?.isPartiallyPaid
+                                                                                    ? `Rs ${Number(activeChildFeeCalculation?.pendingDue || 0).toLocaleString()} (Remaining)`
+                                                                                    : `Rs ${Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}`
+                                                                            }
+                                                                        </strong>
+                                                                        {activeChildFeeCalculation?.isPartiallyPaid && (
+                                                                            <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>
+                                                                                Total: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
                                                             </div>
-                                                            <span style={{ fontSize: '0.68rem', color: '#0284c7', background: '#dbeafe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                                                                Active Matrix Month
-                                                            </span>
-                                                        </div>
-                                                    </div>
 
-                                                    {/* Sibling Hub Summary (if any) */}
-                                                    {detectedSiblings.length > 1 && (
-                                                        <div style={{
-                                                            background: '#f0f9ff',
-                                                            border: '1.5px solid #7dd3fc',
-                                                            borderRadius: '11px',
-                                                            padding: '0.75rem 0.85rem',
-                                                            marginBottom: '0.75rem'
-                                                        }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                                                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                    👨‍👩‍👧‍👦 Family Siblings Hub ({detectedSiblings.length} Children)
-                                                                </span>
-                                                                <span style={{ fontSize: '0.68rem', color: '#0284c7', background: '#e0f2fe', padding: '2px 7px', borderRadius: '5px', fontWeight: '800' }}>
-                                                                    {siblingPaymentScope === 'family' ? `${selectedSiblingIds.length} in Family Bill` : 'Single Child Mode'}
+                                                            {/* Parent Details & Direct WhatsApp */}
+                                                            <div style={{ background: '#ffffff', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '0.65rem' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                    <div>
+                                                                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>Parent / Guardian:</div>
+                                                                        <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            {officialFamilyFatherName}
+                                                                            {activeParentAccount && (
+                                                                                <span style={{ fontSize: '0.6rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
+                                                                                    Verified
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                        {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
+                                                                            <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '1px', fontWeight: '600' }}>
+                                                                                📞 {activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone}
+                                                                            </div>
+                                                                        )}
+                                                                        {/* Residential Address */}
+                                                                        {(() => {
+                                                                            const parentAddr = activeChild?.address || activeChild?.parentDetails?.address || activeChild?.parentAddress || activeChild?.residentialAddress || activeChild?.homeAddress || selectedStudent?.address || selectedStudent?.parentDetails?.address || activeParentAccount?.address;
+                                                                            if (parentAddr) {
+                                                                                return (
+                                                                                    <div style={{ fontSize: '0.71rem', color: '#64748b', marginTop: '2px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '3px' }}>
+                                                                                        <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>📍</span>
+                                                                                        <span style={{ wordBreak: 'break-word' }}>{parentAddr}</span>
+                                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                            return null;
+                                                                        })()}
+                                                                    </div>
+
+                                                                    {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                const phone = activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone;
+                                                                                const text = `Assalam-o-Alaikum, this is regarding ${activeChild.name}'s fee dues for ${schoolInfo.name || 'School'}. Current payable amount is Rs ${Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}.`;
+                                                                                let clean = phone.toString().replace(/[^0-9]/g, '');
+                                                                                if (clean.startsWith('0092')) clean = clean.slice(2);
+                                                                                else if (clean.startsWith('03')) clean = '92' + clean.slice(1);
+                                                                                window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
+                                                                            }}
+                                                                            style={{
+                                                                                padding: '4px 9px',
+                                                                                borderRadius: '6px',
+                                                                                background: '#f0fdf4',
+                                                                                border: '1px solid #86efac',
+                                                                                color: '#15803d',
+                                                                                fontWeight: '700',
+                                                                                fontSize: '0.7rem',
+                                                                                cursor: 'pointer',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px'
+                                                                            }}
+                                                                            title="Direct WhatsApp Reminder"
+                                                                        >
+                                                                            💬 WhatsApp
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Target Month Pill */}
+                                                            <div style={{
+                                                                background: '#eff6ff',
+                                                                border: '1px solid #bfdbfe',
+                                                                borderRadius: '8px',
+                                                                padding: '0.4rem 0.65rem',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'space-between',
+                                                                fontSize: '0.74rem',
+                                                                marginBottom: '0.65rem'
+                                                            }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#1e3a8a', fontWeight: '700' }}>
+                                                                    <CalendarDays size={14} color="#0078d4" />
+                                                                    <span>Target Month: <strong style={{ color: '#0078d4' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
+                                                                </div>
+                                                                <span style={{ fontSize: '0.66rem', color: '#0284c7', background: '#dbeafe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                    Active Matrix Month
                                                                 </span>
                                                             </div>
 
@@ -9524,7 +10248,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         transition: 'all 0.15s ease'
                                                                     }}
                                                                 >
-                                                                    <span>👤 Single Student Only</span>
+                                                                    <span>Single Student Only</span>
                                                                 </button>
                                                                 <button
                                                                     type="button"
@@ -9548,82 +10272,575 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         transition: 'all 0.15s ease'
                                                                     }}
                                                                 >
-                                                                    <span>👨‍👩‍👧‍👦 Complete Family ({detectedSiblings.length})</span>
+                                                                    <span>Complete Family ({detectedSiblings.length})</span>
                                                                 </button>
                                                             </div>
 
                                                             {/* Sibling Selection Chips */}
-                                                            {siblingPaymentScope === 'family' && (
-                                                                <div>
-                                                                    <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: '700', marginBottom: '0.3rem' }}>
-                                                                        Click child to include / exclude from this bill:
+                                                            <div>
+                                                                <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: '700', marginBottom: '0.3rem' }}>
+                                                                    Click child to include / exclude from this bill:
+                                                                </div>
+                                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                                    {detectedSiblings.map(sib => {
+                                                                        const isSelected = selectedSiblingIds.includes(sib.id);
+                                                                        return (
+                                                                            <span
+                                                                                key={sib.id}
+                                                                                onClick={() => toggleSiblingSelection(sib.id)}
+                                                                                style={{
+                                                                                    fontSize: '0.7rem',
+                                                                                    padding: '3px 8px',
+                                                                                    borderRadius: '6px',
+                                                                                    background: isSelected ? '#0369a1' : '#e2e8f0',
+                                                                                    color: isSelected ? '#ffffff' : '#475569',
+                                                                                    fontWeight: '700',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '4px',
+                                                                                    border: isSelected ? '1px solid #0284c7' : '1px solid #cbd5e1',
+                                                                                    transition: 'all 0.15s ease'
+                                                                                }}
+                                                                            >
+                                                                                <span>{isSelected ? '✓' : '+'}</span>
+                                                                                <span>{sib.name} ({sib.className || 'Class'})</span>
+                                                                            </span>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        /* SINGLE STUDENT PROFILE CARD */
+                                                        <div style={{
+                                                            background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+                                                            border: '1.5px solid #cbd5e1',
+                                                            borderRadius: '12px',
+                                                            padding: '0.9rem',
+                                                            marginBottom: '0.75rem',
+                                                            boxShadow: '0 2px 8px -2px rgba(0,0,0,0.05)'
+                                                        }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.65rem' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                                    <div style={{
+                                                                        width: '44px',
+                                                                        height: '44px',
+                                                                        borderRadius: '12px',
+                                                                        background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
+                                                                        color: '#ffffff',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        fontWeight: '800',
+                                                                        fontSize: '1rem',
+                                                                        boxShadow: '0 3px 8px rgba(0, 120, 212, 0.25)'
+                                                                    }}>
+                                                                        {activeChild?.name?.slice(0, 2).toUpperCase() || 'ST'}
                                                                     </div>
-                                                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                                                        {detectedSiblings.map(sib => {
-                                                                            const isSelected = selectedSiblingIds.includes(sib.id);
-                                                                            return (
-                                                                                <span
-                                                                                    key={sib.id}
-                                                                                    onClick={() => toggleSiblingSelection(sib.id)}
-                                                                                    style={{
-                                                                                        fontSize: '0.7rem',
-                                                                                        padding: '3px 8px',
-                                                                                        borderRadius: '6px',
-                                                                                        background: isSelected ? '#0369a1' : '#e2e8f0',
-                                                                                        color: isSelected ? '#ffffff' : '#475569',
-                                                                                        fontWeight: '700',
-                                                                                        cursor: 'pointer',
-                                                                                        display: 'inline-flex',
-                                                                                        alignItems: 'center',
-                                                                                        gap: '4px',
-                                                                                        border: isSelected ? '1px solid #0284c7' : '1px solid #cbd5e1',
-                                                                                        transition: 'all 0.15s ease'
-                                                                                    }}
-                                                                                >
-                                                                                    <span>{isSelected ? '✓' : '+'}</span>
-                                                                                    <span>{sib.name} ({sib.className || 'Class'})</span>
+                                                                    <div>
+                                                                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                            {activeChild?.name || selectedStudent.name}
+                                                                        </h3>
+                                                                        <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
+                                                                            {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                                {(() => {
+                                                                    const mStatus = activeChildFeeCalculation?.monthStatus || (activeChildFeeCalculation?.isPaid ? 'paid' : 'pending');
+                                                                    const monthLabel = MONTH_NAMES[selectedTargetMonthIdx] || 'Month';
+                                                                    const shortMonth = monthLabel.slice(0, 3);
+                                                                    if (mStatus === 'paid') {
+                                                                        return (
+                                                                            <span style={{
+                                                                                fontSize: '0.72rem',
+                                                                                fontWeight: '900',
+                                                                                padding: '3px 9px',
+                                                                                borderRadius: '6px',
+                                                                                background: '#16a34a',
+                                                                                color: '#ffffff',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px',
+                                                                                boxShadow: '0 2px 4px rgba(22, 163, 74, 0.3)'
+                                                                            }}>
+                                                                                <span style={{ fontWeight: '900' }}>✓</span> Paid ({shortMonth})
+                                                                            </span>
+                                                                        );
+                                                                    } else if (mStatus === 'overdue') {
+                                                                        return (
+                                                                            <span style={{
+                                                                                fontSize: '0.72rem',
+                                                                                fontWeight: '900',
+                                                                                padding: '3px 9px',
+                                                                                borderRadius: '6px',
+                                                                                background: '#dc2626',
+                                                                                color: '#ffffff',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px',
+                                                                                boxShadow: '0 2px 4px rgba(220, 38, 38, 0.3)'
+                                                                            }}>
+                                                                                <span style={{ fontWeight: '900' }}>✗</span> Unpaid ({shortMonth})
+                                                                            </span>
+                                                                        );
+                                                                    } else if (mStatus === 'partial') {
+                                                                        return (
+                                                                            <span style={{
+                                                                                fontSize: '0.72rem',
+                                                                                fontWeight: '900',
+                                                                                padding: '3px 9px',
+                                                                                borderRadius: '6px',
+                                                                                background: '#d97706',
+                                                                                color: '#ffffff',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px',
+                                                                                boxShadow: '0 2px 4px rgba(217, 119, 6, 0.3)'
+                                                                            }}>
+                                                                                <span>⚠️</span> Partial ({shortMonth})
+                                                                            </span>
+                                                                        );
+                                                                    } else {
+                                                                        return (
+                                                                            <span style={{
+                                                                                fontSize: '0.72rem',
+                                                                                fontWeight: '900',
+                                                                                padding: '3px 9px',
+                                                                                borderRadius: '6px',
+                                                                                background: '#dc2626',
+                                                                                color: '#ffffff',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '3px',
+                                                                                boxShadow: '0 2px 4px rgba(220, 38, 38, 0.3)'
+                                                                            }}>
+                                                                                <span style={{ fontWeight: '900' }}>✗</span> Unpaid ({shortMonth})
+                                                                            </span>
+                                                                        );
+                                                                    }
+                                                                })()}
+                                                            </div>
+
+                                                            {/* Parent Contact Details */}
+                                                            <div style={{ background: '#f8fafc', padding: '0.65rem 0.75rem', borderRadius: '9px', border: '1px solid #e2e8f0', marginBottom: '0.65rem' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                    <div>
+                                                                        <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Parent / Guardian:</div>
+                                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            {officialFamilyFatherName}
+                                                                            {activeParentAccount && (
+                                                                                <span style={{ fontSize: '0.62rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
+                                                                                    Verified
                                                                                 </span>
-                                                                            );
-                                                                        })}
+                                                                            )}
+                                                                        </div>
+                                                                        {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
+                                                                            <div style={{ fontSize: '0.74rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>
+                                                                                📞 {activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone}
+                                                                            </div>
+                                                                        )}
+                                                                        {/* Residential Address */}
+                                                                        {(() => {
+                                                                            const parentAddr = activeChild?.address || activeChild?.parentDetails?.address || activeChild?.parentAddress || activeChild?.residentialAddress || activeChild?.homeAddress || selectedStudent?.address || selectedStudent?.parentDetails?.address || activeParentAccount?.address;
+                                                                            if (parentAddr) {
+                                                                                return (
+                                                                                    <div style={{ fontSize: '0.71rem', color: '#64748b', marginTop: '2px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '3px' }}>
+                                                                                        <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>📍</span>
+                                                                                        <span style={{ wordBreak: 'break-word' }}>{parentAddr}</span>
+                                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                            return null;
+                                                                        })()}
                                                                     </div>
+
+                                                                    {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                const phone = activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone;
+                                                                                const text = `Assalam-o-Alaikum, this is regarding ${activeChild.name}'s fee dues for ${schoolInfo.name || 'School'}. Current payable amount is Rs ${Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}.`;
+                                                                                let clean = phone.toString().replace(/[^0-9]/g, '');
+                                                                                if (clean.startsWith('0092')) clean = clean.slice(2);
+                                                                                else if (clean.startsWith('03')) clean = '92' + clean.slice(1);
+                                                                                window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
+                                                                            }}
+                                                                            style={{
+                                                                                padding: '5px 10px',
+                                                                                borderRadius: '7px',
+                                                                                background: '#f0fdf4',
+                                                                                border: '1px solid #86efac',
+                                                                                color: '#15803d',
+                                                                                fontWeight: '700',
+                                                                                fontSize: '0.72rem',
+                                                                                cursor: 'pointer',
+                                                                                display: 'inline-flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '4px'
+                                                                            }}
+                                                                            title="Direct WhatsApp Reminder"
+                                                                        >
+                                                                            💬 WhatsApp
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Categorized Fee Sets for Single Student */}
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.65rem' }}>
+                                                                {/* Set 1: Permanent Monthly Fees */}
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <span>🎓</span> Permanent Monthly Fees
+                                                                        </span>
+                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                            Rs {Number(activeChildFeeCalculation?.set1PermanentTotal || 0).toLocaleString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    {(activeChildFeeCalculation?.permanentItems || []).length === 0 ? (
+                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No permanent monthly fees set.</div>
+                                                                    ) : (
+                                                                        (activeChildFeeCalculation?.permanentItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0', borderBottom: iIdx < (activeChildFeeCalculation.permanentItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>{it.category === 'transport' ? '🚌' : '•'}</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <span style={{ color: '#334155', fontWeight: '700' }}>
+                                                                                    Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                </span>
+                                                                            </div>
+                                                                        ))
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Set 2: Individual Actions & Fines (One-Off) */}
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b45309', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <span>⚡</span> Individual Actions & Fines
+                                                                        </span>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setShowNewActionModal(true)}
+                                                                                style={{
+                                                                                    padding: '1px 6px',
+                                                                                    borderRadius: '4px',
+                                                                                    background: '#fef3c7',
+                                                                                    border: '1px solid #fde047',
+                                                                                    color: '#92400e',
+                                                                                    fontSize: '0.65rem',
+                                                                                    fontWeight: '800',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '2px'
+                                                                                }}
+                                                                                title="Add Fine, Exam Fee, Uniform, Tour, etc."
+                                                                            >
+                                                                                + Add Item / Fine
+                                                                            </button>
+                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b45309' }}>
+                                                                                Rs {Number(activeChildFeeCalculation?.set2ActionsTotal || 0).toLocaleString()}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+                                                                    {(activeChildFeeCalculation?.actionItems || []).length === 0 ? (
+                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No actions or fines for this month.</div>
+                                                                    ) : (
+                                                                        (activeChildFeeCalculation?.actionItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.actionItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>⚡</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                    {it.isPaid ? (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                            ✓ Paid
+                                                                                        </span>
+                                                                                    ) : (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                            Unpaid
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                        Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                    </span>
+                                                                                    {!it.isPaid && it.id && (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => handleRemoveCustomAction(it.id)}
+                                                                                            title="Remove this charge"
+                                                                                            style={{
+                                                                                                border: 'none',
+                                                                                                background: '#fee2e2',
+                                                                                                color: '#ef4444',
+                                                                                                borderRadius: '4px',
+                                                                                                width: '16px',
+                                                                                                height: '16px',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                justifyContent: 'center',
+                                                                                                cursor: 'pointer',
+                                                                                                fontSize: '0.62rem',
+                                                                                                padding: 0
+                                                                                            }}
+                                                                                        >
+                                                                                            ✕
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        ))
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Set 3: Store & Inventory Items */}
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#047857', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <span>🛍️</span> Store & Inventory Items
+                                                                        </span>
+                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#047857' }}>
+                                                                            Rs {Number(activeChildFeeCalculation?.set3StoreTotal || 0).toLocaleString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    {(activeChildFeeCalculation?.storeItems || []).length === 0 ? (
+                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No store purchases recorded.</div>
+                                                                    ) : (
+                                                                        (activeChildFeeCalculation?.storeItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.storeItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>🛍️</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                    {it.isPaid ? (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                            ✓ Paid
+                                                                                        </span>
+                                                                                    ) : (
+                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                            Unpaid
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                        Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                    </span>
+                                                                                    {!it.isPaid && it.id && (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => handleRemoveCustomAction(it.id)}
+                                                                                            title="Remove this store charge"
+                                                                                            style={{
+                                                                                                border: 'none',
+                                                                                                background: '#fee2e2',
+                                                                                                color: '#ef4444',
+                                                                                                borderRadius: '4px',
+                                                                                                width: '16px',
+                                                                                                height: '16px',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                justifyContent: 'center',
+                                                                                                cursor: 'pointer',
+                                                                                                fontSize: '0.62rem',
+                                                                                                padding: 0
+                                                                                            }}
+                                                                                        >
+                                                                                            ✕
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        ))
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Set 4: Previous Dues & Arrears (Only if present) */}
+                                                                {((activeChildFeeCalculation?.arrearsItems || []).length > 0 || (activeChildFeeCalculation?.set4ArrearsTotal || 0) > 0) && (
+                                                                    <div style={{ background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', padding: '0.5rem 0.7rem' }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                <span>⏳</span> Previous Dues / Arrears
+                                                                            </span>
+                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b91c1c' }}>
+                                                                                Rs {Number(activeChildFeeCalculation?.set4ArrearsTotal || 0).toLocaleString()}
+                                                                            </span>
+                                                                        </div>
+                                                                        {(activeChildFeeCalculation?.arrearsItems || []).map((it, iIdx) => (
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0' }}>
+                                                                                <span style={{ color: '#991b1b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                    <span>⏳</span>
+                                                                                    <span>{it.name}</span>
+                                                                                </span>
+                                                                                <span style={{ color: '#b91c1c', fontWeight: '800' }}>
+                                                                                    Rs {Number(it.amount || 0).toLocaleString()}
+                                                                                </span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Subtotal Line */}
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}>
+                                                                    <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0f172a' }}>Total Due:</span>
+                                                                    <div style={{ textAlign: 'right' }}>
+                                                                        <strong style={{ fontSize: '0.96rem', fontWeight: '900', color: activeChildFeeCalculation?.isFullyPaid ? '#15803d' : activeChildFeeCalculation?.isPartiallyPaid ? '#d97706' : '#0284c7' }}>
+                                                                            {activeChildFeeCalculation?.isFullyPaid
+                                                                                ? '✓ Paid'
+                                                                                : activeChildFeeCalculation?.isPartiallyPaid
+                                                                                    ? `Rs ${Number(activeChildFeeCalculation?.pendingDue || 0).toLocaleString()} (Remaining)`
+                                                                                    : `Rs ${Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}`
+                                                                            }
+                                                                        </strong>
+                                                                        {activeChildFeeCalculation?.isPartiallyPaid && (
+                                                                            <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>
+                                                                                Total: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Target Month Pill */}
+                                                            <div style={{
+                                                                background: '#eff6ff',
+                                                                border: '1px solid #bfdbfe',
+                                                                borderRadius: '8px',
+                                                                padding: '0.45rem 0.75rem',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'space-between',
+                                                                fontSize: '0.75rem',
+                                                                marginBottom: detectedSiblings.length > 1 ? '0.75rem' : '0'
+                                                            }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#1e3a8a', fontWeight: '700' }}>
+                                                                    <CalendarDays size={14} color="#0078d4" />
+                                                                    <span>Target Month: <strong style={{ color: '#0078d4' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
+                                                                </div>
+                                                                <span style={{ fontSize: '0.68rem', color: '#0284c7', background: '#dbeafe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                    Active Matrix Month
+                                                                </span>
+                                                            </div>
+
+                                                            {/* Dual Mode Switcher if siblings exist */}
+                                                            {detectedSiblings.length > 1 && (
+                                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginTop: '0.65rem' }}>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setSiblingPaymentScope('single')}
+                                                                        style={{
+                                                                            padding: '0.45rem 0.5rem',
+                                                                            borderRadius: '7px',
+                                                                            border: siblingPaymentScope === 'single' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
+                                                                            background: siblingPaymentScope === 'single' ? '#0284c7' : '#ffffff',
+                                                                            color: siblingPaymentScope === 'single' ? '#ffffff' : '#334155',
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: '800',
+                                                                            cursor: 'pointer',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            justifyContent: 'center',
+                                                                            gap: '4px',
+                                                                            transition: 'all 0.15s ease'
+                                                                        }}
+                                                                    >
+                                                                        <span>Single Student Only</span>
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setSiblingPaymentScope('family');
+                                                                            setSelectedSiblingIds(detectedSiblings.map(s => s.id));
+                                                                        }}
+                                                                        style={{
+                                                                            padding: '0.45rem 0.5rem',
+                                                                            borderRadius: '7px',
+                                                                            border: siblingPaymentScope === 'family' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
+                                                                            background: siblingPaymentScope === 'family' ? '#0284c7' : '#ffffff',
+                                                                            color: siblingPaymentScope === 'family' ? '#ffffff' : '#334155',
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: '800',
+                                                                            cursor: 'pointer',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            justifyContent: 'center',
+                                                                            gap: '4px',
+                                                                            transition: 'all 0.15s ease'
+                                                                        }}
+                                                                    >
+                                                                        <span>Complete Family ({detectedSiblings.length})</span>
+                                                                    </button>
                                                                 </div>
                                                             )}
                                                         </div>
                                                     )}
 
                                                     {/* BIG STEP 1 CTA BUTTON TO SWIPE TO STEP 2 */}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setCashierStep(2)}
-                                                        style={{
-                                                            width: '100%',
-                                                            padding: '0.85rem',
-                                                            borderRadius: '12px',
-                                                            background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
-                                                            border: 'none',
-                                                            color: '#ffffff',
-                                                            fontWeight: '900',
-                                                            fontSize: '0.95rem',
-                                                            cursor: 'pointer',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            gap: '0.5rem',
-                                                            boxShadow: '0 4px 14px rgba(0, 120, 212, 0.4)',
-                                                            transition: 'all 0.18s ease'
-                                                        }}
-                                                    >
-                                                        <Wallet size={18} />
-                                                        <span>
-                                                            {feeCalculation?.isMultiFamily
-                                                                ? `Record Fee for Family (${feeCalculation.activeSiblingsCount} Children) 💳 ➔`
-                                                                : `Record Fee / Collect Payment 💳 ➔`
-                                                            }
-                                                        </span>
-                                                        <span style={{ fontSize: '0.68rem', background: 'rgba(255,255,255,0.25)', padding: '2px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                                                            Enter ↵
-                                                        </span>
-                                                    </button>
+                                                    {(() => {
+                                                        const isLocked = feeCalculation?.isFullyPaid || (feeCalculation?.pendingDue <= 0 && feeCalculation?.isPaid);
+                                                        const isPartial = feeCalculation?.isPartiallyPaid && (feeCalculation?.pendingDue > 0);
+                                                        const pendingAmount = Number(feeCalculation?.pendingDue || 0);
+
+                                                        return (
+                                                            <button
+                                                                type="button"
+                                                                disabled={isLocked}
+                                                                onClick={() => {
+                                                                    if (!isLocked) setCashierStep(2);
+                                                                }}
+                                                                style={{
+                                                                    width: '100%',
+                                                                    padding: '0.85rem',
+                                                                    borderRadius: '12px',
+                                                                    background: isLocked
+                                                                        ? 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)'
+                                                                        : isPartial
+                                                                            ? 'linear-gradient(135deg, #d97706 0%, #b45309 100%)'
+                                                                            : 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
+                                                                    border: 'none',
+                                                                    color: '#ffffff',
+                                                                    fontWeight: '900',
+                                                                    fontSize: '0.92rem',
+                                                                    cursor: isLocked ? 'not-allowed' : 'pointer',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    gap: '0.5rem',
+                                                                    boxShadow: isLocked ? 'none' : isPartial ? '0 4px 14px rgba(217, 119, 6, 0.4)' : '0 4px 14px rgba(0, 120, 212, 0.4)',
+                                                                    opacity: isLocked ? 0.8 : 1,
+                                                                    transition: 'all 0.18s ease'
+                                                                }}
+                                                            >
+                                                                {isLocked ? (
+                                                                    <>
+                                                                        <CheckCircle2 size={18} />
+                                                                        <span>✓ Fee Already Paid ({MONTH_NAMES[selectedTargetMonthIdx] || 'Month'})</span>
+                                                                    </>
+                                                                ) : isPartial ? (
+                                                                    <>
+                                                                        <Wallet size={18} />
+                                                                        <span>Collect Remaining Balance (Rs {pendingAmount.toLocaleString()})</span>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <Wallet size={18} />
+                                                                        <span>
+                                                                            {feeCalculation?.isMultiFamily
+                                                                                ? `Record Fee for Family (${feeCalculation.activeSiblingsCount})`
+                                                                                : `Record Fee / Collect Payment`
+                                                                            }
+                                                                        </span>
+                                                                    </>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })()}
 
                                                     {/* Download Pre-payment Challan PDF */}
                                                     <button
@@ -9682,9 +10899,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             (currentStudentToAssess?.monthlyFeeHistory?.[targetMonthKey]?.status === 'paid')
                                                         );
 
+                                                        // Dynamic check: Check if there is any pending balance in active calculation (due to newly added permanent feeStructure items, individual actions, or arrears)
+                                                        const pendingBalanceToClear = Number(activeChildFeeCalculation?.pendingDue ?? feeCalculation?.pendingDue ?? 0);
+                                                        const hasUnsettledBalance = pendingBalanceToClear > 0;
+
                                                         const unpaidCustomActionsList = (activePayableItems || []).filter(it => it.isCustomAction);
                                                         const hasUnpaidCustomActions = unpaidCustomActionsList.length > 0;
-                                                        const isFullyClearedAndLocked = isTargetMonthFullyPaid && !hasUnpaidCustomActions;
+                                                        const isFullyClearedAndLocked = isTargetMonthFullyPaid && !hasUnpaidCustomActions && !hasUnsettledBalance;
                                                         const selectedMonthPaidRecord = getSelectedMonthPaidTxRecord();
                                                         const hasProof = Boolean(selectedMonthPaidRecord?.proofUrl);
 
@@ -10151,7 +11372,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                         return (
                                                             <>
                                                                 {/* Supplementary Charge Mode Notice */}
-                                                                {isTargetMonthFullyPaid && hasUnpaidCustomActions && (
+                                                                {isTargetMonthFullyPaid && (hasUnpaidCustomActions || hasUnsettledBalance) && (
                                                                     <div style={{
                                                                         background: '#eff6ff',
                                                                         border: '1.5px solid #93c5fd',
@@ -10166,7 +11387,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         color: '#1d4ed8'
                                                                     }}>
                                                                         <Sparkles size={14} color="#2563eb" />
-                                                                        <span>Supplementary Fee Mode: Base month is cleared; collecting {unpaidCustomActionsList.length} newly added action fee.</span>
+                                                                        <span>Supplementary Fee Mode: Base month has recorded payments; collecting newly added charges / remaining balance of Rs {pendingBalanceToClear.toLocaleString()}.</span>
                                                                     </div>
                                                                 )}
 
@@ -10219,14 +11440,37 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     }}>
                                                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', borderBottom: '1.5px solid #bae6fd', paddingBottom: '0.45rem' }}>
                                                                             <span style={{ fontSize: '0.82rem', fontWeight: '900', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                                👨‍👩‍👧‍👦 Family Sibling Bill ({feeCalculation.activeSiblingsCount} Children)
+                                                                                👨‍👩‍👧‍👦 Family Sibling Bill ({feeCalculation.studentsBreakdown?.length || feeCalculation.activeSiblingsCount} Children)
                                                                             </span>
-                                                                            <span style={{ fontSize: '0.68rem', color: '#0369a1', background: '#ffffff', border: '1px solid #7dd3fc', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>
-                                                                                Household Breakdown
-                                                                            </span>
+                                                                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleDownloadChallanForMonth(null)}
+                                                                                    style={{
+                                                                                        padding: '2px 7px',
+                                                                                        borderRadius: '5px',
+                                                                                        border: '1px solid #0284c7',
+                                                                                        background: '#ffffff',
+                                                                                        color: '#0284c7',
+                                                                                        fontSize: '0.66rem',
+                                                                                        fontWeight: '800',
+                                                                                        cursor: 'pointer',
+                                                                                        display: 'inline-flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '3px'
+                                                                                    }}
+                                                                                    title="Download combined family fee challan with all siblings"
+                                                                                >
+                                                                                    <FileText size={12} />
+                                                                                    <span>Print Challan</span>
+                                                                                </button>
+                                                                                <span style={{ fontSize: '0.68rem', color: '#0369a1', background: '#ffffff', border: '1px solid #7dd3fc', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>
+                                                                                    {feeCalculation.payingSiblingsCount} of {feeCalculation.studentsBreakdown?.length} Paying
+                                                                                </span>
+                                                                            </div>
                                                                         </div>
 
-                                                                        {/* List of Categorized Sibling Cards */}
+                                                                        {/* List of Categorized Sibling Cards with Live Inclusion Toggle */}
                                                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '2px' }}>
                                                                             {(feeCalculation.studentsBreakdown || []).map((sib) => {
                                                                                 const sibTuition = Number(sib.tuitionFee || (sib.baseFee - (sib.transportFee || 0)) || 0);
@@ -10234,75 +11478,97 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                 const sibStore = Number(sib.storeFee || 0);
                                                                                 const sibActions = Number(sib.actionsFee || 0);
                                                                                 const sibArrears = Number(sib.previousMonthsArrears || 0);
+                                                                                const isPaying = sib.isPaying !== false;
 
                                                                                 return (
-                                                                                    <div key={sib.studentId} style={{
-                                                                                        background: '#ffffff',
-                                                                                        border: '1px solid #cbd5e1',
-                                                                                        borderRadius: '10px',
-                                                                                        padding: '0.6rem 0.75rem',
-                                                                                        display: 'flex',
-                                                                                        justifyContent: 'space-between',
-                                                                                        alignItems: 'center',
-                                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
-                                                                                    }}>
-                                                                                        <div style={{ flex: 1, marginRight: '8px' }}>
-                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                                                <strong style={{ fontSize: '0.84rem', fontWeight: '900', color: '#0f172a' }}>
-                                                                                                    {sib.studentName}
-                                                                                                </strong>
-                                                                                                <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
-                                                                                                    ({sib.className} &bull; Roll #{sib.rollNo})
-                                                                                                </span>
-                                                                                            </div>
+                                                                                    <div 
+                                                                                        key={sib.studentId} 
+                                                                                        onClick={() => !sib.isPaid && toggleSiblingSelection(sib.studentId)}
+                                                                                        style={{
+                                                                                            background: sib.isPaid ? '#f8fafc' : isPaying ? '#ffffff' : '#fef2f2',
+                                                                                            border: sib.isPaid ? '1px solid #cbd5e1' : isPaying ? '1.5px solid #0284c7' : '1.5px dashed #f87171',
+                                                                                            borderRadius: '10px',
+                                                                                            padding: '0.6rem 0.75rem',
+                                                                                            display: 'flex',
+                                                                                            justifyContent: 'space-between',
+                                                                                            alignItems: 'center',
+                                                                                            boxShadow: isPaying ? '0 2px 5px rgba(2, 132, 199, 0.08)' : 'none',
+                                                                                            cursor: sib.isPaid ? 'default' : 'pointer',
+                                                                                            transition: 'all 0.15s ease'
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ flex: 1, marginRight: '8px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                                                                                            <input
+                                                                                                type="checkbox"
+                                                                                                checked={isPaying}
+                                                                                                disabled={sib.isPaid}
+                                                                                                onChange={() => {}}
+                                                                                                style={{
+                                                                                                    marginTop: '2px',
+                                                                                                    accentColor: '#0284c7',
+                                                                                                    cursor: sib.isPaid ? 'not-allowed' : 'pointer',
+                                                                                                    width: '14px',
+                                                                                                    height: '14px'
+                                                                                                }}
+                                                                                            />
+                                                                                            <div style={{ flex: 1 }}>
+                                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                                    <strong style={{ fontSize: '0.84rem', fontWeight: '900', color: isPaying ? '#0f172a' : '#64748b' }}>
+                                                                                                        {sib.studentName}
+                                                                                                    </strong>
+                                                                                                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                                                                                                        ({sib.className} &bull; Roll #{sib.rollNo})
+                                                                                                    </span>
+                                                                                                </div>
 
-                                                                                            {/* Short Categorized Badges */}
-                                                                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
-                                                                                                {sibTuition > 0 && (
-                                                                                                    <span style={{ fontSize: '0.64rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                                                                                                        🎓 Tuition: Rs {sibTuition.toLocaleString()}
-                                                                                                    </span>
-                                                                                                )}
-                                                                                                {sibTransport > 0 && (
-                                                                                                    <span style={{ fontSize: '0.64rem', background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                                                                                                        🚌 Transport: Rs {sibTransport.toLocaleString()}
-                                                                                                    </span>
-                                                                                                )}
-                                                                                                {sibStore > 0 && (
-                                                                                                    <span style={{ fontSize: '0.64rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                                                                                                        🛍️ Store: Rs {sibStore.toLocaleString()}
-                                                                                                    </span>
-                                                                                                )}
-                                                                                                {sibActions > 0 && (
-                                                                                                    <span style={{ fontSize: '0.64rem', background: '#faf5ff', color: '#6b21a8', border: '1px solid #e9d5ff', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                                                                                                        🏷️ Actions: Rs {sibActions.toLocaleString()}
-                                                                                                    </span>
-                                                                                                )}
-                                                                                                {sibArrears > 0 && (
-                                                                                                    <span style={{ fontSize: '0.64rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                                                                                                        ⏳ Arrears: Rs {sibArrears.toLocaleString()}
-                                                                                                    </span>
-                                                                                                )}
+                                                                                                {/* Short Categorized Badges */}
+                                                                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                                                                                                    {sibTuition > 0 && (
+                                                                                                        <span style={{ fontSize: '0.64rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                            🎓 Tuition: Rs {sibTuition.toLocaleString()}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                    {sibTransport > 0 && (
+                                                                                                        <span style={{ fontSize: '0.64rem', background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                            🚌 Bus: Rs {sibTransport.toLocaleString()}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                    {sibStore > 0 && (
+                                                                                                        <span style={{ fontSize: '0.64rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                            🛍️ Store: Rs {sibStore.toLocaleString()}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                    {sibActions > 0 && (
+                                                                                                        <span style={{ fontSize: '0.64rem', background: '#faf5ff', color: '#6b21a8', border: '1px solid #e9d5ff', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                            ⚡ Actions: Rs {sibActions.toLocaleString()}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                    {sibArrears > 0 && (
+                                                                                                        <span style={{ fontSize: '0.64rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                                                            ⏳ Arrears: Rs {sibArrears.toLocaleString()}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </div>
                                                                                             </div>
                                                                                         </div>
 
                                                                                         {/* Subtotal & Status */}
                                                                                         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                                                                                            <div style={{ fontSize: '0.94rem', fontWeight: '900', color: '#0f172a' }}>
+                                                                                            <div style={{ fontSize: '0.94rem', fontWeight: '900', color: isPaying ? '#0f172a' : '#94a3b8' }}>
                                                                                                 Rs {Number(sib.subtotal || 0).toLocaleString()}
                                                                                             </div>
                                                                                             <span style={{
                                                                                                 fontSize: '0.62rem',
-                                                                                                color: sib.isPaid ? '#15803d' : '#b91c1c',
-                                                                                                background: sib.isPaid ? '#dcfce7' : '#fee2e2',
-                                                                                                border: `1px solid ${sib.isPaid ? '#86efac' : '#fca5a5'}`,
-                                                                                                padding: '1px 5px',
+                                                                                                color: sib.isPaid ? '#15803d' : isPaying ? '#0369a1' : '#b91c1c',
+                                                                                                background: sib.isPaid ? '#dcfce7' : isPaying ? '#e0f2fe' : '#fee2e2',
+                                                                                                border: `1px solid ${sib.isPaid ? '#86efac' : isPaying ? '#7dd3fc' : '#fca5a5'}`,
+                                                                                                padding: '1px 6px',
                                                                                                 borderRadius: '4px',
                                                                                                 fontWeight: '800',
                                                                                                 display: 'inline-block',
                                                                                                 marginTop: '2px'
                                                                                             }}>
-                                                                                                {sib.isPaid ? '✓ Paid' : 'Due'}
+                                                                                                {sib.isPaid ? '✓ Paid' : isPaying ? '✓ Paying Now' : '⏳ Excluded / Pending'}
                                                                                             </span>
                                                                                         </div>
                                                                                     </div>
@@ -10348,26 +11614,33 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             )}
                                                                         </div>
 
-                                                                        {/* Combined Family Grand Total */}
+                                                                        {/* 3-Way Financial Reconciliation Grid */}
                                                                         <div style={{
+                                                                            display: 'grid',
+                                                                            gridTemplateColumns: 'repeat(3, 1fr)',
+                                                                            gap: '0.4rem',
                                                                             borderTop: '2px solid #0284c7',
-                                                                            paddingTop: '0.5rem',
-                                                                            marginTop: '0.5rem',
-                                                                            display: 'flex',
-                                                                            justifyContent: 'space-between',
-                                                                            alignItems: 'center'
+                                                                            paddingTop: '0.55rem',
+                                                                            marginTop: '0.55rem'
                                                                         }}>
-                                                                            <div>
-                                                                                <strong style={{ color: '#0369a1', fontSize: '0.86rem', fontWeight: '900', display: 'block' }}>
-                                                                                    Family Grand Total:
+                                                                            <div style={{ background: '#ffffff', borderRadius: '7px', padding: '4px 6px', border: '1px solid #bae6fd' }}>
+                                                                                <span style={{ fontSize: '0.6rem', color: '#64748b', fontWeight: '700', display: 'block' }}>Household Billed:</span>
+                                                                                <strong style={{ color: '#0f172a', fontSize: '0.86rem', fontWeight: '900' }}>
+                                                                                    Rs {Number(feeCalculation?.householdGrandTotal || 0).toLocaleString()}
                                                                                 </strong>
-                                                                                <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
-                                                                                    All active siblings combined
-                                                                                </span>
                                                                             </div>
-                                                                            <strong style={{ color: '#0369a1', fontSize: '1.35rem', fontWeight: '900', letterSpacing: '-0.02em' }}>
-                                                                                Rs {payableNetTotal.toLocaleString()}
-                                                                            </strong>
+                                                                            <div style={{ background: '#f0fdf4', borderRadius: '7px', padding: '4px 6px', border: '1px solid #86efac' }}>
+                                                                                <span style={{ fontSize: '0.6rem', color: '#166534', fontWeight: '700', display: 'block' }}>Paying in Voucher:</span>
+                                                                                <strong style={{ color: '#15803d', fontSize: '0.94rem', fontWeight: '900' }}>
+                                                                                    Rs {payableNetTotal.toLocaleString()}
+                                                                                </strong>
+                                                                            </div>
+                                                                            <div style={{ background: (Number(feeCalculation?.householdTotalPendingDue || 0) - payableNetTotal) > 0 ? '#fef2f2' : '#f8fafc', borderRadius: '7px', padding: '4px 6px', border: (Number(feeCalculation?.householdTotalPendingDue || 0) - payableNetTotal) > 0 ? '1px solid #fca5a5' : '1px solid #cbd5e1' }}>
+                                                                                <span style={{ fontSize: '0.6rem', color: (Number(feeCalculation?.householdTotalPendingDue || 0) - payableNetTotal) > 0 ? '#b91c1c' : '#64748b', fontWeight: '700', display: 'block' }}>Remaining Due:</span>
+                                                                                <strong style={{ color: (Number(feeCalculation?.householdTotalPendingDue || 0) - payableNetTotal) > 0 ? '#b91c1c' : '#15803d', fontSize: '0.86rem', fontWeight: '900' }}>
+                                                                                    Rs {Math.max(0, Number(feeCalculation?.householdTotalPendingDue || 0) - payableNetTotal).toLocaleString()}
+                                                                                </strong>
+                                                                            </div>
                                                                         </div>
                                                                     </div>
                                                                 ) : (
@@ -11363,12 +12636,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                         border: isRecentPaid
                                                             ? '2.5px solid #14532d'
                                                             : isSelected
-                                                            ? '2.5px solid #000000'
+                                                            ? '2.5px solid #0078d4'
                                                             : `2px solid ${darkBorder}`,
                                                         borderBottom: isRecentPaid
                                                             ? '6px solid #14532d'
                                                             : isSelected
-                                                            ? '6px solid #000000'
+                                                            ? '6px solid #0055a0'
                                                             : `5px solid ${shadowColor}`,
                                                         borderRadius: '12px',
                                                         padding: '0.65rem 0.65rem',
@@ -11377,7 +12650,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                         boxShadow: isRecentPaid
                                                             ? '0 0 0 4px rgba(22, 163, 74, 0.5), 0 8px 0px #14532d, 0 14px 20px rgba(0,0,0,0.3)'
                                                             : isSelected
-                                                            ? '0 0 0 3px #000000, 0 7px 0px #000000, 0 12px 18px rgba(0,0,0,0.32)'
+                                                            ? '0 0 0 3px rgba(0,120,212,0.45), 0 7px 0px #0055a0, 0 12px 18px rgba(0,78,152,0.28)'
                                                             : `0 4px 0px ${shadowColor}, 0 8px 14px rgba(0,0,0,0.15), inset 0 1.5px 0.5px rgba(255,255,255,0.6)`,
                                                         transform: isRecentPaid || isSelected ? 'translateY(-3px)' : 'none',
                                                         display: 'flex',
@@ -11397,7 +12670,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         PAID ✓
                                                                     </span>
                                                                 ) : isSelected ? (
-                                                                    <span style={{ fontSize: '0.58rem', background: '#000000', color: '#ffffff', padding: '1px 5px', borderRadius: '4px', fontWeight: '900', letterSpacing: '0.02em', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                                                                    <span style={{ fontSize: '0.58rem', background: '#0078d4', color: '#ffffff', padding: '1px 5px', borderRadius: '4px', fontWeight: '900', letterSpacing: '0.02em', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
                                                                         ACTIVE
                                                                     </span>
                                                                 ) : null}

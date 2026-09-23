@@ -1068,12 +1068,15 @@ const Store = () => {
                         const targetClassId = selectedClassId || selectedStudent.classId || selectedStudent.class;
                         const itemsSummary = cart.map(c => `${c.name}${c.size ? ` [${c.size}]` : ''}${c.quantity > 1 ? ` x${c.quantity}` : ''}`).join(', ');
 
+                        const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
                         const chargeRecord = {
                             id: `store_${receiptNo}`,
                             name: `Store: ${itemsSummary || 'Uniform / Books Store Kit'}`,
                             amount: Number(cartTotal) || 0,
                             status: 'unpaid',
                             date: now.toISOString(),
+                            createdAt: now.toISOString(),
+                            monthKey: currentMonthKey,
                             type: 'store_inventory',
                             receiptNo,
                             itemsCount: cart.reduce((a, b) => a + (Number(b.quantity) || 1), 0),
@@ -1104,6 +1107,7 @@ const Store = () => {
                         const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', selectedStudent.id);
                         batch.set(masterStudentDocRef, {
                             remaining: increment(cartTotal),
+                            storeCharges: arrayUnion(chargeRecord),
                             individualActions: arrayUnion(chargeRecord)
                         }, { merge: true });
                     }

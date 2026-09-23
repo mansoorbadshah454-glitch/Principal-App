@@ -292,9 +292,17 @@ const EditStudentProfile = () => {
     };
 
     const toggleActionStatus = (actionId) => {
+        const today = new Date();
+        const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
         setIndividualActions(prev => prev.map(item => {
             if (item.id === actionId) {
-                return { ...item, status: item.status === 'paid' ? 'unpaid' : 'paid' };
+                const nextStatus = item.status === 'paid' ? 'unpaid' : 'paid';
+                return {
+                    ...item,
+                    status: nextStatus,
+                    paidMonthKey: nextStatus === 'paid' ? (item.paidMonthKey || currentMonthKey) : null,
+                    paidAt: nextStatus === 'paid' ? (item.paidAt || today.toISOString()) : null
+                };
             }
             return item;
         }));

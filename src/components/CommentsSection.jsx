@@ -81,7 +81,19 @@ const CommentsSection = ({ schoolId, postId, currentUserId, schoolProfile }) => 
 
     const formatTime = (timestamp) => {
         if (!timestamp) return 'Just now';
-        return timestamp.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        let date = null;
+        if (typeof timestamp?.toDate === 'function') {
+            date = timestamp.toDate();
+        } else if (timestamp?.seconds !== undefined) {
+            date = new Date(timestamp.seconds * 1000);
+        } else if (timestamp instanceof Date) {
+            date = timestamp;
+        } else {
+            const d = new Date(timestamp);
+            if (!isNaN(d.getTime())) date = d;
+        }
+        if (!date) return 'Just now';
+        return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     };
 
     return (

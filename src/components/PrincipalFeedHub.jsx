@@ -10,6 +10,15 @@ import {
 import { db } from '../firebase';
 import CachedImage from './CachedImage';
 
+const getTimestampMillis = (ts) => {
+    if (!ts) return 0;
+    if (typeof ts.toDate === 'function') return ts.toDate().getTime();
+    if (ts.seconds !== undefined) return ts.seconds * 1000;
+    if (ts instanceof Date) return ts.getTime();
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+};
+
 const PrincipalFeedHub = ({ schoolId, currentUserId, schoolProfile, posts = [], onNavigateToPost }) => {
     const [activeTab, setActiveTab] = useState('comments'); // 'comments' | 'notifications'
     const [commentsList, setCommentsList] = useState([]);
@@ -81,8 +90,8 @@ const PrincipalFeedHub = ({ schoolId, currentUserId, schoolProfile, posts = [], 
                     const combined = [...otherComments, ...fetched];
                     // Sort descending by timestamp
                     combined.sort((a, b) => {
-                        const timeA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp || 0);
-                        const timeB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp || 0);
+                        const timeA = getTimestampMillis(a.timestamp);
+                        const timeB = getTimestampMillis(b.timestamp);
                         return timeB - timeA;
                     });
                     return combined;
@@ -143,8 +152,8 @@ const PrincipalFeedHub = ({ schoolId, currentUserId, schoolProfile, posts = [], 
 
         // Sort notifications by timestamp descending
         notifications.sort((a, b) => {
-            const timeA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp || 0);
-            const timeB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp || 0);
+            const timeA = getTimestampMillis(a.timestamp);
+            const timeB = getTimestampMillis(b.timestamp);
             return timeB - timeA;
         });
 
@@ -188,9 +197,10 @@ const PrincipalFeedHub = ({ schoolId, currentUserId, schoolProfile, posts = [], 
     const formatTimestamp = (ts) => {
         if (!ts) return 'Just now';
         try {
-            const date = ts.toDate ? ts.toDate() : new Date(ts);
-            const now = new Date();
-            const diffMs = now - date;
+            const timeMs = getTimestampMillis(ts);
+            if (!timeMs) return 'Just now';
+            const now = Date.now();
+            const diffMs = now - timeMs;
             const diffMins = Math.floor(diffMs / (1000 * 60));
             const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
             const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));

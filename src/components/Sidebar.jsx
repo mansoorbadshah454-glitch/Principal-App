@@ -5,7 +5,8 @@ import {
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon,
     FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Lock, DoorOpen, BookOpen
 } from 'lucide-react';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { collection, onSnapshot, query } from 'firebase/firestore';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import GalaxyBackground from './GalaxyBackground';
 
@@ -64,7 +65,8 @@ const NAV_GROUPS = [
 const Sidebar = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const { hasAccess, isPrincipal, hasModule } = useAuthPermissions();
+    const { schoolId, hasAccess, isPrincipal, hasModule } = useAuthPermissions();
+    const [pendingOnlineCount, setPendingOnlineCount] = useState(0);
 
     const [openGroups, setOpenGroups] = useState({
         overview: true,
@@ -80,6 +82,24 @@ const Sidebar = () => {
             [groupId]: !prev[groupId]
         }));
     };
+
+    // Live listener for pending online fee submissions
+    useEffect(() => {
+        if (!schoolId) return;
+        const subsRef = collection(db, `schools/${schoolId}/paymentSubmissions`);
+        const q = query(subsRef);
+        const unsub = onSnapshot(q, (snapshot) => {
+            let pending = 0;
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if ((data.status || 'pending') === 'pending') {
+                    pending++;
+                }
+            });
+            setPendingOnlineCount(pending);
+        }, () => {});
+        return () => unsub();
+    }, [schoolId]);
 
     // Auto expand the group of current route
     useEffect(() => {
@@ -302,6 +322,20 @@ const Sidebar = () => {
                                                     }}>
                                                         <Lock size={10} />
                                                         PREMIUM
+                                                    </span>
+                                                 ) : (item.path === '/collections' && pendingOnlineCount > 0) ? (
+                                                    <span style={{
+                                                        fontSize: '0.7rem',
+                                                        padding: '0.15rem 0.5rem',
+                                                        borderRadius: '9999px',
+                                                        background: '#ef4444',
+                                                        color: 'white',
+                                                        fontWeight: '800',
+                                                        letterSpacing: '0.02em',
+                                                        boxShadow: '0 0 10px rgba(239, 68, 68, 0.6)',
+                                                        animation: 'pulse 2s infinite'
+                                                    }}>
+                                                        {pendingOnlineCount}
                                                     </span>
                                                 ) : item.isNew && (
                                                     <span style={{

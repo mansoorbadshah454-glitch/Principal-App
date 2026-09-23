@@ -470,7 +470,19 @@ const NewsFeed = () => {
 
     const formatDate = (timestamp) => {
         if (!timestamp) return 'Just now';
-        const date = timestamp.toDate();
+        let date = null;
+        if (typeof timestamp?.toDate === 'function') {
+            date = timestamp.toDate();
+        } else if (timestamp?.seconds !== undefined) {
+            date = new Date(timestamp.seconds * 1000);
+        } else if (timestamp instanceof Date) {
+            date = timestamp;
+        } else {
+            const d = new Date(timestamp);
+            if (!isNaN(d.getTime())) date = d;
+        }
+        if (!date) return 'Just now';
+
         const now = new Date();
         const diffInHours = Math.abs(now - date) / 36e5;
 
@@ -1085,7 +1097,7 @@ const NewsFeed = () => {
 
                                 <div style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                                     <Calendar size={12} />
-                                    <span>Expires in {Math.max(0, 7 - Math.floor((new Date() - (post.timestamp?.toDate() || new Date())) / (1000 * 60 * 60 * 24)))} days</span>
+                                    <span>Expires in {Math.max(0, 7 - Math.floor((new Date() - (post.timestamp?.toDate ? post.timestamp.toDate() : (post.timestamp?.seconds ? new Date(post.timestamp.seconds * 1000) : (post.timestamp ? new Date(post.timestamp) : new Date())))) / (1000 * 60 * 60 * 24)))} days</span>
                                 </div>
                             </div>
 
