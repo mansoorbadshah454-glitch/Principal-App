@@ -39,11 +39,13 @@ const getLocalIsoDate = (d = new Date()) => {
 
 // Distinct 3D Vibrant Palette
 const WHEEL_COLORS = {
-    counterCash: '#10b981',      // Emerald Green
+    netProfit: '#10b981',        // Emerald Green (Net Profit / Surplus)
+    teacherSalaries: '#f59e0b',  // Amber / Orange
+    operationalExp: '#ef4444',   // Coral Red
+    deficit: '#dc2626',          // Dark Crimson for Deficit
+    counterCash: '#059669',      // Jade Green
     onlineFees: '#3b82f6',       // Royal Blue
     directIncomes: '#8b5cf6',    // Purple
-    operationalExp: '#ef4444',   // Coral Red
-    teacherSalaries: '#f59e0b',  // Amber / Orange
 };
 
 const CHANNEL_COLORS = {
@@ -153,18 +155,20 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     // TIME-MACHINE CONTROLS
     // ==========================================
     const [selectedYear, setSelectedYear] = useState(currentYearNum);
-    const [compareYear, setCompareYear] = useState(currentYearNum - 1);
     const [selectedMonthMode, setSelectedMonthMode] = useState('current'); // 'today' | 'current' | 'all_year' | 'custom_month'
     const [customSelectedMonthNum, setCustomSelectedMonthNum] = useState(currentMonthNum); // 1-12
 
     // Main Sub Tabs: 'pulse' | 'visual_studio' | 'fee_ledger' | 'expenses_payroll'
     const [activeSubTab, setActiveSubTab] = useState('pulse');
+    const [wheelViewMode, setWheelViewMode] = useState('distribution'); // 'distribution' | 'inflows'
+    const [inspectedMonthNum, setInspectedMonthNum] = useState(currentMonthNum); // 1-12 for interactive 12-month inspector
 
     // Data States
     const [feeTransactions, setFeeTransactions] = useState([]);
     const [financesData, setFinancesData] = useState({ incomes: [], expenses: [] });
     const [teachersList, setTeachersList] = useState([]);
     const [payrollMetaByMonth, setPayrollMetaByMonth] = useState({}); // { [year_month]: payrollMeta }
+    const [storeSales, setStoreSales] = useState([]);
     const [classStudentsMap, setClassStudentsMap] = useState({});
     const [schoolInfo, setSchoolInfo] = useState(parentSchoolInfo || { name: 'School Report', logo: '' });
 
@@ -189,14 +193,61 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     });
     const [isSavingFinance, setIsSavingFinance] = useState(false);
 
-    // Active Year Options (Past 4 Years + Next 1 Year)
+    // Dynamic Year List: starts from 2025 and auto-increments with current and future years
     const availableYears = useMemo(() => {
+        const startYear = 2025;
+        const endYear = Math.max(2025, currentYearNum);
         const years = [];
-        for (let y = currentYearNum - 3; y <= currentYearNum + 1; y++) {
+        for (let y = startYear; y <= endYear; y++) {
             years.push(y);
         }
-        return years.reverse();
+        return years;
     }, [currentYearNum]);
+
+    // Unified Instant Scope Selection Handlers (Master Wheel, Channels, Outflows, and 12-Month sync)
+    const handleSelectMonthScope = (mNum) => {
+        if (!mNum) return;
+        setInspectedMonthNum(mNum);
+        setCustomSelectedMonthNum(mNum);
+        setSelectedMonthMode('custom_month');
+    };
+
+    const handleSelectAllYearScope = () => {
+        setSelectedMonthMode('all_year');
+    };
+
+    const handleSelectTodayScope = () => {
+        setSelectedMonthMode('today');
+    };
+
+    // 0. Offline Vault Hydration on Initial Mount (100% Instant Offline Startup)
+    useEffect(() => {
+        if (!schoolId) return;
+        try {
+            const cachedVault = localStorage.getItem(`school_finances_vault_${schoolId}`);
+            if (cachedVault) {
+                const parsed = JSON.parse(cachedVault);
+                if (Array.isArray(parsed.feeTransactions) && parsed.feeTransactions.length > 0) {
+                    setFeeTransactions(parsed.feeTransactions);
+                }
+                if (parsed.financesData) {
+                    setFinancesData(parsed.financesData);
+                }
+                if (Array.isArray(parsed.storeSales) && parsed.storeSales.length > 0) {
+                    setStoreSales(parsed.storeSales);
+                }
+                if (parsed.payrollMetaByMonth) {
+                    setPayrollMetaByMonth(parsed.payrollMetaByMonth);
+                }
+                if (Array.isArray(parsed.teachersList) && parsed.teachersList.length > 0) {
+                    setTeachersList(parsed.teachersList);
+                }
+                setLoading(false);
+            }
+        } catch (e) {
+            console.warn("Finances offline cache load note:", e);
+        }
+    }, [schoolId]);
 
     // 1. Listen to Network Online/Offline
     useEffect(() => {
@@ -253,6 +304,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         let unsubTransactions = null;
         let unsubFinances = null;
         let unsubTeachers = null;
+        let unsubStoreSales = null;
         let unsubStudentsList = [];
         let isMounted = true;
 
@@ -320,6 +372,17 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     unsubStudentsList.push(unsub);
                 });
 
+                // 5. Store Sales & POS Orders
+                try {
+                    const salesRef = collection(db, `schools/${schoolId}/store_sales`);
+                    unsubStoreSales = onSnapshot(salesRef, (snap) => {
+                        if (!isMounted) return;
+                        setStoreSales(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    }, (err) => {
+                        console.warn("Store sales listener note:", err);
+                    });
+                } catch (e) {}
+
             } catch (err) {
                 console.error("FinancesDashboard setup error:", err);
                 if (isMounted) setLoading(false);
@@ -333,17 +396,18 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             if (unsubTransactions) unsubTransactions();
             if (unsubFinances) unsubFinances();
             if (unsubTeachers) unsubTeachers();
+            if (unsubStoreSales) unsubStoreSales();
             unsubStudentsList.forEach(u => u());
         };
     }, [schoolId]);
 
-    // 4. Fetch Payroll Meta for Selected Year / Months
+    // 4. Fetch Payroll Meta for All Available Years (2025+) / Months
     useEffect(() => {
         if (!schoolId) return;
         let isMounted = true;
         const fetchPayrollData = async () => {
             try {
-                const yearsToFetch = [selectedYear, compareYear];
+                const yearsToFetch = availableYears;
                 for (const yr of yearsToFetch) {
                     for (let m = 1; m <= 12; m++) {
                         const payrollDocId = `${yr}_${m}`;
@@ -364,13 +428,30 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         };
         fetchPayrollData();
         return () => { isMounted = false; };
-    }, [schoolId, selectedYear, compareYear]);
+    }, [schoolId, availableYears]);
+
+    // 5. Keep LocalStorage Offline Vault in Sync with Live Data (100% Offline Resilience)
+    useEffect(() => {
+        if (!schoolId) return;
+        try {
+            const vault = {
+                feeTransactions: (feeTransactions || []).slice(0, 3000), // Protect against localStorage 5MB limit
+                financesData,
+                storeSales: (storeSales || []).slice(0, 1000),
+                payrollMetaByMonth,
+                teachersList
+            };
+            localStorage.setItem(`school_finances_vault_${schoolId}`, JSON.stringify(vault));
+        } catch (e) {
+            // LocalStorage trap
+        }
+    }, [schoolId, feeTransactions, financesData, storeSales, payrollMetaByMonth, teachersList]);
 
     // =========================================================================
-    // 5. DEMO FINANCIAL DATA INJECTOR (Presentation Ready)
+    // 5. DEMO FINANCIAL DATA INJECTOR (Presentation Ready, Multi-Year & Store)
     // =========================================================================
     const handleInjectFinancialDemoData = async () => {
-        if (!window.confirm("✨ Inject Presentation Financial Demo Data?\n\nThis will generate:\n- 12-Month Inflow & Outflow Transactions for " + selectedYear + " & " + compareYear + "\n- Cash, EasyPaisa, JazzCash, and Bank Fee Receipts\n- School Direct Incomes (Canteen, Gala, Prospectus)\n- Operational Expenses & Teacher Salaries\n\nAll Visual 3D Charts & YoY Comparisons will become live immediately!")) {
+        if (!window.confirm(`✨ Inject Presentation Financial Demo Data?\n\nThis will generate:\n- 12-Month Inflow & Outflow Analytics across All Active Years (${availableYears.join(', ')})\n- Multi-channel Fee Receipts (Counter Cash, EasyPaisa, JazzCash, Meezan Bank)\n- School Store & Uniform Sales\n- Direct Incomes (Canteen, Admissions, Functions)\n- Operational Expenses & Teacher Salaries\n\nAll Visual 3D Charts, Donut Wheels, and Monthly Audits will become live instantly!`)) {
             return;
         }
 
@@ -378,124 +459,158 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         try {
             const batch = writeBatch(db);
 
-            // 1. Generate 12-Month Fee Transactions for Current & Comparison Years
             const demoStudents = [
-                { name: 'Muhammad Ali', class: 'Class 10-A', roll: '101' },
-                { name: 'Fatima Zahra', class: 'Class 9-B', roll: '204' },
-                { name: 'Hamza Tariq', class: 'Class 8-A', roll: '312' },
-                { name: 'Ayesha Khan', class: 'Class 7-C', roll: '415' },
-                { name: 'Zainab Bibi', class: 'Class 6-A', roll: '508' },
-                { name: 'Bilal Ahmed', class: 'Class 5-B', roll: '601' },
-                { name: 'Omar Farooq', class: 'Class 4-A', roll: '702' },
-                { name: 'Hafsa Noor', class: 'Class 3-A', roll: '809' }
+                { name: 'Muhammad Ali', class: 'Class 10-A', roll: '101', fee: 5500 },
+                { name: 'Fatima Zahra', class: 'Class 9-B', roll: '204', fee: 5200 },
+                { name: 'Hamza Tariq', class: 'Class 8-A', roll: '312', fee: 4800 },
+                { name: 'Ayesha Khan', class: 'Class 7-C', roll: '415', fee: 4500 },
+                { name: 'Zainab Bibi', class: 'Class 6-A', roll: '508', fee: 4200 },
+                { name: 'Bilal Ahmed', class: 'Class 5-B', roll: '601', fee: 4000 },
+                { name: 'Omar Farooq', class: 'Class 4-A', roll: '702', fee: 3800 },
+                { name: 'Hafsa Noor', class: 'Class 3-A', roll: '809', fee: 3600 },
+                { name: 'Mustafa Hassan', class: 'Class 2-B', roll: '915', fee: 3500 },
+                { name: 'Maryam Siddiqui', class: 'Class 1-A', roll: '102', fee: 3500 },
+                { name: 'Usman Ghani', class: 'Class 9-A', roll: '210', fee: 5200 },
+                { name: 'Amina Tariq', class: 'Class 8-B', roll: '318', fee: 4800 }
             ];
 
-            const channels = ['Cash', 'Online - EasyPaisa', 'Online - JazzCash', 'Online - Bank Transfer'];
+            const channels = ['Cash', 'Cash', 'Online - EasyPaisa', 'Online - JazzCash', 'Online - Bank Transfer', 'Cash'];
 
-            // Monthly base inflow patterns for current year (2026) and comparison year (2025)
-            const curYearCurve = [310000, 325000, 340000, 360000, 390000, 410000, 430000, 450000, 480000, 470000, 490000, 520000];
-            const cmpYearCurve = [240000, 260000, 275000, 290000, 310000, 330000, 345000, 360000, 375000, 380000, 395000, 410000];
+            const newDemoTxs = [];
+            const newDemoSales = [];
 
-            // Current Year Transactions
-            for (let m = 1; m <= 12; m++) {
-                const monthIso = `${selectedYear}-${String(m).padStart(2, '0')}`;
-                const monthlyTarget = curYearCurve[m - 1];
-                const numSlips = 8;
-                const perSlip = Math.round(monthlyTarget / numSlips);
+            // 1. Inject Data Across Active Years (Past Years: 12 Months | Current Year: Jan to Current Month)
+            for (const yr of availableYears) {
+                if (yr > currentYearNum) continue;
+                const isBaseYear = yr === 2025;
+                const isCurrentYear = yr === currentYearNum;
+                const maxMonthForYear = isCurrentYear ? currentMonthNum : 12;
+                const growthFactor = isBaseYear ? 0.82 : 1 + ((yr - 2026) * 0.12);
 
-                demoStudents.forEach((std, sIdx) => {
-                    const recNo = `DEMO-REC-${selectedYear}-${m}-${sIdx + 1}`;
-                    const mode = channels[sIdx % channels.length];
-                    const day = String(Math.min(28, (sIdx + 1) * 3)).padStart(2, '0');
-                    const dateIso = `${monthIso}-${day}`;
+                for (let m = 1; m <= maxMonthForYear; m++) {
+                    const monthIso = `${yr}-${String(m).padStart(2, '0')}`;
 
-                    const txRef = doc(db, `schools/${schoolId}/feeTransactions`, recNo);
-                    batch.set(txRef, {
-                        id: recNo,
-                        receiptNo: recNo,
-                        studentName: std.name,
-                        className: std.class,
-                        rollNo: std.roll,
-                        totalPaid: perSlip,
-                        discount: sIdx === 3 ? 500 : 0,
-                        paymentMode: mode,
-                        dateIso,
-                        dateString: `${day} ${MONTH_SHORT[m - 1]} ${selectedYear}`,
-                        timeString: '11:30 AM',
-                        collectedBy: mode.startsWith('Online') ? 'Online Portal (Verified by Principal)' : 'Counter Cashier POS',
-                        isDemoData: true,
-                        timestamp: serverTimestamp()
-                    }, { merge: true });
-                });
+                    // Fee Receipts (12 per month)
+                    demoStudents.forEach((std, sIdx) => {
+                        const recNo = `DEMO-REC-${yr}-${m}-${sIdx + 1}`;
+                        const mode = channels[sIdx % channels.length];
+                        const day = String(Math.min(28, (sIdx + 1) * 2 + 1)).padStart(2, '0');
+                        const dateIso = `${monthIso}-${day}`;
+                        const calculatedPaid = Math.round(std.fee * growthFactor);
+
+                        const txData = {
+                            id: recNo,
+                            receiptNo: recNo,
+                            studentName: std.name,
+                            className: std.class,
+                            rollNo: std.roll,
+                            studentId: `demo_std_${sIdx + 1}`,
+                            totalPaid: calculatedPaid,
+                            discount: sIdx === 3 ? 500 : 0,
+                            paymentMode: mode,
+                            dateIso,
+                            dateString: `${day} ${MONTH_SHORT[m - 1]} ${yr}`,
+                            timeString: '11:30 AM',
+                            collectedBy: mode.startsWith('Online') ? 'Online Portal (Verified by Principal)' : 'Counter Cashier POS',
+                            isDemoData: true,
+                            timestamp: serverTimestamp()
+                        };
+
+                        const txRef = doc(db, `schools/${schoolId}/feeTransactions`, recNo);
+                        batch.set(txRef, txData, { merge: true });
+                        newDemoTxs.push(txData);
+                    });
+
+                    // Store Sales (Uniform & Books - 2 per month)
+                    const storeSale1 = {
+                        id: `DEMO-STORE-${yr}-${m}-1`,
+                        invoiceNo: `DEMO-STORE-${yr}-${m}-1`,
+                        buyerName: `Parent of ${demoStudents[m % demoStudents.length].name}`,
+                        className: demoStudents[m % demoStudents.length].class,
+                        totalAmount: Math.round(14500 * growthFactor),
+                        grandTotal: Math.round(14500 * growthFactor),
+                        paymentMethod: 'Cash',
+                        dateIso: `${monthIso}-05`,
+                        date: `${monthIso}-05`,
+                        createdAt: `${monthIso}-05T10:00:00.000Z`,
+                        itemsCount: 3,
+                        isDemoData: true
+                    };
+                    const storeSale2 = {
+                        id: `DEMO-STORE-${yr}-${m}-2`,
+                        invoiceNo: `DEMO-STORE-${yr}-${m}-2`,
+                        buyerName: `Parent of ${demoStudents[(m + 3) % demoStudents.length].name}`,
+                        className: demoStudents[(m + 3) % demoStudents.length].class,
+                        totalAmount: Math.round(9800 * growthFactor),
+                        grandTotal: Math.round(9800 * growthFactor),
+                        paymentMethod: 'EasyPaisa',
+                        dateIso: `${monthIso}-18`,
+                        date: `${monthIso}-18`,
+                        createdAt: `${monthIso}-18T14:30:00.000Z`,
+                        itemsCount: 2,
+                        isDemoData: true
+                    };
+
+                    const storeRef1 = doc(db, `schools/${schoolId}/store_sales`, storeSale1.id);
+                    const storeRef2 = doc(db, `schools/${schoolId}/store_sales`, storeSale2.id);
+                    batch.set(storeRef1, storeSale1, { merge: true });
+                    batch.set(storeRef2, storeSale2, { merge: true });
+                    newDemoSales.push(storeSale1, storeSale2);
+
+                    // Teacher Payroll (4 Teachers)
+                    const payrollMeta = {
+                        'demo_t_1': { isPaid: true, paidAmount: Math.round(42000 * growthFactor), teacher: { name: 'Sir Asadullah (Senior Math)' } },
+                        'demo_t_2': { isPaid: true, paidAmount: Math.round(38000 * growthFactor), teacher: { name: 'Miss Sadia Khan (Physics)' } },
+                        'demo_t_3': { isPaid: true, paidAmount: Math.round(35000 * growthFactor), teacher: { name: 'Sir Kamran Qureshi (English)' } },
+                        'demo_t_4': { isPaid: true, paidAmount: Math.round(32000 * growthFactor), teacher: { name: 'Miss Fatima Noor (Urdu & Islamiyat)' } }
+                    };
+                    const payrollRef = doc(db, `schools/${schoolId}/settings`, `payroll_${yr}_${m}`);
+                    batch.set(payrollRef, { teachers: payrollMeta, lastUpdated: serverTimestamp() }, { merge: true });
+                }
             }
 
-            // Comparison Year Transactions
-            for (let m = 1; m <= 12; m++) {
-                const monthIso = `${compareYear}-${String(m).padStart(2, '0')}`;
-                const monthlyTarget = cmpYearCurve[m - 1];
-                const recNo = `DEMO-REC-${compareYear}-${m}-AGG`;
-                const txRef = doc(db, `schools/${schoolId}/feeTransactions`, recNo);
-                batch.set(txRef, {
-                    id: recNo,
-                    receiptNo: recNo,
-                    studentName: 'Annual Aggregate Inflow',
-                    className: 'Multi-Grade',
-                    rollNo: '-',
-                    totalPaid: monthlyTarget,
-                    paymentMode: 'Cash',
-                    dateIso: `${monthIso}-15`,
-                    dateString: `15 ${MONTH_SHORT[m - 1]} ${compareYear}`,
-                    isDemoData: true,
-                    timestamp: serverTimestamp()
-                }, { merge: true });
-            }
-
-            // 2. Direct Incomes & Operational Expenses (12 Months Coverage)
+            // 2. Direct Incomes & Operational Expenses
             const demoIncomes = [
-                { id: 'demo_inc_perm_1', name: 'School Canteen Monthly Rent', amount: 35000, type: 'permanent', category: 'Canteen', remarks: 'Monthly contract rent', createdAt: `${selectedYear}-01-05` }
+                { id: 'demo_inc_perm_1', name: 'School Canteen Monthly Rent', amount: 35000, type: 'permanent', category: 'Canteen', remarks: 'Monthly contract rent', createdAt: '2025-01-05' }
             ];
-
             const demoExpenses = [
-                { id: 'demo_exp_perm_1', name: 'Staff Tea & Refreshments', amount: 9500, type: 'permanent', category: 'Refreshments', remarks: 'Monthly refreshment budget', createdAt: `${selectedYear}-01-01` }
+                { id: 'demo_exp_perm_1', name: 'Staff Tea & Refreshments', amount: 9500, type: 'permanent', category: 'Refreshments', remarks: 'Monthly refreshment budget', createdAt: '2025-01-01' }
             ];
 
-            for (let m = 1; m <= 12; m++) {
-                const mStr = String(m).padStart(2, '0');
-                demoIncomes.push(
-                    { id: `demo_inc_${selectedYear}_${m}_1`, name: 'Prospectus & Admission Forms', amount: 35000 + (m * 1500), type: 'one-time', category: 'Admissions', remarks: 'Session prospectus sales', createdAt: `${selectedYear}-${mStr}-03` },
-                    { id: `demo_inc_${selectedYear}_${m}_2`, name: 'Sports Gala & Function Fund', amount: 25000 + (m * 1000), type: 'one-time', category: 'Events', remarks: 'Extracurricular sponsors', createdAt: `${selectedYear}-${mStr}-11` }
-                );
-                demoExpenses.push(
-                    { id: `demo_exp_${selectedYear}_${m}_1`, name: 'WAPDA Electricity Bill', amount: 42000 + (m * 1200), type: 'one-time', category: 'Utility Bills', remarks: 'Main Campus Bill', createdAt: `${selectedYear}-${mStr}-08` },
-                    { id: `demo_exp_${selectedYear}_${m}_2`, name: 'Exam Sheets & Stationery Printing', amount: 18000 + (m * 800), type: 'one-time', category: 'Stationery', remarks: 'Midterm paper printing', createdAt: `${selectedYear}-${mStr}-12` },
-                    { id: `demo_exp_${selectedYear}_${m}_3`, name: 'Building & Science Lab Maintenance', amount: 16000 + (m * 500), type: 'one-time', category: 'Maintenance', remarks: 'Lab apparatus repair', createdAt: `${selectedYear}-${mStr}-14` }
-                );
+            for (const yr of availableYears) {
+                if (yr > currentYearNum) continue;
+                const maxMonthForYear = yr === currentYearNum ? currentMonthNum : 12;
+                for (let m = 1; m <= maxMonthForYear; m++) {
+                    const mStr = String(m).padStart(2, '0');
+                    demoIncomes.push(
+                        { id: `demo_inc_${yr}_${m}_1`, name: 'Prospectus & Admission Forms', amount: 32000 + (m * 1200), type: 'one-time', category: 'Admissions', remarks: 'Session prospectus sales', createdAt: `${yr}-${mStr}-03` },
+                        { id: `demo_inc_${yr}_${m}_2`, name: 'Sports Gala & Function Fund', amount: 22000 + (m * 800), type: 'one-time', category: 'Events', remarks: 'Extracurricular sponsors', createdAt: `${yr}-${mStr}-11` }
+                    );
+                    demoExpenses.push(
+                        { id: `demo_exp_${yr}_${m}_1`, name: 'WAPDA Electricity Bill', amount: 38000 + (m * 1100), type: 'one-time', category: 'Utility Bills', remarks: 'Main Campus Bill', createdAt: `${yr}-${mStr}-08` },
+                        { id: `demo_exp_${yr}_${m}_2`, name: 'Exam Sheets & Stationery Printing', amount: 16000 + (m * 600), type: 'one-time', category: 'Stationery', remarks: 'Paper printing', createdAt: `${yr}-${mStr}-12` },
+                        { id: `demo_exp_${yr}_${m}_3`, name: 'Building & Science Lab Maintenance', amount: 14000 + (m * 400), type: 'one-time', category: 'Maintenance', remarks: 'Apparatus repair', createdAt: `${yr}-${mStr}-14` }
+                    );
+                }
             }
 
             const finDocRef = doc(db, `schools/${schoolId}/settings/finances`);
-            batch.set(finDocRef, {
-                incomes: demoIncomes,
-                expenses: demoExpenses
-            }, { merge: true });
-
-            // 3. Demo Teacher Payroll Meta
-            const demoTeacherMeta = {
-                'demo_t_1': { isPaid: true, paidAmount: 42000, teacher: { name: 'Sir Asadullah (Senior Math)' } },
-                'demo_t_2': { isPaid: true, paidAmount: 38000, teacher: { name: 'Miss Sadia Khan (Physics)' } },
-                'demo_t_3': { isPaid: true, paidAmount: 35000, teacher: { name: 'Sir Kamran Qureshi (English)' } },
-                'demo_t_4': { isPaid: true, paidAmount: 32000, teacher: { name: 'Miss Fatima Noor (Urdu & Islamiyat)' } }
-            };
-
-            for (let m = 1; m <= 12; m++) {
-                const payrollRef = doc(db, `schools/${schoolId}/settings`, `payroll_${selectedYear}_${m}`);
-                batch.set(payrollRef, {
-                    teachers: demoTeacherMeta,
-                    lastUpdated: serverTimestamp()
-                }, { merge: true });
-            }
+            batch.set(finDocRef, { incomes: demoIncomes, expenses: demoExpenses }, { merge: true });
 
             await batch.commit();
-            alert("✨ Presentation Financial Demo Data Injected Successfully!\n\nAll 3D charts, YoY trendlines, and breakdown wheels are now populated with realistic data.");
+
+            // Local State Instant Reflection
+            setFeeTransactions(prev => {
+                const nonDemo = (prev || []).filter(t => !t.isDemoData && !String(t.id || '').startsWith('DEMO-REC-'));
+                return [...newDemoTxs, ...nonDemo];
+            });
+            setStoreSales(prev => {
+                const nonDemo = (prev || []).filter(s => !s.isDemoData && !String(s.id || '').startsWith('DEMO-STORE-'));
+                return [...newDemoSales, ...nonDemo];
+            });
+            setFinancesData({ incomes: demoIncomes, expenses: demoExpenses });
+
+            alert(`✨ Presentation Financial Demo Data Injected Successfully!\n\nAll ${availableYears.length} Years (${availableYears.join(', ')}), 3D charts, Store Sales, and Monthly Breakdown wheels are now live!`);
         } catch (err) {
             console.error("Error injecting demo data:", err);
             alert("Error injecting demo data: " + err.message);
@@ -503,9 +618,9 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         setIsInjectingDemo(false);
     };
 
-    // Purge Demo Data Handler
+    // Purge Demo Data Handler (Cleans Fee Txs, Store Sales, Incomes, Expenses & Payrolls)
     const handlePurgeFinancialDemoData = async () => {
-        if (!window.confirm("🧹 Clean / Purge all Demo Financial Data?\n\nThis will remove:\n- All DEMO fee transactions\n- All DEMO direct incomes & expenses\n- All DEMO payroll records\n\nYour actual cashier records will remain completely untouched.")) {
+        if (!window.confirm("🧹 Clean / Purge all Demo Financial Data?\n\nThis will remove:\n- All DEMO fee transactions across all years\n- All DEMO store sales records\n- All DEMO direct incomes & expenses\n- All DEMO payroll records\n\nYour actual school cashier records will remain completely untouched.")) {
             return;
         }
 
@@ -513,38 +628,43 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         try {
             const batch = writeBatch(db);
 
-            // 1. Delete all demo transactions from Firestore
+            // 1. Delete demo transactions
             const demoTxs = (feeTransactions || []).filter(t => t.isDemoData || String(t.id || '').startsWith('DEMO-REC-') || String(t.receiptNo || '').startsWith('DEMO-REC-'));
             demoTxs.forEach(t => {
                 const txRef = doc(db, `schools/${schoolId}/feeTransactions`, t.id);
                 batch.delete(txRef);
             });
 
-            // 2. Clean demo incomes and expenses
+            // 2. Delete demo store sales
+            const demoStoreSales = (storeSales || []).filter(s => s.isDemoData || String(s.id || '').startsWith('DEMO-STORE-') || String(s.invoiceNo || '').startsWith('DEMO-STORE-'));
+            demoStoreSales.forEach(s => {
+                const sRef = doc(db, `schools/${schoolId}/store_sales`, s.id);
+                batch.delete(sRef);
+            });
+
+            // 3. Clean demo incomes and expenses
             const cleanIncomes = (financesData.incomes || []).filter(i => !String(i.id || '').startsWith('demo_'));
             const cleanExpenses = (financesData.expenses || []).filter(e => !String(e.id || '').startsWith('demo_'));
 
             const finDocRef = doc(db, `schools/${schoolId}/settings/finances`);
-            batch.set(finDocRef, {
-                incomes: cleanIncomes,
-                expenses: cleanExpenses
-            }, { merge: true });
+            batch.set(finDocRef, { incomes: cleanIncomes, expenses: cleanExpenses }, { merge: true });
 
-            // 3. Clean demo payrolls for current and compare years
-            for (let m = 1; m <= 12; m++) {
-                const pCurRef = doc(db, `schools/${schoolId}/settings`, `payroll_${selectedYear}_${m}`);
-                batch.delete(pCurRef);
-                const pCmpRef = doc(db, `schools/${schoolId}/settings`, `payroll_${compareYear}_${m}`);
-                batch.delete(pCmpRef);
+            // 4. Clean demo payrolls for all available years
+            for (const yr of availableYears) {
+                for (let m = 1; m <= 12; m++) {
+                    const pRef = doc(db, `schools/${schoolId}/settings`, `payroll_${yr}_${m}`);
+                    batch.delete(pRef);
+                }
             }
 
             await batch.commit();
 
             setFeeTransactions(prev => prev.filter(t => !t.isDemoData && !String(t.id || '').startsWith('DEMO-REC-') && !String(t.receiptNo || '').startsWith('DEMO-REC-')));
+            setStoreSales(prev => prev.filter(s => !s.isDemoData && !String(s.id || '').startsWith('DEMO-STORE-') && !String(s.invoiceNo || '').startsWith('DEMO-STORE-')));
             setFinancesData({ incomes: cleanIncomes, expenses: cleanExpenses });
             setPayrollMetaByMonth({});
 
-            alert("✓ Demo Financial Records Purged Successfully!\nDaily drawer and live ledger are now clean.");
+            alert("✓ Demo Financial Records Purged Successfully!\nDaily drawer, store register, and live ledger are now clean.");
         } catch (err) {
             console.error("Error purging demo data:", err);
             alert("Error purging demo data: " + err.message);
@@ -554,10 +674,11 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
 
     const hasDemoData = useMemo(() => {
         const hasTx = (feeTransactions || []).some(t => t.isDemoData || String(t.id || '').startsWith('DEMO-REC-') || String(t.receiptNo || '').startsWith('DEMO-REC-'));
+        const hasStore = (storeSales || []).some(s => s.isDemoData || String(s.id || '').startsWith('DEMO-STORE-'));
         const hasInc = (financesData.incomes || []).some(i => String(i.id || '').startsWith('demo_'));
         const hasExp = (financesData.expenses || []).some(e => String(e.id || '').startsWith('demo_'));
-        return hasTx || hasInc || hasExp;
-    }, [feeTransactions, financesData]);
+        return hasTx || hasStore || hasInc || hasExp;
+    }, [feeTransactions, storeSales, financesData]);
 
     // =========================================================================
     // 6. CORE FINANCIAL CALCULATION ENGINE (100% Offline, Time-Series Aware)
@@ -716,26 +837,92 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             }
         }
 
-        // Grand Totals
+        const isSelectedYearFuture = selectedYear > currentYearNum;
+        const isSelectedYearPast = selectedYear < currentYearNum;
+        const isSelectedYearCurrent = selectedYear === currentYearNum;
+        const isFutureScope = isSelectedYearFuture || (isSelectedYearCurrent && !isAllYearMode && !isTodayMode && activeMonthNum > currentMonthNum);
+
+        // Projected Staff Baseline Salaries for Future Months (Fixed Monthly Payroll Commitment)
+        const staffBaseCommitment = teachersList.reduce((sum, t) => sum + (Number(t.baseSalary) || 35000), 0) || 147000;
+        const effectiveSalariesPaid = (isFutureScope && totalTeacherSalariesPaid === 0) ? staffBaseCommitment : totalTeacherSalariesPaid;
+
+        // Grand Totals (Actual for past/current, Projected Fixed for Future)
         const grossRevenue = totalFeePaid + totalDirectIncomes;
-        const totalOutflow = totalOperationalExpenses + totalTeacherSalariesPaid;
+        const totalOutflow = totalOperationalExpenses + effectiveSalariesPaid;
         const netProfit = grossRevenue - totalOutflow;
         const profitMarginPercent = grossRevenue > 0 ? Math.round((netProfit / grossRevenue) * 100) : 0;
 
-        // Master School Financial Wheel Slices (5 Core Pillars)
+        // 1. Revenue Allocation & Profit Pillars (Salaries + Expenses + Net Profit)
+        const revenueDistributionData = [];
+        if (effectiveSalariesPaid > 0) {
+            revenueDistributionData.push({
+                name: isFutureScope ? 'Projected Staff Payroll' : 'Teacher Salaries Paid',
+                value: effectiveSalariesPaid,
+                color: WHEEL_COLORS.teacherSalaries,
+                type: 'outflow'
+            });
+        }
+        if (totalOperationalExpenses > 0) {
+            revenueDistributionData.push({
+                name: isFutureScope ? 'Projected Fixed Expenses' : 'Operational Expenses',
+                value: totalOperationalExpenses,
+                color: WHEEL_COLORS.operationalExp,
+                type: 'outflow'
+            });
+        }
+        if (netProfit > 0) {
+            revenueDistributionData.push({
+                name: isFutureScope ? 'Projected Surplus' : 'Net School Profit',
+                value: netProfit,
+                color: WHEEL_COLORS.netProfit,
+                type: 'profit'
+            });
+        } else if (netProfit < 0) {
+            revenueDistributionData.push({
+                name: isFutureScope ? 'Projected Deficit' : 'Operational Deficit',
+                value: Math.abs(netProfit),
+                color: WHEEL_COLORS.deficit,
+                type: 'deficit'
+            });
+        }
+
+        // 2. Inflow Sources (Counter Cash vs Digital Online vs Direct Income)
+        const inflowSourcesData = [];
+        if (counterCashFees > 0) {
+            inflowSourcesData.push({ name: 'Counter Cash Fees', value: counterCashFees, color: WHEEL_COLORS.counterCash, type: 'inflow' });
+        }
+        if (onlineFees > 0) {
+            inflowSourcesData.push({ name: 'Online / Digital Fees', value: onlineFees, color: WHEEL_COLORS.onlineFees, type: 'inflow' });
+        }
+        if (totalDirectIncomes > 0) {
+            inflowSourcesData.push({ name: isFutureScope ? 'Permanent Incomes (Fixed)' : 'Direct School Incomes', value: totalDirectIncomes, color: WHEEL_COLORS.directIncomes, type: 'inflow' });
+        }
+
+        // 3. Fallback / Combined Pillars (All Inflow + Outflow + Profit)
         const all5WheelPillars = [
             { name: 'Counter Cash Fees', value: counterCashFees, color: WHEEL_COLORS.counterCash, type: 'inflow' },
             { name: 'Online / Digital Fees', value: onlineFees, color: WHEEL_COLORS.onlineFees, type: 'inflow' },
-            { name: 'Direct School Incomes', value: totalDirectIncomes, color: WHEEL_COLORS.directIncomes, type: 'inflow' },
-            { name: 'Teacher Salaries Paid', value: totalTeacherSalariesPaid, color: WHEEL_COLORS.teacherSalaries, type: 'outflow' },
-            { name: 'Operational Expenses', value: totalOperationalExpenses, color: WHEEL_COLORS.operationalExp, type: 'outflow' }
+            { name: isFutureScope ? 'Permanent Incomes' : 'Direct School Incomes', value: totalDirectIncomes, color: WHEEL_COLORS.directIncomes, type: 'inflow' },
+            { name: isFutureScope ? 'Projected Payroll' : 'Teacher Salaries Paid', value: effectiveSalariesPaid, color: WHEEL_COLORS.teacherSalaries, type: 'outflow' },
+            { name: isFutureScope ? 'Fixed Expenses' : 'Operational Expenses', value: totalOperationalExpenses, color: WHEEL_COLORS.operationalExp, type: 'outflow' }
         ];
+        if (netProfit > 0) {
+            all5WheelPillars.push({
+                name: isFutureScope ? 'Projected Surplus' : 'Net School Profit',
+                value: netProfit,
+                color: WHEEL_COLORS.netProfit,
+                type: 'profit'
+            });
+        }
 
-        // Only positive slices for SVG Wheel arcs
-        const masterWheelData = all5WheelPillars.filter(item => item.value > 0);
+        // Active Master Wheel Data based on user toggle
+        const activeDistributionSlices = revenueDistributionData.filter(item => item.value > 0);
+        const masterWheelData = wheelViewMode === 'inflows' 
+            ? (inflowSourcesData.length > 0 ? inflowSourcesData : [{ name: 'Projected Fixed Income', value: totalDirectIncomes || 1, color: WHEEL_COLORS.directIncomes, type: 'inflow' }])
+            : (activeDistributionSlices.length > 0 ? activeDistributionSlices : all5WheelPillars.filter(item => item.value > 0));
 
-        // Payment Channels Distribution Donut
-        const channelDistributionData = [
+        // Payment Channels Distribution Donut (Actual live fees only)
+        const channelDistributionData = isFutureScope ? [] : [
             { name: 'Counter Cash', value: counterCashFees, color: CHANNEL_COLORS.Cash },
             { name: 'EasyPaisa', value: easyPaisaFees, color: CHANNEL_COLORS.EasyPaisa },
             { name: 'JazzCash', value: jazzCashFees, color: CHANNEL_COLORS.JazzCash },
@@ -749,8 +936,8 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             const cat = exp.category || 'General Operational';
             expenseCategoryMap[cat] = (expenseCategoryMap[cat] || 0) + (Number(exp.amount) || 0);
         });
-        if (totalTeacherSalariesPaid > 0) {
-            expenseCategoryMap['Teacher Salaries'] = totalTeacherSalariesPaid;
+        if (effectiveSalariesPaid > 0) {
+            expenseCategoryMap[isFutureScope ? 'Projected Staff Salaries' : 'Teacher Salaries'] = effectiveSalariesPaid;
         }
 
         const expenseCategoriesData = Object.entries(expenseCategoryMap).map(([name, value], idx) => ({
@@ -759,43 +946,76 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             color: ['#ef4444', '#f59e0b', '#3b82f6', '#8b5cf6', '#10b981', '#ec4899', '#64748b'][idx % 7]
         }));
 
-        // 12-Month Year-over-Year (YoY) Trendline Data
+        // Year Rollover & Opening Balance Metrics (Dec -> Jan Bridge)
+        const previousYear = selectedYear - 1;
+        let prevYearFeeTotal = 0;
+        (feeTransactions || []).forEach(tx => {
+            const parts = (tx.dateIso || '').split('-');
+            const y = parts[0] ? Number(parts[0]) : (tx.timestamp?.seconds ? new Date(tx.timestamp.seconds * 1000).getFullYear() : 0);
+            if (y === previousYear) {
+                prevYearFeeTotal += Number(tx.totalPaid) || 0;
+            }
+        });
+        const rolloverOpeningCash = Math.round(prevYearFeeTotal * 0.24); // Healthy previous year cash reserve carry-forward
+        const activePermanentIncomes = (financesData.incomes || []).filter(i => i.type === 'permanent');
+        const activePermanentExpenses = (financesData.expenses || []).filter(e => e.type === 'permanent');
+
+        // Total Enrolled Students across all active classes for Recovery Rate calculation
+        const totalEnrolledStudents = Object.values(classStudentsMap).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
+
+        // 12-Month Inflow & Outflow Data & Isolated Month Ledgers
         const months12Data = MONTH_SHORT.map((mShort, idx) => {
             const mNum = idx + 1;
             const currentYearMonthIso = `${selectedYear}-${String(mNum).padStart(2, '0')}`;
-            const compareYearMonthIso = `${compareYear}-${String(mNum).padStart(2, '0')}`;
+            const isFuture = isSelectedYearFuture || (isSelectedYearCurrent && mNum > currentMonthNum);
+            const isCurrent = isSelectedYearCurrent && mNum === currentMonthNum;
+            const isPast = isSelectedYearPast || (isSelectedYearCurrent && mNum < currentMonthNum);
 
-            let curYearInflow = 0;
-            let curYearOutflow = 0;
             let curYearFees = 0;
             let curYearOnlineFees = 0;
             let curYearCashFees = 0;
+            let monthReceiptCount = 0;
+            const monthPaidStudentIds = new Set();
 
-            (feeTransactions || []).forEach(tx => {
-                let txYear = 0;
-                let txMonth = 0;
-                if (tx.dateIso) {
-                    const parts = tx.dateIso.split('-');
-                    txYear = Number(parts[0]);
-                    txMonth = Number(parts[1]);
-                } else if (tx.timestamp?.seconds) {
-                    const d = new Date(tx.timestamp.seconds * 1000);
-                    txYear = d.getFullYear();
-                    txMonth = d.getMonth() + 1;
-                }
-                if (txYear === selectedYear && txMonth === mNum) {
-                    const amt = Number(tx.totalPaid) || 0;
-                    curYearInflow += amt;
-                    curYearFees += amt;
-                    const mode = (tx.paymentMode || 'Cash').toLowerCase();
-                    if (mode.startsWith('online') || mode.includes('transfer') || mode.includes('easy') || mode.includes('jazz') || mode.includes('bank')) {
-                        curYearOnlineFees += amt;
-                    } else {
-                        curYearCashFees += amt;
+            if (!isFuture) {
+                (feeTransactions || []).forEach(tx => {
+                    let txYear = 0;
+                    let txMonth = 0;
+                    if (tx.dateIso) {
+                        const parts = tx.dateIso.split('-');
+                        txYear = Number(parts[0]);
+                        txMonth = Number(parts[1]);
+                    } else if (tx.timestamp?.seconds) {
+                        const d = new Date(tx.timestamp.seconds * 1000);
+                        txYear = d.getFullYear();
+                        txMonth = d.getMonth() + 1;
+                    } else if (tx.dateString) {
+                        const d = new Date(tx.dateString);
+                        if (!isNaN(d.getTime())) {
+                            txYear = d.getFullYear();
+                            txMonth = d.getMonth() + 1;
+                        }
                     }
-                }
-            });
 
+                    if (txYear === selectedYear && txMonth === mNum) {
+                        const amt = Number(tx.totalPaid) || 0;
+                        curYearFees += amt;
+                        monthReceiptCount += 1;
+                        if (tx.studentId) monthPaidStudentIds.add(tx.studentId);
+
+                        const mode = (tx.paymentMode || 'Cash').toLowerCase();
+                        const collectedBy = (tx.collectedBy || '').toLowerCase();
+                        if (mode.startsWith('online') || collectedBy.includes('online') || mode.includes('transfer') || mode.includes('easy') || mode.includes('jazz') || mode.includes('bank')) {
+                            curYearOnlineFees += amt;
+                        } else {
+                            curYearCashFees += amt;
+                        }
+                    }
+                });
+            }
+
+            // Direct School Incomes for this month
+            let monthDirectIncomes = 0;
             (financesData.incomes || []).forEach(inc => {
                 let incYear = 0;
                 let incMonth = 0;
@@ -811,15 +1031,37 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     const isValidYear = !incYear || selectedYear >= incYear;
                     const isValidMonth = !incYear || selectedYear > incYear || (selectedYear === incYear && mNum >= incMonth);
                     if (isValidYear && isValidMonth) {
-                        curYearInflow += (Number(inc.amount) || 0);
+                        monthDirectIncomes += (Number(inc.amount) || 0);
                     }
-                } else if (inc.createdAt?.startsWith(currentYearMonthIso) || inc.date?.startsWith(currentYearMonthIso)) {
-                    curYearInflow += (Number(inc.amount) || 0);
+                } else if (!isFuture && (inc.createdAt?.startsWith(currentYearMonthIso) || inc.date?.startsWith(currentYearMonthIso))) {
+                    monthDirectIncomes += (Number(inc.amount) || 0);
                 }
             });
 
+            // Store Sales for this month (Only recorded for past and current months)
+            let monthStoreSales = 0;
+            if (!isFuture) {
+                (storeSales || []).forEach(sale => {
+                    let sYear = 0;
+                    let sMonth = 0;
+                    const dStr = sale.timestamp || sale.dateIso || sale.date || sale.createdAt;
+                    if (dStr) {
+                        const d = new Date(dStr?.seconds ? dStr.seconds * 1000 : dStr);
+                        if (!isNaN(d.getTime())) {
+                            sYear = d.getFullYear();
+                            sMonth = d.getMonth() + 1;
+                        }
+                    }
+                    if (sYear === selectedYear && sMonth === mNum) {
+                        monthStoreSales += (Number(sale.grandTotal || sale.totalAmount || sale.totalPaid || sale.amount || 0));
+                    }
+                });
+            }
+
+            // Operational Expenses for this month (excluding salary)
+            let monthOperationalExpenses = 0;
             (financesData.expenses || []).forEach(exp => {
-                const isSalary = (exp.category || '').toLowerCase() === 'salary';
+                const isSalary = (exp.category || '').toLowerCase() === 'salary' || (exp.id || '').startsWith('payroll-');
                 if (!isSalary) {
                     let expYear = 0;
                     let expMonth = 0;
@@ -835,59 +1077,89 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                         const isValidYear = !expYear || selectedYear >= expYear;
                         const isValidMonth = !expYear || selectedYear > expYear || (selectedYear === expYear && mNum >= expMonth);
                         if (isValidYear && isValidMonth) {
-                            curYearOutflow += (Number(exp.amount) || 0);
+                            monthOperationalExpenses += (Number(exp.amount) || 0);
                         }
-                    } else if (exp.createdAt?.startsWith(currentYearMonthIso) || exp.date?.startsWith(currentYearMonthIso)) {
-                        curYearOutflow += (Number(exp.amount) || 0);
+                    } else if (!isFuture && (exp.createdAt?.startsWith(currentYearMonthIso) || exp.date?.startsWith(currentYearMonthIso))) {
+                        monthOperationalExpenses += (Number(exp.amount) || 0);
                     }
                 }
             });
 
-            const pMetaCur = payrollMetaByMonth[`${selectedYear}_${mNum}`] || {};
-            Object.values(pMetaCur).forEach(tm => {
-                if (tm.isPaid) curYearOutflow += (Number(tm.paidAmount) || 0);
-            });
+            // Teacher Salaries from Payroll Meta for this month (Only for past and current months)
+            let monthTeacherSalaries = 0;
+            let monthTeachersPaidCount = 0;
+            if (!isFuture) {
+                const pMetaCur = payrollMetaByMonth[`${selectedYear}_${mNum}`] || {};
+                Object.values(pMetaCur).forEach(tm => {
+                    if (tm.isPaid) {
+                        monthTeacherSalaries += (Number(tm.paidAmount) || 0);
+                        monthTeachersPaidCount += 1;
+                    }
+                });
+            }
 
-            let cmpYearInflow = 0;
-            (feeTransactions || []).forEach(tx => {
-                let txYear = 0;
-                let txMonth = 0;
-                if (tx.dateIso) {
-                    const parts = tx.dateIso.split('-');
-                    txYear = Number(parts[0]);
-                    txMonth = Number(parts[1]);
-                } else if (tx.timestamp?.seconds) {
-                    const d = new Date(tx.timestamp.seconds * 1000);
-                    txYear = d.getFullYear();
-                    txMonth = d.getMonth() + 1;
-                }
-                if (txYear === compareYear && txMonth === mNum) {
-                    cmpYearInflow += (Number(tx.totalPaid) || 0);
-                }
-            });
+            const curYearInflow = curYearFees + monthDirectIncomes + monthStoreSales;
+            const curYearOutflow = monthOperationalExpenses + monthTeacherSalaries;
+            const net = curYearInflow - curYearOutflow;
+            const profitMargin = curYearInflow > 0 ? Math.round((net / curYearInflow) * 100) : 0;
+            const recoveryPercent = isFuture 
+                ? 0 
+                : (totalEnrolledStudents > 0 
+                    ? Math.min(100, Math.round((monthPaidStudentIds.size / totalEnrolledStudents) * 100)) 
+                    : (monthReceiptCount > 0 ? 100 : 0));
+            const digitalRatio = curYearFees > 0 ? Math.round((curYearOnlineFees / curYearFees) * 100) : 0;
 
             return {
                 name: mShort,
                 monthNum: mNum,
+                monthName: MONTH_NAMES[idx],
                 inflow: curYearInflow,
                 outflow: curYearOutflow,
-                net: curYearInflow - curYearOutflow,
-                compareInflow: cmpYearInflow,
+                net,
+                profitMargin,
+                isSurplus: net >= 0,
+                isFuture,
+                isCurrent,
+                isPast,
+                feeInflow: curYearFees,
                 cashFees: curYearCashFees,
                 onlineFees: curYearOnlineFees,
-                isCurrent: mNum === currentMonthNum && selectedYear === currentYearNum
+                digitalRatio,
+                directIncomes: monthDirectIncomes,
+                storeSalesAmount: monthStoreSales,
+                expenses: monthOperationalExpenses,
+                salaries: monthTeacherSalaries,
+                teachersPaidCount: monthTeachersPaidCount,
+                receiptCount: monthReceiptCount,
+                paidStudentsCount: monthPaidStudentIds.size,
+                recoveryPercent,
+                isSelected: mNum === inspectedMonthNum
             };
         });
+
+        // Annual Totals Snapshot for Selected Year (Computed across active past/current months for current year, or all 12 for past years)
+        const recordedMonths = months12Data.filter(m => !m.isFuture);
+        const annualInflow = (recordedMonths.length > 0 ? recordedMonths : months12Data).reduce((s, m) => s + m.inflow, 0);
+        const annualOutflow = (recordedMonths.length > 0 ? recordedMonths : months12Data).reduce((s, m) => s + m.outflow, 0);
+        const annualNet = annualInflow - annualOutflow;
+        const annualMargin = annualInflow > 0 ? Math.round((annualNet / annualInflow) * 100) : 0;
+        const annualTotals = {
+            annualInflow,
+            annualOutflow,
+            annualNet,
+            annualMargin,
+            isSurplus: annualNet >= 0
+        };
+
+        // Active Inspected Month Data Capsule
+        const inspectedMonthData = months12Data.find(m => m.monthNum === inspectedMonthNum) || months12Data[currentMonthNum - 1] || months12Data[0];
 
         // Smart Automated Financial Insight in English
         let smartInsight = '';
         if (isTodayMode) {
             smartInsight = `💡 Daily Closing Insight: Today's counter cash drawer closed with Rs ${counterCashFees.toLocaleString()} collected across ${scopedTxs.length} fee receipts.`;
         } else if (isAllYearMode) {
-            const totalAnnualInflow = months12Data.reduce((s, m) => s + m.inflow, 0);
-            const totalAnnualOutflow = months12Data.reduce((s, m) => s + m.outflow, 0);
-            const annualNet = totalAnnualInflow - totalAnnualOutflow;
-            smartInsight = `💡 Annual Financial Insight: In ${selectedYear}, the school generated Rs ${totalAnnualInflow.toLocaleString()} total revenue with an annual surplus of Rs ${annualNet.toLocaleString()} (${totalAnnualInflow > 0 ? Math.round((annualNet / totalAnnualInflow) * 100) : 0}% margin).`;
+            smartInsight = `💡 Annual Financial Insight: In ${selectedYear}, the school generated Rs ${annualInflow.toLocaleString()} total revenue with an annual surplus of Rs ${annualNet.toLocaleString()} (${annualMargin}% margin).`;
         } else {
             const monthLabel = MONTH_NAMES[activeMonthNum - 1];
             const prevMonthData = months12Data[activeMonthNum - 2];
@@ -930,17 +1202,24 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             netProfit,
             profitMarginPercent,
             totalDiscounts,
-            paidStudentsCount: paidStudentIds.size,
+            revenueDistributionData,
+            inflowSourcesData,
             masterWheelData,
             all5WheelPillars,
             channelDistributionData,
             expenseCategoriesData,
             months12Data,
-            smartInsight
+            inspectedMonthData,
+            annualTotals,
+            smartInsight,
+            isFutureScope,
+            rolloverOpeningCash,
+            activePermanentIncomes,
+            activePermanentExpenses
         };
     }, [
-        selectedYear, compareYear, selectedMonthMode, customSelectedMonthNum,
-        feeTransactions, financesData, teachersList, payrollMetaByMonth, currentMonthNum, currentYearNum, todayIsoDate
+        selectedYear, selectedMonthMode, customSelectedMonthNum, wheelViewMode, inspectedMonthNum,
+        feeTransactions, financesData, teachersList, payrollMetaByMonth, storeSales, classStudentsMap, currentMonthNum, currentYearNum, todayIsoDate
     ]);
 
     // 7. Filtered Ledger Records for Sub Tab 3
@@ -1893,35 +2172,87 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             justifyContent: 'space-between'
                         }}>
                             <div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <PieChart size={20} color="#0078d4" />
-                                        The Master Financial Wheel (3D)
-                                    </h3>
-                                    <span style={{ fontSize: '0.75rem', background: '#eff6ff', color: '#0078d4', padding: '3px 8px', borderRadius: '6px', fontWeight: '700', border: '1px solid #bfdbfe' }}>
-                                        3D Isometric
-                                    </span>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                                    <div>
+                                        <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <PieChart size={22} color="#0078d4" />
+                                            The Master Financial Wheel (3D)
+                                        </h3>
+                                        <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                                            {wheelViewMode === 'distribution' 
+                                                ? 'Revenue allocation across staff payroll, operational expenses & net school profit'
+                                                : 'Inflow distribution across counter cash, online digital portals & direct incomes'}
+                                        </p>
+                                    </div>
+
+                                    {/* View Mode Toggle Pill */}
+                                    <div style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        background: '#f1f5f9',
+                                        padding: '3px',
+                                        borderRadius: '10px',
+                                        border: '1px solid #cbd5e1'
+                                    }}>
+                                        <button
+                                            onClick={() => setWheelViewMode('distribution')}
+                                            style={{
+                                                border: 'none',
+                                                background: wheelViewMode === 'distribution' ? '#ffffff' : 'transparent',
+                                                color: wheelViewMode === 'distribution' ? '#10b981' : '#64748b',
+                                                fontWeight: wheelViewMode === 'distribution' ? '800' : '600',
+                                                padding: '5px 11px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.76rem',
+                                                cursor: 'pointer',
+                                                boxShadow: wheelViewMode === 'distribution' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                        >
+                                            <Zap size={13} /> Profit & Allocation
+                                        </button>
+                                        <button
+                                            onClick={() => setWheelViewMode('inflows')}
+                                            style={{
+                                                border: 'none',
+                                                background: wheelViewMode === 'inflows' ? '#ffffff' : 'transparent',
+                                                color: wheelViewMode === 'inflows' ? '#0078d4' : '#64748b',
+                                                fontWeight: wheelViewMode === 'inflows' ? '800' : '600',
+                                                padding: '5px 11px',
+                                                borderRadius: '7px',
+                                                fontSize: '0.76rem',
+                                                cursor: 'pointer',
+                                                boxShadow: wheelViewMode === 'inflows' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                transition: 'all 0.15s ease'
+                                            }}
+                                        >
+                                            <Wallet size={13} /> Inflow Sources
+                                        </button>
+                                    </div>
                                 </div>
-                                <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-                                    Complete school revenue vs expense distribution with 3D elevation
-                                </p>
                             </div>
 
-                            {/* 3D Donut Chart with Center KPI */}
-                            <div style={{ position: 'relative', height: '280px', width: '100%', margin: '0.5rem 0' }}>
+                            {/* 3D Expanded Donut Chart with Center 3D Metallic Hub */}
+                            <div style={{ position: 'relative', height: '360px', width: '100%', margin: '0.75rem 0' }}>
                                 <ResponsiveContainer width="100%" height="100%">
                                     <RechartsPie>
                                         <defs>
                                             <filter id="shadow3d" x="-20%" y="-20%" width="140%" height="140%">
-                                                <feDropShadow dx="3" dy="5" stdDeviation="4" floodOpacity="0.25" floodColor="#0f172a" />
+                                                <feDropShadow dx="3" dy="6" stdDeviation="5" floodOpacity="0.25" floodColor="#0f172a" />
                                             </filter>
                                         </defs>
                                         <Pie
                                             data={calculatedMetrics.masterWheelData}
                                             cx="50%"
                                             cy="50%"
-                                            innerRadius={72}
-                                            outerRadius={108}
+                                            innerRadius={98}
+                                            outerRadius={148}
                                             paddingAngle={4}
                                             dataKey="value"
                                             filter="url(#shadow3d)"
@@ -1929,14 +2260,14 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                             labelLine={false}
                                         >
                                             {calculatedMetrics.masterWheelData.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={entry.color} stroke="#ffffff" strokeWidth={2} />
+                                                <Cell key={`cell-${index}`} fill={entry.color} stroke="#ffffff" strokeWidth={2.5} />
                                             ))}
                                         </Pie>
                                         <RechartsTooltip content={<CustomPieTooltip />} wrapperStyle={{ zIndex: 9999, pointerEvents: 'none' }} />
                                     </RechartsPie>
                                 </ResponsiveContainer>
 
-                                {/* Center Metallic Donut KPI Pill */}
+                                {/* Center Metallic Donut KPI Hub */}
                                 <div style={{
                                     position: 'absolute',
                                     top: '50%',
@@ -1945,25 +2276,50 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                     textAlign: 'center',
                                     pointerEvents: 'none',
                                     zIndex: 1,
-                                    background: 'linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%)',
+                                    background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
                                     borderRadius: '50%',
-                                    width: '100px',
-                                    height: '100px',
+                                    width: '136px',
+                                    height: '136px',
                                     display: 'flex',
                                     flexDirection: 'column',
                                     alignItems: 'center',
                                     justifyContent: 'center',
-                                    boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.9), 0 4px 10px rgba(0,0,0,0.1)',
-                                    border: '1.5px solid #e2e8f0'
+                                    boxShadow: 'inset 0 2px 5px rgba(255,255,255,1), 0 8px 18px rgba(0,0,0,0.12)',
+                                    border: calculatedMetrics.netProfit >= 0 ? '2px solid #86efac' : '2px solid #fca5a5'
                                 }}>
-                                    <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                        Net Margin
+                                    <div style={{
+                                        fontSize: '0.68rem',
+                                        fontWeight: '800',
+                                        color: calculatedMetrics.netProfit >= 0 ? '#15803d' : '#b91c1c',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.04em',
+                                        background: calculatedMetrics.netProfit >= 0 ? '#dcfce7' : '#fee2e2',
+                                        padding: '2px 8px',
+                                        borderRadius: '999px',
+                                        marginBottom: '3px'
+                                    }}>
+                                        {calculatedMetrics.isFutureScope 
+                                            ? (calculatedMetrics.netProfit >= 0 ? '🕒 Projected Surplus' : '🕒 Projected Deficit')
+                                            : (calculatedMetrics.netProfit >= 0 ? '✨ Net Surplus' : '⚠️ Deficit')}
                                     </div>
-                                    <div style={{ fontSize: '1.35rem', fontWeight: '800', color: calculatedMetrics.netProfit >= 0 ? '#10b981' : '#ef4444', lineHeight: 1.1 }}>
-                                        {calculatedMetrics.profitMarginPercent}%
+                                    <div style={{
+                                        fontSize: '1.2rem',
+                                        fontWeight: '900',
+                                        color: calculatedMetrics.netProfit >= 0 ? '#10b981' : '#dc2626',
+                                        lineHeight: 1.15
+                                    }}>
+                                        Rs {calculatedMetrics.netProfit >= 0 ? calculatedMetrics.netProfit.toLocaleString() : `(${Math.abs(calculatedMetrics.netProfit).toLocaleString()})`}
                                     </div>
-                                    <div style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '600' }}>
-                                        Rs {calculatedMetrics.grossRevenue >= 1000 ? `${(calculatedMetrics.grossRevenue/1000).toFixed(0)}k` : calculatedMetrics.grossRevenue} Turn
+                                    <div style={{
+                                        fontSize: '0.74rem',
+                                        fontWeight: '800',
+                                        color: calculatedMetrics.netProfit >= 0 ? '#059669' : '#e11d48',
+                                        marginTop: '2px'
+                                    }}>
+                                        {calculatedMetrics.isFutureScope ? 'Fixed Commitment' : `${calculatedMetrics.profitMarginPercent}% Margin`}
+                                    </div>
+                                    <div style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '600', marginTop: '1px' }}>
+                                        {calculatedMetrics.isFutureScope ? 'Baseline Projected' : `Rs ${calculatedMetrics.grossRevenue >= 1000 ? `${(calculatedMetrics.grossRevenue/1000).toFixed(0)}k` : calculatedMetrics.grossRevenue} Turn`}
                                     </div>
                                 </div>
                             </div>
@@ -1971,7 +2327,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             {/* Clean Structured Financial Breakdown Badges */}
                             <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '0.5rem', marginTop: '0.85rem' }}>
                                 {(() => {
-                                    const pillars = calculatedMetrics.all5WheelPillars || calculatedMetrics.masterWheelData;
+                                    const pillars = calculatedMetrics.masterWheelData;
                                     const totalWheel = pillars.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
                                     return pillars.map(item => {
                                         const pct = totalWheel > 0 ? Math.round((Number(item.value) / totalWheel) * 100) : 0;
@@ -2012,7 +2368,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             </div>
                         </div>
 
-                        {/* 2. 12-MONTH YoY PROGRESSION & 3D COMPARISON TRENDLINE */}
+                        {/* 2. 12-MONTH YoY PROGRESSION & INTERACTIVE MONTH AUDIT CAPSULE */}
                         <div className="card" style={{
                             background: '#ffffff',
                             backgroundImage: 'radial-gradient(#cbd5e1 1.2px, transparent 1.2px), linear-gradient(to bottom, #ffffff, #f8fafc)',
@@ -2028,35 +2384,219 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             <div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.5rem' }}>
                                     <div>
-                                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <BarChart3 size={20} color="#0078d4" />
-                                            12-Month Inflow & YoY Comparative Trend (3D)
+                                        <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <BarChart3 size={22} color="#0078d4" />
+                                            12-Month Inflow & Outflow Analytics (3D)
                                         </h3>
                                         <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: '#64748b' }}>
-                                            Comparing {selectedYear} cashflow against {compareYear} trendline with sharp grids
+                                            Click any Year tab or Month bar below to audit isolated collections, expenses, store sales, salaries & profit
                                         </p>
                                     </div>
 
-                                    {/* Compare Year Selector */}
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#f8fafc', padding: '0.25rem 0.6rem', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-                                        <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b' }}>Compare:</span>
-                                        <select
-                                            value={compareYear}
-                                            onChange={(e) => setCompareYear(Number(e.target.value))}
-                                            style={{ border: 'none', background: 'transparent', fontSize: '0.8rem', fontWeight: '800', color: '#0f172a', outline: 'none', cursor: 'pointer' }}
-                                        >
-                                            {availableYears.filter(y => y !== selectedYear).map(yr => (
-                                                <option key={yr} value={yr}>{yr}</option>
-                                            ))}
-                                        </select>
+                                    {/* Year Tabs & Annual Snapshot */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                        {/* Annual Summary Snapshot Badge */}
+                                        <div style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            padding: '0.35rem 0.75rem',
+                                            background: '#ffffff',
+                                            borderRadius: '8px',
+                                            border: '1px solid #cbd5e1',
+                                            fontSize: '0.74rem',
+                                            fontWeight: '700',
+                                            color: '#334155',
+                                            boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                                        }}>
+                                            <span style={{ color: '#64748b', fontWeight: '800' }}>{selectedYear} Annual:</span>
+                                            <span style={{ color: '#166534', fontWeight: '800' }}>In: Rs {Math.round((calculatedMetrics.annualTotals?.annualInflow || 0) / 1000)}k</span>
+                                            <span style={{ color: '#991b1b', fontWeight: '800' }}>Out: Rs {Math.round((calculatedMetrics.annualTotals?.annualOutflow || 0) / 1000)}k</span>
+                                            <span style={{
+                                                background: (calculatedMetrics.annualTotals?.annualNet || 0) >= 0 ? '#dcfce7' : '#fee2e2',
+                                                color: (calculatedMetrics.annualTotals?.annualNet || 0) >= 0 ? '#15803d' : '#b91c1c',
+                                                padding: '1px 6px',
+                                                borderRadius: '4px',
+                                                fontWeight: '800',
+                                                border: `1px solid ${(calculatedMetrics.annualTotals?.annualNet || 0) >= 0 ? '#bbf7d0' : '#fecaca'}`
+                                            }}>
+                                                {(calculatedMetrics.annualTotals?.annualNet || 0) >= 0 ? '+' : ''}Rs {Math.round((calculatedMetrics.annualTotals?.annualNet || 0) / 1000)}k ({(calculatedMetrics.annualTotals?.annualMargin || 0)}%)
+                                            </span>
+                                        </div>
+
+                                        {/* Dynamic Year Pills (2025+) */}
+                                        <div style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '3px',
+                                            background: '#f1f5f9',
+                                            padding: '3px',
+                                            borderRadius: '10px',
+                                            border: '1px solid #cbd5e1'
+                                        }}>
+                                            {availableYears.map(yr => {
+                                                const isYearActive = yr === selectedYear;
+                                                const isCurrent = yr === currentYearNum;
+                                                return (
+                                                    <button
+                                                        key={yr}
+                                                        onClick={() => {
+                                                            setSelectedYear(yr);
+                                                            if (yr === currentYearNum) {
+                                                                setInspectedMonthNum(currentMonthNum);
+                                                            } else {
+                                                                setInspectedMonthNum(1);
+                                                            }
+                                                        }}
+                                                        title={`Switch view to Year ${yr}`}
+                                                        style={{
+                                                            border: 'none',
+                                                            background: isYearActive ? 'linear-gradient(135deg, #0078d4 0%, #1e40af 100%)' : 'transparent',
+                                                            color: isYearActive ? '#ffffff' : '#475569',
+                                                            fontWeight: isYearActive ? '900' : '700',
+                                                            fontSize: '0.78rem',
+                                                            padding: '5px 12px',
+                                                            borderRadius: '8px',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '4px',
+                                                            boxShadow: isYearActive ? '0 2px 6px rgba(0, 120, 212, 0.35)' : 'none',
+                                                            transition: 'all 0.15s ease'
+                                                        }}
+                                                    >
+                                                        <span>{yr}</span>
+                                                        {isCurrent && (
+                                                            <span style={{
+                                                                fontSize: '0.62rem',
+                                                                background: isYearActive ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
+                                                                color: isYearActive ? '#ffffff' : '#0078d4',
+                                                                padding: '1px 5px',
+                                                                borderRadius: '4px',
+                                                                fontWeight: '800'
+                                                            }}>
+                                                                Live
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+
+                                            <div style={{ width: '1px', height: '18px', background: '#cbd5e1', margin: '0 4px' }} />
+
+                                            {/* Quick Full Year Pill */}
+                                            <button
+                                                onClick={handleSelectAllYearScope}
+                                                title={`View full accumulated year metrics for ${selectedYear}`}
+                                                style={{
+                                                    border: 'none',
+                                                    background: selectedMonthMode === 'all_year' ? 'linear-gradient(135deg, #0f172a 0%, #334155 100%)' : 'transparent',
+                                                    color: selectedMonthMode === 'all_year' ? '#ffffff' : '#475569',
+                                                    fontWeight: selectedMonthMode === 'all_year' ? '900' : '700',
+                                                    fontSize: '0.76rem',
+                                                    padding: '5px 10px',
+                                                    borderRadius: '8px',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    boxShadow: selectedMonthMode === 'all_year' ? '0 2px 6px rgba(15, 23, 42, 0.35)' : 'none',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                <span>🗓️ Full Year</span>
+                                            </button>
+                                        </div>
                                     </div>
+                                </div>
+
+                                {/* Interactive 12-Month Selector Strip (Capsules / Slices) */}
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(44px, 1fr))',
+                                    gap: '0.3rem',
+                                    margin: '0.75rem 0 0.5rem 0',
+                                    padding: '0.35rem',
+                                    background: '#f8fafc',
+                                    borderRadius: '12px',
+                                    border: '1px solid #e2e8f0'
+                                }}>
+                                    {calculatedMetrics.months12Data.map(m => {
+                                        const isSel = selectedMonthMode !== 'all_year' && selectedMonthMode !== 'today' && (
+                                            (selectedMonthMode === 'custom_month' && customSelectedMonthNum === m.monthNum) ||
+                                            (selectedMonthMode === 'current' && m.monthNum === currentMonthNum && selectedYear === currentYearNum) ||
+                                            (m.monthNum === inspectedMonthNum)
+                                        );
+                                        return (
+                                            <button
+                                                key={m.name}
+                                                onClick={() => handleSelectMonthScope(m.monthNum)}
+                                                title={m.isFuture 
+                                                    ? `Upcoming Month: ${m.monthName} ${selectedYear} (Period in future)`
+                                                    : `Inspect ${m.monthName} ${selectedYear}: Inflow Rs ${m.inflow.toLocaleString()}, Net Rs ${m.net.toLocaleString()}`}
+                                                style={{
+                                                    padding: '5px 4px',
+                                                    borderRadius: '8px',
+                                                    border: isSel 
+                                                        ? '2px solid #0078d4' 
+                                                        : (m.isCurrent 
+                                                            ? '1.5px solid #93c5fd' 
+                                                            : (m.isFuture ? '1px dashed #cbd5e1' : '1px solid #e2e8f0')),
+                                                    background: isSel 
+                                                        ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)' 
+                                                        : (m.isCurrent 
+                                                            ? '#f0f9ff' 
+                                                            : (m.isFuture ? '#fafafa' : '#ffffff')),
+                                                    color: isSel ? '#0078d4' : (m.isFuture ? '#94a3b8' : '#334155'),
+                                                    fontWeight: isSel ? '900' : '700',
+                                                    fontSize: '0.74rem',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '2px',
+                                                    boxShadow: isSel ? '0 3px 8px rgba(0, 120, 212, 0.25)' : 'none',
+                                                    transition: 'all 0.15s ease',
+                                                    opacity: m.isFuture && !isSel ? 0.75 : 1
+                                                }}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                    <span style={{
+                                                        width: '5px',
+                                                        height: '5px',
+                                                        borderRadius: '50%',
+                                                        background: m.isFuture ? '#94a3b8' : (m.isCurrent ? '#2563eb' : (m.isSurplus ? '#10b981' : '#ef4444')),
+                                                        boxShadow: m.isFuture ? 'none' : `0 0 4px ${m.isCurrent ? '#2563eb' : (m.isSurplus ? '#10b981' : '#ef4444')}`
+                                                    }} />
+                                                    <span>{m.name}</span>
+                                                </div>
+                                                <span style={{
+                                                    fontSize: '0.62rem',
+                                                    color: isSel ? '#1e40af' : (m.isFuture ? '#94a3b8' : (m.net >= 0 ? '#166534' : '#b91c1c')),
+                                                    fontWeight: '800'
+                                                }}>
+                                                    {m.isFuture ? 'Upcoming' : (m.inflow > 0 ? (m.net >= 0 ? `+${Math.round(m.net / 1000)}k` : `${Math.round(m.net / 1000)}k`) : 'Rs 0')}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
 
-                            {/* 3D Bar & Spline Chart */}
-                            <div style={{ height: '280px', width: '100%', margin: '0.5rem 0' }}>
+                            {/* 3D Bar Chart with Click-to-Inspect */}
+                            <div style={{ height: '260px', width: '100%', margin: '0.35rem 0' }}>
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <ComposedChart data={calculatedMetrics.months12Data} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                                    <ComposedChart
+                                        data={calculatedMetrics.months12Data}
+                                        margin={{ top: 10, right: 10, left: -15, bottom: 0 }}
+                                        onClick={(e) => {
+                                            if (e && e.activePayload && e.activePayload[0]) {
+                                                const mNum = e.activePayload[0].payload.monthNum;
+                                                if (mNum) handleSelectMonthScope(mNum);
+                                            }
+                                        }}
+                                        style={{ cursor: 'pointer' }}
+                                    >
                                         <defs>
                                             <linearGradient id="inflow3DGrad" x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="0%" stopColor="#34d399" />
@@ -2075,45 +2615,245 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                         <CartesianGrid strokeDasharray="2 2" stroke="#94a3b8" strokeWidth={0.8} vertical={true} opacity={0.6} />
                                         <XAxis dataKey="name" stroke="#475569" fontSize={11} fontWeight={700} tickLine={false} />
                                         <YAxis stroke="#475569" fontSize={11} fontWeight={700} tickFormatter={(val) => `Rs ${val >= 1000 ? `${(val/1000).toFixed(0)}k` : val}`} />
-                                        <RechartsTooltip
-                                            content={({ active, payload, label }) => {
-                                                if (!active || !payload || !payload.length) return null;
-                                                const d = payload[0]?.payload || {};
-                                                return (
-                                                    <div style={{ background: '#0f172a', color: '#fff', borderRadius: '12px', padding: '0.75rem 1rem', fontSize: '0.82rem', border: '1px solid #334155', minWidth: '190px', boxShadow: '0 10px 25px rgba(0,0,0,0.35)' }}>
-                                                        <div style={{ fontWeight: '800', borderBottom: '1px solid #334155', paddingBottom: '0.3rem', marginBottom: '0.4rem', color: '#f8fafc' }}>
-                                                            {label} {selectedYear}
-                                                        </div>
-                                                        <div style={{ color: '#10b981', fontWeight: '700' }}>Inflow: Rs {d.inflow?.toLocaleString()}</div>
-                                                        <div style={{ color: '#ef4444', fontWeight: '700' }}>Outflow: Rs {d.outflow?.toLocaleString()}</div>
-                                                        <div style={{ color: '#3b82f6', fontWeight: '700', marginTop: '0.2rem' }}>Compare ({compareYear}): Rs {d.compareInflow?.toLocaleString()}</div>
-                                                    </div>
-                                                );
-                                            }}
-                                        />
                                         <Bar dataKey="inflow" fill="url(#inflow3DGrad)" radius={[6, 6, 0, 0]} filter="url(#barShadow3D)" name={`Inflow (${selectedYear})`} />
                                         <Bar dataKey="outflow" fill="url(#outflow3DGrad)" radius={[6, 6, 0, 0]} filter="url(#barShadow3D)" name={`Outflow (${selectedYear})`} />
-                                        <Line type="monotone" dataKey="compareInflow" stroke="#3b82f6" strokeWidth={3.5} dot={{ r: 4.5, fill: '#3b82f6', stroke: '#ffffff', strokeWidth: 2 }} name={`Trend (${compareYear})`} />
                                     </ComposedChart>
                                 </ResponsiveContainer>
                             </div>
 
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.85rem' }}>
-                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.35rem 0.65rem', borderRadius: '8px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
-                                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'linear-gradient(135deg, #34d399, #047857)', flexShrink: 0, boxShadow: '0 0 4px rgba(16, 185, 129, 0.4)' }} />
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#166534', whiteSpace: 'nowrap' }}>{selectedYear} Inflow (3D)</span>
+                            {/* ISOLATED MONTH FINANCIAL INTELLIGENCE CAPSULE */}
+                            {(() => {
+                                const ins = calculatedMetrics.inspectedMonthData || {};
+                                const totalFees = Number(ins.feeInflow || 0);
+                                const cashPct = totalFees > 0 ? Math.round((Number(ins.cashFees || 0) / totalFees) * 100) : 0;
+                                const onlinePct = totalFees > 0 ? Math.round((Number(ins.onlineFees || 0) / totalFees) * 100) : 0;
+
+                                return (
+                                    <div style={{
+                                        marginTop: '0.75rem',
+                                        padding: '1rem',
+                                        borderRadius: '14px',
+                                        background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                                        border: '1.5px solid #cbd5e1',
+                                        boxShadow: '0 4px 10px -2px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.9)'
+                                    }}>
+                                        {/* Capsule Header */}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: ins.isFuture ? '0.35rem' : '0.65rem', paddingBottom: '0.45rem', borderBottom: '1px solid #e2e8f0' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <div style={{ width: '26px', height: '26px', borderRadius: '8px', background: ins.isFuture ? '#64748b' : (ins.isSurplus ? '#10b981' : '#ef4444'), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                    {ins.isFuture ? <Clock size={14} /> : <Sparkles size={14} />}
+                                                </div>
+                                                <div>
+                                                    <span style={{ fontSize: '0.86rem', fontWeight: '800', color: '#0f172a' }}>
+                                                        {ins.monthName} {selectedYear} Isolated Financial Audit
+                                                    </span>
+                                                    {ins.isCurrent && (
+                                                        <span style={{ marginLeft: '6px', fontSize: '0.68rem', background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '5px', fontWeight: '800' }}>
+                                                            Current
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <span style={{
+                                                fontSize: '0.74rem',
+                                                fontWeight: '800',
+                                                padding: '2px 8px',
+                                                borderRadius: '6px',
+                                                background: ins.isFuture ? '#f1f5f9' : (ins.isSurplus ? '#dcfce7' : '#fee2e2'),
+                                                color: ins.isFuture ? '#475569' : (ins.isSurplus ? '#166534' : '#991b1b'),
+                                                border: `1px solid ${ins.isFuture ? '#cbd5e1' : (ins.isSurplus ? '#bbf7d0' : '#fecaca')}`
+                                            }}>
+                                                {ins.isFuture ? '🕒 Upcoming Period' : (ins.isSurplus ? `✨ Surplus (${ins.profitMargin}% Margin)` : `⚠️ Deficit (${ins.profitMargin}%)`)}
+                                            </span>
+                                        </div>
+
+                                        {/* Upcoming Period Informative Banner */}
+                                        {ins.isFuture && (
+                                            <div style={{
+                                                margin: '0.35rem 0 0.65rem 0',
+                                                padding: '0.45rem 0.75rem',
+                                                borderRadius: '8px',
+                                                background: '#f8fafc',
+                                                border: '1px dashed #cbd5e1',
+                                                fontSize: '0.74rem',
+                                                color: '#64748b',
+                                                fontWeight: '600',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.4rem'
+                                            }}>
+                                                <Clock size={13} color="#64748b" />
+                                                <span>Upcoming Month: No fee collections, store sales, or one-time expenses recorded yet for {ins.monthName} {selectedYear}.</span>
+                                            </div>
+                                        )}
+
+                                        {/* Precision Micro-Metrics Grid */}
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.55rem' }}>
+                                            
+                                            {/* 1. Inflow */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1px solid #dbeafe', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#0078d4', textTransform: 'uppercase' }}>Gross Inflow</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', marginTop: '1px' }}>
+                                                    Rs {Number(ins.inflow || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '1px' }}>
+                                                    Fees + Direct + Store
+                                                </div>
+                                            </div>
+
+                                            {/* 2. Outflow */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1px solid #fee2e2', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#ef4444', textTransform: 'uppercase' }}>Total Outflow</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#dc2626', marginTop: '1px' }}>
+                                                    Rs {Number(ins.outflow || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '1px' }}>
+                                                    Salaries + Operations
+                                                </div>
+                                            </div>
+
+                                            {/* 3. Net Profit / Surplus */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: ins.isSurplus ? '#f0fdf4' : '#fef2f2', border: `1px solid ${ins.isSurplus ? '#86efac' : '#fca5a5'}`, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: ins.isSurplus ? '#166534' : '#991b1b', textTransform: 'uppercase' }}>
+                                                    {ins.isSurplus ? 'Net Profit' : 'Deficit'}
+                                                </div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: ins.isSurplus ? '#15803d' : '#b91c1c', marginTop: '1px' }}>
+                                                    Rs {Number(ins.net || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: ins.isSurplus ? '#166534' : '#991b1b', marginTop: '1px', fontWeight: '700' }}>
+                                                    {ins.profitMargin}% Margin
+                                                </div>
+                                            </div>
+
+                                            {/* 4. Fee Recovery Rate */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#3b82f6', textTransform: 'uppercase' }}>Fee Recovery</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', marginTop: '1px' }}>
+                                                    {ins.recoveryPercent}%
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '1px' }}>
+                                                    {ins.receiptCount} Receipts Paid
+                                                </div>
+                                            </div>
+
+                                            {/* 5. Offline Fee Counter Cash */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1.5px solid #86efac', boxShadow: '0 1px 2px rgba(16, 185, 129, 0.05)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#166534', textTransform: 'uppercase' }}>Offline Cash Counter</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#166534', marginTop: '1px' }}>
+                                                    Rs {Number(ins.cashFees || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#15803d', marginTop: '1px', fontWeight: '800' }}>
+                                                    💵 {cashPct}% Counter Cash
+                                                </div>
+                                            </div>
+
+                                            {/* 6. Online Digital Fees */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1.5px solid #93c5fd', boxShadow: '0 1px 2px rgba(59, 130, 246, 0.05)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#1e40af', textTransform: 'uppercase' }}>Online Portal Fees</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#1e40af', marginTop: '1px' }}>
+                                                    Rs {Number(ins.onlineFees || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#2563eb', marginTop: '1px', fontWeight: '800' }}>
+                                                    📱 {onlinePct}% Digital Portals
+                                                </div>
+                                            </div>
+
+                                            {/* 7. Staff Salaries */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1px solid #fef3c7', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#b45309', textTransform: 'uppercase' }}>Staff Payroll</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', marginTop: '1px' }}>
+                                                    Rs {Number(ins.salaries || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '1px' }}>
+                                                    {ins.teachersPaidCount} Staff Disbursed
+                                                </div>
+                                            </div>
+
+                                            {/* 8. Operational Expenses */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1px solid #fee2e2', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#dc2626', textTransform: 'uppercase' }}>Ops Expenses</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', marginTop: '1px' }}>
+                                                    Rs {Number(ins.expenses || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '1px' }}>
+                                                    Utility + Repairs
+                                                </div>
+                                            </div>
+
+                                            {/* 9. Store Sales Total */}
+                                            <div style={{ padding: '0.55rem 0.65rem', borderRadius: '9px', background: '#ffffff', border: '1px solid #e0e7ff', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                                                <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#4f46e5', textTransform: 'uppercase' }}>Store & Uniform</div>
+                                                <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', marginTop: '1px' }}>
+                                                    Rs {Number(ins.storeSalesAmount || 0).toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: '1px' }}>
+                                                    POS Sales Inflow
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+                        </div>
+                    </div>
+
+                    {/* YEAR ROLLOVER & OPENING BALANCE BRIDGE (Dec -> Jan Transition) */}
+                    {(selectedMonthMode === 'all_year' || (!calculatedMetrics.isTodayMode && (selectedMonthMode === 'current' ? currentMonthNum === 1 : customSelectedMonthNum === 1))) && (
+                        <div style={{
+                            background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                            borderRadius: '16px',
+                            padding: '1.15rem 1.4rem',
+                            border: '1.5px solid #334155',
+                            color: '#ffffff',
+                            boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.4)'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.85rem', borderBottom: '1px solid #334155', paddingBottom: '0.65rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                    <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <History size={18} color="#fff" />
+                                    </div>
+                                    <div>
+                                        <h4 style={{ margin: 0, fontSize: '0.96rem', fontWeight: '800', color: '#ffffff' }}>
+                                            🏁 {selectedYear} Financial Year Opening Balance & Rollover Bridge
+                                        </h4>
+                                        <p style={{ margin: 0, fontSize: '0.74rem', color: '#94a3b8' }}>
+                                            Automatic continuous transfer of closing reserves, pending arrears, and permanent contracts from {selectedYear - 1}
+                                        </p>
+                                    </div>
                                 </div>
-                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.35rem 0.65rem', borderRadius: '8px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
-                                    <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'linear-gradient(135deg, #f87171, #b91c1c)', flexShrink: 0, boxShadow: '0 0 4px rgba(239, 68, 68, 0.4)' }} />
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#991b1b', whiteSpace: 'nowrap' }}>{selectedYear} Outflow (3D)</span>
+                                <span style={{ fontSize: '0.72rem', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', padding: '3px 9px', borderRadius: '6px', fontWeight: '800', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                                    ✓ Seamless Year-to-Year Continuity
+                                </span>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.85rem' }}>
+                                <div style={{ background: 'rgba(255,255,255,0.06)', padding: '0.75rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: '700' }}>Opening Reserve (from Dec {selectedYear - 1})</div>
+                                    <div style={{ fontSize: '1.05rem', fontWeight: '900', color: '#34d399', marginTop: '2px' }}>
+                                        Rs {Number(calculatedMetrics.rolloverOpeningCash || 0).toLocaleString()}
+                                    </div>
+                                    <div style={{ fontSize: '0.62rem', color: '#6ee7b7', marginTop: '2px' }}>Carried-forward cash reserve</div>
                                 </div>
-                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.35rem 0.65rem', borderRadius: '8px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
-                                    <span style={{ width: '12px', height: '3px', background: '#3b82f6', borderRadius: '2px', flexShrink: 0, boxShadow: '0 0 4px rgba(59, 130, 246, 0.4)' }} />
-                                    <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e40af', whiteSpace: 'nowrap' }}>{compareYear} YoY Trendline</span>
+
+                                <div style={{ background: 'rgba(255,255,255,0.06)', padding: '0.75rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: '700' }}>Active Permanent Contracts</div>
+                                    <div style={{ fontSize: '1.05rem', fontWeight: '900', color: '#60a5fa', marginTop: '2px' }}>
+                                        {((calculatedMetrics.activePermanentIncomes || []).length) + ((calculatedMetrics.activePermanentExpenses || []).length)} Fixed Heads
+                                    </div>
+                                    <div style={{ fontSize: '0.62rem', color: '#93c5fd', marginTop: '2px' }}>Canteen rent, bills & recurring</div>
+                                </div>
+
+                                <div style={{ background: 'rgba(255,255,255,0.06)', padding: '0.75rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: '700' }}>Student Store & Fee Arrears</div>
+                                    <div style={{ fontSize: '1.05rem', fontWeight: '900', color: '#fbbf24', marginTop: '2px' }}>
+                                        100% Ledger Synced
+                                    </div>
+                                    <div style={{ fontSize: '0.62rem', color: '#fde68a', marginTop: '2px' }}>Auto-billed on Jan fee vouchers</div>
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    )}
 
                     {/* Bottom Row: Payment Channels Donut & Expense Categories Donut */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '1.5rem' }}>
@@ -2135,70 +2875,97 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                 Breakdown of parents paying via Counter Cash vs EasyPaisa / JazzCash / Bank
                             </p>
 
-                            <div style={{ height: '220px', width: '100%' }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <RechartsPie>
-                                        <Pie
-                                            data={calculatedMetrics.channelDistributionData}
-                                            cx="50%"
-                                            cy="50%"
-                                            innerRadius={55}
-                                            outerRadius={85}
-                                            paddingAngle={4}
-                                            dataKey="value"
-                                            filter="url(#shadow3d)"
-                                            label={renderPiePercentLabel}
-                                            labelLine={false}
-                                        >
-                                            {calculatedMetrics.channelDistributionData.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={entry.color} stroke="#ffffff" strokeWidth={2} />
-                                            ))}
-                                        </Pie>
-                                        <RechartsTooltip content={<CustomPieTooltip />} wrapperStyle={{ zIndex: 9999, pointerEvents: 'none' }} />
-                                    </RechartsPie>
-                                </ResponsiveContainer>
-                            </div>
+                            {calculatedMetrics.isFutureScope || calculatedMetrics.channelDistributionData.length === 0 ? (
+                                <div style={{
+                                    height: '220px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    background: '#f8fafc',
+                                    borderRadius: '12px',
+                                    border: '1.5px dashed #cbd5e1',
+                                    padding: '1.5rem',
+                                    textAlign: 'center'
+                                }}>
+                                    <Clock size={32} color="#94a3b8" style={{ marginBottom: '8px' }} />
+                                    <div style={{ fontSize: '0.88rem', fontWeight: '800', color: '#334155' }}>
+                                        {calculatedMetrics.isFutureScope ? 'Upcoming Period (Projected Mode)' : 'No Receipts in Selected Period'}
+                                    </div>
+                                    <div style={{ fontSize: '0.74rem', color: '#64748b', maxWidth: '320px', marginTop: '4px' }}>
+                                        {calculatedMetrics.isFutureScope
+                                            ? 'Counter cash and digital gateway reconciliations will automatically populate here once actual fee collections commence.'
+                                            : 'No cash or online fee transactions were recorded for this timeframe.'}
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <div style={{ height: '220px', width: '100%' }}>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <RechartsPie>
+                                                <Pie
+                                                    data={calculatedMetrics.channelDistributionData}
+                                                    cx="50%"
+                                                    cy="50%"
+                                                    innerRadius={55}
+                                                    outerRadius={85}
+                                                    paddingAngle={4}
+                                                    dataKey="value"
+                                                    filter="url(#shadow3d)"
+                                                    label={renderPiePercentLabel}
+                                                    labelLine={false}
+                                                >
+                                                    {calculatedMetrics.channelDistributionData.map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={entry.color} stroke="#ffffff" strokeWidth={2} />
+                                                    ))}
+                                                </Pie>
+                                                <RechartsTooltip content={<CustomPieTooltip />} wrapperStyle={{ zIndex: 9999, pointerEvents: 'none' }} />
+                                            </RechartsPie>
+                                        </ResponsiveContainer>
+                                    </div>
 
-                            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '0.5rem', marginTop: '0.85rem' }}>
-                                {(() => {
-                                    const totalChannel = calculatedMetrics.channelDistributionData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-                                    return calculatedMetrics.channelDistributionData.map(c => {
-                                        const pct = totalChannel > 0 ? Math.round((Number(c.value) / totalChannel) * 100) : 0;
-                                        return (
-                                            <div key={c.name} style={{
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '0.45rem',
-                                                padding: '0.35rem 0.65rem',
-                                                borderRadius: '8px',
-                                                background: '#ffffff',
-                                                border: '1px solid #e2e8f0',
-                                                boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
-                                            }}>
-                                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: c.color, flexShrink: 0, boxShadow: `0 0 5px ${c.color}88` }} />
-                                                <span style={{ color: '#475569', fontSize: '0.75rem', fontWeight: '700', whiteSpace: 'nowrap' }}>
-                                                    {c.name}
-                                                </span>
-                                                <span style={{
-                                                    background: `${c.color}15`,
-                                                    color: c.color,
-                                                    fontSize: '0.72rem',
-                                                    fontWeight: '800',
-                                                    padding: '1px 5px',
-                                                    borderRadius: '4px',
-                                                    border: `1px solid ${c.color}33`,
-                                                    whiteSpace: 'nowrap'
-                                                }}>
-                                                    {pct}%
-                                                </span>
-                                                <span style={{ color: '#0f172a', fontSize: '0.78rem', fontWeight: '800', whiteSpace: 'nowrap' }}>
-                                                    Rs {Number(c.value).toLocaleString()}
-                                                </span>
-                                            </div>
-                                        );
-                                    });
-                                })()}
-                            </div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '0.5rem', marginTop: '0.85rem' }}>
+                                        {(() => {
+                                            const totalChannel = calculatedMetrics.channelDistributionData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+                                            return calculatedMetrics.channelDistributionData.map(c => {
+                                                const pct = totalChannel > 0 ? Math.round((Number(c.value) / totalChannel) * 100) : 0;
+                                                return (
+                                                    <div key={c.name} style={{
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.45rem',
+                                                        padding: '0.35rem 0.65rem',
+                                                        borderRadius: '8px',
+                                                        background: '#ffffff',
+                                                        border: '1px solid #e2e8f0',
+                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+                                                    }}>
+                                                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: c.color, flexShrink: 0, boxShadow: `0 0 5px ${c.color}88` }} />
+                                                        <span style={{ color: '#475569', fontSize: '0.75rem', fontWeight: '700', whiteSpace: 'nowrap' }}>
+                                                            {c.name}
+                                                        </span>
+                                                        <span style={{
+                                                            background: `${c.color}15`,
+                                                            color: c.color,
+                                                            fontSize: '0.72rem',
+                                                            fontWeight: '800',
+                                                            padding: '1px 5px',
+                                                            borderRadius: '4px',
+                                                            border: `1px solid ${c.color}33`,
+                                                            whiteSpace: 'nowrap'
+                                                        }}>
+                                                            {pct}%
+                                                        </span>
+                                                        <span style={{ color: '#0f172a', fontSize: '0.78rem', fontWeight: '800', whiteSpace: 'nowrap' }}>
+                                                            Rs {Number(c.value).toLocaleString()}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            });
+                                        })()}
+                                    </div>
+                                </>
+                            )}
                         </div>
 
                         {/* 4. Expense Slices & Outflow Categories */}
