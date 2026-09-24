@@ -330,6 +330,61 @@ export const STANDARD_CLASS_TEMPLATES = {
     }
 };
 
+export const getSaleIsoString = (sale) => {
+    if (!sale) return '';
+    const ts = sale.timestamp || sale.createdAt || sale.date;
+    if (typeof ts === 'string') return ts;
+    if (ts && typeof ts.toDate === 'function') {
+        try {
+            return ts.toDate().toISOString();
+        } catch (e) {
+            return '';
+        }
+    }
+    if (ts && typeof ts.seconds === 'number') {
+        return new Date(ts.seconds * 1000).toISOString();
+    }
+    if (ts instanceof Date) {
+        return ts.toISOString();
+    }
+    if (typeof ts === 'number') {
+        return new Date(ts).toISOString();
+    }
+    if (sale.timestampMillis && typeof sale.timestampMillis === 'number') {
+        return new Date(sale.timestampMillis).toISOString();
+    }
+    return '';
+};
+
+export const getSaleMillis = (sale) => {
+    if (!sale) return 0;
+    if (typeof sale.timestampMillis === 'number') return sale.timestampMillis;
+    const ts = sale.timestamp || sale.createdAt || sale.date;
+    if (typeof ts === 'number') return ts;
+    if (ts && typeof ts.toMillis === 'function') return ts.toMillis();
+    if (ts && typeof ts.seconds === 'number') return ts.seconds * 1000;
+    if (ts instanceof Date) return ts.getTime();
+    if (typeof ts === 'string') {
+        const ms = new Date(ts).getTime();
+        return isNaN(ms) ? 0 : ms;
+    }
+    return 0;
+};
+
+export const formatSaleDate = (sale) => {
+    if (!sale) return 'Recent';
+    if (sale.createdAtFormatted) return sale.createdAtFormatted;
+    const iso = getSaleIsoString(sale);
+    if (iso) {
+        try {
+            return new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+        } catch (e) {
+            return 'Recent';
+        }
+    }
+    return 'Recent';
+};
+
 const Store = () => {
     const { schoolId: authSchoolId, isPrincipal, hasAccess, userProfile } = useAuthPermissions();
     const schoolId = authSchoolId || (() => {
@@ -894,7 +949,7 @@ const Store = () => {
 
     const generateWhatsAppReceiptText = (sale) => {
         const schoolTitle = schoolInfo.name || 'School Store Management';
-        const dateStr = sale.createdAtFormatted || new Date().toLocaleString();
+        const dateStr = formatSaleDate(sale);
         const receiptNum = sale.receiptNo || 'STORE-RECEIPT';
         const customer = sale.customerName || (sale.studentInfo ? `${sale.studentInfo.name} (${sale.studentInfo.className})` : 'Walk-in Customer');
         const paymentText = sale.paymentMode === 'fee_ledger' ? '📝 ADDED TO STUDENT MONTHLY FEE LEDGER' : '💵 PAID IN CASH (COUNTER)';
@@ -1533,7 +1588,7 @@ const Store = () => {
             doc.setFontSize(7);
             doc.setFont('helvetica', 'normal');
             doc.text(`Receipt #: ${receipt.receiptNo}`, 5, 30);
-            doc.text(`Date: ${receipt.createdAtFormatted || new Date().toLocaleString()}`, 5, 34);
+            doc.text(`Date: ${formatSaleDate(receipt)}`, 5, 34);
             doc.text(`Customer: ${receipt.customerName || 'Walk-in'}`, 5, 38);
             if (receipt.studentInfo) {
                 doc.text(`Class: ${receipt.studentInfo.className} (Roll #${receipt.studentInfo.rollNo || 'N/A'})`, 5, 42);
@@ -1640,25 +1695,28 @@ const Store = () => {
 
     const filteredSales = useMemo(() => {
         return sales.filter(s => {
-            const matchesSearch = s.receiptNo.toLowerCase().includes(salesSearch.toLowerCase()) ||
-                (s.customerName && s.customerName.toLowerCase().includes(salesSearch.toLowerCase())) ||
-                (s.studentInfo?.name && s.studentInfo.name.toLowerCase().includes(salesSearch.toLowerCase()));
+            const matchesSearch = String(s.receiptNo || '').toLowerCase().includes(salesSearch.toLowerCase()) ||
+                (s.customerName && String(s.customerName).toLowerCase().includes(salesSearch.toLowerCase())) ||
+                (s.studentInfo?.name && String(s.studentInfo.name).toLowerCase().includes(salesSearch.toLowerCase()));
 
             const matchesPayment = salesPaymentFilter === 'all' || s.paymentMode === salesPaymentFilter;
 
             if (!matchesSearch || !matchesPayment) return false;
 
+            const sIso = getSaleIsoString(s);
+            const sMs = getSaleMillis(s);
+
             if (salesDateFilter === 'today') {
                 const today = new Date().toISOString().slice(0, 10);
-                return s.timestamp && s.timestamp.startsWith(today);
+                return sIso.startsWith(today);
             }
             if (salesDateFilter === 'week') {
-                const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).getTime();
-                return (s.timestampMillis || new Date(s.timestamp).getTime()) >= weekAgo;
+                const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                return sMs >= weekAgo;
             }
             if (salesDateFilter === 'month') {
                 const currentMonth = new Date().toISOString().slice(0, 7);
-                return s.timestamp && s.timestamp.startsWith(currentMonth);
+                return sIso.startsWith(currentMonth);
             }
 
             return true;
@@ -1693,7 +1751,8 @@ const Store = () => {
             totalRevenue += amt;
             if (s.paymentMode === 'cash') totalCash += amt;
             if (s.paymentMode === 'fee_ledger') totalLedger += amt;
-            if (s.timestamp && s.timestamp.startsWith(todayStr)) {
+            const sIso = getSaleIsoString(s);
+            if (sIso && sIso.startsWith(todayStr)) {
                 todayRevenue += amt;
             }
         });
@@ -2929,7 +2988,7 @@ const Store = () => {
                                                     {sale.receiptNo}
                                                 </td>
                                                 <td className="py-3.5 px-4 text-slate-600 font-medium">
-                                                    {sale.createdAtFormatted || (sale.timestamp ? new Date(sale.timestamp).toLocaleString() : 'Recent')}
+                                                    {formatSaleDate(sale)}
                                                 </td>
                                                 <td className="py-3.5 px-4">
                                                     <div className="font-bold text-slate-900">

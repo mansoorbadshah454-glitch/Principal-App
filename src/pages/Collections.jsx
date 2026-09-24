@@ -8416,7 +8416,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
             // In-memory student update for all affected siblings (Ensures child-specific split accuracy)
             const updatedStudentsMap = new Map();
-            (feeCalculation.studentsBreakdown || []).forEach(st => {
+            const targetSiblingsToProcess = isMultiFamily 
+                ? (feeCalculation.studentsBreakdown || []).filter(st => st.isPaying !== false)
+                : (feeCalculation.studentsBreakdown || []).filter(st => st.studentId === selectedStudent.id);
+            const finalSiblingsToProcess = targetSiblingsToProcess.length > 0 
+                ? targetSiblingsToProcess 
+                : [{ studentId: selectedStudent.id, classId: selectedClassId || selectedStudent.classId, subtotal: finalAmount, isPaying: true }];
+
+            finalSiblingsToProcess.forEach(st => {
                 const childSubtotal = Number(st.pendingDue !== undefined ? st.pendingDue : (st.subtotal || 0));
                 const isThisChildPaying = st.isPaying !== false;
                 const childPaidAmount = isMultiFamily
@@ -8567,7 +8574,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     const writePromises = [];
                     const nowD = new Date();
 
-                    (feeCalculation.studentsBreakdown || []).forEach(st => {
+                    const targetSiblingsForDb = isMultiFamily 
+                        ? (feeCalculation.studentsBreakdown || []).filter(st => st.isPaying !== false)
+                        : (feeCalculation.studentsBreakdown || []).filter(st => st.studentId === selectedStudent.id);
+                    const finalSiblingsForDb = targetSiblingsForDb.length > 0 
+                        ? targetSiblingsForDb 
+                        : [{ studentId: selectedStudent.id, classId: selectedClassId || selectedStudent.classId, subtotal: finalAmount, isPaying: true }];
+
+                    finalSiblingsForDb.forEach(st => {
                         const childSubtotal = Number(st.pendingDue !== undefined ? st.pendingDue : (st.subtotal || 0));
                         const childPaidAmount = isMultiFamily
                             ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal)
@@ -8667,8 +8681,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     // Auto approve any matching pending online submissions
                     (onlineSubmissions || []).forEach(sub => {
                         const isMatch = sub.status === 'pending' && (
-                            feeCalculation.studentsBreakdown.some(st => st.studentId === sub.studentId) ||
-                            (sub.isFamilyCombined && Array.isArray(sub.familyStudents) && sub.familyStudents.some(fs => feeCalculation.studentsBreakdown.some(st => st.studentId === fs.studentId)))
+                            isMultiFamily
+                                ? (finalSiblingsForDb.some(st => st.studentId === sub.studentId) ||
+                                   (sub.isFamilyCombined && Array.isArray(sub.familyStudents) && sub.familyStudents.some(fs => finalSiblingsForDb.some(st => st.studentId === fs.studentId))))
+                                : (sub.studentId === selectedStudent.id)
                         );
                         if (isMatch && sub.id) {
                             const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
@@ -14213,7 +14229,12 @@ const Collections = () => {
             )}
 
             {activeTab === 'onlineSubmissions' && (
-                <OnlineSubmissionsDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
+                <OnlineSubmissionsDashboard 
+                    schoolId={schoolId} 
+                    schoolInfo={schoolInfo} 
+                    classes={classes}
+                    feeSettings={feeSettings}
+                />
             )}
 
             {activeTab === 'monthlyMatrix' && (

@@ -38,6 +38,112 @@ export const checkIs100PercentFree = (student) => {
 };
 
 /**
+ * Universal Single Source of Truth: Check if a specific month is settled/paid for a student.
+ */
+export const isMonthSettled = (student, monthIdx, targetYear = 2026, historyTxs = []) => {
+    if (!student) return false;
+    if (checkIs100PercentFree(student)) return true;
+
+    const targetMonthKey = `${targetYear}-${String(monthIdx + 1).padStart(2, '0')}`;
+    const targetMonthName = MONTH_NAMES[monthIdx] || '';
+    const targetMonthShort = MONTH_SHORT[monthIdx] || '';
+
+    // 1. Check monthlyFeeHistory
+    const hist = student?.monthlyFeeHistory?.[targetMonthKey] || 
+                 student?.monthlyFeeHistory?.[`${targetMonthName} ${targetYear}`] || 
+                 student?.monthlyFeeHistory?.[`${targetMonthShort} ${targetYear}`];
+    if (hist) {
+        const st = String(hist.status || '').toLowerCase();
+        if (st === 'paid' || st === 'cleared') return true;
+        const paid = Number(hist.paidAmount || 0);
+        const remaining = hist.remainingBalance !== undefined ? Number(hist.remainingBalance) : null;
+        if (remaining !== null && remaining === 0 && paid > 0) return true;
+        const expected = Number(hist.expectedAmount || hist.netPayable || hist.totalPayable || 0);
+        if (paid > 0 && expected > 0 && paid >= expected) return true;
+    }
+
+    // 2. Check paidMonths list
+    if (Array.isArray(student.paidMonths)) {
+        const isPaidInList = student.paidMonths.some(pm => {
+            if (typeof pm === 'string') {
+                const s = pm.toLowerCase().trim();
+                return s === targetMonthKey.toLowerCase() ||
+                       s === `${targetYear}-${monthIdx + 1}` ||
+                       s === `${targetYear}-${String(monthIdx + 1).padStart(2, '0')}` ||
+                       s.includes(targetMonthShort.toLowerCase()) ||
+                       s.includes(targetMonthName.toLowerCase());
+            }
+            return false;
+        });
+        if (isPaidInList) return true;
+    }
+
+    // 3. Check historyTxs
+    if (Array.isArray(historyTxs) && historyTxs.length > 0) {
+        const hasTx = historyTxs.some(tx => {
+            if (!tx || (tx.studentId && tx.studentId !== student.id)) return false;
+            if (tx.targetMonthKey === targetMonthKey || (tx.targetMonthIdx === monthIdx && Number(tx.targetYear || targetYear) === targetYear)) {
+                return (Number(tx.totalPaid || tx.totalAmount || 0) > 0);
+            }
+            return false;
+        });
+        if (hasTx) return true;
+    }
+
+    // 4. Check monthlyFeeStatus for current month
+    const today = new Date();
+    if (targetYear === today.getFullYear() && monthIdx === today.getMonth() && (String(student.monthlyFeeStatus || '').toLowerCase() === 'paid' || String(student.monthlyFeeStatus || '').toLowerCase() === 'cleared')) {
+        return true;
+    }
+
+    return false;
+};
+
+/**
+ * Helper to check if a monthKey string (e.g. "2026-09" or "Sep 2026") is settled
+ */
+export const isMonthKeySettled = (student, monthKey, defaultYear = 2026, historyTxs = []) => {
+    if (!monthKey) return false;
+    let yr = defaultYear;
+    let mIdx = new Date().getMonth();
+
+    if (monthKey.includes('-')) {
+        const parts = monthKey.split('-');
+        if (parts.length >= 2) {
+            yr = parseInt(parts[0], 10) || yr;
+            mIdx = (parseInt(parts[1], 10) || 1) - 1;
+        }
+    } else {
+        const lower = monthKey.toLowerCase();
+        for (let i = 0; i < MONTH_NAMES.length; i++) {
+            if (lower.includes(MONTH_NAMES[i].toLowerCase()) || lower.includes(MONTH_SHORT[i].toLowerCase())) {
+                mIdx = i;
+                break;
+            }
+        }
+        const yearMatch = monthKey.match(/\b(20\d\d)\b/);
+        if (yearMatch) {
+            yr = parseInt(yearMatch[1], 10) || yr;
+        }
+    }
+    return isMonthSettled(student, mIdx, yr, historyTxs);
+};
+
+/**
+ * Calculate the earliest unpaid/active billing month index (0-11) for a student in targetYear.
+ * If currentMonth is paid (or settled), it looks forward to find the next unpaid month.
+ */
+export const getEffectiveBillingMonthIdx = (student, targetYear = 2026, historyTxs = []) => {
+    if (!student) return new Date().getMonth();
+    for (let m = 0; m < 12; m++) {
+        if (!isMonthSettled(student, m, targetYear, historyTxs)) {
+            return m; // Earliest unpaid month index (0-11)
+        }
+    }
+    return new Date().getMonth();
+};
+
+/**
  * Calculate the exact itemized fee breakdown for a specific target month.
  */
 export const calculateItemizedFeeBreakdown = (
@@ -70,6 +176,8 @@ export const calculateItemizedFeeBreakdown = (
     const targetMonthName = MONTH_NAMES[targetMonthIdx] || '';
     const targetMonthShort = MONTH_SHORT[targetMonthIdx] || '';
     const feeHistoryEntry = student?.monthlyFeeHistory?.[targetMonthKey] || null;
+    const isTargetMonthPaid = isMonthSettled(student, targetMonthIdx, targetYear, historyTxs);
+    const effectiveBillingMonthIdx = getEffectiveBillingMonthIdx(student, targetYear, historyTxs);
 
     // 1. Base Tuition
     let baseTuition = Number(student.tuitionFee || student.monthlyFee || student.fee || 0);
@@ -94,25 +202,87 @@ export const calculateItemizedFeeBreakdown = (
     // 2. Transport Fee
     let transportFee = Number(student.transportFee || student.monthlyTransportFee || 0);
 
-    // 3. Month-Isolated Store Purchases
+    // 3. Month-Isolated Store Purchases & Unpaid Aggregation
     let storeDues = 0;
-    if (Array.isArray(student.storePurchases)) {
-        student.storePurchases.forEach(item => {
-            if (item.monthKey === targetMonthKey) {
-                storeDues += Number(item.amount || item.price || 0);
-            }
-        });
-    } else if (Number(student.storeDues) > 0 && targetMonthIdx === new Date().getMonth()) {
-        storeDues = Number(student.storeDues);
+    const storeItemsList = [];
+
+    if (isTargetMonthPaid) {
+        // Locked historical paid month - preserve exactly what was paid
+        if (feeHistoryEntry && Array.isArray(feeHistoryEntry.storeItems) && feeHistoryEntry.storeItems.length > 0) {
+            feeHistoryEntry.storeItems.forEach(item => {
+                const amt = Number(item.amount || item.price || 0);
+                if (amt > 0) {
+                    storeDues += amt;
+                    storeItemsList.push({ ...item, status: 'paid' });
+                }
+            });
+        } else if (Number(feeHistoryEntry?.storeDues || 0) > 0) {
+            storeDues = Number(feeHistoryEntry.storeDues);
+        }
+    } else {
+        // Target month is OPEN / UNPAID - capture assigned items and all unpaid store charges
+        if (Array.isArray(student.storePurchases)) {
+            student.storePurchases.forEach(item => {
+                const isItemPaid = item.status === 'paid';
+                if (isItemPaid) {
+                    const itemKey = item.monthKey || '';
+                    if (itemKey !== targetMonthKey) return;
+                }
+
+                const itemKey = item.monthKey || (item.date && item.date.length >= 7 ? item.date.slice(0, 7) : '');
+                const isEligibleForUnpaidMonth = (!isItemPaid) && 
+                    (!itemKey || itemKey <= targetMonthKey);
+
+                if (isEligibleForUnpaidMonth) {
+                    const amt = Number(item.amount || item.price || 0);
+                    if (amt > 0) {
+                        storeDues += amt;
+                        storeItemsList.push({
+                            name: item.name || 'Store Item',
+                            amount: amt,
+                            status: 'unpaid',
+                            receiptNo: item.receiptNo || 'STORE-KIT'
+                        });
+                    }
+                }
+            });
+        } else if (Array.isArray(student.storeCharges)) {
+            student.storeCharges.forEach(item => {
+                const isItemPaid = item.status === 'paid';
+                if (isItemPaid) {
+                    const itemKey = item.monthKey || '';
+                    if (itemKey !== targetMonthKey) return;
+                }
+
+                const itemKey = item.monthKey || (item.date && item.date.length >= 7 ? item.date.slice(0, 7) : '');
+                const isEligibleForUnpaidMonth = (!isItemPaid) && 
+                    (!itemKey || itemKey <= targetMonthKey);
+
+                if (isEligibleForUnpaidMonth) {
+                    const amt = Number(item.amount || item.price || 0);
+                    if (amt > 0) {
+                        storeDues += amt;
+                        storeItemsList.push({
+                            name: item.name || 'Store Item',
+                            amount: amt,
+                            status: 'unpaid',
+                            receiptNo: item.receiptNo || 'STORE-KIT'
+                        });
+                    }
+                }
+            });
+        } else if (Number(student.storeDues) > 0 && targetMonthIdx === effectiveBillingMonthIdx) {
+            storeDues = Number(student.storeDues);
+        }
     }
 
-    // 4. Targeted Action & Individual Custom Actions
+    // 4. Targeted Action & Individual Custom Actions & Unpaid Aggregation
     let actionFee = 0;
     const actionNames = [];
     const customItems = [];
 
-    // Check feeHistoryEntry custom items first (Exact settled record)
-    if (feeHistoryEntry && Array.isArray(feeHistoryEntry.customItems) && feeHistoryEntry.customItems.length > 0) {
+    // Check feeHistoryEntry custom items first (Exact settled record for paid month)
+    if (isTargetMonthPaid && feeHistoryEntry && Array.isArray(feeHistoryEntry.customItems) && feeHistoryEntry.customItems.length > 0) {
         feeHistoryEntry.customItems.forEach(c => {
             const amt = Number(c.amount || 0);
             const title = c.title || c.name || 'Custom Fee';
@@ -122,34 +292,70 @@ export const calculateItemizedFeeBreakdown = (
                 customItems.push({ title, name: title, amount: amt, status: 'paid' });
             }
         });
-    } else {
+    } else if (!isTargetMonthPaid) {
         // From individualActions on student object
         if (Array.isArray(student.individualActions)) {
             student.individualActions.forEach(act => {
-                const isMatchingMonth = act.monthKey === targetMonthKey || 
-                                       (act.month && (act.month.toLowerCase().includes(targetMonthName.toLowerCase()) || act.month.toLowerCase().includes(targetMonthShort.toLowerCase()))) ||
-                                       (!act.monthKey && !act.month && targetMonthIdx === new Date().getMonth());
-                if (isMatchingMonth) {
+                // Skip store inventory items if already handled
+                if (act.type === 'store_inventory') {
+                    if (storeItemsList.some(si => (si.receiptNo && si.receiptNo === act.receiptNo) || si.name === act.name)) {
+                        return;
+                    }
+                }
+
+                const isActPaid = act.status === 'paid';
+                if (isActPaid) {
+                    const actKey = act.monthKey || '';
+                    if (actKey !== targetMonthKey) return;
+                }
+
+                const actKey = act.monthKey || 
+                    (act.createdAt && act.createdAt.length >= 7 ? act.createdAt.slice(0, 7) : 
+                    (act.date && act.date.length >= 7 ? act.date.slice(0, 7) : ''));
+
+                const isEligibleForUnpaidMonth = (!isActPaid) && 
+                    (!actKey || actKey <= targetMonthKey);
+
+                if (isEligibleForUnpaidMonth) {
                     const amt = Number(act.amount || 0);
                     const title = act.title || act.name || 'Custom Action';
                     if (amt > 0) {
-                        actionFee += amt;
-                        if (!actionNames.includes(title)) actionNames.push(title);
-                        customItems.push({ title, name: title, amount: amt, status: act.status || 'unpaid' });
+                        if (act.type === 'store_inventory') {
+                            storeDues += amt;
+                            storeItemsList.push({
+                                name: title,
+                                amount: amt,
+                                status: 'unpaid'
+                            });
+                        } else {
+                            actionFee += amt;
+                            if (!actionNames.includes(title)) actionNames.push(title);
+                            customItems.push({ 
+                                title, 
+                                name: title, 
+                                amount: amt, 
+                                status: 'unpaid' 
+                            });
+                        }
                     }
                 }
             });
         }
 
-        // Global Campaign Action if targeted
-        if (currentAction) {
+        // Global Campaign Action if targeted to effective open month
+        if (currentAction && targetMonthIdx === effectiveBillingMonthIdx) {
             const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(student.classId));
             if (isTargeted) {
                 const amt = Number(currentAction.amount || 0);
                 if (amt > 0 && !actionNames.includes(currentAction.name)) {
                     actionFee += amt;
                     actionNames.push(currentAction.name);
-                    customItems.push({ title: currentAction.name, name: currentAction.name, amount: amt, status: student.customPayments?.[currentAction.name]?.status || 'unpaid' });
+                    customItems.push({ 
+                        title: currentAction.name, 
+                        name: currentAction.name, 
+                        amount: amt, 
+                        status: student.customPayments?.[currentAction.name]?.status || 'unpaid' 
+                    });
                 }
             }
         }

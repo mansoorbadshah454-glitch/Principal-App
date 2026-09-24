@@ -1,33 +1,47 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
     Clock, CheckCircle2, XCircle, Search, Eye, Filter, Download, ExternalLink, 
     Smartphone, Landmark, AlertCircle, ArrowUpRight, Check, X, Loader2,
     ZoomIn, ZoomOut, RotateCcw, RotateCw, Users, ShieldCheck, FileCheck, RefreshCw, 
     AlertTriangle, Copy, Calendar, CheckCheck, Sparkles, CreditCard, ArrowRight,
-    Volume2, VolumeX, Bell
+    Volume2, VolumeX, Bell, UserCheck, ChevronRight, Hash, Tag, Receipt
 } from 'lucide-react';
-import { db, storage } from '../firebase';
+import { db } from '../firebase';
 import { 
-    collection, onSnapshot, query, doc, updateDoc, setDoc, getDoc, orderBy, serverTimestamp, writeBatch, arrayUnion
+    collection, onSnapshot, query, doc, updateDoc, setDoc, getDoc, getDocs, orderBy, serverTimestamp, writeBatch, arrayUnion
 } from 'firebase/firestore';
+import { calculateItemizedFeeBreakdown, MONTH_NAMES, MONTH_SHORT, formatPKR, isMonthKeySettled } from '../utils/feePipeline';
+import { cacheStudentsOffline, getCachedStudentsOffline } from '../utils/offlineFeeEngine';
 
-const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
+const OnlineSubmissionsDashboard = ({ 
+    schoolId, 
+    schoolInfo, 
+    classes = [], 
+    feeSettings = {}, 
+    allStudents = [] 
+}) => {
     const [submissions, setSubmissions] = useState([]);
+    const [localStudents, setLocalStudents] = useState([]);
     const [loading, setLoading] = useState(true);
     
-    // Primary Sub-Tab Switch: 'counter' (⚡ Online Fee Counter) vs 'history' (📜 Online Fee History)
+    // Primary Sub-Tab Switch: 'counter' (⚡ Online Fee Counter Studio) vs 'history' (📜 Online Fee History)
     const [activeSubTab, setActiveSubTab] = useState('counter');
     
+    // Active Selected Submission in Studio Cockpit
+    const [selectedSubId, setSelectedSubId] = useState(null);
+    
+    // Per-sibling inclusion toggle map for multi-child settlements
+    const [selectedSiblingsPayingMap, setSelectedSiblingsPayingMap] = useState({});
+
     // Filters
-    const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'approved', 'rejected', 'needs_reupload' for history
+    const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'approved', 'rejected', 'needs_reupload'
     const [filterMethod, setFilterMethod] = useState('all'); // 'all', 'easypaisa', 'jazzcash', 'bank', 'family'
     const [searchQuery, setSearchQuery] = useState('');
     
-    // Modals & Slip Viewer States
+    // Canvas & Slip Viewer States
     const [selectedProofUrl, setSelectedProofUrl] = useState(null);
     const [zoomLevel, setZoomLevel] = useState(1); // 1 = 100%, 1.5 = 150%, 2 = 200%, 2.5 = 250%
     const [slipRotation, setSlipRotation] = useState(0); // 0, 90, 180, 270
-    const [reviewingSub, setReviewingSub] = useState(null);
     const [rejectingSub, setRejectingSub] = useState(null);
     const [rejectReason, setRejectReason] = useState('');
     const [reuploadSub, setReuploadSub] = useState(null);
@@ -125,41 +139,328 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
         return () => unsub();
     }, [schoolId, audioEnabled]);
 
-    // Helper to extract normalized "YYYY-MM" monthKey
-    const getMonthKey = (monthStr) => {
+    // ⚡ SUPER-FAST OFFLINE & MULTI-CLASS REALTIME STUDENT AGGREGATOR
+    // 1. Instantly pull cached students from IndexedDB (0ms delay)
+    // 2. Attach live real-time listeners to all class subcollections
+    useEffect(() => {
+        if (!schoolId) return;
+
+        let isMounted = true;
+
+        // Step 1: 0ms Instant Offline retrieval
+        getCachedStudentsOffline(schoolId).then((cached) => {
+            if (isMounted && Array.isArray(cached) && cached.length > 0) {
+                setLocalStudents(prev => prev.length === 0 ? cached : prev);
+            }
+        }).catch(e => console.warn("Offline cache read notice:", e));
+
+        const unsubs = [];
+        const classStudentsMap = {};
+
+        // If classes array is provided, listen to each class's students subcollection
+        if (Array.isArray(classes) && classes.length > 0) {
+            classes.forEach((cls) => {
+                if (!cls || !cls.id) return;
+                const classStRef = collection(db, `schools/${schoolId}/classes/${cls.id}/students`);
+                const unsubClass = onSnapshot(classStRef, (snap) => {
+                    const arr = [];
+                    snap.forEach((d) => {
+                        arr.push({ 
+                            id: d.id, 
+                            classId: cls.id, 
+                            className: cls.name || cls.className || 'Class', 
+                            ...d.data() 
+                        });
+                    });
+                    classStudentsMap[cls.id] = arr;
+
+                    // Flatten all classes
+                    const allFlattened = Object.values(classStudentsMap).flat();
+                    if (isMounted) {
+                        setLocalStudents(allFlattened);
+                        cacheStudentsOffline(schoolId, allFlattened);
+                    }
+                }, (err) => {
+                    console.warn(`Error listening to class ${cls.id} students:`, err);
+                });
+                unsubs.push(unsubClass);
+            });
+        }
+
+        // Also listen to master /students collection as fallback / sync
+        const masterStRef = collection(db, `schools/${schoolId}/students`);
+        const unsubMaster = onSnapshot(masterStRef, (snapshot) => {
+            if (snapshot.size > 0) {
+                const arr = [];
+                snapshot.forEach(d => arr.push({ id: d.id, ...d.data() }));
+                if (isMounted && (!classes || classes.length === 0)) {
+                    setLocalStudents(arr);
+                    cacheStudentsOffline(schoolId, arr);
+                }
+            }
+        }, (err) => {
+            console.warn("Error fetching students master in OnlineSubmissionsDashboard:", err);
+        });
+        unsubs.push(unsubMaster);
+
+        return () => {
+            isMounted = false;
+            unsubs.forEach(fn => {
+                if (typeof fn === 'function') fn();
+            });
+        };
+    }, [schoolId, classes]);
+
+    // Helper to extract normalized "YYYY-MM" monthKey and month index
+    const parseMonthInfo = (monthStr) => {
+        let yr = new Date().getFullYear();
+        let mIdx = new Date().getMonth();
+
         if (monthStr) {
             const yearMatch = monthStr.match(/\b(20\d\d)\b/);
-            const yr = yearMatch ? yearMatch[1] : new Date().getFullYear();
+            if (yearMatch) yr = parseInt(yearMatch[1], 10);
             const s = monthStr.toLowerCase();
-            let m = null;
-            if (s.includes('jan')) m = '01';
-            else if (s.includes('feb')) m = '02';
-            else if (s.includes('mar')) m = '03';
-            else if (s.includes('apr')) m = '04';
-            else if (s.includes('may')) m = '05';
-            else if (s.includes('jun')) m = '06';
-            else if (s.includes('jul')) m = '07';
-            else if (s.includes('aug')) m = '08';
-            else if (s.includes('sep')) m = '09';
-            else if (s.includes('oct')) m = '10';
-            else if (s.includes('nov')) m = '11';
-            else if (s.includes('dec')) m = '12';
-            else {
-                const numMatch = s.match(/[-/](\d{1,2})/);
-                if (numMatch) m = numMatch[1].padStart(2, '0');
+            for (let i = 0; i < MONTH_NAMES.length; i++) {
+                if (s.includes(MONTH_NAMES[i].toLowerCase()) || s.includes(MONTH_SHORT[i].toLowerCase())) {
+                    mIdx = i;
+                    break;
+                }
             }
-            if (m) return `${yr}-${m}`;
         }
-        const d = new Date();
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const monthKey = `${yr}-${String(mIdx + 1).padStart(2, '0')}`;
+        const monthName = MONTH_NAMES[mIdx];
+        return { monthKey, monthName, mIdx, yr };
     };
 
-    // Handle Approve (Single or Multi-child Family Submission)
-    const handleApprove = async (sub) => {
-        const isFamily = Boolean(sub.isFamilyCombined && sub.familyStudents && sub.familyStudents.length > 0);
-        const confirmMsg = isFamily
-            ? `Approve combined family fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.familyStudents.length} students?`
-            : `Approve fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.studentName} (${sub.className})?`;
+    // Pending vs History lists
+    const pendingSubs = useMemo(() => {
+        return submissions.filter(s => (s.status || 'pending') === 'pending');
+    }, [submissions]);
+
+    const historySubs = useMemo(() => {
+        return submissions.filter(s => (s.status || 'pending') !== 'pending');
+    }, [submissions]);
+
+    // Auto-select first pending submission if none selected or if selected is no longer pending
+    useEffect(() => {
+        if (pendingSubs.length > 0) {
+            if (!selectedSubId || !pendingSubs.some(s => s.id === selectedSubId)) {
+                setSelectedSubId(pendingSubs[0].id);
+                setZoomLevel(1);
+                setSlipRotation(0);
+            }
+        } else {
+            setSelectedSubId(null);
+        }
+    }, [pendingSubs, selectedSubId]);
+
+    // Active Selected Submission Object
+    const activeSub = useMemo(() => {
+        return pendingSubs.find(s => s.id === selectedSubId) || pendingSubs[0] || null;
+    }, [pendingSubs, selectedSubId]);
+
+    // Duplicate TRX ID map across all submissions
+    const trxCountMap = useMemo(() => {
+        const counts = {};
+        submissions.forEach(s => {
+            const trx = (s.transactionId || '').trim();
+            if (trx && trx.length >= 4) {
+                counts[trx] = (counts[trx] || 0) + 1;
+            }
+        });
+        return counts;
+    }, [submissions]);
+
+    // 🎯 RESOLVE SIBLING STUDENTS VIA DIRECT PARENT ACCOUNT (UID) + SMART FALLBACK
+    const resolvedFamilyStudents = useMemo(() => {
+        if (!activeSub) return [];
+
+        const targetParentId = (activeSub.parentId || '').toString().trim();
+        const targetStudentId = (activeSub.studentId || '').toString().trim();
+        const targetPhone = (activeSub.parentPhone || activeSub.fatherPhone || '').toString().replace(/[^0-9]/g, '');
+        const targetFatherName = (activeSub.parentName || activeSub.fatherName || '').toString().trim().toLowerCase();
+        const subMonthInfo = parseMonthInfo(activeSub.month);
+
+        const studentPool = (Array.isArray(allStudents) && allStudents.length > 0) ? allStudents : localStudents;
+        let siblingCandidates = [];
+
+        if (Array.isArray(studentPool) && studentPool.length > 0) {
+            const map = new Map();
+
+            // 1. PRIMARY & FASTEST: Match directly by Parent Account UID
+            if (targetParentId) {
+                studentPool.forEach(st => {
+                    if (!st) return;
+                    const pId = (st.parentDetails?.parentId || st.parentId || st.parentUid || st.guardianId || '').toString().trim();
+                    if (pId && pId === targetParentId) {
+                        map.set(st.id, st);
+                    }
+                });
+            }
+
+            // 2. SECONDARY: Add primary student if explicitly tagged in submission
+            if (targetStudentId && !map.has(targetStudentId)) {
+                const primarySt = studentPool.find(s => s.id === targetStudentId);
+                if (primarySt) map.set(primarySt.id, primarySt);
+            }
+
+            // 3. TERTIARY FALLBACK: Match by normalized Phone Number (if no parent account matches found)
+            if (map.size === 0 && targetPhone.length >= 7) {
+                studentPool.forEach(st => {
+                    if (!st) return;
+                    const sPhones = [
+                        st.fatherPhone, st.phone, st.emergencyPhone, 
+                        st.parentDetails?.phone, st.guardianPhone, st.motherPhone
+                    ].map(p => (p || '').toString().replace(/[^0-9]/g, '')).filter(p => p.length >= 7);
+
+                    if (sPhones.some(p => p.includes(targetPhone) || targetPhone.includes(p))) {
+                        map.set(st.id, st);
+                    }
+                });
+            }
+
+            // 4. QUATERNARY FALLBACK: Match by Father Name
+            if (map.size === 0 && targetFatherName.length >= 3) {
+                studentPool.forEach(st => {
+                    if (!st) return;
+                    const stFather = (st.fatherName || st.parentDetails?.fatherName || st.parentName || '').toString().trim().toLowerCase();
+                    if (stFather && (stFather === targetFatherName || stFather.includes(targetFatherName) || targetFatherName.includes(stFather))) {
+                        map.set(st.id, st);
+                    }
+                });
+            }
+
+            siblingCandidates = Array.from(map.values());
+        }
+
+        // 5. FINAL FALLBACK: If still not resolved from pool, extract from submission payload
+        if (siblingCandidates.length === 0) {
+            if (activeSub.isFamilyCombined && Array.isArray(activeSub.familyStudents) && activeSub.familyStudents.length > 0) {
+                siblingCandidates = activeSub.familyStudents.map(fs => ({
+                    id: fs.studentId || fs.id,
+                    name: fs.studentName || fs.name,
+                    className: fs.className || 'Class',
+                    classId: fs.classId || '',
+                    rollNo: fs.rollNo || '',
+                    subtotal: Number(fs.subtotal || 0)
+                }));
+            } else if (activeSub.studentId) {
+                siblingCandidates = [{
+                    id: activeSub.studentId,
+                    name: activeSub.studentName || 'Student',
+                    className: activeSub.className || 'Class',
+                    classId: activeSub.classId || '',
+                    rollNo: activeSub.rollNo || '',
+                    subtotal: Number(activeSub.amount || 0)
+                }];
+            }
+        }
+
+        // Calculate universal itemized fee breakdown for each sibling
+        return siblingCandidates.map(st => {
+            const breakdown = calculateItemizedFeeBreakdown(
+                st, 
+                null, 
+                feeSettings, 
+                subMonthInfo.mIdx, 
+                subMonthInfo.yr
+            );
+
+            const isPrimary = (st.id === targetStudentId) || (activeSub.isFamilyCombined && activeSub.familyStudents?.some(fs => fs.studentId === st.id));
+            const isSettled = isMonthKeySettled(st, subMonthInfo.monthKey, subMonthInfo.yr);
+
+            return {
+                ...st,
+                breakdown,
+                calculatedDue: breakdown.totalPayable,
+                isPrimary,
+                isSettled
+            };
+        });
+    }, [activeSub, allStudents, localStudents, feeSettings]);
+
+    // Sibling Paying Selection state updater
+    useEffect(() => {
+        if (!activeSub) return;
+        const initialMap = {};
+        resolvedFamilyStudents.forEach(st => {
+            // Default to checked if it's the primary student or listed in submission
+            if (activeSub.isFamilyCombined && Array.isArray(activeSub.familyStudents)) {
+                initialMap[st.id] = activeSub.familyStudents.some(fs => fs.studentId === st.id);
+            } else {
+                initialMap[st.id] = (st.id === activeSub.studentId) || (resolvedFamilyStudents.length === 1);
+            }
+        });
+        setSelectedSiblingsPayingMap(initialMap);
+    }, [activeSub?.id, resolvedFamilyStudents.length]);
+
+    const toggleSiblingPaying = (studentId) => {
+        setSelectedSiblingsPayingMap(prev => ({
+            ...prev,
+            [studentId]: !prev[studentId]
+        }));
+    };
+
+    // Calculate Grand Total of checked siblings
+    const totalCalculatedDue = useMemo(() => {
+        return resolvedFamilyStudents
+            .filter(st => selectedSiblingsPayingMap[st.id] !== false)
+            .reduce((sum, st) => sum + (Number(st.calculatedDue) || 0), 0);
+    }, [resolvedFamilyStudents, selectedSiblingsPayingMap]);
+
+    const slipPaidAmount = Number(activeSub?.amount) || 0;
+    const isExactMatch = totalCalculatedDue === slipPaidAmount;
+    const discrepancy = slipPaidAmount - totalCalculatedDue;
+
+    // Filtered lists for rendering
+    const applyCommonSearch = (sub) => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        return (
+            (sub.studentName && sub.studentName.toLowerCase().includes(q)) ||
+            (sub.className && sub.className.toLowerCase().includes(q)) ||
+            (sub.rollNo && sub.rollNo.toString().toLowerCase().includes(q)) ||
+            (sub.transactionId && sub.transactionId.toLowerCase().includes(q)) ||
+            (sub.receiptNo && sub.receiptNo.toLowerCase().includes(q)) ||
+            (sub.parentName && sub.parentName.toLowerCase().includes(q)) ||
+            (sub.parentPhone && sub.parentPhone.includes(q)) ||
+            (sub.paymentMethod && sub.paymentMethod.toLowerCase().includes(q))
+        );
+    };
+
+    const applyMethodFilter = (sub) => {
+        if (filterMethod === 'all') return true;
+        if (filterMethod === 'family') return Boolean(sub.isFamilyCombined);
+        const m = (sub.paymentMethod || '').toLowerCase();
+        if (filterMethod === 'easypaisa') return m.includes('easypaisa');
+        if (filterMethod === 'jazzcash') return m.includes('jazzcash');
+        if (filterMethod === 'bank') return m.includes('bank') || m.includes('meezan') || m.includes('transfer') || m.includes('hbl') || m.includes('ubl') || m.includes('alfalah');
+        return true;
+    };
+
+    const filteredCounterList = useMemo(() => {
+        return pendingSubs.filter(s => applyCommonSearch(s) && applyMethodFilter(s));
+    }, [pendingSubs, searchQuery, filterMethod]);
+
+    const filteredHistoryList = useMemo(() => {
+        return historySubs.filter(s => {
+            if (!applyCommonSearch(s) || !applyMethodFilter(s)) return false;
+            if (filterStatus === 'all') return true;
+            return s.status === filterStatus;
+        });
+    }, [historySubs, searchQuery, filterMethod, filterStatus]);
+
+    // Handle Approve (Executes Atomic Batch with Multi-Sibling Support)
+    const handleApprove = async (subToApprove) => {
+        const sub = subToApprove || activeSub;
+        if (!sub) return;
+
+        const payingStudents = resolvedFamilyStudents.filter(st => selectedSiblingsPayingMap[st.id] !== false);
+        const isMulti = payingStudents.length > 1;
+
+        const confirmMsg = isMulti
+            ? `Approve combined family fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${payingStudents.length} students (${payingStudents.map(s => s.name).join(', ')})?`
+            : `Approve fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.studentName || payingStudents[0]?.name || 'Student'} (${sub.className || payingStudents[0]?.className || 'Class'})?`;
 
         if (!window.confirm(confirmMsg)) {
             return;
@@ -169,209 +470,126 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
         try {
             const now = new Date();
             const nowIso = now.toISOString();
-            const dateString = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-            const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
             const receiptNo = sub.transactionId ? `ONL-${sub.transactionId}` : `ONL-${Date.now().toString().slice(-6)}`;
             const finalAmount = Number(sub.amount) || 0;
-            const monthKey = getMonthKey(sub.month);
+            const { monthKey, monthName } = parseMonthInfo(sub.month);
 
             const batch = writeBatch(db);
 
-            if (isFamily) {
-                // 1. Process Multi-Student Family atomically
-                for (const student of sub.familyStudents) {
-                    const studentDue = Number(student.subtotal) || 0;
+            // 1. Process each paying sibling document
+            for (const st of payingStudents) {
+                const childSubtotal = Number(st.calculatedDue || st.subtotal || 0);
+                const classId = st.classId || sub.classId || '';
 
-                    const studentHistoryEntry = {
+                const studentPayload = {
+                    monthlyFeeStatus: 'paid',
+                    monthlyFeeDate: nowIso,
+                    paidMonths: arrayUnion(monthKey),
+                    lastPaymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                    lastReceiptNo: receiptNo,
+                    lastPaymentAmount: isMulti && totalCalculatedDue > 0 ? Math.round((childSubtotal / totalCalculatedDue) * finalAmount) : finalAmount,
+                    lastPaymentProofUrl: sub.proofUrl || null,
+                    pendingPaymentSubmission: {
+                        status: 'approved',
+                        approvedAt: nowIso,
+                        receiptNo
+                    },
+                    [`monthlyFeeHistory.${monthKey}`]: {
                         status: 'paid',
-                        paidAmount: studentDue,
+                        paidAmount: isMulti && totalCalculatedDue > 0 ? Math.round((childSubtotal / totalCalculatedDue) * finalAmount) : finalAmount,
                         remainingBalance: 0,
                         paidAt: nowIso,
                         receiptNo,
                         paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
                         proofUrl: sub.proofUrl || null,
                         transactionId: sub.transactionId || null,
-                        monthKey
-                    };
-
-                    if (student.classId && student.studentId) {
-                        const classStudentRef = doc(db, `schools/${schoolId}/classes/${student.classId}/students`, student.studentId);
-                        batch.set(classStudentRef, {
-                            monthlyFeeStatus: 'paid',
-                            monthlyFeeDate: nowIso,
-                            paidMonths: arrayUnion(monthKey),
-                            [`monthlyFeeHistory.${monthKey}`]: studentHistoryEntry,
-                            lastPaymentMode: sub.paymentMethod || 'Online Transfer',
-                            lastPaymentAmount: studentDue,
-                            lastReceiptNo: receiptNo,
-                            lastPaymentProofUrl: sub.proofUrl || null,
-                            pendingPaymentSubmission: {
-                                status: 'approved',
-                                approvedAt: nowIso
-                            }
-                        }, { merge: true });
+                        monthKey,
+                        monthName
                     }
-
-                    if (student.studentId) {
-                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.studentId);
-                        batch.set(masterStudentRef, {
-                            monthlyFeeStatus: 'paid',
-                            monthlyFeeDate: nowIso,
-                            paidMonths: arrayUnion(monthKey),
-                            [`monthlyFeeHistory.${monthKey}`]: studentHistoryEntry,
-                            lastPaymentMode: sub.paymentMethod || 'Online Transfer',
-                            lastPaymentAmount: studentDue,
-                            lastReceiptNo: receiptNo,
-                            lastPaymentProofUrl: sub.proofUrl || null,
-                            pendingPaymentSubmission: {
-                                status: 'approved',
-                                approvedAt: nowIso
-                            }
-                        }, { merge: true });
-                    }
-                }
-
-                // Family Transaction Record
-                const transactionRecord = {
-                    receiptNo,
-                    isFamilyCombined: true,
-                    familyStudents: sub.familyStudents,
-                    studentId: sub.studentId || sub.familyStudents[0]?.studentId,
-                    studentName: sub.studentName || `Family (${sub.familyStudents.length} Students)`,
-                    rollNo: '-',
-                    classId: sub.classId || sub.familyStudents[0]?.classId,
-                    className: `${sub.familyStudents.length} Classes Combined`,
-                    fatherName: sub.parentName || 'Parent / Guardian',
-                    fatherPhone: sub.parentPhone || '',
-                    items: sub.familyStudents.map(s => ({
-                        name: `${s.studentName} (${s.className || 'Class'}) - Online Fee`,
-                        amount: Number(s.subtotal) || 0
-                    })),
-                    baseFee: finalAmount,
-                    actionsFee: 0,
-                    fineAmount: 0,
-                    discount: 0,
-                    totalPaid: finalAmount,
-                    paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
-                    proofUrl: sub.proofUrl || null,
-                    remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Family Payment Approved',
-                    dueDate: null,
-                    targetMonthKey: monthKey,
-                    timestamp: serverTimestamp(),
-                    dateString,
-                    timeString,
-                    collectedBy: 'Online Portal (Verified by Principal)'
                 };
 
-                const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
-                batch.set(txDocRef, {
-                    ...transactionRecord,
-                    id: receiptNo,
-                    timestamp: serverTimestamp()
-                }, { merge: true });
-
-            } else {
-                // Single Student Processing
-                const singleHistoryEntry = {
-                    status: 'paid',
-                    paidAmount: finalAmount,
-                    remainingBalance: 0,
-                    paidAt: nowIso,
-                    receiptNo,
-                    paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
-                    proofUrl: sub.proofUrl || null,
-                    transactionId: sub.transactionId || null,
-                    monthKey
-                };
-
-                const transactionRecord = {
-                    receiptNo,
-                    isFamilyCombined: false,
-                    familyStudents: [],
-                    studentId: sub.studentId,
-                    studentName: sub.studentName,
-                    rollNo: sub.rollNo || 'N/A',
-                    classId: sub.classId,
-                    className: sub.className || 'Class',
-                    fatherName: sub.parentName || 'Parent / Guardian',
-                    fatherPhone: sub.parentPhone || '',
-                    items: [
-                        { name: `Online Fee Payment (${sub.month || 'Current Month'})`, amount: finalAmount }
-                    ],
-                    baseFee: finalAmount,
-                    actionsFee: 0,
-                    fineAmount: 0,
-                    discount: 0,
-                    totalPaid: finalAmount,
-                    paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
-                    proofUrl: sub.proofUrl || null,
-                    remarks: sub.transactionId ? `TRX ID: ${sub.transactionId}` : 'Online Payment Approved',
-                    dueDate: null,
-                    targetMonthKey: monthKey,
-                    timestamp: serverTimestamp(),
-                    dateString,
-                    timeString,
-                    collectedBy: 'Online Portal (Verified by Principal)'
-                };
-
-                if (sub.classId && sub.studentId) {
-                    const classStudentRef = doc(db, `schools/${schoolId}/classes/${sub.classId}/students`, sub.studentId);
-                    batch.set(classStudentRef, {
-                        monthlyFeeStatus: 'paid',
-                        monthlyFeeDate: nowIso,
-                        paidMonths: arrayUnion(monthKey),
-                        [`monthlyFeeHistory.${monthKey}`]: singleHistoryEntry,
-                        lastPaymentMode: sub.paymentMethod || 'Online Transfer',
-                        lastPaymentAmount: finalAmount,
-                        lastReceiptNo: receiptNo,
-                        lastPaymentProofUrl: sub.proofUrl || null,
-                        pendingPaymentSubmission: {
-                            status: 'approved',
-                            approvedAt: nowIso
+                // Clear store purchases for this month if any
+                if (Array.isArray(st.storePurchases)) {
+                    studentPayload.storePurchases = st.storePurchases.map(sp => {
+                        if (sp.monthKey === monthKey || sp.status === 'unpaid') {
+                            return { ...sp, status: 'paid', paidAt: nowIso, receiptNo };
                         }
-                    }, { merge: true });
+                        return sp;
+                    });
+                    studentPayload.storeDues = 0;
                 }
 
-                if (sub.studentId) {
-                    const masterStudentRef = doc(db, `schools/${schoolId}/students`, sub.studentId);
-                    batch.set(masterStudentRef, {
-                        monthlyFeeStatus: 'paid',
-                        monthlyFeeDate: nowIso,
-                        paidMonths: arrayUnion(monthKey),
-                        [`monthlyFeeHistory.${monthKey}`]: singleHistoryEntry,
-                        lastPaymentMode: sub.paymentMethod || 'Online Transfer',
-                        lastPaymentAmount: finalAmount,
-                        lastReceiptNo: receiptNo,
-                        lastPaymentProofUrl: sub.proofUrl || null,
-                        pendingPaymentSubmission: {
-                            status: 'approved',
-                            approvedAt: nowIso
-                        }
-                    }, { merge: true });
+                if (classId && st.id) {
+                    const classStRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, st.id);
+                    batch.set(classStRef, studentPayload, { merge: true });
                 }
-
-                const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
-                batch.set(txDocRef, {
-                    ...transactionRecord,
-                    id: receiptNo,
-                    timestamp: serverTimestamp()
-                }, { merge: true });
+                if (st.id) {
+                    const masterStRef = doc(db, `schools/${schoolId}/students`, st.id);
+                    batch.set(masterStRef, studentPayload, { merge: true });
+                }
             }
 
-            // Update Submission Document Status
+            // 2. Create Master Fee Transaction record
+            const transactionRecord = {
+                receiptNo,
+                isFamilyCombined: isMulti,
+                familyStudents: payingStudents.map(s => ({
+                    studentId: s.id,
+                    studentName: s.name,
+                    className: s.className,
+                    classId: s.classId || '',
+                    rollNo: s.rollNo || '',
+                    subtotal: s.calculatedDue || 0
+                })),
+                studentId: payingStudents[0]?.id || sub.studentId || '',
+                studentName: isMulti ? `Family of ${sub.parentName || payingStudents[0]?.fatherName || 'Parent'} (${payingStudents.length} Students)` : (sub.studentName || payingStudents[0]?.name || 'Student'),
+                rollNo: isMulti ? '-' : (sub.rollNo || payingStudents[0]?.rollNo || 'N/A'),
+                classId: payingStudents[0]?.classId || sub.classId || '',
+                className: isMulti ? `${payingStudents.length} Classes Combined` : (sub.className || payingStudents[0]?.className || 'Class'),
+                fatherName: sub.parentName || payingStudents[0]?.fatherName || 'Parent',
+                fatherPhone: sub.parentPhone || payingStudents[0]?.fatherPhone || '',
+                paidCategories: ['tuition', 'transport', 'action', 'store'],
+                totalPaid: finalAmount,
+                targetMonth: monthName,
+                targetMonthKey: monthKey,
+                paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
+                proofUrl: sub.proofUrl || null,
+                transactionId: sub.transactionId || null,
+                status: 'paid',
+                cashier: 'Online Verification Studio',
+                schoolId,
+                timestamp: serverTimestamp(),
+                createdAt: nowIso
+            };
+
+            const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+            batch.set(txDocRef, transactionRecord, { merge: true });
+
+            // 3. Update Submission Status to Approved
             const subRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
             batch.update(subRef, {
                 status: 'approved',
                 approvedAt: nowIso,
-                receiptNo
+                receiptNo,
+                approvedSiblings: payingStudents.map(s => ({ studentId: s.id, studentName: s.name, className: s.className }))
             });
 
-            // Commit atomic batch
-            await batch.commit();
-
-            if (reviewingSub?.id === sub.id) {
-                setReviewingSub(null);
+            // 4. Send In-App Notification to Parent
+            if (sub.parentId) {
+                const notifRef = doc(collection(db, `schools/${schoolId}/notifications`));
+                batch.set(notifRef, {
+                    id: notifRef.id,
+                    parentId: sub.parentId,
+                    studentId: sub.studentId || null,
+                    title: 'Fee Payment Approved ✓',
+                    message: `Your fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${monthName || sub.month || 'Fee'} has been approved and verified by the school administration. Receipt: ${receiptNo}`,
+                    type: 'fee',
+                    read: false,
+                    createdAt: serverTimestamp()
+                });
             }
+
+            await batch.commit();
 
         } catch (err) {
             console.error("Error approving submission:", err);
@@ -408,18 +626,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                 transactionId: rejectingSub.transactionId || ''
             };
 
-            if (rejectingSub.isFamilyCombined && rejectingSub.familyStudents?.length > 0) {
-                for (const student of rejectingSub.familyStudents) {
-                    if (student.classId && student.studentId) {
-                        const classStudentRef = doc(db, `schools/${schoolId}/classes/${student.classId}/students`, student.studentId);
-                        batch.set(classStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
-                    }
-                    if (student.studentId) {
-                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.studentId);
-                        batch.set(masterStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
-                    }
-                }
-            } else if (rejectingSub.studentId) {
+            if (rejectingSub.studentId) {
                 let resolvedClassId = rejectingSub.classId;
                 if (!resolvedClassId) {
                     try {
@@ -437,12 +644,23 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                 batch.set(masterStudentRef, { pendingPaymentSubmission: rejectTag }, { merge: true });
             }
 
+            if (rejectingSub.parentId) {
+                const notifRef = doc(collection(db, `schools/${schoolId}/notifications`));
+                batch.set(notifRef, {
+                    id: notifRef.id,
+                    parentId: rejectingSub.parentId,
+                    studentId: rejectingSub.studentId || null,
+                    title: 'Payment Slip Rejected',
+                    message: `Payment proof for ${rejectingSub.month || 'Fee'} was rejected: ${message}`,
+                    type: 'alert',
+                    read: false,
+                    createdAt: serverTimestamp()
+                });
+            }
+
             await batch.commit();
             setRejectingSub(null);
             setRejectReason('');
-            if (reviewingSub?.id === rejectingSub.id) {
-                setReviewingSub(null);
-            }
         } catch (err) {
             console.error("Error rejecting submission:", err);
             alert("Failed to reject submission: " + err.message);
@@ -474,32 +692,32 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                 requestedAt: nowIso
             };
 
-            if (reuploadSub.isFamilyCombined && reuploadSub.familyStudents?.length > 0) {
-                for (const student of reuploadSub.familyStudents) {
-                    if (student.classId && student.studentId) {
-                        const classStudentRef = doc(db, `schools/${schoolId}/classes/${student.classId}/students`, student.studentId);
-                        batch.set(classStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
-                    }
-                    if (student.studentId) {
-                        const masterStudentRef = doc(db, `schools/${schoolId}/students`, student.studentId);
-                        batch.set(masterStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
-                    }
-                }
-            } else if (reuploadSub.classId && reuploadSub.studentId) {
+            if (reuploadSub.classId && reuploadSub.studentId) {
                 const classStudentRef = doc(db, `schools/${schoolId}/classes/${reuploadSub.classId}/students`, reuploadSub.studentId);
                 batch.set(classStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
-                if (reuploadSub.studentId) {
-                    const masterStudentRef = doc(db, `schools/${schoolId}/students`, reuploadSub.studentId);
-                    batch.set(masterStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
-                }
+            }
+            if (reuploadSub.studentId) {
+                const masterStudentRef = doc(db, `schools/${schoolId}/students`, reuploadSub.studentId);
+                batch.set(masterStudentRef, { pendingPaymentSubmission: reuploadTag }, { merge: true });
+            }
+
+            if (reuploadSub.parentId) {
+                const notifRef = doc(collection(db, `schools/${schoolId}/notifications`));
+                batch.set(notifRef, {
+                    id: notifRef.id,
+                    parentId: reuploadSub.parentId,
+                    studentId: reuploadSub.studentId || null,
+                    title: 'Payment Slip Re-upload Requested',
+                    message: `Please upload a clearer receipt for ${reuploadSub.month || 'Fee'}: ${message}`,
+                    type: 'alert',
+                    read: false,
+                    createdAt: serverTimestamp()
+                });
             }
 
             await batch.commit();
             setReuploadSub(null);
             setReuploadNote('');
-            if (reviewingSub?.id === reuploadSub.id) {
-                setReviewingSub(null);
-            }
         } catch (err) {
             console.error("Error requesting slip re-upload:", err);
             alert("Failed to request re-upload: " + err.message);
@@ -508,267 +726,69 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
         }
     };
 
-    // Counts & Metrics
-    const pendingSubs = submissions.filter(s => (s.status || 'pending') === 'pending');
-    const historySubs = submissions.filter(s => (s.status || 'pending') !== 'pending');
-    
+    const getMethodBadge = (method) => {
+        const m = (method || '').toLowerCase();
+        if (m.includes('easypaisa')) {
+            return { label: 'EasyPaisa', bg: '#ecfdf5', color: '#047857', border: '#a7f3d0', icon: Smartphone };
+        }
+        if (m.includes('jazzcash')) {
+            return { label: 'JazzCash', bg: '#fef2f2', color: '#b91c1c', border: '#fecaca', icon: Smartphone };
+        }
+        if (m.includes('bank') || m.includes('transfer') || m.includes('meezan') || m.includes('hbl') || m.includes('ubl')) {
+            return { label: method || 'Bank Transfer', bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe', icon: Landmark };
+        }
+        return { label: method || 'Online Transfer', bg: '#faf5ff', color: '#7e22ce', border: '#e9d5ff', icon: CreditCard };
+    };
+
     const pendingCount = pendingSubs.length;
     const approvedCount = submissions.filter(s => s.status === 'approved').length;
     const rejectedCount = submissions.filter(s => s.status === 'rejected').length;
     const reuploadCount = submissions.filter(s => s.status === 'needs_reupload').length;
-    const totalCollectedOnline = submissions
-        .filter(s => s.status === 'approved')
-        .reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
-
-    // Filtered Lists based on activeSubTab
-    const applyCommonSearch = (sub) => {
-        if (!searchQuery) return true;
-        const queryLower = searchQuery.toLowerCase();
-        return (
-            (sub.studentName && sub.studentName.toLowerCase().includes(queryLower)) ||
-            (sub.className && sub.className.toLowerCase().includes(queryLower)) ||
-            (sub.rollNo && sub.rollNo.toString().toLowerCase().includes(queryLower)) ||
-            (sub.transactionId && sub.transactionId.toLowerCase().includes(queryLower)) ||
-            (sub.receiptNo && sub.receiptNo.toLowerCase().includes(queryLower)) ||
-            (sub.parentName && sub.parentName.toLowerCase().includes(queryLower)) ||
-            (sub.parentPhone && sub.parentPhone.includes(queryLower)) ||
-            (sub.paymentMethod && sub.paymentMethod.toLowerCase().includes(queryLower))
-        );
-    };
-
-    const applyMethodFilter = (sub) => {
-        if (filterMethod === 'all') return true;
-        if (filterMethod === 'family') return Boolean(sub.isFamilyCombined);
-        const m = (sub.paymentMethod || '').toLowerCase();
-        if (filterMethod === 'easypaisa') return m.includes('easypaisa');
-        if (filterMethod === 'jazzcash') return m.includes('jazzcash');
-        if (filterMethod === 'bank') return m.includes('bank') || m.includes('transfer') || m.includes('meezan') || m.includes('hbl') || m.includes('ubl');
-        return true;
-    };
-
-    const filteredCounterList = pendingSubs
-        .filter(applyMethodFilter)
-        .filter(applyCommonSearch);
-
-    const filteredHistoryList = historySubs
-        .filter(sub => filterStatus === 'all' || sub.status === filterStatus)
-        .filter(applyMethodFilter)
-        .filter(applyCommonSearch);
-
-    const getMethodBadge = (method) => {
-        const m = (method || '').toLowerCase();
-        if (m.includes('easypaisa')) {
-            return { label: 'EasyPaisa', bg: '#dcfce7', color: '#15803d', border: '#86efac', icon: Smartphone };
-        } else if (m.includes('jazzcash')) {
-            return { label: 'JazzCash', bg: '#fee2e2', color: '#b91c1c', border: '#fca5a5', icon: Smartphone };
-        }
-        return { label: method || 'Bank Transfer', bg: '#f3e8ff', color: '#7e22ce', border: '#d8b4fe', icon: Landmark };
-    };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingBottom: '2.5rem' }}>
             
-            {/* Top Sub-Nav Switch: Online Fee Counter vs Online Fee History */}
-            <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '1rem',
-                background: 'white',
-                padding: '0.85rem 1.25rem',
-                borderRadius: '18px',
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 4px 6px -1px rgba(0,0,0,0.03)'
-            }}>
-                <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
-                    <button
-                        type="button"
-                        onClick={() => setActiveSubTab('counter')}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.6rem',
-                            padding: '0.65rem 1.35rem',
-                            borderRadius: '12px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                            background: activeSubTab === 'counter' 
-                                ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' 
-                                : '#f8fafc',
-                            color: activeSubTab === 'counter' ? 'white' : '#475569',
-                            boxShadow: activeSubTab === 'counter' ? '0 4px 12px rgba(79, 70, 229, 0.35)' : 'none',
-                            fontWeight: '700',
-                            fontSize: '0.95rem'
-                        }}
-                    >
-                        <Sparkles size={17} color={activeSubTab === 'counter' ? '#fbbf24' : '#6366f1'} />
-                        <span>Online Fee Counter</span>
-                        {pendingCount > 0 ? (
-                            <span style={{
-                                padding: '0.15rem 0.55rem',
-                                borderRadius: '10px',
-                                background: activeSubTab === 'counter' ? '#ef4444' : '#fee2e2',
-                                color: activeSubTab === 'counter' ? 'white' : '#dc2626',
-                                fontSize: '0.75rem',
-                                fontWeight: '800',
-                                animation: 'pulse 2s infinite'
-                            }}>
-                                {pendingCount} Pending
-                            </span>
-                        ) : (
-                            <span style={{
-                                padding: '0.15rem 0.45rem',
-                                borderRadius: '10px',
-                                background: activeSubTab === 'counter' ? 'rgba(255,255,255,0.2)' : '#e2e8f0',
-                                color: activeSubTab === 'counter' ? 'white' : '#64748b',
-                                fontSize: '0.75rem',
-                                fontWeight: '700'
-                            }}>
-                                Cleared ✓
-                            </span>
-                        )}
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSubTab('history')}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.6rem',
-                            padding: '0.65rem 1.35rem',
-                            borderRadius: '12px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                            background: activeSubTab === 'history' 
-                                ? 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' 
-                                : '#f8fafc',
-                            color: activeSubTab === 'history' ? 'white' : '#475569',
-                            boxShadow: activeSubTab === 'history' ? '0 4px 12px rgba(15, 23, 42, 0.35)' : 'none',
-                            fontWeight: '700',
-                            fontSize: '0.95rem'
-                        }}
-                    >
-                        <FileCheck size={17} color={activeSubTab === 'history' ? '#38bdf8' : '#64748b'} />
-                        <span>Online Fee History</span>
-                        <span style={{
-                            padding: '0.15rem 0.55rem',
-                            borderRadius: '10px',
-                            background: activeSubTab === 'history' ? 'rgba(255,255,255,0.15)' : '#e2e8f0',
-                            color: activeSubTab === 'history' ? 'white' : '#64748b',
-                            fontSize: '0.75rem',
-                            fontWeight: '700'
-                        }}>
-                            {historySubs.length} Records
-                        </span>
-                    </button>
-                </div>
-
-                {/* Right Summary */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.75rem',
-                        background: '#ecfdf5',
-                        padding: '0.45rem 0.9rem',
-                        borderRadius: '12px',
-                        border: '1px solid #a7f3d0'
-                    }}>
-                        <Landmark size={18} color="#059669" />
-                        <div>
-                            <div style={{ fontSize: '0.7rem', color: '#065f46', fontWeight: '700', textTransform: 'uppercase' }}>Total Online Approved</div>
-                            <div style={{ fontSize: '0.95rem', fontWeight: '900', color: '#047857' }}>
-                                Rs. {totalCollectedOnline.toLocaleString()}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Real-time Live Online Payment Received Toast Banner */}
+            {/* Realtime Floating Toast Notification */}
             {realtimeToast && (
                 <div style={{
+                    position: 'fixed', top: '24px', right: '24px', zIndex: 10000,
                     background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                    borderRadius: '16px',
-                    padding: '0.95rem 1.25rem',
-                    color: '#ffffff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    boxShadow: '0 10px 25px -5px rgba(2, 132, 199, 0.45)',
-                    border: '1.5px solid #7dd3fc',
-                    gap: '1rem',
-                    flexWrap: 'wrap'
+                    color: 'white', padding: '1rem 1.25rem', borderRadius: '16px',
+                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.25), 0 8px 10px -6px rgba(0,0,0,0.25)',
+                    display: 'flex', alignItems: 'center', gap: '1rem', maxWidth: '440px',
+                    border: '1px solid rgba(255,255,255,0.25)', animation: 'slideInRight 0.3s ease'
                 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-                        <div style={{
-                            width: '42px',
-                            height: '42px',
-                            borderRadius: '12px',
-                            background: 'rgba(255,255,255,0.2)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            flexShrink: 0
-                        }}>
-                            <Bell size={22} color="#ffffff" />
-                        </div>
-                        <div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <span style={{ fontSize: '0.72rem', fontWeight: '900', background: '#38bdf8', color: '#082f49', padding: '2px 8px', borderRadius: '10px' }}>
-                                    ⚡ NEW ONLINE FEE SLIP ARRIVED
-                                </span>
-                                <span style={{ fontSize: '0.75rem', color: '#e0f2fe' }}>Just now</span>
-                            </div>
-                            <div style={{ fontSize: '0.95rem', fontWeight: '800', marginTop: '2px' }}>
-                                {realtimeToast.studentName} ({realtimeToast.className}) submitted Rs. {Number(realtimeToast.amount || 0).toLocaleString()} via {realtimeToast.paymentMethod || 'Online Transfer'}
-                            </div>
+                    <div style={{ background: 'rgba(255,255,255,0.2)', padding: '0.6rem', borderRadius: '12px' }}>
+                        <Bell size={24} className="animate-bounce" />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '800', fontSize: '0.95rem' }}>⚡ New Online Payment Slip!</div>
+                        <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                            {realtimeToast.studentName} ({realtimeToast.className}) • Rs. {Number(realtimeToast.amount || 0).toLocaleString()}
                         </div>
                     </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
                         <button
                             type="button"
                             onClick={() => {
+                                setSelectedSubId(realtimeToast.id);
                                 setActiveSubTab('counter');
-                                setReviewingSub(realtimeToast);
                                 setRealtimeToast(null);
                             }}
                             style={{
-                                padding: '0.5rem 1.15rem',
-                                borderRadius: '9px',
-                                border: 'none',
-                                background: '#ffffff',
-                                color: '#0369a1',
-                                fontWeight: '800',
-                                fontSize: '0.85rem',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.4rem',
+                                padding: '0.45rem 0.85rem', borderRadius: '9px', border: 'none',
+                                background: '#ffffff', color: '#0369a1', fontWeight: '800', fontSize: '0.85rem',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem',
                                 boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
                             }}
                         >
-                            <ShieldCheck size={16} /> Open & Review Slip
+                            <ShieldCheck size={16} /> Open Cockpit
                         </button>
                         <button
                             type="button"
                             onClick={() => setRealtimeToast(null)}
-                            style={{
-                                background: 'rgba(255,255,255,0.15)',
-                                border: 'none',
-                                borderRadius: '8px',
-                                color: '#ffffff',
-                                padding: '0.5rem',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center'
-                            }}
-                            title="Dismiss notification"
+                            style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '8px', color: '#ffffff', padding: '0.5rem', cursor: 'pointer' }}
+                            title="Dismiss"
                         >
                             <X size={16} />
                         </button>
@@ -776,19 +796,113 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                 </div>
             )}
 
+            {/* Top Sub-Nav Switch: 3-Tab Master Architecture */}
+            <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                flexWrap: 'wrap', gap: '1rem', background: 'white', padding: '0.85rem 1.25rem',
+                borderRadius: '18px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+            }}>
+                <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {/* TAB 1: Online Fee Counter Studio */}
+                    <button
+                        type="button"
+                        onClick={() => setActiveSubTab('counter')}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.6rem 1.25rem', borderRadius: '12px', border: 'none',
+                            fontWeight: '800', fontSize: '0.9rem', cursor: 'pointer',
+                            background: activeSubTab === 'counter' ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : '#f8fafc',
+                            color: activeSubTab === 'counter' ? 'white' : '#64748b',
+                            boxShadow: activeSubTab === 'counter' ? '0 4px 10px rgba(79, 70, 229, 0.3)' : 'none',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <Sparkles size={17} />
+                        <span>Online Fee Counter</span>
+                        <span style={{
+                            padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '900',
+                            background: activeSubTab === 'counter' ? 'rgba(239, 68, 68, 0.95)' : (pendingCount > 0 ? '#ef4444' : '#94a3b8'),
+                            color: 'white'
+                        }}>
+                            {pendingCount} Pending
+                        </span>
+                    </button>
+
+                    {/* TAB 2: Dedicated Pending Queue List */}
+                    <button
+                        type="button"
+                        onClick={() => setActiveSubTab('pending_queue')}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.6rem 1.25rem', borderRadius: '12px', border: 'none',
+                            fontWeight: '800', fontSize: '0.9rem', cursor: 'pointer',
+                            background: activeSubTab === 'pending_queue' ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : '#f8fafc',
+                            color: activeSubTab === 'pending_queue' ? 'white' : '#64748b',
+                            boxShadow: activeSubTab === 'pending_queue' ? '0 4px 10px rgba(79, 70, 229, 0.3)' : 'none',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <Clock size={17} />
+                        <span>Pending Queue</span>
+                        <span style={{
+                            padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '800',
+                            background: activeSubTab === 'pending_queue' ? 'rgba(255,255,255,0.25)' : (pendingCount > 0 ? '#fee2e2' : '#e2e8f0'),
+                            color: activeSubTab === 'pending_queue' ? 'white' : (pendingCount > 0 ? '#b91c1c' : '#475569')
+                        }}>
+                            {pendingCount} Slips
+                        </span>
+                    </button>
+
+                    {/* TAB 3: Online Fee History */}
+                    <button
+                        type="button"
+                        onClick={() => setActiveSubTab('history')}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.6rem 1.25rem', borderRadius: '12px', border: 'none',
+                            fontWeight: '800', fontSize: '0.9rem', cursor: 'pointer',
+                            background: activeSubTab === 'history' ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : '#f8fafc',
+                            color: activeSubTab === 'history' ? 'white' : '#64748b',
+                            boxShadow: activeSubTab === 'history' ? '0 4px 10px rgba(79, 70, 229, 0.3)' : 'none',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <FileCheck size={17} />
+                        <span>Online Fee History</span>
+                        <span style={{
+                            padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '800',
+                            background: activeSubTab === 'history' ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
+                            color: activeSubTab === 'history' ? 'white' : '#475569'
+                        }}>
+                            {historySubs.length} Records
+                        </span>
+                    </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <button
+                        type="button"
+                        onClick={() => setAudioEnabled(!audioEnabled)}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                            padding: '0.5rem 0.85rem', borderRadius: '10px', border: '1px solid #cbd5e1',
+                            background: '#f8fafc', color: audioEnabled ? '#16a34a' : '#94a3b8',
+                            fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer'
+                        }}
+                        title={audioEnabled ? "Audio chimes active for incoming slips" : "Audio chimes muted"}
+                    >
+                        {audioEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                        <span>{audioEnabled ? 'Chime ON' : 'Muted'}</span>
+                    </button>
+                </div>
+            </div>
+
             {/* Sub-Header Channel Filters & Search */}
             <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '1rem',
-                background: 'white',
-                padding: '0.85rem 1.25rem',
-                borderRadius: '16px',
-                border: '1px solid #e2e8f0'
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                flexWrap: 'wrap', gap: '1rem', background: 'white', padding: '0.85rem 1.25rem',
+                borderRadius: '16px', border: '1px solid #e2e8f0'
             }}>
-                {/* Method / Channel Pills */}
                 <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginRight: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                         <Filter size={15} /> Channel:
@@ -805,10 +919,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                             type="button"
                             onClick={() => setFilterMethod(pill.id)}
                             style={{
-                                padding: '0.35rem 0.8rem',
-                                borderRadius: '20px',
-                                fontSize: '0.8rem',
-                                fontWeight: '700',
+                                padding: '0.35rem 0.8rem', borderRadius: '20px', fontSize: '0.8rem', fontWeight: '700',
                                 border: filterMethod === pill.id ? '1px solid #4f46e5' : '1px solid #e2e8f0',
                                 cursor: 'pointer',
                                 background: filterMethod === pill.id ? '#e0e7ff' : '#f8fafc',
@@ -821,7 +932,6 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                     ))}
                 </div>
 
-                {/* History Status Selector (if activeSubTab === 'history') */}
                 {activeSubTab === 'history' && (
                     <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                         {[
@@ -835,12 +945,8 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                                 type="button"
                                 onClick={() => setFilterStatus(st.id)}
                                 style={{
-                                    padding: '0.35rem 0.75rem',
-                                    borderRadius: '10px',
-                                    fontSize: '0.78rem',
-                                    fontWeight: '700',
-                                    border: 'none',
-                                    cursor: 'pointer',
+                                    padding: '0.35rem 0.75rem', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '700',
+                                    border: 'none', cursor: 'pointer',
                                     background: filterStatus === st.id ? '#1e293b' : '#f1f5f9',
                                     color: filterStatus === st.id ? 'white' : (st.color || '#475569')
                                 }}
@@ -851,7 +957,6 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                     </div>
                 )}
 
-                {/* Search Bar */}
                 <div style={{ display: 'flex', alignItems: 'center', background: '#f8fafc', padding: '0.45rem 0.85rem', borderRadius: '10px', border: '1px solid #cbd5e1', minWidth: '260px' }}>
                     <Search size={16} color="#64748b" style={{ marginRight: '0.5rem' }} />
                     <input
@@ -870,407 +975,814 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
             </div>
 
             {/* ========================================================================= */}
-            {/* TAB 1: ⚡ ONLINE FEE COUNTER (RAPID VERIFICATION COCKPIT)                */}
+            {/* TAB 1: ⚡ ONLINE STUDIO FEE COUNTER COCKPIT                                */}
             {/* ========================================================================= */}
             {activeSubTab === 'counter' && (
                 <div>
                     {loading ? (
-                        <div style={{ textAlign: 'center', padding: '3.5rem', background: 'white', borderRadius: '18px' }}>
+                        <div style={{ textAlign: 'center', padding: '4rem', background: 'white', borderRadius: '18px' }}>
                             <Loader2 size={36} className="animate-spin" color="#4f46e5" style={{ margin: '0 auto 1rem' }} />
-                            <p style={{ color: '#64748b', fontWeight: '600' }}>Connecting to live Online Fee Counter...</p>
+                            <p style={{ color: '#64748b', fontWeight: '600' }}>Connecting to live Online Fee Counter Studio...</p>
                         </div>
                     ) : filteredCounterList.length === 0 ? (
                         <div style={{
-                            textAlign: 'center',
-                            padding: '4rem 2rem',
-                            background: 'white',
-                            borderRadius: '20px',
-                            border: '1.5px dashed #cbd5e1',
-                            boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)'
+                            textAlign: 'center', padding: '4.5rem 2rem', background: 'white',
+                            borderRadius: '20px', border: '1.5px dashed #cbd5e1', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)'
                         }}>
                             <div style={{
-                                width: '64px',
-                                height: '64px',
-                                borderRadius: '50%',
-                                background: '#ecfdf5',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                margin: '0 auto 1.25rem',
+                                width: '68px', height: '68px', borderRadius: '50%', background: '#ecfdf5',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem',
                                 border: '2px solid #a7f3d0'
                             }}>
-                                <CheckCircle2 size={36} color="#059669" />
+                                <CheckCircle2 size={38} color="#059669" />
                             </div>
-                            <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.35rem' }}>
+                            <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#0f172a', marginBottom: '0.35rem' }}>
                                 All Online Fee Slips Are Cleared!
                             </h3>
-                            <p style={{ color: '#64748b', fontSize: '0.9rem', maxWidth: '480px', margin: '0 auto 1.5rem' }}>
-                                No pending online submissions require verification at this moment. You can review all approved or archived payments in the <strong>Online Fee History</strong> tab.
+                            <p style={{ color: '#64748b', fontSize: '0.92rem', maxWidth: '480px', margin: '0 auto 1.5rem' }}>
+                                There are no pending online submissions requiring verification right now. Any newly submitted slips from Parent Mobile App will pop-up here automatically in real time.
                             </p>
                             <button
                                 type="button"
                                 onClick={() => setActiveSubTab('history')}
                                 style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                    padding: '0.6rem 1.25rem',
-                                    borderRadius: '10px',
-                                    border: 'none',
-                                    background: '#4f46e5',
-                                    color: 'white',
-                                    fontWeight: '700',
-                                    cursor: 'pointer',
+                                    display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                                    padding: '0.65rem 1.35rem', borderRadius: '10px', border: 'none',
+                                    background: '#4f46e5', color: 'white', fontWeight: '700', cursor: 'pointer',
                                     boxShadow: '0 4px 6px -1px rgba(79, 70, 229, 0.3)'
                                 }}
                             >
-                                <span>Go to Online Fee History</span>
+                                <span>Review Online Fee History</span>
                                 <ArrowRight size={16} />
                             </button>
                         </div>
                     ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: '1.25rem' }}>
-                            {filteredCounterList.map((sub) => {
-                                const badge = getMethodBadge(sub.paymentMethod);
-                                const isFamily = Boolean(sub.isFamilyCombined && sub.familyStudents && sub.familyStudents.length > 0);
-                                const isProcessing = processingId === sub.id;
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                            
+                            {/* Sleek Compact Studio Navigation Bar (Zero Duplication) */}
+                            {filteredCounterList.length > 0 && activeSub && (() => {
+                                const currentIndex = filteredCounterList.findIndex(s => s.id === activeSub.id);
+                                const totalSlips = filteredCounterList.length;
+                                const badge = getMethodBadge(activeSub.paymentMethod);
 
                                 return (
-                                    <div
-                                        key={sub.id}
-                                        style={{
-                                            background: 'white',
-                                            borderRadius: '18px',
-                                            border: '1.5px solid #e2e8f0',
-                                            boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)',
-                                            overflow: 'hidden',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            transition: 'transform 0.15s, box-shadow 0.15s'
-                                        }}
-                                    >
-                                        {/* Card Header */}
-                                        <div style={{
-                                            padding: '0.85rem 1.15rem',
-                                            background: isFamily ? '#f5f3ff' : '#f8fafc',
-                                            borderBottom: '1px solid #e2e8f0',
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center'
-                                        }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                {isFamily ? (
-                                                    <span style={{
-                                                        padding: '0.2rem 0.6rem',
-                                                        borderRadius: '8px',
-                                                        background: '#ede9fe',
-                                                        color: '#6d28d9',
-                                                        fontWeight: '800',
-                                                        fontSize: '0.75rem',
-                                                        border: '1px solid #ddd6fe',
-                                                        display: 'inline-flex',
-                                                        alignItems: 'center',
-                                                        gap: '0.25rem'
-                                                    }}>
-                                                        <Users size={13} /> Family ({sub.familyStudents.length} Students)
-                                                    </span>
-                                                ) : (
-                                                    <span style={{
-                                                        padding: '0.2rem 0.55rem',
-                                                        borderRadius: '8px',
-                                                        background: '#e0e7ff',
-                                                        color: '#4338ca',
-                                                        fontWeight: '800',
-                                                        fontSize: '0.75rem',
-                                                        border: '1px solid #c7d2fe'
-                                                    }}>
-                                                        {sub.className || 'Class'}
-                                                    </span>
-                                                )}
-                                                <span style={{
-                                                    padding: '0.2rem 0.55rem',
-                                                    borderRadius: '8px',
-                                                    background: '#f1f5f9',
-                                                    color: '#475569',
-                                                    fontSize: '0.75rem',
-                                                    fontWeight: '700'
-                                                }}>
-                                                    {sub.month || 'Current Month'}
-                                                </span>
-                                            </div>
-
-                                            {/* Payment Channel Badge */}
+                                    <div style={{
+                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                        flexWrap: 'wrap', gap: '0.75rem', background: '#f8fafc', padding: '0.75rem 1.25rem',
+                                        borderRadius: '14px', border: '1px solid #e2e8f0'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                             <span style={{
-                                                padding: '0.25rem 0.6rem',
-                                                borderRadius: '8px',
-                                                fontSize: '0.75rem',
-                                                fontWeight: '800',
-                                                background: badge.bg,
-                                                color: badge.color,
-                                                border: `1px solid ${badge.border}`,
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '0.3rem'
+                                                fontSize: '0.8rem', fontWeight: '900', color: '#4f46e5',
+                                                background: '#e0e7ff', padding: '3px 10px', borderRadius: '8px'
                                             }}>
-                                                <badge.icon size={13} /> {badge.label}
+                                                Slip {currentIndex + 1} of {totalSlips}
                                             </span>
+                                            <div style={{ fontSize: '0.9rem', fontWeight: '800', color: '#1e293b' }}>
+                                                {activeSub.studentName}
+                                            </div>
+                                            <span style={{
+                                                fontSize: '0.72rem', fontWeight: '800', padding: '2px 7px',
+                                                borderRadius: '6px', background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`
+                                            }}>
+                                                {badge.label}
+                                            </span>
+                                            <strong style={{ fontSize: '0.92rem', color: '#0f172a', marginLeft: '0.25rem' }}>
+                                                Rs. {Number(activeSub.amount || 0).toLocaleString()}
+                                            </strong>
                                         </div>
 
-                                        {/* Card Body: Split thumbnail + student ledger */}
-                                        <div style={{ padding: '1.15rem', display: 'flex', gap: '1rem', flex: 1 }}>
-                                            {/* Slip Thumbnail with Hover Magnifier */}
-                                            <div style={{ width: '105px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                {sub.proofUrl ? (
-                                                    <div
-                                                        onClick={() => {
-                                                            setSelectedProofUrl(sub.proofUrl);
-                                                            setZoomLevel(1);
-                                                            setSlipRotation(0);
-                                                        }}
-                                                        style={{
-                                                            width: '100%',
-                                                            height: '115px',
-                                                            borderRadius: '12px',
-                                                            overflow: 'hidden',
-                                                            border: '1.5px solid #cbd5e1',
-                                                            cursor: 'pointer',
-                                                            position: 'relative',
-                                                            background: '#0f172a'
-                                                        }}
-                                                        title="Click to inspect slip in HD"
-                                                    >
-                                                        <img
-                                                            src={sub.proofUrl}
-                                                            alt="Slip"
-                                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                                        />
-                                                        <div style={{
-                                                            position: 'absolute',
-                                                            inset: 0,
-                                                            background: 'rgba(0,0,0,0.35)',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            opacity: 0.9,
-                                                            transition: 'opacity 0.2s'
-                                                        }}>
-                                                            <ZoomIn size={20} color="white" />
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <div style={{
-                                                        width: '100%',
-                                                        height: '115px',
-                                                        borderRadius: '12px',
-                                                        background: '#f1f5f9',
-                                                        border: '1px dashed #cbd5e1',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center',
-                                                        color: '#94a3b8',
-                                                        fontSize: '0.75rem',
-                                                        textAlign: 'center',
-                                                        padding: '0.5rem'
-                                                    }}>
-                                                        No Slip Image
-                                                    </div>
-                                                )}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setReviewingSub(sub);
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <button
+                                                type="button"
+                                                disabled={currentIndex <= 0}
+                                                onClick={() => {
+                                                    if (currentIndex > 0) {
+                                                        setSelectedSubId(filteredCounterList[currentIndex - 1].id);
                                                         setZoomLevel(1);
                                                         setSlipRotation(0);
-                                                    }}
-                                                    style={{
-                                                        width: '100%',
-                                                        padding: '0.35rem',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #c7d2fe',
-                                                        background: '#e0e7ff',
-                                                        color: '#4338ca',
-                                                        fontSize: '0.75rem',
-                                                        fontWeight: '700',
-                                                        cursor: 'pointer',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center',
-                                                        gap: '0.25rem'
-                                                    }}
-                                                >
-                                                    <ShieldCheck size={13} /> Full Audit
-                                                </button>
-                                            </div>
-
-                                            {/* Right Info: Student name, breakdown, TRX */}
-                                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                                                <div>
-                                                    {isFamily ? (
-                                                        <div>
-                                                            <h4 style={{ margin: '0 0 0.25rem', fontSize: '0.95rem', fontWeight: '800', color: '#1e293b' }}>
-                                                                {sub.parentName || 'Family Head'}
-                                                            </h4>
-                                                            <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '0.5rem' }}>
-                                                                Phone: {sub.parentPhone || '—'}
-                                                            </div>
-                                                            <div style={{ background: '#faf5ff', borderRadius: '8px', padding: '0.45rem 0.65rem', border: '1px solid #f3e8ff' }}>
-                                                                {sub.familyStudents.map((s, idx) => (
-                                                                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '0.15rem 0', color: '#4b5563' }}>
-                                                                        <span style={{ fontWeight: '600' }}>• {s.studentName} ({s.className || 'Class'})</span>
-                                                                        <span style={{ fontWeight: '700', color: '#6b21a8' }}>Rs. {Number(s.subtotal || 0).toLocaleString()}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        <div>
-                                                            <h4 style={{ margin: '0 0 0.15rem', fontSize: '1rem', fontWeight: '800', color: '#1e293b' }}>
-                                                                {sub.studentName}
-                                                            </h4>
-                                                            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.35rem' }}>
-                                                                Parent: <strong>{sub.parentName || 'Parent'}</strong> {sub.parentPhone ? `(${sub.parentPhone})` : ''}
-                                                            </div>
-                                                            <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                                                                Class: <strong>{sub.className}</strong> • Roll: <strong>{sub.rollNo || 'N/A'}</strong>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* TRX ID with 1-Click Copy */}
-                                                    <div style={{
-                                                        marginTop: '0.65rem',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'space-between',
-                                                        background: '#f8fafc',
-                                                        padding: '0.35rem 0.6rem',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e2e8f0'
-                                                    }}>
-                                                        <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#334155', fontWeight: '700' }}>
-                                                            TRX: {sub.transactionId || 'None'}
-                                                        </div>
-                                                        {sub.transactionId && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleCopyTrx(sub.transactionId)}
-                                                                style={{
-                                                                    background: 'none',
-                                                                    border: 'none',
-                                                                    cursor: 'pointer',
-                                                                    color: copiedTrx === sub.transactionId ? '#16a34a' : '#6366f1',
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '0.2rem',
-                                                                    fontSize: '0.7rem',
-                                                                    fontWeight: '700'
-                                                                }}
-                                                            >
-                                                                {copiedTrx === sub.transactionId ? <CheckCheck size={12} /> : <Copy size={12} />}
-                                                                {copiedTrx === sub.transactionId ? 'Copied' : 'Copy'}
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                {/* Total Amount Tag */}
-                                                <div style={{
-                                                    marginTop: '0.75rem',
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    alignItems: 'baseline',
-                                                    paddingTop: '0.5rem',
-                                                    borderTop: '1px dashed #e2e8f0'
-                                                }}>
-                                                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Slip Amount</span>
-                                                    <span style={{ fontSize: '1.2rem', fontWeight: '900', color: '#0f172a' }}>
-                                                        Rs. {Number(sub.amount || 0).toLocaleString()}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Card Action Footer */}
-                                        <div style={{
-                                            padding: '0.75rem 1.15rem',
-                                            background: '#f8fafc',
-                                            borderTop: '1px solid #e2e8f0',
-                                            display: 'flex',
-                                            gap: '0.5rem',
-                                            justifyContent: 'flex-end'
-                                        }}>
-                                            <button
-                                                type="button"
-                                                onClick={() => setReuploadSub(sub)}
-                                                disabled={isProcessing}
+                                                    }
+                                                }}
                                                 style={{
-                                                    padding: '0.45rem 0.75rem',
-                                                    borderRadius: '8px',
-                                                    border: '1px solid #fde68a',
-                                                    background: '#fffbeb',
-                                                    color: '#b45309',
-                                                    fontSize: '0.78rem',
-                                                    fontWeight: '700',
-                                                    cursor: isProcessing ? 'not-allowed' : 'pointer',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.3rem'
+                                                    padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid #cbd5e1',
+                                                    background: currentIndex <= 0 ? '#f1f5f9' : '#ffffff',
+                                                    color: currentIndex <= 0 ? '#94a3b8' : '#334155',
+                                                    fontSize: '0.78rem', fontWeight: '700', cursor: currentIndex <= 0 ? 'not-allowed' : 'pointer'
                                                 }}
                                             >
-                                                <RefreshCw size={13} /> Re-upload
+                                                ⬅️ Previous
                                             </button>
 
                                             <button
                                                 type="button"
+                                                disabled={currentIndex >= totalSlips - 1}
                                                 onClick={() => {
-                                                    setRejectReason(sub.rejectReason || '');
-                                                    setRejectingSub(sub);
+                                                    if (currentIndex < totalSlips - 1) {
+                                                        setSelectedSubId(filteredCounterList[currentIndex + 1].id);
+                                                        setZoomLevel(1);
+                                                        setSlipRotation(0);
+                                                    }
                                                 }}
-                                                disabled={isProcessing}
                                                 style={{
-                                                    padding: '0.45rem 0.75rem',
-                                                    borderRadius: '8px',
-                                                    border: '1px solid #fecaca',
-                                                    background: '#fef2f2',
-                                                    color: '#dc2626',
-                                                    fontSize: '0.78rem',
-                                                    fontWeight: '700',
-                                                    cursor: isProcessing ? 'not-allowed' : 'pointer',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.3rem'
+                                                    padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid #cbd5e1',
+                                                    background: currentIndex >= totalSlips - 1 ? '#f1f5f9' : '#ffffff',
+                                                    color: currentIndex >= totalSlips - 1 ? '#94a3b8' : '#334155',
+                                                    fontSize: '0.78rem', fontWeight: '700', cursor: currentIndex >= totalSlips - 1 ? 'not-allowed' : 'pointer'
                                                 }}
                                             >
-                                                <X size={13} /> Reject
+                                                Next ➡️
                                             </button>
 
                                             <button
                                                 type="button"
-                                                onClick={() => handleApprove(sub)}
-                                                disabled={isProcessing}
+                                                onClick={() => setActiveSubTab('pending_queue')}
                                                 style={{
-                                                    padding: '0.45rem 1.15rem',
-                                                    borderRadius: '8px',
-                                                    border: 'none',
-                                                    background: '#16a34a',
-                                                    color: 'white',
-                                                    fontSize: '0.82rem',
-                                                    fontWeight: '800',
-                                                    cursor: isProcessing ? 'not-allowed' : 'pointer',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.35rem',
-                                                    boxShadow: '0 2px 4px rgba(22, 163, 74, 0.25)',
-                                                    opacity: isProcessing ? 0.6 : 1
+                                                    padding: '0.4rem 0.85rem', borderRadius: '8px', border: '1px solid #c7d2fe',
+                                                    background: '#eef2ff', color: '#4338ca', fontSize: '0.78rem', fontWeight: '800',
+                                                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem'
                                                 }}
                                             >
-                                                {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                                                <span>Approve Slip</span>
+                                                <Clock size={14} /> View All in Queue
                                             </button>
                                         </div>
                                     </div>
                                 );
-                            })}
+                            })()}
+
+                            {/* Main 2-Column Canva Studio Cockpit */}
+                            {activeSub && (() => {
+                                const totalSiblings = resolvedFamilyStudents.length;
+                                const settledSiblings = resolvedFamilyStudents.filter(s => s.isSettled).length;
+                                const payingSiblings = resolvedFamilyStudents.filter(s => selectedSiblingsPayingMap[s.id] !== false).length;
+                                const unpaidSiblings = resolvedFamilyStudents.filter(s => !s.isSettled && selectedSiblingsPayingMap[s.id] === false).length;
+
+                                return (
+                                <div style={{
+                                    display: 'grid', gridTemplateColumns: 'minmax(420px, 1.15fr) minmax(380px, 0.85fr)',
+                                    gap: '1.25rem', alignItems: 'start'
+                                }}>
+                                    
+                                    {/* 👈 LEFT COLUMN: Student & Family Fee Cockpit (Offline Fee Counter Categorized Style) */}
+                                    <div style={{
+                                        background: 'white', borderRadius: '20px', border: '1.5px solid #e2e8f0',
+                                        boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)', overflow: 'hidden',
+                                        display: 'flex', flexDirection: 'column'
+                                    }}>
+                                        {/* Cockpit Header with Parent Account Intelligence */}
+                                        <div style={{
+                                            padding: '1.15rem 1.4rem', background: '#f8fafc',
+                                            borderBottom: '1px solid #e2e8f0', display: 'flex',
+                                            justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <div style={{
+                                                    width: '44px', height: '44px', borderRadius: '12px',
+                                                    background: 'linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%)', display: 'flex', alignItems: 'center',
+                                                    justifyContent: 'center', border: '1px solid #c4b5fd'
+                                                }}>
+                                                    <Users size={22} color="#7c3aed" />
+                                                </div>
+                                                <div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#1e293b' }}>
+                                                            {activeSub.parentName || 'Parent / Guardian Account'}
+                                                        </h3>
+                                                        {activeSub.parentId && (
+                                                            <span style={{
+                                                                fontSize: '0.68rem', fontWeight: '800', background: '#eff6ff',
+                                                                color: '#2563eb', padding: '2px 7px', borderRadius: '6px', border: '1px solid #bfdbfe'
+                                                            }}>
+                                                                Parent UID Linked ✓
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p style={{ margin: '0.15rem 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                                                        Phone: <strong>{activeSub.parentPhone || '—'}</strong> • <strong>{totalSiblings}</strong> Registered Child(ren) in School
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <div style={{ textAlign: 'right' }}>
+                                                <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Target Fee Month</div>
+                                                <div style={{ fontSize: '0.95rem', fontWeight: '800', color: '#4f46e5' }}>
+                                                    {activeSub.month || 'Current Month'}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Household Intelligence Summary Bar */}
+                                        <div style={{
+                                            padding: '0.75rem 1.4rem', background: '#f1f5f9', borderBottom: '1px solid #e2e8f0',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem'
+                                        }}>
+                                            <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#475569', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                <ShieldCheck size={15} color="#7c3aed" /> Household Breakdown:
+                                            </span>
+                                            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                                <span style={{
+                                                    fontSize: '0.73rem', fontWeight: '800', padding: '2px 8px', borderRadius: '8px',
+                                                    background: '#ede9fe', color: '#6d28d9', border: '1px solid #ddd6fe'
+                                                }}>
+                                                    ⚡ {payingSiblings} In this Slip
+                                                </span>
+                                                {settledSiblings > 0 && (
+                                                    <span style={{
+                                                        fontSize: '0.73rem', fontWeight: '800', padding: '2px 8px', borderRadius: '8px',
+                                                        background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0'
+                                                    }}>
+                                                        🟢 {settledSiblings} Already Settled ✓
+                                                    </span>
+                                                )}
+                                                {unpaidSiblings > 0 && (
+                                                    <span style={{
+                                                        fontSize: '0.73rem', fontWeight: '800', padding: '2px 8px', borderRadius: '8px',
+                                                        background: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca'
+                                                    }}>
+                                                        🔴 {unpaidSiblings} Unpaid (Excluded)
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Sibling Students List with Offline Fee Counter Style Categorized Breakdown */}
+                                        <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#334155', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                    <FileCheck size={16} color="#7c3aed" />
+                                                    <span>Enrolled Children & Itemized Calculations</span>
+                                                </span>
+                                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                    Target children are locked • Siblings can be added
+                                                </span>
+                                            </div>
+
+                                            {resolvedFamilyStudents.map((st) => {
+                                                // 🔒 SMART LOCKING LOGIC:
+                                                // If Family combined: All students submitted in family are LOCKED
+                                                // If Single payment: Target student is LOCKED
+                                                const isSubmittedInSlip = activeSub.isFamilyCombined
+                                                    ? Boolean(activeSub.familyStudents?.some(fs => fs.studentId === st.id))
+                                                    : (st.id === activeSub.studentId);
+                                                
+                                                const isLocked = isSubmittedInSlip || st.isSettled;
+                                                const isPaying = isSubmittedInSlip ? true : (selectedSiblingsPayingMap[st.id] !== false);
+                                                const bd = st.breakdown || {};
+
+                                                return (
+                                                    <div
+                                                        key={st.id}
+                                                        style={{
+                                                            background: isPaying ? '#ffffff' : (st.isSettled ? '#f0fdf4' : '#f8fafc'),
+                                                            borderRadius: '16px',
+                                                            border: isPaying ? '1.5px solid #a855f7' : (st.isSettled ? '1px solid #bbf7d0' : '1px solid #e2e8f0'),
+                                                            boxShadow: isPaying ? '0 4px 12px rgba(168, 85, 247, 0.08)' : 'none',
+                                                            padding: '1.1rem',
+                                                            transition: 'all 0.15s'
+                                                        }}
+                                                    >
+                                                        {/* Student Card Top Bar */}
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isPaying}
+                                                                    disabled={isLocked}
+                                                                    onChange={() => {
+                                                                        if (!isLocked) {
+                                                                            toggleSiblingPaying(st.id);
+                                                                        }
+                                                                    }}
+                                                                    style={{
+                                                                        width: '18px', height: '18px',
+                                                                        cursor: isLocked ? 'not-allowed' : 'pointer',
+                                                                        accentColor: '#7c3aed', opacity: isLocked ? 0.85 : 1
+                                                                    }}
+                                                                />
+                                                                <div>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                                                        <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: '900', color: isPaying ? '#4c1d95' : '#334155' }}>
+                                                                            {st.name}
+                                                                        </h4>
+                                                                        {isSubmittedInSlip ? (
+                                                                            <span style={{
+                                                                                background: '#f3e8ff', color: '#7e22ce', padding: '2px 8px',
+                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900', border: '1px solid #d8b4fe'
+                                                                            }}>
+                                                                                🔒 Submitted in Slip (Locked)
+                                                                            </span>
+                                                                        ) : st.isSettled ? (
+                                                                            <span style={{
+                                                                                background: '#dcfce7', color: '#15803d', padding: '2px 8px',
+                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800', border: '1px solid #bbf7d0'
+                                                                            }}>
+                                                                                🟢 Already Settled ✓
+                                                                            </span>
+                                                                        ) : isPaying ? (
+                                                                            <span style={{
+                                                                                background: '#eff6ff', color: '#2563eb', padding: '2px 8px',
+                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800', border: '1px solid #bfdbfe'
+                                                                            }}>
+                                                                                ⚡ Added by Cashier
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span style={{
+                                                                                background: '#fee2e2', color: '#b91c1c', padding: '2px 8px',
+                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800', border: '1px solid #fecaca'
+                                                                            }}>
+                                                                                🔴 Unpaid (Excluded)
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.2rem' }}>
+                                                                        Class: <strong style={{ color: '#1e293b' }}>{st.className}</strong> • Roll: <strong style={{ color: '#1e293b' }}>{st.rollNo || 'N/A'}</strong>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+
+                                                            <div style={{ textAlign: 'right' }}>
+                                                                <span style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Calculated Due</span>
+                                                                <div style={{ fontSize: '1.15rem', fontWeight: '900', color: isPaying ? '#6b21a8' : '#64748b' }}>
+                                                                    Rs. {Number(st.calculatedDue || 0).toLocaleString()}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* 📊 Offline Fee Counter Style Itemized Categorized Breakdown */}
+                                                        {isPaying && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.65rem' }}>
+                                                                
+                                                                {/* 1. Tuition & Base Fee */}
+                                                                <div style={{
+                                                                    background: '#eff6ff', borderRadius: '10px',
+                                                                    border: '1px solid #bfdbfe', padding: '0.65rem 0.85rem',
+                                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem'
+                                                                }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                        <span style={{ fontSize: '1rem' }}>🎓</span>
+                                                                        <div>
+                                                                            <strong style={{ color: '#1e40af' }}>Monthly Tuition Fee</strong>
+                                                                            {bd.isScholarship && (
+                                                                                <span style={{ marginLeft: '0.4rem', background: '#dcfce7', color: '#166534', padding: '1px 5px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800' }}>
+                                                                                    {bd.concessionType || 'Scholarship'} Applied
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                    <strong style={{ color: '#1e3a8a', fontSize: '0.9rem' }}>
+                                                                        Rs. {Number(bd.tuitionPayable || bd.baseTuition || 0).toLocaleString()}
+                                                                    </strong>
+                                                                </div>
+
+                                                                {/* 2. Transport Fee if any */}
+                                                                {Number(bd.transportFee || 0) > 0 && (
+                                                                    <div style={{
+                                                                        background: '#fefce8', borderRadius: '10px',
+                                                                        border: '1px solid #fef08a', padding: '0.65rem 0.85rem',
+                                                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem'
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                            <span style={{ fontSize: '1rem' }}>🚌</span>
+                                                                            <strong style={{ color: '#854d0e' }}>Transport Charges</strong>
+                                                                        </div>
+                                                                        <strong style={{ color: '#713f12', fontSize: '0.9rem' }}>
+                                                                            Rs. {Number(bd.transportFee).toLocaleString()}
+                                                                        </strong>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* 3. Store Purchases / Uniform / Books if any */}
+                                                                {Number(bd.storeDues || 0) > 0 && (
+                                                                    <div style={{
+                                                                        background: '#faf5ff', borderRadius: '10px',
+                                                                        border: '1px solid #e9d5ff', padding: '0.65rem 0.85rem',
+                                                                        fontSize: '0.8rem'
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                                <span style={{ fontSize: '1rem' }}>🛍️</span>
+                                                                                <strong style={{ color: '#6b21a8' }}>Store / Uniform & Books</strong>
+                                                                            </div>
+                                                                            <strong style={{ color: '#581c87', fontSize: '0.9rem' }}>
+                                                                                Rs. {Number(bd.storeDues).toLocaleString()}
+                                                                            </strong>
+                                                                        </div>
+                                                                        {Array.isArray(bd.storePurchases) && bd.storePurchases.length > 0 && (
+                                                                            <div style={{ fontSize: '0.74rem', color: '#7e22ce', paddingLeft: '1.4rem' }}>
+                                                                                {bd.storePurchases.map((sp, idx) => (
+                                                                                    <span key={idx} style={{ marginRight: '0.6rem' }}>
+                                                                                        • {sp.title || sp.name || sp.item || 'Item'} (Rs. {Number(sp.amount || 0).toLocaleString()})
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* 4. Exams & Action Charges if any */}
+                                                                {Number(bd.actionFee || 0) > 0 && (
+                                                                    <div style={{
+                                                                        background: '#f0fdf4', borderRadius: '10px',
+                                                                        border: '1px solid #bbf7d0', padding: '0.65rem 0.85rem',
+                                                                        fontSize: '0.8rem'
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                                <span style={{ fontSize: '1rem' }}>📝</span>
+                                                                                <strong style={{ color: '#166534' }}>Exams & Special Charges</strong>
+                                                                            </div>
+                                                                            <strong style={{ color: '#14532d', fontSize: '0.9rem' }}>
+                                                                                Rs. {Number(bd.actionFee).toLocaleString()}
+                                                                            </strong>
+                                                                        </div>
+                                                                        {Array.isArray(bd.actions) && bd.actions.length > 0 && (
+                                                                            <div style={{ fontSize: '0.74rem', color: '#15803d', paddingLeft: '1.4rem' }}>
+                                                                                {bd.actions.map((act, idx) => (
+                                                                                    <span key={idx} style={{ marginRight: '0.6rem' }}>
+                                                                                        • {act.name || act.title || 'Charge'} (Rs. {Number(act.amount || 0).toLocaleString()})
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* 5. Late Fine if any */}
+                                                                {Number(bd.penaltyFine || 0) > 0 && (
+                                                                    <div style={{
+                                                                        background: '#fef2f2', borderRadius: '10px',
+                                                                        border: '1px solid #fecaca', padding: '0.55rem 0.85rem',
+                                                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem'
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                            <span style={{ fontSize: '1rem' }}>⏱️</span>
+                                                                            <strong style={{ color: '#991b1b' }}>Late Fine Charges</strong>
+                                                                        </div>
+                                                                        <strong style={{ color: '#dc2626', fontSize: '0.88rem' }}>
+                                                                            Rs. {Number(bd.penaltyFine).toLocaleString()}
+                                                                        </strong>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Child Subtotal Footer Pill */}
+                                                                <div style={{
+                                                                    padding: '0.5rem 0.75rem', background: '#f8fafc',
+                                                                    borderRadius: '8px', border: '1px solid #e2e8f0',
+                                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem'
+                                                                }}>
+                                                                    <span style={{ color: '#64748b', fontWeight: '700' }}>Child Subtotal Due:</span>
+                                                                    <span style={{ color: '#4c1d95', fontWeight: '900', fontSize: '0.92rem' }}>
+                                                                        Rs. {Number(st.calculatedDue || 0).toLocaleString()}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        {/* Reconciliation Match Card */}
+                                        <div style={{ padding: '0 1.4rem 1.4rem' }}>
+                                            <div style={{
+                                                padding: '1rem 1.25rem', borderRadius: '14px',
+                                                background: isExactMatch ? '#ecfdf5' : (discrepancy < 0 ? '#fef2f2' : '#eff6ff'),
+                                                border: `1.5px solid ${isExactMatch ? '#a7f3d0' : (discrepancy < 0 ? '#fecaca' : '#bfdbfe')}`,
+                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                            }}>
+                                                <div>
+                                                    <div style={{
+                                                        fontSize: '0.85rem', fontWeight: '800',
+                                                        color: isExactMatch ? '#065f46' : (discrepancy < 0 ? '#991b1b' : '#1e40af'),
+                                                        display: 'flex', alignItems: 'center', gap: '0.4rem'
+                                                    }}>
+                                                        {isExactMatch ? <CheckCircle2 size={18} color="#059669" /> : <AlertCircle size={18} color={discrepancy < 0 ? '#dc2626' : '#2563eb'} />}
+                                                        <span>{isExactMatch ? 'Exact 100% Match (Zero Discrepancy)' : (discrepancy < 0 ? 'Underpaid Slip Amount' : 'Overpaid / Advance Credit')}</span>
+                                                    </div>
+                                                    <div style={{ fontSize: '0.78rem', color: isExactMatch ? '#047857' : (discrepancy < 0 ? '#b91c1c' : '#1d4ed8'), marginTop: '0.15rem' }}>
+                                                        {isExactMatch ? 'Calculated fee matches bank slip amount perfectly' : (discrepancy < 0 ? `Slip is short by Rs. ${Math.abs(discrepancy).toLocaleString()}` : `Slip has Rs. ${discrepancy.toLocaleString()} excess`)}
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Calculated Dues Total</div>
+                                                    <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a' }}>
+                                                        Rs. {Number(totalCalculatedDue || 0).toLocaleString()}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 👉 RIGHT COLUMN: Canva-Style HD Slip & Proof Studio */}
+                                    <div style={{
+                                        background: '#0f172a', borderRadius: '20px', border: '1.5px solid #334155',
+                                        boxShadow: '0 10px 15px -3px rgba(0,0,0,0.2)', overflow: 'hidden',
+                                        display: 'flex', flexDirection: 'column'
+                                    }}>
+                                        {/* Canva Toolbar Header */}
+                                        <div style={{
+                                            padding: '0.85rem 1.15rem', background: '#1e293b',
+                                            borderBottom: '1px solid #334155', display: 'flex',
+                                            justifyContent: 'space-between', alignItems: 'center'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <Landmark size={18} color="#818cf8" />
+                                                <span style={{ color: '#f8fafc', fontWeight: '800', fontSize: '0.88rem' }}>
+                                                    {activeSub.paymentMethod || 'Bank Deposit Slip'}
+                                                </span>
+                                            </div>
+
+                                            {/* Zoom / Rotate Controls */}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleZoomOut}
+                                                    disabled={zoomLevel <= 1}
+                                                    title="Zoom Out"
+                                                    style={{ width: '28px', height: '28px', borderRadius: '6px', border: 'none', background: '#334155', color: 'white', cursor: zoomLevel <= 1 ? 'not-allowed' : 'pointer' }}
+                                                >
+                                                    <ZoomOut size={14} />
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={handleResetZoom}
+                                                    title="Reset Zoom"
+                                                    style={{ padding: '0 0.45rem', height: '28px', border: 'none', background: 'transparent', color: '#818cf8', fontSize: '0.75rem', fontWeight: '800', fontFamily: 'monospace' }}
+                                                >
+                                                    {Math.round(zoomLevel * 100)}%
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={handleZoomIn}
+                                                    disabled={zoomLevel >= 2.5}
+                                                    title="Zoom In"
+                                                    style={{ width: '28px', height: '28px', borderRadius: '6px', border: 'none', background: '#334155', color: 'white', cursor: zoomLevel >= 2.5 ? 'not-allowed' : 'pointer' }}
+                                                >
+                                                    <ZoomIn size={14} />
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRotateSlip}
+                                                    title="Rotate 90 degrees"
+                                                    style={{ width: '28px', height: '28px', borderRadius: '6px', border: 'none', background: '#334155', color: 'white', cursor: 'pointer', marginLeft: '2px' }}
+                                                >
+                                                    <RotateCw size={14} />
+                                                </button>
+
+                                                {activeSub.proofUrl && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSelectedProofUrl(activeSub.proofUrl)}
+                                                        title="Fullscreen Lightbox"
+                                                        style={{ width: '28px', height: '28px', borderRadius: '6px', border: 'none', background: '#4f46e5', color: 'white', cursor: 'pointer', marginLeft: '2px' }}
+                                                    >
+                                                        <ExternalLink size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* TRX ID & Account Verification Bar */}
+                                        <div style={{
+                                            padding: '0.65rem 1.15rem', background: '#090d16',
+                                            borderBottom: '1px solid #1e293b', display: 'flex',
+                                            justifyContent: 'space-between', alignItems: 'center'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <span style={{ color: '#94a3b8', fontSize: '0.72rem', fontWeight: '700', textTransform: 'uppercase' }}>TRX ID:</span>
+                                                <span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: '800', fontSize: '0.82rem' }}>
+                                                    {activeSub.transactionId || 'None entered'}
+                                                </span>
+                                                {activeSub.transactionId && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleCopyTrx(activeSub.transactionId)}
+                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: copiedTrx === activeSub.transactionId ? '#4ade80' : '#94a3b8' }}
+                                                        title="Copy TRX ID"
+                                                    >
+                                                        {copiedTrx === activeSub.transactionId ? <CheckCheck size={14} /> : <Copy size={14} />}
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div style={{ color: '#cbd5e1', fontSize: '0.75rem' }}>
+                                                Deposit A/C: <strong>{activeSub.accountNumberPaidTo || 'Official School A/C'}</strong>
+                                            </div>
+                                        </div>
+
+                                        {/* Duplicate TRX Alert if any */}
+                                        {activeSub.transactionId && trxCountMap[(activeSub.transactionId || '').trim()] > 1 && (
+                                            <div style={{
+                                                padding: '0.5rem 1.15rem', background: '#450a0a', borderBottom: '1px solid #7f1d1d',
+                                                color: '#fca5a5', fontSize: '0.75rem', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.4rem'
+                                            }}>
+                                                <AlertTriangle size={15} color="#ef4444" />
+                                                <span>Warning: Duplicate TRX ID found in {trxCountMap[(activeSub.transactionId || '').trim()]} different submissions!</span>
+                                            </div>
+                                        )}
+
+                                        {/* HD Slip Canvas Viewport */}
+                                        <div style={{
+                                            flex: 1, minHeight: '380px', maxHeight: '480px', background: '#020617',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            overflow: 'hidden', padding: '1rem', position: 'relative'
+                                        }}>
+                                            {activeSub.proofUrl ? (
+                                                <img
+                                                    src={activeSub.proofUrl}
+                                                    alt="Payment Slip"
+                                                    style={{
+                                                        transform: `scale(${zoomLevel}) rotate(${slipRotation}deg)`,
+                                                        transformOrigin: 'center center',
+                                                        transition: 'transform 0.2s ease',
+                                                        maxWidth: '100%', maxHeight: '440px', objectFit: 'contain',
+                                                        borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)'
+                                                    }}
+                                                />
+                                            ) : (
+                                                <div style={{ color: '#64748b', fontSize: '0.9rem', textAlign: 'center' }}>
+                                                    <Landmark size={36} color="#334155" style={{ margin: '0 auto 0.5rem' }} />
+                                                    <p>No receipt slip image attached</p>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Amount Paid On Slip Footer Tag */}
+                                        <div style={{
+                                            padding: '0.85rem 1.25rem', background: '#1e293b',
+                                            borderTop: '1px solid #334155', display: 'flex',
+                                            justifyContent: 'space-between', alignItems: 'center'
+                                        }}>
+                                            <div>
+                                                <span style={{ color: '#94a3b8', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '700' }}>Paid Amount on Slip</span>
+                                                <div style={{ fontSize: '1.35rem', fontWeight: '900', color: '#38bdf8' }}>
+                                                    Rs. {Number(activeSub.amount || 0).toLocaleString()}
+                                                </div>
+                                            </div>
+
+                                            {/* Action Buttons inside Studio */}
+                                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setReuploadSub(activeSub)}
+                                                    disabled={processingId === activeSub.id}
+                                                    style={{
+                                                        padding: '0.55rem 0.85rem', borderRadius: '10px', border: '1px solid #fde68a',
+                                                        background: '#fffbeb', color: '#b45309', fontWeight: '800', fontSize: '0.8rem',
+                                                        cursor: processingId === activeSub.id ? 'not-allowed' : 'pointer',
+                                                        display: 'flex', alignItems: 'center', gap: '0.35rem'
+                                                    }}
+                                                >
+                                                    <RefreshCw size={14} /> Re-upload
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setRejectReason(activeSub.rejectReason || '');
+                                                        setRejectingSub(activeSub);
+                                                    }}
+                                                    disabled={processingId === activeSub.id}
+                                                    style={{
+                                                        padding: '0.55rem 0.85rem', borderRadius: '10px', border: '1px solid #fecaca',
+                                                        background: '#fef2f2', color: '#dc2626', fontWeight: '800', fontSize: '0.8rem',
+                                                        cursor: processingId === activeSub.id ? 'not-allowed' : 'pointer',
+                                                        display: 'flex', alignItems: 'center', gap: '0.35rem'
+                                                    }}
+                                                >
+                                                    <X size={14} /> Reject
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleApprove(activeSub)}
+                                                    disabled={processingId === activeSub.id}
+                                                    style={{
+                                                        padding: '0.55rem 1.35rem', borderRadius: '10px', border: 'none',
+                                                        background: 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)',
+                                                        color: 'white', fontWeight: '900', fontSize: '0.88rem',
+                                                        cursor: processingId === activeSub.id ? 'not-allowed' : 'pointer',
+                                                        display: 'flex', alignItems: 'center', gap: '0.45rem',
+                                                        boxShadow: '0 4px 10px rgba(22, 163, 74, 0.4)',
+                                                        opacity: processingId === activeSub.id ? 0.6 : 1
+                                                    }}
+                                                >
+                                                    {processingId === activeSub.id ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                                                    <span>Approve & Issue Receipt</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                );
+                            })()}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ========================================================================= */}
+            {/* TAB 2: 📋 DEDICATED PENDING SUBMISSIONS QUEUE                             */}
+            {/* ========================================================================= */}
+            {activeSubTab === 'pending_queue' && (
+                <div style={{ background: 'white', borderRadius: '18px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
+                    {loading ? (
+                        <div style={{ textAlign: 'center', padding: '3.5rem' }}>
+                            <Loader2 size={32} className="animate-spin" color="#4f46e5" style={{ margin: '0 auto 1rem' }} />
+                            <p style={{ color: '#64748b' }}>Loading pending queue...</p>
+                        </div>
+                    ) : filteredCounterList.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '3.5rem', border: '1px dashed #cbd5e1', margin: '1rem', borderRadius: '14px' }}>
+                            <CheckCircle2 size={38} color="#059669" style={{ margin: '0 auto 0.75rem' }} />
+                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#334155' }}>Pending Queue is Empty!</h3>
+                            <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>All submitted slips have been verified and processed.</p>
+                        </div>
+                    ) : (
+                        <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+                                <thead>
+                                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontWeight: '700', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                        <th style={{ padding: '0.9rem 1.15rem' }}>Date / Time</th>
+                                        <th style={{ padding: '0.9rem 1.15rem' }}>Parent & Account</th>
+                                        <th style={{ padding: '0.9rem 1.15rem' }}>Target Student(s)</th>
+                                        <th style={{ padding: '0.9rem 1.15rem' }}>Fee Month</th>
+                                        <th style={{ padding: '0.9rem 1.15rem' }}>Channel</th>
+                                        <th style={{ padding: '0.9rem 1.15rem' }}>Amount</th>
+                                        <th style={{ padding: '0.9rem 1.15rem' }}>TRX ID</th>
+                                        <th style={{ padding: '0.9rem 1.15rem', textAlign: 'right' }}>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredCounterList.map((sub) => {
+                                        const badge = getMethodBadge(sub.paymentMethod);
+                                        const isFamily = Boolean(sub.isFamilyCombined && sub.familyStudents?.length > 0);
+                                        const isDuplicateTrx = sub.transactionId && trxCountMap[(sub.transactionId || '').trim()] > 1;
+
+                                        return (
+                                            <tr key={sub.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s' }}>
+                                                <td style={{ padding: '0.9rem 1.15rem', color: '#64748b', fontSize: '0.8rem' }}>
+                                                    {sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1.15rem' }}>
+                                                    <div style={{ fontWeight: '800', color: '#0f172a' }}>{sub.parentName || 'Parent'}</div>
+                                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{sub.parentPhone || '—'}</div>
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1.15rem' }}>
+                                                    <div style={{ fontWeight: '800', color: '#4338ca' }}>
+                                                        {sub.studentName}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                        {isFamily ? `👨‍👩‍👧‍👦 Family Combined (${sub.familyStudents.length} Kids)` : `${sub.className} • Roll: ${sub.rollNo || 'N/A'}`}
+                                                    </div>
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1.15rem', fontWeight: '700', color: '#334155' }}>
+                                                    {sub.month || 'Current'}
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1.15rem' }}>
+                                                    <span style={{
+                                                        fontSize: '0.74rem', fontWeight: '800', padding: '0.2rem 0.55rem',
+                                                        borderRadius: '6px', background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`
+                                                    }}>
+                                                        {badge.label}
+                                                    </span>
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1.15rem', fontWeight: '900', color: '#0f172a', fontSize: '0.95rem' }}>
+                                                    Rs. {Number(sub.amount || 0).toLocaleString()}
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1.15rem', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                                                    <div style={{ color: '#0369a1', fontWeight: '700' }}>{sub.transactionId || 'None'}</div>
+                                                    {isDuplicateTrx && (
+                                                        <span style={{ color: '#dc2626', fontSize: '0.68rem', fontWeight: '800' }}>⚠️ Duplicate TRX</span>
+                                                    )}
+                                                </td>
+                                                <td style={{ padding: '0.9rem 1.15rem', textAlign: 'right' }}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSelectedSubId(sub.id);
+                                                            setActiveSubTab('counter');
+                                                            setZoomLevel(1);
+                                                            setSlipRotation(0);
+                                                        }}
+                                                        style={{
+                                                            padding: '0.45rem 0.95rem', borderRadius: '9px', border: 'none',
+                                                            background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
+                                                            color: 'white', fontWeight: '800', fontSize: '0.8rem',
+                                                            cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                                                            boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)'
+                                                        }}
+                                                    >
+                                                        <Sparkles size={14} /> Verify in Counter ⚡
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         </div>
                     )}
                 </div>
@@ -1282,7 +1794,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
             {activeSubTab === 'history' && (
                 <div style={{ background: 'white', borderRadius: '18px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
                     {loading ? (
-                        <div style={{ textAlign: 'center', padding: '3rem' }}>
+                        <div style={{ textAlign: 'center', padding: '3.5rem' }}>
                             <Loader2 size={32} className="animate-spin" color="#4f46e5" style={{ margin: '0 auto 1rem' }} />
                             <p style={{ color: '#64748b' }}>Loading history records...</p>
                         </div>
@@ -1316,7 +1828,6 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
 
                                         return (
                                             <tr key={sub.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s' }}>
-                                                {/* Receipt & Status */}
                                                 <td style={{ padding: '0.9rem 1.15rem' }}>
                                                     <div style={{ fontFamily: 'monospace', fontWeight: '800', color: '#0f172a', fontSize: '0.82rem' }}>
                                                         {sub.receiptNo || (sub.transactionId ? `ONL-${sub.transactionId}` : '—')}
@@ -1340,7 +1851,6 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                                                     </div>
                                                 </td>
 
-                                                {/* Student & Class */}
                                                 <td style={{ padding: '0.9rem 1.15rem' }}>
                                                     {sub.isFamilyCombined && sub.familyStudents?.length > 0 ? (
                                                         <div>
@@ -1361,42 +1871,32 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                                                     )}
                                                 </td>
 
-                                                {/* Month */}
                                                 <td style={{ padding: '0.9rem 1.15rem' }}>
                                                     <span style={{ fontWeight: '700', color: '#4f46e5', fontSize: '0.8rem' }}>
                                                         {sub.month || 'Current Month'}
                                                     </span>
                                                 </td>
 
-                                                {/* Parent */}
                                                 <td style={{ padding: '0.9rem 1.15rem' }}>
                                                     <div style={{ fontWeight: '600', color: '#334155' }}>{sub.parentName || 'Parent'}</div>
                                                     <div style={{ fontSize: '0.78rem', color: '#64748b' }}>{sub.parentPhone || '—'}</div>
                                                 </td>
 
-                                                {/* Channel */}
                                                 <td style={{ padding: '0.9rem 1.15rem' }}>
                                                     <span style={{
-                                                        padding: '0.2rem 0.55rem',
-                                                        borderRadius: '6px',
-                                                        fontSize: '0.72rem',
-                                                        fontWeight: '700',
-                                                        background: badge.bg,
-                                                        color: badge.color,
-                                                        border: `1px solid ${badge.border}`
+                                                        padding: '0.2rem 0.55rem', borderRadius: '6px', fontSize: '0.72rem',
+                                                        fontWeight: '700', background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`
                                                     }}>
                                                         {badge.label}
                                                     </span>
                                                 </td>
 
-                                                {/* Amount */}
                                                 <td style={{ padding: '0.9rem 1.15rem' }}>
                                                     <div style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.95rem' }}>
                                                         Rs. {Number(sub.amount || 0).toLocaleString()}
                                                     </div>
                                                 </td>
 
-                                                {/* Date */}
                                                 <td style={{ padding: '0.9rem 1.15rem' }}>
                                                     <div style={{ fontSize: '0.8rem', color: '#334155', fontWeight: '600' }}>
                                                         {sub.approvedAt ? new Date(sub.approvedAt).toLocaleDateString() : (sub.rejectedAt ? new Date(sub.rejectedAt).toLocaleDateString() : (sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString() : '—'))}
@@ -1406,31 +1906,26 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                                                     </div>
                                                 </td>
 
-                                                {/* Audit Button */}
                                                 <td style={{ padding: '0.9rem 1.15rem', textAlign: 'right' }}>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setReviewingSub(sub);
-                                                            setZoomLevel(1);
-                                                            setSlipRotation(0);
-                                                        }}
-                                                        style={{
-                                                            padding: '0.4rem 0.8rem',
-                                                            borderRadius: '8px',
-                                                            border: '1px solid #cbd5e1',
-                                                            background: '#f8fafc',
-                                                            color: '#334155',
-                                                            fontWeight: '700',
-                                                            fontSize: '0.78rem',
-                                                            cursor: 'pointer',
-                                                            display: 'inline-flex',
-                                                            alignItems: 'center',
-                                                            gap: '0.35rem'
-                                                        }}
-                                                    >
-                                                        <Eye size={13} color="#4f46e5" /> View Slip
-                                                    </button>
+                                                    {sub.proofUrl ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setSelectedProofUrl(sub.proofUrl);
+                                                                setZoomLevel(1);
+                                                                setSlipRotation(0);
+                                                            }}
+                                                            style={{
+                                                                padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid #cbd5e1',
+                                                                background: '#f8fafc', color: '#334155', fontWeight: '700', fontSize: '0.78rem',
+                                                                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.35rem'
+                                                            }}
+                                                        >
+                                                            <Eye size={13} color="#4f46e5" /> View Slip
+                                                        </button>
+                                                    ) : (
+                                                        <span style={{ color: '#94a3b8', fontSize: '0.78rem' }}>No Slip</span>
+                                                    )}
                                                 </td>
                                             </tr>
                                         );
@@ -1461,7 +1956,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                     <div 
                         onClick={(e) => e.stopPropagation()}
                         style={{
-                            background: 'white', borderRadius: '16px', maxWidth: '780px', width: '95%',
+                            background: 'white', borderRadius: '16px', maxWidth: '820px', width: '95%',
                             overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', position: 'relative',
                             display: 'flex', flexDirection: 'column'
                         }}
@@ -1472,18 +1967,13 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                             flexWrap: 'wrap', gap: '0.5rem'
                         }}>
                             <h4 style={{ margin: 0, fontWeight: '700', color: '#1e293b', fontSize: '0.95rem' }}>
-                                Payment Slip Receipt
+                                Payment Slip Full Inspection
                             </h4>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                {/* Zoom & Rotation Pill */}
                                 <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    background: '#ffffff',
-                                    border: '1px solid #cbd5e1',
-                                    borderRadius: '8px',
-                                    padding: '2px'
+                                    display: 'flex', alignItems: 'center', background: '#ffffff',
+                                    border: '1px solid #cbd5e1', borderRadius: '8px', padding: '2px'
                                 }}>
                                     <button 
                                         type="button"
@@ -1514,7 +2004,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                                         <ZoomIn size={15} />
                                     </button>
 
-                                    <button
+                                    <button 
                                         type="button"
                                         onClick={handleRotateSlip}
                                         title="Rotate 90 degrees"
@@ -1535,7 +2025,7 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                                         background: '#ffffff', border: '1px solid #cbd5e1' 
                                     }}
                                 >
-                                    <ExternalLink size={13} /> Open Full
+                                    <ExternalLink size={13} /> Open Raw
                                 </a>
 
                                 <button 
@@ -1652,352 +2142,6 @@ const OnlineSubmissionsDashboard = ({ schoolId, schoolInfo }) => {
                             >
                                 Send Request to Parent
                             </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ========================================================================= */}
-            {/* SPLIT-SCREEN VERIFICATION COCKPIT MODAL                                  */}
-            {/* ========================================================================= */}
-            {reviewingSub && (
-                <div
-                    onClick={() => {
-                        setReviewingSub(null);
-                        setZoomLevel(1);
-                        setSlipRotation(0);
-                    }}
-                    style={{
-                        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.8)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9998,
-                        padding: '1.25rem', backdropFilter: 'blur(5px)'
-                    }}
-                >
-                    <div
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                            background: 'white', borderRadius: '20px', maxWidth: '1080px', width: '96%',
-                            maxHeight: '92vh', display: 'flex', flexDirection: 'column',
-                            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', overflow: 'hidden'
-                        }}
-                    >
-                        {/* Header */}
-                        <div style={{
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                            padding: '1rem 1.5rem', borderBottom: '1px solid #e2e8f0', background: '#f8fafc'
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                                <div style={{
-                                    width: '38px', height: '38px', borderRadius: '10px',
-                                    background: '#e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                }}>
-                                    <ShieldCheck size={22} color="#4f46e5" />
-                                </div>
-                                <div>
-                                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#0f172a' }}>
-                                        {reviewingSub.isFamilyCombined ? 'Family Payment Audit & Reconciliation' : 'Student Payment Verification Cockpit'}
-                                    </h3>
-                                    <p style={{ margin: 0, fontSize: '0.78rem', color: '#64748b' }}>
-                                        {reviewingSub.isFamilyCombined
-                                            ? `Combined Submission for ${reviewingSub.familyStudents?.length || 2} Students`
-                                            : `Single Student: ${reviewingSub.studentName} (${reviewingSub.className})`}
-                                    </p>
-                                </div>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setReviewingSub(null);
-                                    setZoomLevel(1);
-                                    setSlipRotation(0);
-                                }}
-                                style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '8px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b' }}
-                            >
-                                <X size={18} />
-                            </button>
-                        </div>
-
-                        {/* Split Body */}
-                        <div style={{
-                            display: 'grid', gridTemplateColumns: 'minmax(340px, 1fr) minmax(380px, 1.25fr)',
-                            flex: 1, overflow: 'hidden', minHeight: '440px'
-                        }}>
-                            {/* Left Pane: Zoomable & Rotatable Payment Slip */}
-                            <div style={{
-                                background: '#0f172a', padding: '1rem', display: 'flex', flexDirection: 'column',
-                                borderRight: '1px solid #334155'
-                            }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Receipt Slip Proof
-                                    </span>
-                                    
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                        <button
-                                            type="button"
-                                            onClick={handleZoomOut}
-                                            disabled={zoomLevel <= 1}
-                                            title="Zoom Out"
-                                            style={{ width: '26px', height: '26px', borderRadius: '6px', border: 'none', background: '#334155', color: 'white', cursor: 'pointer' }}
-                                        >
-                                            <ZoomOut size={13} />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleZoomIn}
-                                            disabled={zoomLevel >= 2.5}
-                                            title="Zoom In"
-                                            style={{ width: '26px', height: '26px', borderRadius: '6px', border: 'none', background: '#334155', color: 'white', cursor: 'pointer' }}
-                                        >
-                                            <ZoomIn size={13} />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleRotateSlip}
-                                            title="Rotate"
-                                            style={{ width: '26px', height: '26px', borderRadius: '6px', border: 'none', background: '#334155', color: 'white', cursor: 'pointer' }}
-                                        >
-                                            <RotateCw size={13} />
-                                        </button>
-                                        {reviewingSub.proofUrl && (
-                                            <a
-                                                href={reviewingSub.proofUrl}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                style={{ color: '#818cf8', fontSize: '0.75rem', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', marginLeft: '0.25rem' }}
-                                            >
-                                                <ExternalLink size={12} /> Open Full
-                                            </a>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div style={{
-                                    flex: 1, background: '#020617', borderRadius: '12px', display: 'flex',
-                                    alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative'
-                                }}>
-                                    {reviewingSub.proofUrl ? (
-                                        <img
-                                            src={reviewingSub.proofUrl}
-                                            alt="Slip Proof"
-                                            style={{
-                                                transform: `scale(${zoomLevel}) rotate(${slipRotation}deg)`,
-                                                transformOrigin: 'center center',
-                                                transition: 'transform 0.2s ease',
-                                                maxWidth: '100%', maxHeight: '420px', objectFit: 'contain',
-                                                borderRadius: '8px'
-                                            }}
-                                        />
-                                    ) : (
-                                        <div style={{ color: '#64748b', fontSize: '0.85rem' }}>No proof image attached</div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Right Pane: Itemized Ledger & Reconciliation */}
-                            <div style={{
-                                padding: '1.25rem 1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem',
-                                background: '#ffffff'
-                            }}>
-                                {/* Target Fee Month & Channel */}
-                                <div style={{
-                                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem',
-                                    background: '#f8fafc', padding: '0.85rem', borderRadius: '12px', border: '1px solid #e2e8f0'
-                                }}>
-                                    <div style={{
-                                        gridColumn: '1 / -1',
-                                        background: '#f5f3ff', border: '1.5px solid #c4b5fd', borderRadius: '10px',
-                                        padding: '0.65rem 0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-                                    }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                            <Calendar size={18} color="#7c3aed" />
-                                            <div>
-                                                <div style={{ fontSize: '0.7rem', color: '#6d28d9', textTransform: 'uppercase', fontWeight: '800' }}>Fee Month</div>
-                                                <div style={{ fontWeight: '800', color: '#4c1d95', fontSize: '0.95rem' }}>
-                                                    {reviewingSub.month || 'Current Month'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <span style={{ fontSize: '0.75rem', color: '#6d28d9', background: '#ffffff', padding: '0.25rem 0.6rem', borderRadius: '6px', fontWeight: '700', border: '1px solid #ddd6fe' }}>
-                                            Online Verification
-                                        </span>
-                                    </div>
-                                    <div>
-                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Parent / Guardian</div>
-                                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{reviewingSub.parentName || 'Parent'}</div>
-                                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{reviewingSub.parentPhone || '—'}</div>
-                                    </div>
-                                    <div>
-                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Payment Mode</div>
-                                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{reviewingSub.paymentMethod || 'Online'}</div>
-                                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>A/C: {reviewingSub.accountNumberPaidTo || 'Official A/C'}</div>
-                                    </div>
-                                    <div>
-                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>TRX ID / Reference</div>
-                                        <div style={{ fontWeight: '800', fontFamily: 'monospace', color: '#4338ca', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                            <span>{reviewingSub.transactionId || 'None entered'}</span>
-                                            {reviewingSub.transactionId && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleCopyTrx(reviewingSub.transactionId)}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6366f1' }}
-                                                >
-                                                    <Copy size={12} />
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Submitted Date</div>
-                                        <div style={{ fontSize: '0.8rem', color: '#334155', fontWeight: '600' }}>
-                                            {reviewingSub.submittedAt ? new Date(reviewingSub.submittedAt).toLocaleString() : '—'}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Itemized Breakdown (Family or Single) */}
-                                <div>
-                                    <div style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        <FileCheck size={16} color="#4f46e5" />
-                                        <span>Itemized Bill Distribution</span>
-                                    </div>
-
-                                    {reviewingSub.isFamilyCombined && reviewingSub.familyStudents?.length > 0 ? (
-                                        <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                                                <thead>
-                                                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', textAlign: 'left' }}>
-                                                        <th style={{ padding: '0.6rem 0.85rem' }}>Student</th>
-                                                        <th style={{ padding: '0.6rem 0.85rem' }}>Class & Roll</th>
-                                                        <th style={{ padding: '0.6rem 0.85rem', textAlign: 'right' }}>Calculated Due</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {reviewingSub.familyStudents.map((std, idx) => (
-                                                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                            <td style={{ padding: '0.65rem 0.85rem', fontWeight: '700', color: '#1e293b' }}>
-                                                                {std.studentName}
-                                                            </td>
-                                                            <td style={{ padding: '0.65rem 0.85rem', color: '#64748b' }}>
-                                                                {std.className} (Roll: {std.rollNo || 'N/A'})
-                                                            </td>
-                                                            <td style={{ padding: '0.65rem 0.85rem', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>
-                                                                Rs. {Number(std.subtotal || 0).toLocaleString()}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    ) : (
-                                        <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '0.85rem', background: '#faf5ff' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <div>
-                                                    <div style={{ fontWeight: '700', color: '#581c87', fontSize: '0.9rem' }}>{reviewingSub.studentName}</div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#7e22ce' }}>Class: {reviewingSub.className} • Roll: {reviewingSub.rollNo || 'N/A'}</div>
-                                                </div>
-                                                <div style={{ fontWeight: '800', color: '#581c87', fontSize: '1.05rem' }}>
-                                                    Rs. {Number(reviewingSub.amount || 0).toLocaleString()}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Reconciliation Match Banner */}
-                                <div style={{
-                                    padding: '0.85rem 1rem', borderRadius: '12px',
-                                    background: '#ecfdf5', border: '1px solid #a7f3d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                                }}>
-                                    <div>
-                                        <div style={{ fontSize: '0.78rem', fontWeight: '800', color: '#065f46', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                            <CheckCircle2 size={16} color="#059669" />
-                                            <span>Zero-Discrepancy Match</span>
-                                        </div>
-                                        <div style={{ fontSize: '0.75rem', color: '#047857' }}>
-                                            Amount matches student dues & online slip submission
-                                        </div>
-                                    </div>
-                                    <div style={{ textAlign: 'right' }}>
-                                        <div style={{ fontSize: '0.7rem', color: '#065f46', textTransform: 'uppercase', fontWeight: '600' }}>Total Paid on Slip</div>
-                                        <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#065f46' }}>
-                                            Rs. {Number(reviewingSub.amount || 0).toLocaleString()}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Modal Actions */}
-                                <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '0.65rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setReviewingSub(null);
-                                            setZoomLevel(1);
-                                            setSlipRotation(0);
-                                        }}
-                                        style={{ padding: '0.55rem 1rem', borderRadius: '10px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '600', cursor: 'pointer' }}
-                                    >
-                                        Close
-                                    </button>
-
-                                    {(reviewingSub.status || 'pending') === 'pending' && (
-                                        <>
-                                            <button
-                                                type="button"
-                                                onClick={() => setReuploadSub(reviewingSub)}
-                                                disabled={Boolean(processingId && processingId === reviewingSub.id)}
-                                                style={{
-                                                    padding: '0.55rem 1rem', borderRadius: '10px', border: '1px solid #fde68a',
-                                                    background: '#fffbeb', color: '#b45309', fontWeight: '700', fontSize: '0.85rem',
-                                                    cursor: processingId === reviewingSub.id ? 'not-allowed' : 'pointer',
-                                                    display: 'flex', alignItems: 'center', gap: '0.35rem'
-                                                }}
-                                            >
-                                                <RefreshCw size={14} /> Request Re-upload
-                                            </button>
-
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setRejectReason(reviewingSub.rejectReason || '');
-                                                    setRejectingSub(reviewingSub);
-                                                }}
-                                                disabled={Boolean(processingId && processingId === reviewingSub.id)}
-                                                style={{
-                                                    padding: '0.55rem 1rem', borderRadius: '10px', border: '1px solid #fecaca',
-                                                    background: '#fef2f2', color: '#dc2626', fontWeight: '700', fontSize: '0.85rem',
-                                                    cursor: processingId === reviewingSub.id ? 'not-allowed' : 'pointer',
-                                                    display: 'flex', alignItems: 'center', gap: '0.35rem'
-                                                }}
-                                            >
-                                                <X size={14} /> Reject
-                                            </button>
-
-                                            <button
-                                                type="button"
-                                                onClick={() => handleApprove(reviewingSub)}
-                                                disabled={Boolean(processingId && processingId === reviewingSub.id)}
-                                                style={{
-                                                    padding: '0.55rem 1.4rem', borderRadius: '10px', border: 'none',
-                                                    background: '#16a34a', color: 'white', fontWeight: '800', fontSize: '0.85rem',
-                                                    cursor: processingId === reviewingSub.id ? 'not-allowed' : 'pointer',
-                                                    display: 'flex', alignItems: 'center', gap: '0.45rem',
-                                                    boxShadow: '0 4px 6px -1px rgba(22, 163, 74, 0.3)',
-                                                    opacity: processingId === reviewingSub.id ? 0.6 : 1
-                                                }}
-                                            >
-                                                {processingId === reviewingSub.id ? (
-                                                    <Loader2 size={16} className="animate-spin" />
-                                                ) : (
-                                                    <Check size={16} />
-                                                )}
-                                                Approve & Issue Receipt
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
