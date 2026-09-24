@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-    Wallet, Users, ChevronRight, ChevronLeft, Ban, CheckCircle, Plus, Trash2, X, 
+    Wallet, Users, ChevronRight, ChevronLeft, Ban, CheckCircle, Plus, Trash2, Edit2, X, 
     CheckSquare, Square, ArrowUpRight, ArrowDownRight, Download,
     Printer, Search, CheckCircle2, User, FileText, Loader2, Sparkles, Building2, Phone, Calendar, Clock, DollarSign,
     Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity,
@@ -27,6 +27,15 @@ const MONTH_NAMES = [
     "July", "August", "September", "October", "November", "December"
 ];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Accurate Local ISO Date (Pakistan Time / System Local Date)
+const getLocalIsoDate = (d = new Date()) => {
+    if (!d || isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
 
 // Distinct 3D Vibrant Palette
 const WHEEL_COLORS = {
@@ -120,7 +129,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const currentYearNum = today.getFullYear();
     const currentMonthNum = today.getMonth() + 1; // 1-12
     const currentIsoMonth = `${currentYearNum}-${String(currentMonthNum).padStart(2, '0')}`;
-    const todayIsoDate = today.toISOString().split('T')[0];
+    const todayIsoDate = getLocalIsoDate(today);
 
     const [loading, setLoading] = useState(true);
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -138,6 +147,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     }, [schoolId]);
 
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
+    const [isPurgingDemo, setIsPurgingDemo] = useState(false);
 
     // ==========================================
     // TIME-MACHINE CONTROLS
@@ -166,13 +176,18 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const [proofModalState, setProofModalState] = useState({ isOpen: false, url: '', title: '' });
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
-    // Add Income / Expense Modals
-    const [showAddIncomeModal, setShowAddIncomeModal] = useState(false);
-    const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
-    const [newIncome, setNewIncome] = useState({ name: '', amount: '', type: 'one-time', remarks: '', category: 'General' });
-    const [newExpense, setNewExpense] = useState({ name: '', amount: '', type: 'one-time', remarks: '', category: 'Operational' });
-    const [isSavingIncome, setIsSavingIncome] = useState(false);
-    const [isSavingExpense, setIsSavingExpense] = useState(false);
+    // Unified Add / Edit Modal State for Incomes & Expenses
+    const [financeModalState, setFinanceModalState] = useState({ isOpen: false, category: 'incomes', item: null });
+    const [financeForm, setFinanceForm] = useState({
+        name: '',
+        amount: '',
+        type: 'one-time', // 'one-time' | 'permanent'
+        category: 'General',
+        remarks: '',
+        year: currentYearNum,
+        month: currentMonthNum
+    });
+    const [isSavingFinance, setIsSavingFinance] = useState(false);
 
     // Active Year Options (Past 4 Years + Next 1 Year)
     const availableYears = useMemo(() => {
@@ -488,6 +503,62 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         setIsInjectingDemo(false);
     };
 
+    // Purge Demo Data Handler
+    const handlePurgeFinancialDemoData = async () => {
+        if (!window.confirm("🧹 Clean / Purge all Demo Financial Data?\n\nThis will remove:\n- All DEMO fee transactions\n- All DEMO direct incomes & expenses\n- All DEMO payroll records\n\nYour actual cashier records will remain completely untouched.")) {
+            return;
+        }
+
+        setIsPurgingDemo(true);
+        try {
+            const batch = writeBatch(db);
+
+            // 1. Delete all demo transactions from Firestore
+            const demoTxs = (feeTransactions || []).filter(t => t.isDemoData || String(t.id || '').startsWith('DEMO-REC-') || String(t.receiptNo || '').startsWith('DEMO-REC-'));
+            demoTxs.forEach(t => {
+                const txRef = doc(db, `schools/${schoolId}/feeTransactions`, t.id);
+                batch.delete(txRef);
+            });
+
+            // 2. Clean demo incomes and expenses
+            const cleanIncomes = (financesData.incomes || []).filter(i => !String(i.id || '').startsWith('demo_'));
+            const cleanExpenses = (financesData.expenses || []).filter(e => !String(e.id || '').startsWith('demo_'));
+
+            const finDocRef = doc(db, `schools/${schoolId}/settings/finances`);
+            batch.set(finDocRef, {
+                incomes: cleanIncomes,
+                expenses: cleanExpenses
+            }, { merge: true });
+
+            // 3. Clean demo payrolls for current and compare years
+            for (let m = 1; m <= 12; m++) {
+                const pCurRef = doc(db, `schools/${schoolId}/settings`, `payroll_${selectedYear}_${m}`);
+                batch.delete(pCurRef);
+                const pCmpRef = doc(db, `schools/${schoolId}/settings`, `payroll_${compareYear}_${m}`);
+                batch.delete(pCmpRef);
+            }
+
+            await batch.commit();
+
+            setFeeTransactions(prev => prev.filter(t => !t.isDemoData && !String(t.id || '').startsWith('DEMO-REC-') && !String(t.receiptNo || '').startsWith('DEMO-REC-')));
+            setFinancesData({ incomes: cleanIncomes, expenses: cleanExpenses });
+            setPayrollMetaByMonth({});
+
+            alert("✓ Demo Financial Records Purged Successfully!\nDaily drawer and live ledger are now clean.");
+        } catch (err) {
+            console.error("Error purging demo data:", err);
+            alert("Error purging demo data: " + err.message);
+        }
+        setIsPurgingDemo(false);
+    };
+
+    const hasDemoData = useMemo(() => {
+        const hasTx = (feeTransactions || []).some(t => t.isDemoData || String(t.id || '').startsWith('DEMO-REC-') || String(t.receiptNo || '').startsWith('DEMO-REC-'));
+        const hasInc = (financesData.incomes || []).some(i => String(i.id || '').startsWith('demo_'));
+        const hasExp = (financesData.expenses || []).some(e => String(e.id || '').startsWith('demo_'));
+        return hasTx || hasInc || hasExp;
+    }, [feeTransactions, financesData]);
+
     // =========================================================================
     // 6. CORE FINANCIAL CALCULATION ENGINE (100% Offline, Time-Series Aware)
     // =========================================================================
@@ -512,13 +583,13 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                 const d = new Date(tx.timestamp.seconds * 1000);
                 txYear = d.getFullYear();
                 txMonth = d.getMonth() + 1;
-                txIsoDate = d.toISOString().split('T')[0];
+                txIsoDate = getLocalIsoDate(d);
             } else if (tx.dateString) {
                 const d = new Date(tx.dateString);
                 if (!isNaN(d.getTime())) {
                     txYear = d.getFullYear();
                     txMonth = d.getMonth() + 1;
-                    txIsoDate = d.toISOString().split('T')[0];
+                    txIsoDate = getLocalIsoDate(d);
                 }
             }
 
@@ -573,18 +644,29 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
 
         // Helper: Filter Direct Incomes & Operational Expenses
         const isEntryInScope = (entry) => {
-            if (entry.type === 'permanent') {
-                return !isTodayMode;
-            }
             const dStr = entry.createdAt || entry.date;
-            if (!dStr) return false;
-            const d = new Date(dStr);
-            if (isNaN(d.getTime())) return false;
-            
-            const eIsoDate = d.toISOString().split('T')[0];
-            const eYear = d.getFullYear();
-            const eMonth = d.getMonth() + 1;
+            let eYear = 0;
+            let eMonth = 0;
+            let eIsoDate = '';
 
+            if (dStr) {
+                const d = new Date(dStr);
+                if (!isNaN(d.getTime())) {
+                    eYear = d.getFullYear();
+                    eMonth = d.getMonth() + 1;
+                    eIsoDate = getLocalIsoDate(d);
+                }
+            }
+
+            if (entry.type === 'permanent') {
+                if (isTodayMode) return false; // Today mode is strictly for daily cash drawer
+                // Prevent recurring entries from leaking into historical years before creation
+                if (eYear > 0 && selectedYear < eYear) return false;
+                if (eYear > 0 && selectedYear === eYear && !isAllYearMode && activeMonthNum < eMonth) return false;
+                return true;
+            }
+
+            if (!dStr) return false;
             if (isTodayMode) return eIsoDate === todayIsoDate;
             if (isAllYearMode) return eYear === selectedYear;
             return eYear === selectedYear && eMonth === activeMonthNum;
@@ -715,8 +797,22 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             });
 
             (financesData.incomes || []).forEach(inc => {
+                let incYear = 0;
+                let incMonth = 0;
+                if (inc.createdAt || inc.date) {
+                    const d = new Date(inc.createdAt || inc.date);
+                    if (!isNaN(d.getTime())) {
+                        incYear = d.getFullYear();
+                        incMonth = d.getMonth() + 1;
+                    }
+                }
+
                 if (inc.type === 'permanent') {
-                    curYearInflow += (Number(inc.amount) || 0);
+                    const isValidYear = !incYear || selectedYear >= incYear;
+                    const isValidMonth = !incYear || selectedYear > incYear || (selectedYear === incYear && mNum >= incMonth);
+                    if (isValidYear && isValidMonth) {
+                        curYearInflow += (Number(inc.amount) || 0);
+                    }
                 } else if (inc.createdAt?.startsWith(currentYearMonthIso) || inc.date?.startsWith(currentYearMonthIso)) {
                     curYearInflow += (Number(inc.amount) || 0);
                 }
@@ -725,8 +821,22 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             (financesData.expenses || []).forEach(exp => {
                 const isSalary = (exp.category || '').toLowerCase() === 'salary';
                 if (!isSalary) {
+                    let expYear = 0;
+                    let expMonth = 0;
+                    if (exp.createdAt || exp.date) {
+                        const d = new Date(exp.createdAt || exp.date);
+                        if (!isNaN(d.getTime())) {
+                            expYear = d.getFullYear();
+                            expMonth = d.getMonth() + 1;
+                        }
+                    }
+
                     if (exp.type === 'permanent') {
-                        curYearOutflow += (Number(exp.amount) || 0);
+                        const isValidYear = !expYear || selectedYear >= expYear;
+                        const isValidMonth = !expYear || selectedYear > expYear || (selectedYear === expYear && mNum >= expMonth);
+                        if (isValidYear && isValidMonth) {
+                            curYearOutflow += (Number(exp.amount) || 0);
+                        }
                     } else if (exp.createdAt?.startsWith(currentYearMonthIso) || exp.date?.startsWith(currentYearMonthIso)) {
                         curYearOutflow += (Number(exp.amount) || 0);
                     }
@@ -859,64 +969,97 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         });
     }, [calculatedMetrics.scopedTxs, searchLedger, modeLedgerFilter]);
 
-    // 8. Handlers for Adding Direct Income and Operational Expense
-    const handleSaveIncome = async (e) => {
-        e.preventDefault();
-        if (!newIncome.name.trim() || !newIncome.amount) return;
-        setIsSavingIncome(true);
-
-        const newItem = {
-            id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            name: newIncome.name.trim(),
-            amount: Number(newIncome.amount),
-            type: newIncome.type,
-            category: newIncome.category || 'General',
-            remarks: newIncome.remarks.trim(),
-            createdAt: new Date().toISOString(),
-            date: new Date().toISOString().split('T')[0]
-        };
-
-        const updatedIncomes = [...(financesData.incomes || []), newItem];
-        setFinancesData(prev => ({ ...prev, incomes: updatedIncomes }));
-        setNewIncome({ name: '', amount: '', type: 'one-time', remarks: '', category: 'General' });
-        setShowAddIncomeModal(false);
-        setIsSavingIncome(false);
-
-        try {
-            const docRef = doc(db, `schools/${schoolId}/settings/finances`);
-            await setDoc(docRef, { incomes: updatedIncomes }, { merge: true });
-        } catch (err) {
-            console.warn("Income cached locally for background sync:", err);
+    // 8. Handlers for Opening, Adding & Editing Direct Incomes and Operational Expenses
+    const handleOpenFinanceModal = (category, item = null) => {
+        const defaultMonth = selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum;
+        if (item) {
+            let yr = selectedYear;
+            let m = defaultMonth;
+            const dStr = item.date || item.createdAt;
+            if (dStr) {
+                const d = new Date(dStr);
+                if (!isNaN(d.getTime())) {
+                    yr = d.getFullYear();
+                    m = d.getMonth() + 1;
+                }
+            }
+            setFinanceForm({
+                name: item.name || '',
+                amount: String(item.amount || ''),
+                type: item.type || 'one-time',
+                category: item.category || (category === 'incomes' ? 'General' : 'Operational'),
+                remarks: item.remarks || '',
+                year: yr,
+                month: m
+            });
+            setFinanceModalState({ isOpen: true, category, item });
+        } else {
+            setFinanceForm({
+                name: '',
+                amount: '',
+                type: 'one-time',
+                category: category === 'incomes' ? 'General' : 'Operational',
+                remarks: '',
+                year: selectedYear,
+                month: defaultMonth
+            });
+            setFinanceModalState({ isOpen: true, category, item: null });
         }
     };
 
-    const handleSaveExpense = async (e) => {
-        e.preventDefault();
-        if (!newExpense.name.trim() || !newExpense.amount) return;
-        setIsSavingExpense(true);
+    const handleSaveFinanceItem = async (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (!financeForm.name.trim() || !financeForm.amount) return;
+        setIsSavingFinance(true);
 
-        const newItem = {
-            id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            name: newExpense.name.trim(),
-            amount: Number(newExpense.amount),
-            type: newExpense.type,
-            category: newExpense.category || 'Operational',
-            remarks: newExpense.remarks.trim(),
-            createdAt: new Date().toISOString(),
-            date: new Date().toISOString().split('T')[0]
-        };
+        const category = financeModalState.category;
+        const isEdit = Boolean(financeModalState.item?.id);
+        const targetYear = Number(financeForm.year || selectedYear);
+        const targetMonth = Number(financeForm.month || (selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum));
+        const targetMonthIso = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+        const dateIso = `${targetMonthIso}-01`;
 
-        const updatedExpenses = [...(financesData.expenses || []), newItem];
-        setFinancesData(prev => ({ ...prev, expenses: updatedExpenses }));
-        setNewExpense({ name: '', amount: '', type: 'one-time', remarks: '', category: 'Operational' });
-        setShowAddExpenseModal(false);
-        setIsSavingExpense(false);
+        let updatedList;
+        if (isEdit) {
+            const editId = financeModalState.item.id;
+            updatedList = (financesData[category] || []).map(entry => {
+                if (entry.id === editId) {
+                    return {
+                        ...entry,
+                        name: financeForm.name.trim(),
+                        amount: Number(financeForm.amount),
+                        type: financeForm.type,
+                        category: financeForm.category,
+                        remarks: financeForm.remarks.trim(),
+                        date: dateIso,
+                        createdAt: entry.createdAt || `${targetMonthIso}-01T00:00:00.000Z`
+                    };
+                }
+                return entry;
+            });
+        } else {
+            const newItem = {
+                id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                name: financeForm.name.trim(),
+                amount: Number(financeForm.amount),
+                type: financeForm.type,
+                category: financeForm.category,
+                remarks: financeForm.remarks.trim(),
+                createdAt: `${targetMonthIso}-01T00:00:00.000Z`,
+                date: dateIso
+            };
+            updatedList = [...(financesData[category] || []), newItem];
+        }
+
+        setFinancesData(prev => ({ ...prev, [category]: updatedList }));
+        setFinanceModalState({ isOpen: false, category: 'incomes', item: null });
+        setIsSavingFinance(false);
 
         try {
             const docRef = doc(db, `schools/${schoolId}/settings/finances`);
-            await setDoc(docRef, { expenses: updatedExpenses }, { merge: true });
+            await setDoc(docRef, { [category]: updatedList }, { merge: true });
         } catch (err) {
-            console.warn("Expense cached locally for background sync:", err);
+            console.warn("Finance entry saved locally for background sync:", err);
         }
     };
 
@@ -1200,6 +1343,60 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                 ))}
                             </select>
                         </div>
+                    )}
+
+                    {/* Clean Demo Data Button (Shown when demo records are detected) */}
+                    {hasDemoData && (
+                        <button
+                            onClick={handlePurgeFinancialDemoData}
+                            disabled={isPurgingDemo}
+                            title="Purge all generated demo transactions and restore clean slate"
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.65rem 1.1rem',
+                                background: '#fef2f2',
+                                color: '#b91c1c',
+                                border: '1px solid #fecaca',
+                                borderRadius: '10px',
+                                fontWeight: '700',
+                                fontSize: '0.82rem',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                                opacity: isPurgingDemo ? 0.7 : 1
+                            }}
+                        >
+                            {isPurgingDemo ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                            {isPurgingDemo ? 'Purging...' : 'Clean Demo Records'}
+                        </button>
+                    )}
+
+                    {/* Inject Demo Data (Visible in Demo Account / Localhost) */}
+                    {isDemoAccount && !hasDemoData && (
+                        <button
+                            onClick={handleInjectFinancialDemoData}
+                            disabled={isInjectingDemo}
+                            title="Populate 12-month visual analytics with demo test data"
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.65rem 1.1rem',
+                                background: '#f0fdf4',
+                                color: '#15803d',
+                                border: '1px solid #bbf7d0',
+                                borderRadius: '10px',
+                                fontWeight: '700',
+                                fontSize: '0.82rem',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                                opacity: isInjectingDemo ? 0.7 : 1
+                            }}
+                        >
+                            {isInjectingDemo ? <Loader2 size={15} className="animate-spin" /> : <PlayCircle size={15} />}
+                            {isInjectingDemo ? 'Injecting...' : 'Inject Demo'}
+                        </button>
                     )}
 
                     {/* Download PDF Button */}
@@ -2259,7 +2456,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                 </p>
                             </div>
                             <button
-                                onClick={() => setShowAddExpenseModal(true)}
+                                onClick={() => handleOpenFinanceModal('expenses', null)}
                                 style={{
                                     padding: '0.45rem 0.9rem',
                                     borderRadius: '8px',
@@ -2284,32 +2481,53 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             </div>
                         ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '400px', overflowY: 'auto' }}>
-                                {calculatedMetrics.scopedExpenses.map(exp => (
-                                    <div key={exp.id} style={{
-                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                        padding: '0.75rem 1rem', borderRadius: '10px', background: '#fef2f2', border: '1px solid #fee2e2'
-                                    }}>
-                                        <div>
-                                            <strong style={{ color: '#0f172a', display: 'block', fontSize: '0.88rem' }}>{exp.name}</strong>
-                                            <span style={{ fontSize: '0.75rem', color: '#991b1b' }}>
-                                                {exp.category || 'Operational'} • {exp.type === 'permanent' ? 'Auto Recurring' : 'One-time'}
-                                                {exp.remarks && ` • Note: ${exp.remarks}`}
-                                            </span>
+                                {calculatedMetrics.scopedExpenses.map(exp => {
+                                    const eDate = exp.date || exp.createdAt;
+                                    const dObj = eDate ? new Date(eDate) : null;
+                                    const mLabel = (dObj && !isNaN(dObj.getTime())) ? `${MONTH_SHORT[dObj.getMonth()]} ${dObj.getFullYear()}` : '';
+                                    return (
+                                        <div key={exp.id} style={{
+                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                            padding: '0.75rem 1rem', borderRadius: '10px', background: '#fef2f2', border: '1px solid #fee2e2'
+                                        }}>
+                                            <div>
+                                                <strong style={{ color: '#0f172a', display: 'block', fontSize: '0.88rem' }}>{exp.name}</strong>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
+                                                    <span style={{ fontSize: '0.72rem', color: '#991b1b', fontWeight: '700', background: '#fee2e2', padding: '1px 6px', borderRadius: '4px' }}>
+                                                        {exp.category || 'Operational'}
+                                                    </span>
+                                                    <span style={{ fontSize: '0.72rem', color: exp.type === 'permanent' ? '#7c2d12' : '#475569', fontWeight: '800', background: exp.type === 'permanent' ? '#ffedd5' : '#f1f5f9', padding: '1px 6px', borderRadius: '4px' }}>
+                                                        {exp.type === 'permanent' ? `🔄 Permanent (From ${mLabel})` : `⚡ 1-Time (${mLabel})`}
+                                                    </span>
+                                                    {exp.remarks && (
+                                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                                            • {exp.remarks}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                                <strong style={{ color: '#dc2626', fontSize: '0.95rem' }}>
+                                                    Rs {Number(exp.amount).toLocaleString()}
+                                                </strong>
+                                                <button
+                                                    onClick={() => handleOpenFinanceModal('expenses', exp)}
+                                                    style={{ border: 'none', background: '#fee2e2', color: '#dc2626', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', display: 'flex', alignItems: 'center' }}
+                                                    title="Edit Expense"
+                                                >
+                                                    <Edit2 size={13} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteFinanceEntry(exp.id, 'expenses')}
+                                                    style={{ border: 'none', background: 'none', color: '#94a3b8', cursor: 'pointer', padding: '3px' }}
+                                                    title="Delete"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                            <strong style={{ color: '#dc2626', fontSize: '0.95rem' }}>
-                                                Rs {Number(exp.amount).toLocaleString()}
-                                            </strong>
-                                            <button
-                                                onClick={() => handleDeleteFinanceEntry(exp.id, 'expenses')}
-                                                style={{ border: 'none', background: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px' }}
-                                                title="Delete"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -2326,7 +2544,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                 </p>
                             </div>
                             <button
-                                onClick={() => setShowAddIncomeModal(true)}
+                                onClick={() => handleOpenFinanceModal('incomes', null)}
                                 style={{
                                     padding: '0.45rem 0.9rem',
                                     borderRadius: '8px',
@@ -2351,32 +2569,53 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             </div>
                         ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '400px', overflowY: 'auto' }}>
-                                {calculatedMetrics.scopedIncomes.map(inc => (
-                                    <div key={inc.id} style={{
-                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                        padding: '0.75rem 1rem', borderRadius: '10px', background: '#f0fdf4', border: '1px solid #dcfce7'
-                                    }}>
-                                        <div>
-                                            <strong style={{ color: '#0f172a', display: 'block', fontSize: '0.88rem' }}>{inc.name}</strong>
-                                            <span style={{ fontSize: '0.75rem', color: '#166534' }}>
-                                                {inc.category || 'General'} • {inc.type === 'permanent' ? 'Auto Recurring' : 'One-time'}
-                                                {inc.remarks && ` • Note: ${inc.remarks}`}
-                                            </span>
+                                {calculatedMetrics.scopedIncomes.map(inc => {
+                                    const eDate = inc.date || inc.createdAt;
+                                    const dObj = eDate ? new Date(eDate) : null;
+                                    const mLabel = (dObj && !isNaN(dObj.getTime())) ? `${MONTH_SHORT[dObj.getMonth()]} ${dObj.getFullYear()}` : '';
+                                    return (
+                                        <div key={inc.id} style={{
+                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                            padding: '0.75rem 1rem', borderRadius: '10px', background: '#f0fdf4', border: '1px solid #dcfce7'
+                                        }}>
+                                            <div>
+                                                <strong style={{ color: '#0f172a', display: 'block', fontSize: '0.88rem' }}>{inc.name}</strong>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
+                                                    <span style={{ fontSize: '0.72rem', color: '#166534', fontWeight: '700', background: '#dcfce7', padding: '1px 6px', borderRadius: '4px' }}>
+                                                        {inc.category || 'General'}
+                                                    </span>
+                                                    <span style={{ fontSize: '0.72rem', color: inc.type === 'permanent' ? '#065f46' : '#475569', fontWeight: '800', background: inc.type === 'permanent' ? '#d1fae5' : '#f1f5f9', padding: '1px 6px', borderRadius: '4px' }}>
+                                                        {inc.type === 'permanent' ? `🔄 Permanent (From ${mLabel})` : `⚡ 1-Time (${mLabel})`}
+                                                    </span>
+                                                    {inc.remarks && (
+                                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                                            • {inc.remarks}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                                <strong style={{ color: '#16a34a', fontSize: '0.95rem' }}>
+                                                    Rs {Number(inc.amount).toLocaleString()}
+                                                </strong>
+                                                <button
+                                                    onClick={() => handleOpenFinanceModal('incomes', inc)}
+                                                    style={{ border: 'none', background: '#dcfce7', color: '#16a34a', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', display: 'flex', alignItems: 'center' }}
+                                                    title="Edit Income"
+                                                >
+                                                    <Edit2 size={13} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteFinanceEntry(inc.id, 'incomes')}
+                                                    style={{ border: 'none', background: 'none', color: '#94a3b8', cursor: 'pointer', padding: '3px' }}
+                                                    title="Delete"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                            <strong style={{ color: '#16a34a', fontSize: '0.95rem' }}>
-                                                Rs {Number(inc.amount).toLocaleString()}
-                                            </strong>
-                                            <button
-                                                onClick={() => handleDeleteFinanceEntry(inc.id, 'incomes')}
-                                                style={{ border: 'none', background: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px' }}
-                                                title="Delete"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -2384,143 +2623,250 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             )}
 
             {/* ========================================================= */}
-            {/* MODALS */}
+            {/* UNIFIED ADD / EDIT MODAL FOR INCOMES & EXPENSES */}
             {/* ========================================================= */}
-
-            {/* 1. Add Income Modal */}
-            {showAddIncomeModal && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}>
-                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '440px', padding: '1.5rem', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+            {financeModalState.isOpen && (
+                <div style={{
+                    position: 'fixed', inset: 0,
+                    background: 'rgba(15, 23, 42, 0.65)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 9999, padding: '1rem'
+                }}>
+                    <div className="card" style={{
+                        background: '#ffffff',
+                        borderRadius: '16px',
+                        width: '100%',
+                        maxWidth: '480px',
+                        padding: '1.5rem',
+                        boxShadow: '0 20px 25px -5px rgba(0,0,0,0.15)',
+                        border: `1.5px solid ${financeModalState.category === 'incomes' ? '#86efac' : '#fca5a5'}`
+                    }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#16a34a' }}>Add Direct Income</h3>
-                            <button onClick={() => setShowAddIncomeModal(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}><X size={18} /></button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <div style={{
+                                    width: '32px', height: '32px', borderRadius: '8px',
+                                    background: financeModalState.category === 'incomes' ? '#dcfce7' : '#fee2e2',
+                                    color: financeModalState.category === 'incomes' ? '#16a34a' : '#dc2626',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontWeight: '800'
+                                }}>
+                                    {financeModalState.category === 'incomes' ? '💰' : '🏷️'}
+                                </div>
+                                <h3 style={{
+                                    margin: 0, fontSize: '1.1rem', fontWeight: '800',
+                                    color: financeModalState.category === 'incomes' ? '#16a34a' : '#dc2626'
+                                }}>
+                                    {financeModalState.item ? 'Edit' : 'Add'}{' '}
+                                    {financeModalState.category === 'incomes' ? 'Direct School Income' : 'Operational Expense'}
+                                </h3>
+                            </div>
+                            <button
+                                onClick={() => setFinanceModalState({ isOpen: false, category: 'incomes', item: null })}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b', padding: '4px' }}
+                            >
+                                <X size={20} />
+                            </button>
                         </div>
-                        <form onSubmit={handleSaveIncome} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+                        <form onSubmit={handleSaveFinanceItem} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            
+                            {/* Type Selection: 1-Time vs Permanent */}
                             <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Income Title / Source</label>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '800', color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                    Frequency / Schedule Type
+                                </label>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFinanceForm(prev => ({ ...prev, type: 'one-time' }))}
+                                        style={{
+                                            padding: '0.65rem 0.75rem',
+                                            borderRadius: '10px',
+                                            border: financeForm.type === 'one-time' ? `2px solid ${financeModalState.category === 'incomes' ? '#16a34a' : '#dc2626'}` : '1.5px solid #e2e8f0',
+                                            background: financeForm.type === 'one-time' ? (financeModalState.category === 'incomes' ? '#f0fdf4' : '#fef2f2') : '#f8fafc',
+                                            color: financeForm.type === 'one-time' ? (financeModalState.category === 'incomes' ? '#166534' : '#991b1b') : '#64748b',
+                                            fontWeight: '800',
+                                            fontSize: '0.82rem',
+                                            cursor: 'pointer',
+                                            textAlign: 'left',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span>⚡ 1-Time</span>
+                                        </div>
+                                        <div style={{ fontSize: '0.7rem', fontWeight: '500', opacity: 0.85, marginTop: '2px' }}>
+                                            Only in target month
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setFinanceForm(prev => ({ ...prev, type: 'permanent' }))}
+                                        style={{
+                                            padding: '0.65rem 0.75rem',
+                                            borderRadius: '10px',
+                                            border: financeForm.type === 'permanent' ? `2px solid ${financeModalState.category === 'incomes' ? '#16a34a' : '#dc2626'}` : '1.5px solid #e2e8f0',
+                                            background: financeForm.type === 'permanent' ? (financeModalState.category === 'incomes' ? '#f0fdf4' : '#fef2f2') : '#f8fafc',
+                                            color: financeForm.type === 'permanent' ? (financeModalState.category === 'incomes' ? '#166534' : '#991b1b') : '#64748b',
+                                            fontWeight: '800',
+                                            fontSize: '0.82rem',
+                                            cursor: 'pointer',
+                                            textAlign: 'left',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span>🔄 Permanent</span>
+                                        </div>
+                                        <div style={{ fontSize: '0.7rem', fontWeight: '500', opacity: 0.85, marginTop: '2px' }}>
+                                            Starts from month & repeats
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Target Month & Year Selector */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>
+                                        {financeForm.type === 'permanent' ? 'Start Month' : 'Target Month'}
+                                    </label>
+                                    <select
+                                        value={financeForm.month}
+                                        onChange={(e) => setFinanceForm(prev => ({ ...prev, month: Number(e.target.value) }))}
+                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', fontWeight: '700', color: '#0f172a' }}
+                                    >
+                                        {MONTH_NAMES.map((name, idx) => (
+                                            <option key={name} value={idx + 1}>{name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>
+                                        {financeForm.type === 'permanent' ? 'Start Year' : 'Target Year'}
+                                    </label>
+                                    <select
+                                        value={financeForm.year}
+                                        onChange={(e) => setFinanceForm(prev => ({ ...prev, year: Number(e.target.value) }))}
+                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', fontWeight: '700', color: '#0f172a' }}
+                                    >
+                                        {availableYears.map(yr => (
+                                            <option key={yr} value={yr}>{yr}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Title / Name */}
+                            <div>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>
+                                    {financeModalState.category === 'incomes' ? 'Income Title / Source *' : 'Expense Title / Description *'}
+                                </label>
                                 <input
                                     type="text"
-                                    placeholder="e.g. Canteen Rent, Prospectus Sale"
-                                    value={newIncome.name}
-                                    onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })}
+                                    placeholder={financeModalState.category === 'incomes' ? "e.g. School Canteen Monthly Rent, Prospectus Sales" : "e.g. Electricity Bill, Stationery Printing, Generator Fuel"}
+                                    value={financeForm.name}
+                                    onChange={(e) => setFinanceForm(prev => ({ ...prev, name: e.target.value }))}
                                     required
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+                                    style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', outline: 'none', fontSize: '0.88rem', fontWeight: '600' }}
                                 />
                             </div>
+
+                            {/* Amount & Category */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>
+                                        Amount (Rs) *
+                                    </label>
+                                    <input
+                                        type="number"
+                                        placeholder="e.g. 15000"
+                                        min="1"
+                                        value={financeForm.amount}
+                                        onChange={(e) => setFinanceForm(prev => ({ ...prev, amount: e.target.value }))}
+                                        required
+                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', outline: 'none', fontSize: '0.88rem', fontWeight: '800', color: '#0f172a' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>
+                                        Category Head
+                                    </label>
+                                    <select
+                                        value={financeForm.category}
+                                        onChange={(e) => setFinanceForm(prev => ({ ...prev, category: e.target.value }))}
+                                        style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', outline: 'none', fontSize: '0.85rem', fontWeight: '700', color: '#0f172a' }}
+                                    >
+                                        {financeModalState.category === 'incomes' ? (
+                                            <>
+                                                <option value="General">General Incomes</option>
+                                                <option value="Canteen">Canteen Monthly Rent</option>
+                                                <option value="Admissions">Prospectus & Admissions</option>
+                                                <option value="Events">Sports Gala & Events Fund</option>
+                                                <option value="Donations">Donations & Grants</option>
+                                                <option value="Uniforms">Uniform & Stationary Shop</option>
+                                                <option value="Other">Other Direct Inflow</option>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <option value="Operational">Operational / Office</option>
+                                                <option value="Utility Bills">WAPDA / Gas / Utility Bills</option>
+                                                <option value="Stationery">Stationery & Paper Printing</option>
+                                                <option value="Maintenance">Building / Repairs / Lab</option>
+                                                <option value="Refreshments">Staff Tea & Refreshments</option>
+                                                <option value="Fuel">Generator & Van Fuel</option>
+                                                <option value="Other">Other Miscellaneous Outflow</option>
+                                            </>
+                                        )}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Remarks / Note */}
                             <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Amount (Rs)</label>
+                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>
+                                    Remarks / Note (Optional)
+                                </label>
                                 <input
-                                    type="number"
-                                    placeholder="e.g. 5000"
-                                    value={newIncome.amount}
-                                    onChange={(e) => setNewIncome({ ...newIncome, amount: e.target.value })}
-                                    required
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+                                    type="text"
+                                    placeholder="e.g. Invoice #104, Vendor: Khan Traders"
+                                    value={financeForm.remarks}
+                                    onChange={(e) => setFinanceForm(prev => ({ ...prev, remarks: e.target.value }))}
+                                    style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', outline: 'none', fontSize: '0.85rem' }}
                                 />
                             </div>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Type</label>
-                                <select
-                                    value={newIncome.type}
-                                    onChange={(e) => setNewIncome({ ...newIncome, type: e.target.value })}
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+
+                            {/* Action Buttons */}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setFinanceModalState({ isOpen: false, category: 'incomes', item: null })}
+                                    style={{ padding: '0.6rem 1.1rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', background: '#fff', color: '#64748b', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}
                                 >
-                                    <option value="one-time">One-Time (This period only)</option>
-                                    <option value="permanent">Recurring (Auto every month)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Remarks / Note (Optional)</label>
-                                <input
-                                    type="text"
-                                    placeholder="Details or reference"
-                                    value={newIncome.remarks}
-                                    onChange={(e) => setNewIncome({ ...newIncome, remarks: e.target.value })}
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                                />
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                                <button type="button" onClick={() => setShowAddIncomeModal(false)} style={{ padding: '0.55rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', color: '#64748b', cursor: 'pointer' }}>Cancel</button>
-                                <button type="submit" disabled={isSavingIncome} style={{ padding: '0.55rem 1.25rem', borderRadius: '8px', border: 'none', background: '#16a34a', color: '#fff', fontWeight: '700', cursor: 'pointer' }}>
-                                    {isSavingIncome ? 'Saving...' : 'Save Income'}
+                                    Cancel
                                 </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* 2. Add Expense Modal */}
-            {showAddExpenseModal && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}>
-                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '440px', padding: '1.5rem', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#dc2626' }}>Add Operational Expense</h3>
-                            <button onClick={() => setShowAddExpenseModal(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}><X size={18} /></button>
-                        </div>
-                        <form onSubmit={handleSaveExpense} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Expense Title</label>
-                                <input
-                                    type="text"
-                                    placeholder="e.g. Electricity Bill, Stationery"
-                                    value={newExpense.name}
-                                    onChange={(e) => setNewExpense({ ...newExpense, name: e.target.value })}
-                                    required
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Amount (Rs)</label>
-                                <input
-                                    type="number"
-                                    placeholder="e.g. 12000"
-                                    value={newExpense.amount}
-                                    onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
-                                    required
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Category</label>
-                                <select
-                                    value={newExpense.category}
-                                    onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
+                                <button
+                                    type="submit"
+                                    disabled={isSavingFinance}
+                                    style={{
+                                        padding: '0.6rem 1.35rem',
+                                        borderRadius: '8px',
+                                        border: 'none',
+                                        background: financeModalState.category === 'incomes' ? '#16a34a' : '#dc2626',
+                                        color: '#ffffff',
+                                        fontWeight: '800',
+                                        fontSize: '0.85rem',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem',
+                                        opacity: isSavingFinance ? 0.7 : 1
+                                    }}
                                 >
-                                    <option value="Operational">Operational / Office</option>
-                                    <option value="Utility Bills">Utility Bills</option>
-                                    <option value="Stationery">Stationery & Printing</option>
-                                    <option value="Maintenance">Building / Repairs</option>
-                                    <option value="Refreshments">Refreshments / Tea</option>
-                                    <option value="Other">Other Miscellaneous</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Type</label>
-                                <select
-                                    value={newExpense.type}
-                                    onChange={(e) => setNewExpense({ ...newExpense, type: e.target.value })}
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                                >
-                                    <option value="one-time">One-Time (This period only)</option>
-                                    <option value="permanent">Recurring (Auto every month)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#475569', marginBottom: '0.3rem' }}>Remarks / Note (Optional)</label>
-                                <input
-                                    type="text"
-                                    placeholder="Invoice # or reference"
-                                    value={newExpense.remarks}
-                                    onChange={(e) => setNewExpense({ ...newExpense, remarks: e.target.value })}
-                                    style={{ width: '100%', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.9rem' }}
-                                />
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                                <button type="button" onClick={() => setShowAddExpenseModal(false)} style={{ padding: '0.55rem 1rem', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', color: '#64748b', cursor: 'pointer' }}>Cancel</button>
-                                <button type="submit" disabled={isSavingExpense} style={{ padding: '0.55rem 1.25rem', borderRadius: '8px', border: 'none', background: '#dc2626', color: '#fff', fontWeight: '700', cursor: 'pointer' }}>
-                                    {isSavingExpense ? 'Saving...' : 'Save Expense'}
+                                    {isSavingFinance ? <Loader2 size={16} className="animate-spin" /> : null}
+                                    {isSavingFinance ? 'Saving...' : (financeModalState.item ? '✓ Update Entry' : '✓ Save Entry')}
                                 </button>
                             </div>
                         </form>
