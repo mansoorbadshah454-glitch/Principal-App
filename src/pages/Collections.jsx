@@ -6699,6 +6699,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         // Individual item paid status flags (Prevents double billing!)
         const isTuitionPaid = isMonthFullyPaid || breakdown.is100PercentFree || (Array.isArray(studentToAssess.paidMonths) && studentToAssess.paidMonths.includes(targetMonthKey)) || Boolean(matchingMonthTx?.paidCategories?.includes('tuition'));
         const isTransportPaid = isMonthFullyPaid || (breakdown.transportFee === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('transport'));
+        const isRecurringPaid = isMonthFullyPaid || breakdown.is100PercentFree || ((breakdown.otherRecurringTotal || 0) === 0) || (Array.isArray(studentToAssess.paidMonths) && studentToAssess.paidMonths.includes(targetMonthKey)) || Boolean(matchingMonthTx?.paidCategories?.includes('recurring'));
         const isStorePaid = isMonthFullyPaid || (breakdown.storeDues === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('store'));
         const isActionPaid = isMonthFullyPaid || (breakdown.actionFee === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('action'));
         const isFinePaid = isMonthFullyPaid || isFineWaived || (breakdown.penaltyFine === 0) || Boolean(matchingMonthTx?.paidCategories?.includes('fine'));
@@ -6706,6 +6707,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
         const calculatedNetPayable = (isTuitionPaid ? 0 : breakdown.tuitionPayable) +
             (isTransportPaid ? 0 : breakdown.transportFee) +
+            (isRecurringPaid ? 0 : (breakdown.otherRecurringTotal || 0)) +
             (isStorePaid ? 0 : breakdown.storeDues) +
             (isActionPaid ? 0 : breakdown.actionFee) +
             (isFinePaid ? 0 : (isFineWaived ? 0 : breakdown.penaltyFine)) +
@@ -6728,6 +6730,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
             isTuitionPaid,
             isTransportPaid,
+            isRecurringPaid,
             isStorePaid,
             isActionPaid,
             isFinePaid,
@@ -6738,14 +6741,19 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const autoSelectedKeys = [];
         if (!isArrearsPaid && breakdown.arrears > 0) autoSelectedKeys.push('arrears');
         if (!isTuitionPaid && breakdown.tuitionPayable > 0) autoSelectedKeys.push('tuition');
-        if (!isStorePaid && breakdown.storeDues > 0) autoSelectedKeys.push('store');
         if (!isTransportPaid && breakdown.transportFee > 0) autoSelectedKeys.push('transport');
+        if (!isRecurringPaid && (breakdown.otherRecurringTotal || 0) > 0) {
+            autoSelectedKeys.push('recurring');
+            (breakdown.recurringItems || []).forEach((_, idx) => autoSelectedKeys.push(`recurring_${idx}`));
+        }
+        if (!isStorePaid && breakdown.storeDues > 0) autoSelectedKeys.push('store');
         if (!isActionPaid && breakdown.actionFee > 0) autoSelectedKeys.push('action');
         if (!isFinePaid && breakdown.penaltyFine > 0) autoSelectedKeys.push('fine');
 
         // Include any unpaid individual actions for this student (applicable to target month)
         const targetYearMonthKey = `${new Date().getFullYear()}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
         (studentToAssess?.individualActions || []).forEach((act, idx) => {
+            if (act.type === 'recurring_fee' || act.isRecurring) return;
             const actMonthKey = act.monthKey || (act.createdAt ? act.createdAt.slice(0, 7) : (act.date ? act.date.slice(0, 7) : targetYearMonthKey));
             if (targetYearMonthKey < actMonthKey) return;
             if (act.status !== 'paid' && act.type !== 'store_inventory') {
@@ -6803,7 +6811,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 ...selectedDetailMonthData.breakdown,
                 penaltyFine: 0,
                 isFineWaived: true,
-                totalPayable: Math.max(0, (selectedDetailMonthData.breakdown.tuitionPayable || 0) + (selectedDetailMonthData.breakdown.transportFee || 0) + (selectedDetailMonthData.breakdown.storeDues || 0) + (selectedDetailMonthData.breakdown.actionFee || 0))
+                totalPayable: Math.max(0, 
+                    (selectedDetailMonthData.breakdown.tuitionPayable || 0) + 
+                    (selectedDetailMonthData.breakdown.transportFee || 0) + 
+                    (selectedDetailMonthData.breakdown.otherRecurringTotal || 0) + 
+                    (selectedDetailMonthData.breakdown.storeDues || 0) + 
+                    (selectedDetailMonthData.breakdown.actionFee || 0) +
+                    (selectedDetailMonthData.breakdown.arrears || 0)
+                )
             };
             setSelectedDetailMonthData({
                 ...selectedDetailMonthData,
@@ -6824,7 +6839,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 ...selectedDetailMonthData.breakdown,
                 penaltyFine: val,
                 isFineWaived: val === 0,
-                totalPayable: Math.max(0, (selectedDetailMonthData.breakdown.tuitionPayable || 0) + (selectedDetailMonthData.breakdown.transportFee || 0) + (selectedDetailMonthData.breakdown.storeDues || 0) + (selectedDetailMonthData.breakdown.actionFee || 0) + val)
+                totalPayable: Math.max(0, 
+                    (selectedDetailMonthData.breakdown.tuitionPayable || 0) + 
+                    (selectedDetailMonthData.breakdown.transportFee || 0) + 
+                    (selectedDetailMonthData.breakdown.otherRecurringTotal || 0) + 
+                    (selectedDetailMonthData.breakdown.storeDues || 0) + 
+                    (selectedDetailMonthData.breakdown.actionFee || 0) + 
+                    (selectedDetailMonthData.breakdown.arrears || 0) + 
+                    val
+                )
             };
             setSelectedDetailMonthData({
                 ...selectedDetailMonthData,
@@ -7142,6 +7165,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             `------------------------------------\n` +
             `• Monthly Tuition: Rs ${Number(breakdown.tuitionPayable || 0).toLocaleString()}\n` +
             (breakdown.transportFee > 0 ? `• Transport Charges: Rs ${Number(breakdown.transportFee).toLocaleString()}\n` : '') +
+            (Array.isArray(breakdown.recurringItems) && breakdown.recurringItems.length > 0
+                ? breakdown.recurringItems.map(r => `• ${r.name}: Rs ${Number(r.amount || 0).toLocaleString()}\n`).join('')
+                : (breakdown.otherRecurringTotal > 0 ? `• Online & Other Services: Rs ${Number(breakdown.otherRecurringTotal).toLocaleString()}\n` : '')) +
             (breakdown.storeDues > 0 ? `• Uniform & Store Items: Rs ${Number(breakdown.storeDues).toLocaleString()}\n` : '') +
             (breakdown.actionFee > 0 ? `• Actions & Exam Charges: Rs ${Number(breakdown.actionFee).toLocaleString()}\n` : '') +
             (breakdown.penaltyFine > 0 ? `• Late Fine Surcharge: Rs ${Number(breakdown.penaltyFine).toLocaleString()}\n` : '') +
@@ -7270,6 +7296,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const transportAmt = Number(b?.transportFee ?? histData?.transportFee ?? st.transportFee ?? 0);
         if (transportAmt > 0) {
             items.push({ name: 'Transport / Van Fee', amount: transportAmt, category: 'transport' });
+        }
+        
+        if (Array.isArray(b?.recurringItems) && b.recurringItems.length > 0) {
+            b.recurringItems.forEach(r => {
+                const amt = Number(r.amount || 0);
+                if (amt > 0) items.push({ name: r.name || 'Recurring Fee', amount: amt, category: 'recurring' });
+            });
+        } else if (Number(b?.otherRecurringTotal || 0) > 0) {
+            items.push({ name: 'Online & Other Services', amount: Number(b.otherRecurringTotal), category: 'recurring' });
         }
         
         const storeAmt = Number(b?.storeDues ?? histData?.storeDues ?? 0);
@@ -8055,6 +8090,28 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             if (b.transportFee > 0) {
                 list.push({ key: 'transport', name: 'Transport / Van Fee', amount: b.transportFee, category: 'transport' });
             }
+            if (Array.isArray(b.recurringItems) && b.recurringItems.length > 0) {
+                b.recurringItems.forEach((rec, rIdx) => {
+                    const recAmt = Number(rec.amount || 0);
+                    if (recAmt > 0) {
+                        list.push({
+                            key: `recurring_${rIdx}`,
+                            name: rec.name || 'Recurring Fee',
+                            amount: recAmt,
+                            category: 'recurring',
+                            isRecurring: true
+                        });
+                    }
+                });
+            } else if (b.otherRecurringTotal > 0) {
+                list.push({
+                    key: 'recurring',
+                    name: 'Online & Other Services',
+                    amount: b.otherRecurringTotal,
+                    category: 'recurring',
+                    isRecurring: true
+                });
+            }
             if (b.storeDues > 0) {
                 list.push({ key: 'store', name: 'Uniform & Store Items', amount: b.storeDues, category: 'store' });
             }
@@ -8068,6 +8125,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
             if (studentToAssess && Array.isArray(studentToAssess.individualActions)) {
                 studentToAssess.individualActions.forEach((act, idx) => {
+                    if (act.type === 'recurring_fee' || act.isRecurring || (Array.isArray(b.recurringItems) && b.recurringItems.some(r => (r.name || '').toLowerCase() === (act.name || act.title || '').toLowerCase()))) {
+                        return;
+                    }
                     const actMonthKey = act.monthKey || (act.createdAt ? act.createdAt.slice(0, 7) : (act.date ? act.date.slice(0, 7) : targetMonthKey));
                     if (targetMonthKey < actMonthKey) return;
                     if (act.status === 'paid') {
@@ -11834,6 +11894,41 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                         Rs {Number(selectedDetailMonthData?.breakdown?.tuitionPayable ?? (activeChild?.tuitionFee || selectedStudent.tuitionFee || 0)).toLocaleString()}
                                                                                     </strong>
                                                                                 </div>
+
+                                                                                {/* Monthly Recurring Items (Online Services, Library, etc.) */}
+                                                                                {(activePayableItems || []).filter(it => it.isRecurring || it.category === 'recurring').map((recItem, rIdx) => (
+                                                                                    <div 
+                                                                                        key={recItem.key || `recurring_${rIdx}`}
+                                                                                        onClick={() => !selectedDetailMonthData?.isRecurringPaid && toggleFeeItemKey(recItem.key)}
+                                                                                        style={{ 
+                                                                                            display: 'flex', 
+                                                                                            justifyContent: 'space-between', 
+                                                                                            alignItems: 'center',
+                                                                                            cursor: selectedDetailMonthData?.isRecurringPaid ? 'default' : 'pointer',
+                                                                                            padding: '5px 7px',
+                                                                                            borderRadius: '7px',
+                                                                                            background: selectedDetailMonthData?.isRecurringPaid ? '#f0fdf4' : selectedFeeItemKeys.includes(recItem.key) ? '#ffffff' : '#f8fafc',
+                                                                                            border: selectedDetailMonthData?.isRecurringPaid ? '1.5px solid #86efac' : selectedFeeItemKeys.includes(recItem.key) ? '1.5px solid #0f172a' : '1px solid #e2e8f0',
+                                                                                            opacity: selectedDetailMonthData?.isRecurringPaid ? 1 : selectedFeeItemKeys.includes(recItem.key) ? 1 : 0.45
+                                                                                        }}
+                                                                                    >
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                            <input 
+                                                                                                type="checkbox" 
+                                                                                                checked={selectedDetailMonthData?.isRecurringPaid || selectedFeeItemKeys.includes(recItem.key)} 
+                                                                                                disabled={selectedDetailMonthData?.isRecurringPaid}
+                                                                                                onChange={() => {}} 
+                                                                                                style={{ cursor: selectedDetailMonthData?.isRecurringPaid ? 'not-allowed' : 'pointer', accentColor: selectedDetailMonthData?.isRecurringPaid ? '#16a34a' : '#0f172a', width: '13px', height: '13px' }} 
+                                                                                            />
+                                                                                            <span style={{ color: '#0f172a', fontWeight: '800', fontSize: '0.78rem' }}>
+                                                                                                🌐 {recItem.name}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <strong style={{ color: selectedDetailMonthData?.isRecurringPaid ? '#15803d' : '#0f172a', fontWeight: '900', fontSize: '0.84rem' }}>
+                                                                                            +Rs {Number(recItem.amount).toLocaleString()}
+                                                                                        </strong>
+                                                                                    </div>
+                                                                                ))}
 
                                                                                 {/* Store & Uniform Items */}
                                                                                 {Number(selectedDetailMonthData?.breakdown?.storeDues || feeCalculation?.storeFee || 0) > 0 && (
