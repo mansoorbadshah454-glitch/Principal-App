@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-    Camera, Save, Loader2, Shield, Copy, CheckCircle2, Clock, Building, Briefcase,
+    Camera, Save, Loader2, Shield, ShieldCheck, Copy, CheckCircle2, Clock, Building, Briefcase,
     Plus, Trash2, Users, Info, BookOpen, Sparkles, Bot, Key, ExternalLink,
     CreditCard, Landmark, Upload, Eye, FileText, AlertCircle, AlertTriangle, ArrowRight,
     Smartphone, RefreshCw, X, Check, Search, Calendar, LayoutGrid, ListFilter,
@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import {
-    doc, getDoc, setDoc, onSnapshot, collection, query, where, addDoc, serverTimestamp, deleteDoc, writeBatch
+    doc, getDoc, setDoc, onSnapshot, collection, query, where, addDoc, serverTimestamp, deleteDoc, writeBatch, getDocs
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
@@ -62,7 +62,28 @@ const Settings = () => {
     const [bankAccounts, setBankAccounts] = useState([]);
     const [previewImage, setPreviewImage] = useState(null);
     const [imageFile, setImageFile] = useState(null);
-    const [feeSettings, setFeeSettings] = useState({ dueDate: '', penaltyAmount: '' });
+    const [feeSettings, setFeeSettings] = useState({
+        dueDate: '',
+        penaltyAmount: '',
+        historicalBaselineCompleted: false,
+        historicalBaselinePaidUpTo: '',
+        historicalBaselinePaidUpToName: '',
+        historicalBaselineDate: ''
+    });
+
+    // One-Time Initial Historical Fee Baseline States
+    const [classesList, setClassesList] = useState([]);
+    const [historicalCutoffMonthIdx, setHistoricalCutoffMonthIdx] = useState(() => {
+        const currentMonth = new Date().getMonth();
+        return Math.max(0, currentMonth - 2); // default e.g. June if September (2 months arrear backlog)
+    });
+    const [historicalCutoffYear, setHistoricalCutoffYear] = useState(() => new Date().getFullYear());
+    const [historicalTargetScope, setHistoricalTargetScope] = useState('all');
+    const [historicalTargetClassId, setHistoricalTargetClassId] = useState('');
+    const [showBaselineConfirmModal, setShowBaselineConfirmModal] = useState(false);
+    const [baselineProcessing, setBaselineProcessing] = useState(false);
+    const [baselineSuccessMsg, setBaselineSuccessMsg] = useState('');
+
     const [aiSettings, setAiSettings] = useState({ apiKey: '', botName: 'Principal AI Copilot' });
     const [savingAi, setSavingAi] = useState(false);
     const [aiSavedSuccess, setAiSavedSuccess] = useState(false);
@@ -505,14 +526,34 @@ const Settings = () => {
             if (!isMounted) return;
             
             if (feeSnap.exists()) {
+                const fData = feeSnap.data();
                 setFeeSettings({
-                    dueDate: feeSnap.data().dueDate || '',
-                    penaltyAmount: feeSnap.data().penaltyAmount || ''
+                    dueDate: fData.dueDate || '',
+                    penaltyAmount: fData.penaltyAmount || '',
+                    historicalBaselineCompleted: Boolean(fData.historicalBaselineCompleted),
+                    historicalBaselinePaidUpTo: fData.historicalBaselinePaidUpTo || '',
+                    historicalBaselinePaidUpToName: fData.historicalBaselinePaidUpToName || '',
+                    historicalBaselineDate: fData.historicalBaselineDate || ''
                 });
             }
         }, (err) => {
             console.error("Error fetching fee settings:", err);
         });
+
+        // Fetch classes list for historical baseline targeting
+        const fetchClasses = async () => {
+            try {
+                const classesSnap = await getDocs(collection(db, `schools/${id}/classes`));
+                const list = [];
+                classesSnap.forEach(d => {
+                    list.push({ id: d.id, name: d.data().name || d.data().className || d.id });
+                });
+                setClassesList(list);
+            } catch (err) {
+                console.warn("Error fetching classes in settings:", err);
+            }
+        };
+        fetchClasses();
 
 
         // Fetch AI settings using onSnapshot
@@ -922,6 +963,112 @@ const Settings = () => {
         }
     };
 
+    const handleExecuteHistoricalBaseline = async () => {
+        let currentSchoolId = schoolId || JSON.parse(localStorage.getItem('manual_session') || '{}')?.schoolId;
+        if (!currentSchoolId) {
+            alert('School ID not found.');
+            return;
+        }
+
+        setBaselineProcessing(true);
+        setBaselineSuccessMsg('');
+
+        try {
+            const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            const targetCutoffName = `${MONTH_NAMES[historicalCutoffMonthIdx]} ${historicalCutoffYear}`;
+            const targetCutoffKey = `${historicalCutoffYear}-${String(historicalCutoffMonthIdx + 1).padStart(2, '0')}`;
+
+            // Generate list of all month keys to mark as paid (from Jan up to selected cutoff month)
+            const monthsToSettleKeys = [];
+            for (let i = 0; i <= historicalCutoffMonthIdx; i++) {
+                monthsToSettleKeys.push(`${historicalCutoffYear}-${String(i + 1).padStart(2, '0')}`);
+            }
+
+            // Determine target classes
+            let targetClasses = classesList;
+            if (historicalTargetScope === 'specific' && historicalTargetClassId) {
+                targetClasses = classesList.filter(c => c.id === historicalTargetClassId);
+            }
+
+            let totalStudentsUpdated = 0;
+            const batchSize = 350;
+            let currentBatch = writeBatch(db);
+            let opCount = 0;
+
+            for (const cls of targetClasses) {
+                const studentsSnap = await getDocs(collection(db, `schools/${currentSchoolId}/classes/${cls.id}/students`));
+                for (const studentDoc of studentsSnap.docs) {
+                    const studentData = studentDoc.data();
+                    const existingPaidMonths = Array.isArray(studentData.paidMonths) ? studentData.paidMonths : [];
+                    
+                    // Merge new settled months with existing paid months to preserve prior records
+                    const mergedPaidMonths = Array.from(new Set([...existingPaidMonths, ...monthsToSettleKeys]));
+                    
+                    const updateData = {
+                        paidMonths: mergedPaidMonths,
+                        historicalBaselineAppliedAt: new Date().toISOString(),
+                        historicalBaselineCutoff: targetCutoffKey
+                    };
+
+                    currentBatch.update(studentDoc.ref, updateData);
+                    opCount++;
+
+                    // Also update master student document if exists
+                    try {
+                        const masterRef = doc(db, `schools/${currentSchoolId}/students`, studentDoc.id);
+                        currentBatch.set(masterRef, updateData, { merge: true });
+                        opCount++;
+                    } catch (e) {}
+
+                    totalStudentsUpdated++;
+
+                    if (opCount >= batchSize) {
+                        await currentBatch.commit();
+                        currentBatch = writeBatch(db);
+                        opCount = 0;
+                    }
+                }
+            }
+
+            if (opCount > 0) {
+                await currentBatch.commit();
+            }
+
+            // Lock the baseline setup permanently in feeSettings
+            const feeSettingsPayload = {
+                ...feeSettings,
+                historicalBaselineCompleted: true,
+                historicalBaselinePaidUpTo: targetCutoffKey,
+                historicalBaselinePaidUpToName: targetCutoffName,
+                historicalBaselineDate: new Date().toISOString(),
+                historicalBaselineStudentsCount: totalStudentsUpdated
+            };
+
+            await setDoc(doc(db, `schools/${currentSchoolId}/settings`, 'feeSettings'), feeSettingsPayload, { merge: true });
+
+            // Invalidate Matrix & Collections cache for instant real-time sync
+            try {
+                sessionStorage.removeItem(`fee_matrix_cache_${currentSchoolId}`);
+            } catch (e) {}
+
+            setFeeSettings(prev => ({
+                ...prev,
+                historicalBaselineCompleted: true,
+                historicalBaselinePaidUpTo: targetCutoffKey,
+                historicalBaselinePaidUpToName: targetCutoffName,
+                historicalBaselineDate: new Date().toISOString()
+            }));
+
+            setBaselineSuccessMsg(`Historical fee baseline successfully initialized for ${totalStudentsUpdated} students up to ${targetCutoffName}!`);
+            setShowBaselineConfirmModal(false);
+        } catch (err) {
+            console.error("Error executing historical baseline:", err);
+            alert("Failed to apply historical baseline: " + err.message);
+        } finally {
+            setBaselineProcessing(false);
+        }
+    };
+
     const handleSaveAiSettings = async () => {
         let currentSchoolId = schoolId || JSON.parse(localStorage.getItem('manual_session') || '{}')?.schoolId;
         if (!currentSchoolId) {
@@ -1273,6 +1420,206 @@ const Settings = () => {
                                     />
                                 </div>
                             </div>
+
+                            {/* Baseline Success Notification Alert */}
+                            {baselineSuccessMsg && (
+                                <div style={{
+                                    marginTop: '1.25rem',
+                                    padding: '1rem 1.25rem',
+                                    background: '#ecfdf5',
+                                    border: '1px solid #a7f3d0',
+                                    borderRadius: '12px',
+                                    color: '#065f46',
+                                    fontWeight: '700',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.75rem',
+                                    fontSize: '0.9rem'
+                                }}>
+                                    <CheckCircle2 size={20} color="#10b981" />
+                                    <span>{baselineSuccessMsg}</span>
+                                </div>
+                            )}
+
+                            {/* One-Time Historical Baseline Setup Component */}
+                            {feeSettings.historicalBaselineCompleted ? (
+                                <div style={{
+                                    marginTop: '1.25rem',
+                                    padding: '1.25rem 1.5rem',
+                                    background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
+                                    border: '1.5px solid #a7f3d0',
+                                    borderRadius: '16px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '1rem',
+                                    boxShadow: '0 2px 6px rgba(16, 185, 129, 0.08)'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                        <div style={{ background: '#10b981', color: 'white', borderRadius: '12px', padding: '0.6rem', display: 'flex' }}>
+                                            <ShieldCheck size={24} />
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.95rem', fontWeight: '800', color: '#065f46' }}>
+                                                Initial Historical Fee Baseline Configured (Permanently Locked)
+                                            </div>
+                                            <div style={{ fontSize: '0.8rem', color: '#047857', marginTop: '2px' }}>
+                                                All historical months prior to <strong>{feeSettings.historicalBaselinePaidUpToName || feeSettings.historicalBaselinePaidUpTo}</strong> were marked settled on school onboarding. Parents' mobile apps are synchronized.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span style={{ fontSize: '0.75rem', padding: '6px 12px', background: '#d1fae5', color: '#065f46', borderRadius: '8px', fontWeight: '800', letterSpacing: '0.5px' }}>
+                                        LOCKED 🔒
+                                    </span>
+                                </div>
+                            ) : (
+                                <div style={{
+                                    marginTop: '1.5rem',
+                                    padding: '1.5rem',
+                                    background: '#f8fafc',
+                                    border: '2px dashed #cbd5e1',
+                                    borderRadius: '16px'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                            <div style={{ background: '#e0e7ff', color: '#4f46e5', padding: '0.5rem', borderRadius: '10px' }}>
+                                                <Sparkles size={20} />
+                                            </div>
+                                            <div>
+                                                <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>
+                                                    Initial Historical Fee Baseline Setup (One-Time Onboarding)
+                                                </h4>
+                                                <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+                                                    Mark past months as Paid so only your desired backlog (e.g. 2 months arrears) and current month are due for parents.
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <span style={{ fontSize: '0.7rem', padding: '4px 10px', background: '#fef3c7', color: '#92400e', borderRadius: '6px', fontWeight: '800' }}>
+                                            ONE-TIME USE ⚠️
+                                        </span>
+                                    </div>
+
+                                    {/* Selection Controls Grid */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem', marginTop: '1rem', marginBottom: '1.25rem' }}>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                                Mark All Past Months As PAID Up To:
+                                            </label>
+                                            <select
+                                                value={historicalCutoffMonthIdx}
+                                                onChange={(e) => setHistoricalCutoffMonthIdx(Number(e.target.value))}
+                                                style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1.5px solid #cbd5e1', background: 'white', fontWeight: '700', color: '#1e293b' }}
+                                            >
+                                                {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((m, idx) => (
+                                                    <option key={m} value={idx}>
+                                                        {m} {historicalCutoffYear}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                                Target Scope:
+                                            </label>
+                                            <select
+                                                value={historicalTargetScope}
+                                                onChange={(e) => setHistoricalTargetScope(e.target.value)}
+                                                style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1.5px solid #cbd5e1', background: 'white', fontWeight: '700', color: '#1e293b' }}
+                                            >
+                                                <option value="all">Whole School (All Classes)</option>
+                                                <option value="specific">Specific Class Only</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {historicalTargetScope === 'specific' && (
+                                        <div style={{ marginBottom: '1.25rem' }}>
+                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
+                                                Select Specific Class:
+                                            </label>
+                                            <select
+                                                value={historicalTargetClassId}
+                                                onChange={(e) => setHistoricalTargetClassId(e.target.value)}
+                                                style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1.5px solid #cbd5e1', background: 'white', fontWeight: '700', color: '#1e293b' }}
+                                            >
+                                                <option value="">-- Choose Class --</option>
+                                                {classesList.map(c => (
+                                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+
+                                    {/* Real-time Dynamic Breakdown Preview */}
+                                    {(() => {
+                                        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                        const curMonth = new Date().getMonth();
+                                        const settledList = MONTHS.slice(0, historicalCutoffMonthIdx + 1);
+                                        const arrearList = MONTHS.slice(historicalCutoffMonthIdx + 1, curMonth);
+                                        const activeMonth = MONTHS[curMonth] || '';
+
+                                        return (
+                                            <div style={{ background: 'white', padding: '1rem 1.25rem', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '1.25rem' }}>
+                                                <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.75rem' }}>
+                                                    Live Visual Breakdown Preview
+                                                </div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                                                    <div style={{ padding: '0.75rem', background: '#ecfdf5', borderRadius: '10px', border: '1px solid #a7f3d0' }}>
+                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#047857' }}>🟢 Settled / Paid Months</div>
+                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#065f46', marginTop: '3px' }}>
+                                                            {settledList.length > 0 ? settledList.join(', ') : 'None'}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#059669', marginTop: '2px' }}>({settledList.length} months marked Green/Paid)</div>
+                                                    </div>
+
+                                                    <div style={{ padding: '0.75rem', background: '#fef2f2', borderRadius: '10px', border: '1px solid #fecaca' }}>
+                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#b91c1c' }}>🔴 Pending Arrears</div>
+                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#991b1b', marginTop: '3px' }}>
+                                                            {arrearList.length > 0 ? arrearList.join(', ') : 'None (0 Arrears)'}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#dc2626', marginTop: '2px' }}>({arrearList.length} months left as overdue)</div>
+                                                    </div>
+
+                                                    <div style={{ padding: '0.75rem', background: '#eff6ff', borderRadius: '10px', border: '1px solid #bfdbfe' }}>
+                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#1d4ed8' }}>🔵 Active Billing Month</div>
+                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e40af', marginTop: '3px' }}>
+                                                            {activeMonth} {historicalCutoffYear}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.7rem', color: '#2563eb', marginTop: '2px' }}>(Current open billing cycle)</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* Apply Button */}
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowBaselineConfirmModal(true)}
+                                            style={{
+                                                padding: '0.75rem 1.5rem',
+                                                borderRadius: '10px',
+                                                border: 'none',
+                                                background: '#4f46e5',
+                                                color: 'white',
+                                                fontWeight: '800',
+                                                fontSize: '0.85rem',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem',
+                                                boxShadow: '0 4px 10px rgba(79, 70, 229, 0.3)',
+                                                transition: 'all 0.2s'
+                                            }}
+                                            className="hover:scale-105 active:scale-95"
+                                        >
+                                            <Sparkles size={16} /> Settle & Lock Historical Baseline
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Banking Section */}
@@ -3214,6 +3561,194 @@ const Settings = () => {
                                 style={{ padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.85rem', fontWeight: '600' }}
                             >
                                 Close Preview
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Historical Baseline Confirmation Modal */}
+            {showBaselineConfirmModal && (
+                <div style={{
+                    position: 'fixed',
+                    inset: 0,
+                    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+                    backdropFilter: 'blur(6px)',
+                    zIndex: 9999,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '1rem',
+                    animation: 'fadeIn 0.2s ease-out'
+                }}>
+                    <div style={{
+                        background: 'white',
+                        borderRadius: '20px',
+                        maxWidth: '540px',
+                        width: '100%',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                        border: '1px solid #e2e8f0',
+                        overflow: 'hidden'
+                    }}>
+                        {/* Header */}
+                        <div style={{
+                            padding: '1.25rem 1.5rem',
+                            background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+                            color: 'white',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <div style={{
+                                    width: '38px',
+                                    height: '38px',
+                                    borderRadius: '10px',
+                                    background: 'rgba(255, 255, 255, 0.15)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                }}>
+                                    <ShieldCheck size={22} color="#a5b4fc" />
+                                </div>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: 'white' }}>
+                                        Confirm Fee Baseline Setup
+                                    </h3>
+                                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#c7d2fe', marginTop: '2px' }}>
+                                        Permanent One-Time Onboarding Action
+                                    </p>
+                                </div>
+                            </div>
+                            {!baselineProcessing && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowBaselineConfirmModal(false)}
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: '#c7d2fe',
+                                        cursor: 'pointer',
+                                        padding: '4px',
+                                        borderRadius: '6px'
+                                    }}
+                                >
+                                    <X size={20} />
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Body */}
+                        <div style={{ padding: '1.5rem' }}>
+                            <div style={{
+                                padding: '1rem',
+                                background: '#fffbeb',
+                                border: '1px solid #fde68a',
+                                borderRadius: '12px',
+                                display: 'flex',
+                                gap: '0.75rem',
+                                marginBottom: '1.25rem'
+                            }}>
+                                <AlertTriangle size={22} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
+                                <div style={{ fontSize: '0.82rem', color: '#92400e', lineHeight: 1.5 }}>
+                                    <strong>Important Note:</strong> This action will mark past fee records up to <strong>{['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][historicalCutoffMonthIdx]} {historicalCutoffYear}</strong> as <strong>PAID</strong> for <strong>{historicalTargetScope === 'all' ? 'All Students in Whole School' : classesList.find(c => c.id === historicalTargetClassId)?.name || 'Selected Class'}</strong>.
+                                </div>
+                            </div>
+
+                            {/* Impact Summary */}
+                            <div style={{
+                                background: '#f8fafc',
+                                borderRadius: '12px',
+                                border: '1px solid #e2e8f0',
+                                padding: '1rem',
+                                marginBottom: '1.25rem'
+                            }}>
+                                <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                                    Configuration Summary:
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', fontSize: '0.82rem' }}>
+                                    <div>
+                                        <span style={{ color: '#64748b' }}>Target Scope:</span>
+                                        <div style={{ fontWeight: '700', color: '#1e293b' }}>
+                                            {historicalTargetScope === 'all' ? 'Whole School' : 'Specific Class'}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <span style={{ color: '#64748b' }}>Cutoff Settlement:</span>
+                                        <div style={{ fontWeight: '700', color: '#059669' }}>
+                                            Up to {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][historicalCutoffMonthIdx]} {historicalCutoffYear}
+                                        </div>
+                                    </div>
+                                    <div style={{ gridColumn: 'span 2', paddingTop: '0.4rem', borderTop: '1px dashed #cbd5e1' }}>
+                                        <span style={{ color: '#64748b' }}>Parent Mobile App & Portal Sync:</span>
+                                        <div style={{ fontWeight: '700', color: '#2563eb' }}>
+                                            Live real-time sync (0% APK rebuild required)
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <p style={{ fontSize: '0.8rem', color: '#64748b', margin: 0, textAlign: 'center' }}>
+                                Once applied, this setup card will disappear and permanently lock to prevent duplicate overwrites.
+                            </p>
+                        </div>
+
+                        {/* Actions */}
+                        <div style={{
+                            padding: '1rem 1.5rem',
+                            background: '#f8fafc',
+                            borderTop: '1px solid #e2e8f0',
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '0.75rem'
+                        }}>
+                            <button
+                                type="button"
+                                disabled={baselineProcessing}
+                                onClick={() => setShowBaselineConfirmModal(false)}
+                                style={{
+                                    padding: '0.65rem 1.25rem',
+                                    borderRadius: '10px',
+                                    border: '1px solid #cbd5e1',
+                                    background: 'white',
+                                    color: '#475569',
+                                    fontWeight: '700',
+                                    fontSize: '0.85rem',
+                                    cursor: baselineProcessing ? 'not-allowed' : 'pointer'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                disabled={baselineProcessing}
+                                onClick={handleExecuteHistoricalBaseline}
+                                style={{
+                                    padding: '0.65rem 1.5rem',
+                                    borderRadius: '10px',
+                                    border: 'none',
+                                    background: baselineProcessing ? '#94a3b8' : '#4f46e5',
+                                    color: 'white',
+                                    fontWeight: '800',
+                                    fontSize: '0.85rem',
+                                    cursor: baselineProcessing ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    boxShadow: '0 4px 10px rgba(79, 70, 229, 0.3)'
+                                }}
+                            >
+                                {baselineProcessing ? (
+                                    <>
+                                        <Loader2 className="animate-spin" size={16} />
+                                        Applying Baseline across Firestore...
+                                    </>
+                                ) : (
+                                    <>
+                                        <CheckCircle2 size={16} />
+                                        Confirm & Settle Baseline
+                                    </>
+                                )}
                             </button>
                         </div>
                     </div>
