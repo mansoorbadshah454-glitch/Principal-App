@@ -179,12 +179,17 @@ export const calculateItemizedFeeBreakdown = (
     const isTargetMonthPaid = isMonthSettled(student, targetMonthIdx, targetYear, historyTxs);
     const effectiveBillingMonthIdx = getEffectiveBillingMonthIdx(student, targetYear, historyTxs);
 
-    // 1. Base Tuition
-    let baseTuition = Number(student.tuitionFee || student.monthlyFee || student.fee || 0);
-    if (baseTuition === 0 && Array.isArray(student.feeStructure) && student.feeStructure.length > 0) {
-        const tuitionItem = student.feeStructure.find(f => (f.name || '').toLowerCase().includes('tuition'));
+    // 1. Base Tuition & Recurring Items
+    const feeStructureList = Array.isArray(student.feeStructure) ? student.feeStructure : [];
+    let baseTuition = Number(student.tuitionFee || 0);
+
+    if (baseTuition === 0 && feeStructureList.length > 0) {
+        const tuitionItem = feeStructureList.find(f => (f.name || '').toLowerCase().includes('tuition'));
         if (tuitionItem) baseTuition = Number(tuitionItem.amount || 0);
-        else baseTuition = student.feeStructure.reduce((sum, f) => sum + Number(f.amount || 0), 0);
+        else baseTuition = Number(student.monthlyFee || student.fee || 0);
+    }
+    if (baseTuition === 0 && !student.tuitionFee && student.monthlyFee) {
+        baseTuition = Number(student.monthlyFee);
     }
     if (baseTuition === 0 && !is100PercentFree) baseTuition = 2000; // Standard Default
 
@@ -201,6 +206,23 @@ export const calculateItemizedFeeBreakdown = (
 
     // 2. Transport Fee
     let transportFee = Number(student.transportFee || student.monthlyTransportFee || 0);
+    if (transportFee === 0 && feeStructureList.length > 0) {
+        const transItem = feeStructureList.find(f => (f.name || '').toLowerCase().includes('transport'));
+        if (transItem) transportFee = Number(transItem.amount || 0);
+    }
+
+    // 2.1 Other Monthly Recurring Items (Online Services, Library, Hostel, etc.)
+    const recurringItems = [];
+    let otherRecurringTotal = 0;
+    feeStructureList.forEach(f => {
+        const name = f.name || 'Recurring Fee';
+        const lower = name.toLowerCase();
+        const amt = Number(f.amount || 0);
+        if (amt > 0 && !lower.includes('tuition') && !lower.includes('transport')) {
+            recurringItems.push({ name, amount: amt });
+            otherRecurringTotal += amt;
+        }
+    });
 
     // 3. Month-Isolated Store Purchases & Unpaid Aggregation
     let storeDues = 0;
@@ -303,6 +325,11 @@ export const calculateItemizedFeeBreakdown = (
                     }
                 }
 
+                // Skip recurring mirror items if already counted in otherRecurringTotal
+                if (act.type === 'recurring_fee' || act.isRecurring || recurringItems.some(r => (r.name || '').toLowerCase() === (act.name || act.title || '').toLowerCase())) {
+                    return;
+                }
+
                 const isActPaid = act.status === 'paid';
                 if (isActPaid) {
                     const actKey = act.monthKey || '';
@@ -375,7 +402,7 @@ export const calculateItemizedFeeBreakdown = (
         }
     }
 
-    let totalPayable = tuitionPayable + transportFee + storeDues + actionFee + penaltyFine;
+    let totalPayable = tuitionPayable + transportFee + otherRecurringTotal + storeDues + actionFee + penaltyFine;
 
     // If historical payment exists, net total must match actual collected amount
     const paidAmount = feeHistoryEntry ? Number(feeHistoryEntry.paidAmount || 0) : 0;
@@ -388,6 +415,9 @@ export const calculateItemizedFeeBreakdown = (
         baseTuition,
         tuitionPayable,
         transportFee,
+        recurringItems,
+        otherRecurringFees: recurringItems,
+        otherRecurringTotal,
         storeDues,
         actionFee,
         actionName: actionNames.join(', '),

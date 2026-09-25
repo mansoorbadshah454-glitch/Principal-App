@@ -189,8 +189,11 @@ const EditStudentProfile = () => {
                     }
                     setFeeStructure(initialFees);
 
-                    // Parse individual actions
-                    setIndividualActions(Array.isArray(data.individualActions) ? data.individualActions : []);
+                    // Parse individual actions (filter out auto-mirrored recurring items so user only manages clean 1-time actions)
+                    const loadedActions = Array.isArray(data.individualActions)
+                        ? data.individualActions.filter(a => a.type !== 'recurring_fee' && !a.isRecurring)
+                        : [];
+                    setIndividualActions(loadedActions);
 
                     // Determine Concession & Scholarship Mode
                     const is100Free = (
@@ -352,6 +355,28 @@ const EditStudentProfile = () => {
                 : Math.max(0, calculations.grossRecurring - (transportItem ? Number(transportItem.amount || 0) : 0));
             const derivedTransport = transportItem ? Number(transportItem.amount || 0) : 0;
 
+            // Generate mirror items for non-tuition/non-transport recurring charges
+            // This guarantees 100% backward compatibility for already compiled Parent App APKs without requiring re-build
+            const today = new Date();
+            const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+            const nonTuitionRecurring = feeStructure.filter(f => {
+                const name = (f.name || '').toLowerCase();
+                return !name.includes('tuition') && !name.includes('transport') && Number(f.amount || 0) > 0;
+            });
+            const cleanUserActions = individualActions.filter(a => a.type !== 'recurring_fee' && !a.isRecurring);
+            const recurringMirrors = nonTuitionRecurring.map(f => ({
+                id: `rec_mirror_${f.id || f.name.replace(/\s+/g, '_').toLowerCase()}`,
+                name: f.name,
+                title: f.name,
+                amount: Number(f.amount || 0),
+                status: 'unpaid',
+                type: 'recurring_fee',
+                isRecurring: true,
+                createdAt: today.toISOString(),
+                monthKey: currentMonthKey
+            }));
+            const finalIndividualActions = [...cleanUserActions, ...recurringMirrors];
+
             const updatePayload = {
                 name: profile.name,
                 rollNo: profile.rollNo,
@@ -363,7 +388,7 @@ const EditStudentProfile = () => {
                 
                 // Itemized Fee Breakdowns
                 feeStructure: feeStructure,
-                individualActions: individualActions,
+                individualActions: finalIndividualActions,
                 tuitionFee: derivedTuition,
                 transportFee: derivedTransport,
                 monthlyFee: calculations.netMonthlyPayable,
