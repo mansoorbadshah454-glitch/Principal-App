@@ -529,6 +529,28 @@ const OnlineSubmissionsDashboard = ({
                 }
             }
 
+            // 1b. Reset pendingPaymentSubmission for unselected / unapproved siblings in this family
+            const unselectedStudents = resolvedFamilyStudents.filter(st => selectedSiblingsPayingMap[st.id] === false);
+            for (const unst of unselectedStudents) {
+                const classId = unst.classId || '';
+                const unselectedPayload = {
+                    pendingPaymentSubmission: {
+                        status: 'unapproved',
+                        reason: 'Not included in the approved online payment voucher',
+                        unapprovedAt: nowIso,
+                        approvedSubmissionId: sub.id
+                    }
+                };
+                if (classId && unst.id) {
+                    const classStRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, unst.id);
+                    batch.set(classStRef, unselectedPayload, { merge: true });
+                }
+                if (unst.id) {
+                    const masterStRef = doc(db, `schools/${schoolId}/students`, unst.id);
+                    batch.set(masterStRef, unselectedPayload, { merge: true });
+                }
+            }
+
             // 2. Create Master Fee Transaction record
             const transactionRecord = {
                 receiptNo,
