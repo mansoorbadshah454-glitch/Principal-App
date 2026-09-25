@@ -5,11 +5,28 @@ import { db, auth } from '../firebase';
 import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import CachedImage from '../components/CachedImage';
 
-const ACTION_CATEGORIES = ['Fine fee', 'Uniform', 'Books', 'Sports', 'Tour charges', 'Club membership', 'Store items'];
+const ACTION_CATEGORIES = [
+    'Admission fee',
+    'Registration fee',
+    'Security',
+    'Uniform',
+    'Books',
+    'Sports',
+    'Tour charges',
+    'Club membership',
+    'Fine fee',
+    'Promotions fee',
+    'Annual fund',
+    'Store items'
+];
 const RECURRING_CATEGORIES = [
-    'Tuition fee', 'Transport fee', 'Admission fee', 'Library', 'Hostel fee',
-    'Stationary charges', 'Promotions fee', 'Security',
-    'Annual fund', 'Online Services', 'Miscellaneous'
+    'Tuition fee',
+    'Transport fee',
+    'Library',
+    'Hostel fee',
+    'Stationary charges',
+    'Online Services',
+    'Miscellaneous'
 ];
 
 const ALL_CATEGORIES = [...RECURRING_CATEGORIES, ...ACTION_CATEGORIES];

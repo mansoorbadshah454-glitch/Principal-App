@@ -4,6 +4,10 @@
     width: calc(100% + 5rem);
     margin: -2.5rem -2.5rem 0 -2.5rem;
     min-height: 100%;
+    background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.05) 0%, transparent 60%),
+                radial-gradient(#cbd5e1 0.8px, transparent 0.8px);
+    background-size: 100% 100%, 26px 26px;
+    background-attachment: fixed;
 }
 
 .admission-container {
@@ -347,3 +351,261 @@
 .form-section:hover .bg-decor-icon {
     opacity: 0.06;
 }
+
+/* =========================================================
+   SWIPE / SLIDE CARD & PAYMENT FINANCE HUB STYLES (SCOPED)
+   ========================================================= */
+
+.slide-card-wrapper {
+    position: relative;
+    width: 100%;
+    margin-bottom: 2rem;
+    overflow: hidden;
+    border-radius: 20px;
+}
+
+/* Front Header Fee Button */
+.fee-flip-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 1rem;
+    border-radius: 9999px;
+    font-size: 0.825rem;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1.5px solid rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    backdrop-filter: blur(8px);
+    transition: all 0.25s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.fee-flip-btn:hover {
+    background: rgba(255, 255, 255, 0.28);
+    border-color: #ffffff;
+    transform: translateY(-1px) scale(1.02);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.fee-flip-btn.has-fees {
+    background: linear-gradient(135deg, #10b981, #059669);
+    border-color: #34d399;
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+}
+
+.fee-flip-btn.has-fees:hover {
+    background: linear-gradient(135deg, #059669, #047857);
+    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.45);
+}
+
+/* Card Background Decor Watermark */
+.card-bg-decor-watermark {
+    position: absolute;
+    right: -25px;
+    bottom: -25px;
+    opacity: 0.12;
+    color: #ffffff;
+    transform: rotate(-12deg);
+    pointer-events: none;
+    z-index: 0;
+    transition: transform 0.4s ease, opacity 0.4s ease;
+}
+
+.slide-card-wrapper:hover .card-bg-decor-watermark {
+    opacity: 0.18;
+    transform: rotate(-6deg) scale(1.05);
+}
+
+/* Back Finance Card - Matching Student Info Card Theme */
+.finance-back-card {
+    background: #3b82f6;
+    border: 2px solid #1e40af;
+    box-shadow: 8px 8px 0px #1e40af;
+    color: #ffffff;
+    padding: 1.75rem 2rem;
+    border-radius: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.finance-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+    padding-bottom: 1rem;
+    position: relative;
+    z-index: 1;
+}
+
+.back-to-info-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 1rem;
+    border-radius: 12px;
+    border: 1.5px solid rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: all 0.2s ease;
+}
+
+.back-to-info-btn:hover {
+    background: rgba(255, 255, 255, 0.35);
+    border-color: #ffffff;
+    color: #ffffff;
+    transform: translateX(-3px);
+}
+
+/* Segmented Mode Tabs */
+.finance-mode-tabs {
+    display: flex;
+    background: rgba(30, 64, 175, 0.45);
+    padding: 0.35rem;
+    border-radius: 14px;
+    border: 1.5px solid rgba(255, 255, 255, 0.25);
+    gap: 0.4rem;
+    position: relative;
+    z-index: 1;
+}
+
+.finance-mode-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.875rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.finance-mode-tab.active {
+    background: #ffffff;
+    color: #1e40af;
+    font-weight: 800;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+}
+
+.finance-mode-tab.active.action-mode {
+    background: #fef08a;
+    color: #854d0e;
+    font-weight: 800;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+}
+
+/* Status Pill Button */
+.action-status-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+}
+
+.action-status-toggle.paid {
+    background: #065f46;
+    color: #a7f3d0;
+    border: 1px solid #34d399;
+}
+
+.action-status-toggle.unpaid {
+    background: #7f1d1d;
+    color: #fecaca;
+    border: 1px solid #f87171;
+}
+
+/* Live Financial Summary Bar */
+.finance-summary-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: rgba(30, 58, 138, 0.85);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 16px;
+    padding: 1rem 1.25rem;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.finance-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.finance-summary-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #bfdbfe;
+    font-weight: 700;
+}
+
+.finance-summary-val {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+.finance-summary-val.highlight {
+    color: #ffffff;
+}
+
+.finance-summary-val.grand {
+    color: #86efac;
+    font-size: 1.35rem;
+}
+
+/* PDF Official Paid Stamp */
+.pdf-paid-stamp {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 3px dashed #059669;
+    border-radius: 12px;
+    padding: 0.4rem 1.25rem;
+    color: #047857;
+    background: #ecfdf5;
+    transform: rotate(-3deg);
+    box-shadow: 0 4px 10px rgba(5, 150, 105, 0.15);
+}
+
+.pdf-paid-stamp-text {
+    font-size: 1.2rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.pdf-paid-stamp-sub {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #065f46;
+    letter-spacing: 0.5px;
+}

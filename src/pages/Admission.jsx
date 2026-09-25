@@ -25,6 +25,13 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
+  Wallet,
+  CheckCircle2,
+  RotateCcw,
+  Sparkles,
+  ArrowLeft,
+  Check,
+  GraduationCap,
 } from "lucide-react";
 import { db, storage } from "../firebase";
 import AdmissionHistory from "./AdmissionHistory";
@@ -50,25 +57,26 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 
 const ACTION_CATEGORIES = [
-  "Fine fee",
+  "Admission fee",
+  "Registration fee",
+  "Security",
   "Uniform",
   "Books",
   "Sports",
   "Tour charges",
   "Club membership",
+  "Fine fee",
+  "Promotions fee",
+  "Annual fund",
 ];
 const RECURRING_CATEGORIES = [
-  "Admission fee",
   "Tuition fee",
   "Transport fee",
   "Library",
   "Hostel fee",
   "Stationary charges",
-  "Promotions fee",
   "Concession",
-  "Security",
   "Miscellaneous",
-  "Annual fund",
 ];
 const ALL_CATEGORIES = [...RECURRING_CATEGORIES, ...ACTION_CATEGORIES].sort();
 
@@ -150,6 +158,15 @@ const Admission = () => {
   const [selectedSiblingId, setSelectedSiblingId] = useState("");
   const [linkedSiblings, setLinkedSiblings] = useState([]); // Students already in school to link to this parent
 
+  const [studentCardTabs, setStudentCardTabs] = useState({});
+
+  const setStudentTab = (index, tab) => {
+    setStudentCardTabs((prev) => ({
+      ...prev,
+      [index]: tab,
+    }));
+  };
+
   const [students, setStudents] = useState([
     {
       firstName: "",
@@ -162,8 +179,11 @@ const Admission = () => {
       admissionNo: "", // New Field
       feeStructure: [],
       individualActions: [],
-      newFeeCategory: ALL_CATEGORIES[0],
+      newFeeCategory: RECURRING_CATEGORIES[0],
       newFeeAmount: "",
+      newFeeMode: "recurring", // "recurring" | "action"
+      markPaidAtAdmission: false,
+      feePaymentMode: "Cash",
       profilePic: null,
     },
   ]);
@@ -507,8 +527,11 @@ const Admission = () => {
         admissionNo: "",
         feeStructure: [],
         individualActions: [],
-        newFeeCategory: ALL_CATEGORIES[0],
+        newFeeCategory: RECURRING_CATEGORIES[0],
         newFeeAmount: "",
+        newFeeMode: "recurring",
+        markPaidAtAdmission: false,
+        feePaymentMode: "Cash",
         profilePic: null,
       },
     ]);
@@ -517,23 +540,38 @@ const Admission = () => {
   const handleAddFee = (index) => {
     const updatedStudents = [...students];
     const student = updatedStudents[index];
-    if (!student.newFeeCategory || !student.newFeeAmount) return;
+    if (!student.newFeeCategory || !student.newFeeAmount || Number(student.newFeeAmount) <= 0) return;
 
-    const isAction = ACTION_CATEGORIES.includes(student.newFeeCategory);
+    const isAction = student.newFeeMode === "action" || ACTION_CATEGORIES.includes(student.newFeeCategory);
     const newItem = {
-      id: Date.now().toString(),
+      id: (isAction ? "action_" : "fee_") + Date.now().toString() + "_" + Math.random().toString(36).substring(2, 6),
       name: student.newFeeCategory,
       amount: Number(student.newFeeAmount),
       ...(isAction ? { status: "unpaid" } : {}),
     };
 
     if (isAction) {
-      student.individualActions = [...student.individualActions, newItem];
+      student.individualActions = [...(student.individualActions || []), newItem];
     } else {
-      student.feeStructure = [...student.feeStructure, newItem];
+      student.feeStructure = [...(student.feeStructure || []), newItem];
     }
 
     student.newFeeAmount = ""; // Reset input
+    setStudents(updatedStudents);
+  };
+
+  const handleToggleActionStatus = (studentIndex, actionId) => {
+    const updatedStudents = [...students];
+    const student = updatedStudents[studentIndex];
+    student.individualActions = (student.individualActions || []).map((item) => {
+      if (item.id === actionId) {
+        return {
+          ...item,
+          status: item.status === "paid" ? "unpaid" : "paid",
+        };
+      }
+      return item;
+    });
     setStudents(updatedStudents);
   };
 
@@ -542,11 +580,11 @@ const Admission = () => {
     const student = updatedStudents[studentIndex];
 
     if (isAction) {
-      student.individualActions = student.individualActions.filter(
+      student.individualActions = (student.individualActions || []).filter(
         (item) => item.id !== feeId,
       );
     } else {
-      student.feeStructure = student.feeStructure.filter(
+      student.feeStructure = (student.feeStructure || []).filter(
         (item) => item.id !== feeId,
       );
     }
@@ -691,6 +729,53 @@ const Admission = () => {
           }
         }
 
+        // Compute Financial SSOT attributes
+        const tuitionItem = (student.feeStructure || []).find((f) =>
+          (f.name || "").toLowerCase().includes("tuition")
+        );
+        const transportItem = (student.feeStructure || []).find((f) =>
+          (f.name || "").toLowerCase().includes("transport")
+        );
+        const recurringTotal = (student.feeStructure || []).reduce(
+          (sum, f) => sum + (Number(f.amount) || 0),
+          0
+        );
+        const actionsTotal = (student.individualActions || []).reduce(
+          (sum, a) => sum + (Number(a.amount) || 0),
+          0
+        );
+        const derivedTuition = tuitionItem
+          ? Number(tuitionItem.amount || 0)
+          : Math.max(
+              0,
+              recurringTotal - (transportItem ? Number(transportItem.amount || 0) : 0)
+            );
+        const derivedTransport = transportItem ? Number(transportItem.amount || 0) : 0;
+
+        const now = new Date();
+        const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        const isPaidNow = Boolean(student.markPaidAtAdmission);
+
+        const processedActions = (student.individualActions || []).map((a) => ({
+          ...a,
+          status: isPaidNow ? "paid" : (a.status || "unpaid"),
+          ...(isPaidNow ? { paidAt: now.toISOString(), paidMonthKey: currentMonthKey } : {}),
+        }));
+
+        const monthlyFeeHist = isPaidNow
+          ? {
+              [currentMonthKey]: {
+                status: "paid",
+                paidAmount: recurringTotal + actionsTotal,
+                expectedAmount: recurringTotal + actionsTotal,
+                paidAt: now.toISOString(),
+                paymentMode: student.feePaymentMode || "Cash",
+                receiptNo: `ADM-${Date.now().toString().slice(-6)}`,
+                settledVia: "admission_counter",
+              },
+            }
+          : {};
+
         // Prepare Student Data Object
         const studentData = {
           name: `${student.firstName} ${student.lastName}`,
@@ -706,7 +791,22 @@ const Admission = () => {
             student.rollNo || `TPP-${Math.floor(1000 + Math.random() * 9000)}`,
           admissionNo: student.admissionNo || "",
           feeStructure: student.feeStructure || [],
-          individualActions: student.individualActions || [],
+          individualActions: processedActions,
+          tuitionFee: derivedTuition,
+          transportFee: derivedTransport,
+          monthlyFee: recurringTotal,
+          fee: recurringTotal,
+          baseFee: recurringTotal,
+          monthlyFeeStatus: isPaidNow ? "paid" : "unpaid",
+          ...(isPaidNow
+            ? {
+                monthlyFeeDate: now.toISOString(),
+                paidMonths: [currentMonthKey],
+                lastPaymentMode: student.feePaymentMode || "Cash",
+                lastPaymentAt: now.toISOString(),
+                monthlyFeeHistory: monthlyFeeHist,
+              }
+            : {}),
           status: "present",
           avgScore: 0,
           homework: 0,
@@ -810,6 +910,14 @@ const Admission = () => {
         parentPassword: parentDetails.password,
         students: students.map((s) => {
           const cls = availableClasses.find((c) => c.id === s.admissionClass);
+          const recTotal = (s.feeStructure || []).reduce(
+            (sum, f) => sum + (Number(f.amount) || 0),
+            0
+          );
+          const actTotal = (s.individualActions || []).reduce(
+            (sum, a) => sum + (Number(a.amount) || 0),
+            0
+          );
           return {
             name: `${s.firstName} ${s.lastName}`,
             className: cls ? cls.name : "Unknown Class",
@@ -817,6 +925,11 @@ const Admission = () => {
             admissionNo: s.admissionNo,
             feeStructure: s.feeStructure || [],
             individualActions: s.individualActions || [],
+            isPaidAtAdmission: Boolean(s.markPaidAtAdmission),
+            paymentMode: s.feePaymentMode || "Cash",
+            monthlyTotal: recTotal,
+            oneTimeTotal: actTotal,
+            grandTotal: recTotal + actTotal,
           };
         }),
       });
@@ -840,14 +953,19 @@ const Admission = () => {
           gender: "select",
           admissionClass: "",
           previousSchool: "",
+          rollNo: "",
           admissionNo: "",
           feeStructure: [],
           individualActions: [],
-          newFeeCategory: ALL_CATEGORIES[0],
+          newFeeCategory: RECURRING_CATEGORIES[0],
           newFeeAmount: "",
+          newFeeMode: "recurring",
+          markPaidAtAdmission: false,
+          feePaymentMode: "Cash",
           profilePic: null,
         },
       ]);
+      setStudentCardTabs({});
       setExistingParent(null);
       setSearchPhone("");
       setLinkedSiblings([]);
@@ -1666,534 +1784,1168 @@ const Admission = () => {
             </div>
 
             <AnimatePresence>
-              {students.map((student, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="student-card"
-                  style={{
-                    background: "#3b82f6",
-                    border: "2px solid #1e40af",
-                    boxShadow: "8px 8px 0px #1e40af",
-                    color: "white",
-                  }}
-                >
-                  <div
-                    className="student-header"
-                    style={{ borderBottom: "1px solid rgba(255,255,255,0.2)" }}
+              {students.map((student, index) => {
+                const monthlyTotal = (student.feeStructure || []).reduce(
+                  (sum, f) => sum + (Number(f.amount) || 0),
+                  0
+                );
+                const actionsTotal = (student.individualActions || []).reduce(
+                  (sum, a) => sum + (Number(a.amount) || 0),
+                  0
+                );
+                const grandTotal = monthlyTotal + actionsTotal;
+                const hasFees =
+                  (student.feeStructure || []).length > 0 ||
+                  (student.individualActions || []).length > 0;
+                const isFeeTab = studentCardTabs[index] === "fee";
+
+                return (
+                  <motion.div
+                    key={index}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="slide-card-wrapper"
                   >
-                    <h3
-                      className="section-title-text"
-                      style={{
-                        fontSize: "1.1rem",
-                        display: "flex",
-                        alignItems: "center",
-                        color: "white",
-                      }}
-                    >
-                      <span
-                        className="student-number-badge"
+                    <AnimatePresence mode="wait">
+                      {!isFeeTab ? (
+                        <motion.div
+                          key="info-card"
+                          initial={{ x: -30, opacity: 0 }}
+                          animate={{ x: 0, opacity: 1 }}
+                          exit={{ x: -30, opacity: 0 }}
+                          transition={{ duration: 0.25, ease: "easeInOut" }}
+                          className="student-card"
+                          style={{
+                            background: "#3b82f6",
+                            border: "2px solid #1e40af",
+                            boxShadow: "8px 8px 0px #1e40af",
+                            color: "white",
+                            marginBottom: 0,
+                            position: "relative",
+                            overflow: "hidden",
+                          }}
+                        >
+                          {/* Background Decor Watermark */}
+                          <div className="card-bg-decor-watermark">
+                            <GraduationCap size={200} />
+                          </div>
+
+                          <div
+                            className="student-header"
+                            style={{ borderBottom: "1px solid rgba(255,255,255,0.2)", position: "relative", zIndex: 1 }}
+                          >
+                            <h3
+                              className="section-title-text"
+                              style={{
+                                fontSize: "1.1rem",
+                                display: "flex",
+                                alignItems: "center",
+                                color: "white",
+                              }}
+                            >
+                              <span
+                                className="student-number-badge"
+                                style={{
+                                  background: "rgba(255,255,255,0.2)",
+                                  color: "white",
+                                }}
+                              >
+                                {index + 1}
+                              </span>
+                              Student Information
+                            </h3>
+
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.75rem",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setStudentTab(index, "fee")}
+                                className={`fee-flip-btn ${
+                                  hasFees ? "has-fees" : ""
+                                }`}
+                                title="Setup / View Fees for this student"
+                              >
+                              <Wallet size={16} />
+                              <span>
+                                {hasFees
+                                  ? `Fees: ₨ ${monthlyTotal.toLocaleString()}/mo ${
+                                      actionsTotal > 0
+                                        ? `+ ₨ ${actionsTotal.toLocaleString()} 1-Time`
+                                        : ""
+                                    } ✓`
+                                  : "Setup Fees & Finance ↻"}
+                              </span>
+                            </button>
+
+                            {students.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeStudent(index)}
+                                className="remove-btn"
+                                title="Remove Student"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="form-grid">
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              First Name
+                            </label>
+                            <div className="input-wrapper">
+                              <input
+                                type="text"
+                                name="firstName"
+                                value={student.firstName}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input"
+                                required
+                              />
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Last Name
+                            </label>
+                            <div className="input-wrapper">
+                              <input
+                                type="text"
+                                name="lastName"
+                                value={student.lastName}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input"
+                                required
+                              />
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Admission No
+                            </label>
+                            <div className="input-wrapper">
+                              <input
+                                type="text"
+                                name="admissionNo"
+                                value={student.admissionNo}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input"
+                                placeholder="e.g. ADM-001"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Roll Number
+                            </label>
+                            <div className="input-wrapper">
+                              <input
+                                type="text"
+                                name="rollNo"
+                                value={student.rollNo}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input"
+                                placeholder="e.g. 101"
+                                required
+                              />
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Date of Birth
+                            </label>
+                            <div className="input-wrapper">
+                              <input
+                                type="date"
+                                name="dob"
+                                value={student.dob}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input"
+                                required
+                              />
+                              <Calendar
+                                className="input-icon"
+                                size={20}
+                                style={{ color: "white" }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Gender
+                            </label>
+                            <div className="input-wrapper">
+                              <select
+                                name="gender"
+                                value={student.gender}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input modern-select"
+                              >
+                                <option value="select" disabled>
+                                  Select Gender
+                                </option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Admission Class
+                            </label>
+                            <div className="input-wrapper">
+                              <select
+                                name="admissionClass"
+                                value={student.admissionClass}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input modern-select"
+                                required
+                              >
+                                <option value="" disabled>
+                                  Select Class
+                                </option>
+                                {availableClasses.length > 0 ? (
+                                  availableClasses.map((cls) => (
+                                    <option key={cls.id} value={cls.id}>
+                                      {cls.name}
+                                    </option>
+                                  ))
+                                ) : (
+                                  <option value="" disabled>
+                                    Loading classes...
+                                  </option>
+                                )}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Previous School
+                            </label>
+                            <div className="input-wrapper">
+                              <input
+                                type="text"
+                                name="previousSchool"
+                                value={student.previousSchool}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input"
+                                placeholder="Optional"
+                              />
+                            </div>
+                          </div>
+
+                          <div
+                            className="input-group"
+                            style={{ gridColumn: "1 / -1" }}
+                          >
+                            <label
+                              className="input-label"
+                              style={{ color: "rgba(255,255,255,0.8)" }}
+                            >
+                              Student Photo
+                            </label>
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "1.5rem",
+                                marginTop: "0.5rem",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: "80px",
+                                  height: "80px",
+                                  borderRadius: "50%",
+                                  background: "rgba(255,255,255,0.1)",
+                                  border: "2px dashed rgba(255,255,255,0.3)",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  overflow: "hidden",
+                                  position: "relative",
+                                }}
+                              >
+                                {student.profilePic ? (
+                                  <img
+                                    src={student.profilePic}
+                                    alt="Preview"
+                                    style={{
+                                      width: "100%",
+                                      height: "100%",
+                                      objectFit: "cover",
+                                    }}
+                                  />
+                                ) : (
+                                  <Camera
+                                    size={32}
+                                    color="rgba(255,255,255,0.5)"
+                                  />
+                                )}
+                              </div>
+                              <div>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) => handleImageUpload(index, e)}
+                                  id={`photo-upload-${index}`}
+                                  style={{ display: "none" }}
+                                />
+                                <label
+                                  htmlFor={`photo-upload-${index}`}
+                                  style={{
+                                    display: "inline-block",
+                                    padding: "0.6rem 1.2rem",
+                                    background: "white",
+                                    border: "1px solid #e2e8f0",
+                                    borderRadius: "8px",
+                                    cursor: "pointer",
+                                    fontSize: "0.9rem",
+                                    fontWeight: "600",
+                                    color: "var(--text-main)",
+                                    transition: "all 0.2s",
+                                  }}
+                                >
+                                  Upload Photo
+                                </label>
+                                <p
+                                  style={{
+                                    fontSize: "0.8rem",
+                                    color: "rgba(255,255,255,0.7)",
+                                    marginTop: "0.25rem",
+                                  }}
+                                >
+                                  JPG, PNG up to 2MB
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ) : (
+                      /* ================= FINANCE SIDE: Payment & Finance Hub (Slide in from Right) ================= */
+                      <motion.div
+                        key="finance-card"
+                        initial={{ x: 30, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        exit={{ x: 30, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: "easeInOut" }}
+                        className="finance-back-card"
                         style={{
-                          background: "rgba(255,255,255,0.2)",
+                          background: "#3b82f6",
+                          border: "2px solid #1e40af",
+                          boxShadow: "8px 8px 0px #1e40af",
                           color: "white",
+                          marginBottom: 0,
+                          position: "relative",
+                          overflow: "hidden",
                         }}
                       >
-                        {index + 1}
-                      </span>
-                      Student Information
-                    </h3>
-                    {students.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeStudent(index)}
-                        className="remove-btn"
-                        title="Remove Student"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    )}
-                  </div>
+                        {/* Background Decor Watermark */}
+                        <div className="card-bg-decor-watermark">
+                          <Wallet size={200} />
+                        </div>
 
-                  <div className="form-grid">
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        First Name
-                      </label>
-                      <div className="input-wrapper">
-                        <input
-                          type="text"
-                          name="firstName"
-                          value={student.firstName}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input"
-                          required
-                        />
-                      </div>
-                    </div>
+                        <div className="finance-header">
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.75rem",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 38,
+                                height: 38,
+                                borderRadius: "10px",
+                                background: "rgba(255, 255, 255, 0.2)",
+                                color: "#ffffff",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                border: "1px solid rgba(255, 255, 255, 0.35)",
+                              }}
+                            >
+                              <Wallet size={20} />
+                            </div>
+                            <div>
+                              <h3
+                                style={{
+                                  fontSize: "1.1rem",
+                                  fontWeight: "800",
+                                  margin: 0,
+                                  color: "#ffffff",
+                                  letterSpacing: "-0.01em",
+                                }}
+                              >
+                                Fee & Payment Setup
+                              </h3>
+                              <p
+                                style={{
+                                  margin: 0,
+                                  fontSize: "0.8rem",
+                                  color: "rgba(255, 255, 255, 0.85)",
+                                }}
+                              >
+                                {student.firstName || student.lastName
+                                  ? `${student.firstName} ${student.lastName}`
+                                  : `Student #${index + 1}`}{" "}
+                                • Live Sync with Mobile App
+                              </p>
+                            </div>
+                          </div>
 
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Last Name
-                      </label>
-                      <div className="input-wrapper">
-                        <input
-                          type="text"
-                          name="lastName"
-                          value={student.lastName}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input"
-                          required
-                        />
-                      </div>
-                    </div>
+                          <button
+                            type="button"
+                            onClick={() => setStudentTab(index, "info")}
+                            className="back-to-info-btn"
+                          >
+                            <ArrowLeft size={16} />
+                            <span>Back to Info</span>
+                          </button>
+                        </div>
 
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Admission No
-                      </label>
-                      <div className="input-wrapper">
-                        <input
-                          type="text"
-                          name="admissionNo"
-                          value={student.admissionNo}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input"
-                          placeholder="e.g. ADM-001"
-                        />
-                      </div>
-                    </div>
+                        {/* Segmented Mode Selector: Recurring vs One-Time */}
+                        <div className="finance-mode-tabs">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = [...students];
+                              updated[index].newFeeMode = "recurring";
+                              updated[index].newFeeCategory =
+                                RECURRING_CATEGORIES[0];
+                              setStudents(updated);
+                            }}
+                            className={`finance-mode-tab ${
+                              student.newFeeMode !== "action" ? "active" : ""
+                            }`}
+                          >
+                            <RotateCcw size={15} />
+                            <span>Permanent / Monthly Recurring</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = [...students];
+                              updated[index].newFeeMode = "action";
+                              updated[index].newFeeCategory =
+                                ACTION_CATEGORIES[0];
+                              setStudents(updated);
+                            }}
+                            className={`finance-mode-tab ${
+                              student.newFeeMode === "action"
+                                ? "active action-mode"
+                                : ""
+                            }`}
+                          >
+                            <Sparkles size={15} />
+                            <span>1-Time / Admission Action Charge</span>
+                          </button>
+                        </div>
 
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Roll Number
-                      </label>
-                      <div className="input-wrapper">
-                        <input
-                          type="text"
-                          name="rollNo"
-                          value={student.rollNo}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input"
-                          placeholder="e.g. 101"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Date of Birth
-                      </label>
-                      <div className="input-wrapper">
-                        <input
-                          type="date"
-                          name="dob"
-                          value={student.dob}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input"
-                          required
-                        />
-                        <Calendar
-                          className="input-icon"
-                          size={20}
-                          style={{ color: "white" }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Gender
-                      </label>
-                      <div className="input-wrapper">
-                        <select
-                          name="gender"
-                          value={student.gender}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input modern-select"
-                        >
-                          <option value="select" disabled>
-                            Select Gender
-                          </option>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                          <option value="Other">Other</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Admission Class
-                      </label>
-                      <div className="input-wrapper">
-                        <select
-                          name="admissionClass"
-                          value={student.admissionClass}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input modern-select"
-                          required
-                        >
-                          <option value="" disabled>
-                            Select Class
-                          </option>
-                          {availableClasses.length > 0 ? (
-                            availableClasses.map((cls) => (
-                              <option key={cls.id} value={cls.id}>
-                                {cls.name}
-                              </option>
-                            ))
-                          ) : (
-                            <option value="" disabled>
-                              Loading classes...
-                            </option>
-                          )}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="input-group">
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Previous School
-                      </label>
-                      <div className="input-wrapper">
-                        <input
-                          type="text"
-                          name="previousSchool"
-                          value={student.previousSchool}
-                          onChange={(e) => handleStudentChange(index, e)}
-                          className="modern-input"
-                          placeholder="Optional"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Fee Details */}
-                    <div
-                      className="input-group"
-                      style={{ gridColumn: "1 / -1" }}
-                    >
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Fee Management
-                      </label>
-
-                      <div
-                        style={{
-                          background: "rgba(255,255,255,0.05)",
-                          padding: "1rem",
-                          borderRadius: "16px",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                        }}
-                      >
-                        {/* Existing Fees List */}
+                        {/* Add Fee Inputs */}
                         <div
                           style={{
-                            marginBottom: "0.5rem",
+                            background: "rgba(30, 64, 175, 0.35)",
+                            padding: "1rem",
+                            borderRadius: "14px",
+                            border: "1.5px solid rgba(255, 255, 255, 0.25)",
                             display: "flex",
                             flexDirection: "column",
                             gap: "0.75rem",
+                            position: "relative",
+                            zIndex: 1,
+                            backdropFilter: "blur(6px)",
                           }}
                         >
-                          {student.feeStructure.length === 0 &&
-                            student.individualActions.length === 0 && (
-                              <p
-                                style={{
-                                  color: "rgba(255,255,255,0.5)",
-                                  textAlign: "center",
-                                  padding: "1rem",
-                                  background: "rgba(0,0,0,0.2)",
-                                  borderRadius: "12px",
-                                  fontSize: "0.9rem",
-                                }}
-                              >
-                                No fees assigned.
-                              </p>
-                            )}
-
-                          {student.feeStructure.map((fee) => (
-                            <div
-                              key={fee.id}
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                padding: "0.75rem 1rem",
-                                background: "rgba(255,255,255,0.1)",
-                                borderRadius: "12px",
-                              }}
-                            >
-                              <span
-                                style={{ fontWeight: "600", color: "white" }}
-                              >
-                                {fee.name}
-                              </span>
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "1rem",
-                                }}
-                              >
-                                <span
-                                  style={{ fontWeight: "800", color: "white" }}
-                                >
-                                  Rs {fee.amount}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleRemoveFee(index, fee.id, false)
-                                  }
-                                  style={{
-                                    background: "none",
-                                    border: "none",
-                                    color: "#ef4444",
-                                    cursor: "pointer",
-                                    padding: "0.25rem",
-                                  }}
-                                >
-                                  <Trash2 size={18} />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-
-                          {student.individualActions.map((action) => (
-                            <div
-                              key={action.id}
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                padding: "0.75rem 1rem",
-                                background: "rgba(239, 68, 68, 0.1)",
-                                borderRadius: "12px",
-                                border: "1px dashed rgba(239, 68, 68, 0.3)",
-                              }}
-                            >
-                              <span
-                                style={{ fontWeight: "600", color: "#fca5a5" }}
-                              >
-                                {action.name} (Action)
-                              </span>
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "1rem",
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontWeight: "800",
-                                    color: "#fca5a5",
-                                  }}
-                                >
-                                  Rs {action.amount}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleRemoveFee(index, action.id, true)
-                                  }
-                                  style={{
-                                    background: "none",
-                                    border: "none",
-                                    color: "#ef4444",
-                                    cursor: "pointer",
-                                    padding: "0.25rem",
-                                  }}
-                                >
-                                  <Trash2 size={18} />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Add New Fee Form */}
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: "1rem",
-                            alignItems: "center",
-                          }}
-                        >
-                          <select
-                            name="newFeeCategory"
-                            value={student.newFeeCategory}
-                            onChange={(e) => handleStudentChange(index, e)}
-                            className="modern-input modern-select"
-                            style={{ flex: 2 }}
-                          >
-                            <optgroup label="Recurring Fees">
-                              {RECURRING_CATEGORIES.map((cat) => (
-                                <option key={cat} value={cat}>
-                                  {cat}
-                                </option>
-                              ))}
-                            </optgroup>
-                            <optgroup label="Individual Actions (Fines, Uniforms, etc.)">
-                              {ACTION_CATEGORIES.map((cat) => (
-                                <option key={cat} value={cat}>
-                                  {cat}
-                                </option>
-                              ))}
-                            </optgroup>
-                          </select>
-                          <input
-                            type="number"
-                            name="newFeeAmount"
-                            placeholder="Amount"
-                            value={student.newFeeAmount}
-                            onChange={(e) => handleStudentChange(index, e)}
-                            className="modern-input"
-                            style={{ flex: 1 }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleAddFee(index)}
-                            disabled={!student.newFeeAmount}
+                          <div
                             style={{
-                              padding: "0 1.5rem",
-                              height: "48px",
-                              borderRadius: "12px",
-                              border: "none",
-                              background: student.newFeeAmount
-                                ? "#6366f1"
-                                : "rgba(255,255,255,0.1)",
-                              color: "white",
-                              fontWeight: "700",
-                              cursor: student.newFeeAmount
-                                ? "pointer"
-                                : "not-allowed",
+                              display: "flex",
+                              gap: "0.75rem",
+                              alignItems: "center",
+                            }}
+                          >
+                            <div style={{ flex: 1.6 }}>
+                              <label
+                                style={{
+                                  fontSize: "0.75rem",
+                                  fontWeight: "700",
+                                  color: "rgba(255, 255, 255, 0.9)",
+                                  display: "block",
+                                  marginBottom: "0.3rem",
+                                  textTransform: "uppercase",
+                                }}
+                              >
+                                {student.newFeeMode === "action"
+                                  ? "1-Time Category"
+                                  : "Monthly Fee Category"}
+                              </label>
+                              <select
+                                value={student.newFeeCategory}
+                                onChange={(e) => {
+                                  const updated = [...students];
+                                  updated[index].newFeeCategory =
+                                    e.target.value;
+                                  setStudents(updated);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  padding: "0.7rem 1rem",
+                                  borderRadius: "10px",
+                                  border: "2px solid #1e40af",
+                                  background: "#ffffff",
+                                  color: "#0f172a",
+                                  fontSize: "0.9rem",
+                                  fontWeight: "700",
+                                  outline: "none",
+                                }}
+                              >
+                                {student.newFeeMode === "action" ? (
+                                  <>
+                                    {ACTION_CATEGORIES.map((cat) => (
+                                      <option key={cat} value={cat}>
+                                        {cat}
+                                      </option>
+                                    ))}
+                                  </>
+                                ) : (
+                                  <>
+                                    {RECURRING_CATEGORIES.map((cat) => (
+                                      <option key={cat} value={cat}>
+                                        {cat}
+                                      </option>
+                                    ))}
+                                  </>
+                                )}
+                              </select>
+                            </div>
+
+                            <div style={{ flex: 1 }}>
+                              <label
+                                style={{
+                                  fontSize: "0.75rem",
+                                  fontWeight: "700",
+                                  color: "rgba(255, 255, 255, 0.9)",
+                                  display: "block",
+                                  marginBottom: "0.3rem",
+                                  textTransform: "uppercase",
+                                }}
+                              >
+                                Amount (PKR)
+                              </label>
+                              <input
+                                type="number"
+                                value={student.newFeeAmount}
+                                onChange={(e) => {
+                                  const updated = [...students];
+                                  updated[index].newFeeAmount = e.target.value;
+                                  setStudents(updated);
+                                }}
+                                placeholder="e.g. 3500"
+                                style={{
+                                  width: "100%",
+                                  padding: "0.7rem 1rem",
+                                  borderRadius: "10px",
+                                  border: "2px solid #1e40af",
+                                  background: "#ffffff",
+                                  color: "#0f172a",
+                                  fontSize: "0.9rem",
+                                  fontWeight: "700",
+                                  outline: "none",
+                                }}
+                              />
+                            </div>
+
+                            <div style={{ alignSelf: "flex-end" }}>
+                              <button
+                                type="button"
+                                onClick={() => handleAddFee(index)}
+                                disabled={!student.newFeeAmount}
+                                style={{
+                                  padding: "0.7rem 1.4rem",
+                                  borderRadius: "10px",
+                                  border: student.newFeeAmount ? "2px solid #065f46" : "2px solid #1e40af",
+                                  background: student.newFeeAmount
+                                    ? student.newFeeMode === "action"
+                                      ? "#f59e0b"
+                                      : "#10b981"
+                                    : "rgba(255, 255, 255, 0.2)",
+                                  color:
+                                    student.newFeeAmount
+                                      ? student.newFeeMode === "action"
+                                        ? "#0f172a"
+                                        : "#ffffff"
+                                      : "rgba(255, 255, 255, 0.5)",
+                                  fontWeight: "800",
+                                  fontSize: "0.9rem",
+                                  cursor: student.newFeeAmount
+                                    ? "pointer"
+                                    : "not-allowed",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.4rem",
+                                  boxShadow: student.newFeeAmount
+                                    ? "2px 2px 0px rgba(0,0,0,0.2)"
+                                    : "none",
+                                  transition: "all 0.2s ease",
+                                }}
+                              >
+                                <Plus size={16} /> Add Fee
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Quick Amount Suggestion Chips */}
+                          <div
+                            style={{
                               display: "flex",
                               alignItems: "center",
                               gap: "0.5rem",
+                              flexWrap: "wrap",
+                              paddingTop: "0.25rem",
                             }}
                           >
-                            <Plus size={18} /> Add
-                          </button>
+                            <span
+                              style={{
+                                fontSize: "0.75rem",
+                                color: "rgba(255, 255, 255, 0.8)",
+                                fontWeight: "700",
+                              }}
+                            >
+                              Quick Amount:
+                            </span>
+                            {[500, 1000, 1500, 2000, 3000, 5000].map(
+                              (amt) => (
+                                <button
+                                  key={amt}
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...students];
+                                    updated[index].newFeeAmount = String(amt);
+                                    setStudents(updated);
+                                  }}
+                                  style={{
+                                    padding: "0.2rem 0.65rem",
+                                    borderRadius: "6px",
+                                    border: "1px solid rgba(255, 255, 255, 0.35)",
+                                    background: "rgba(255, 255, 255, 0.18)",
+                                    color: "#ffffff",
+                                    fontSize: "0.75rem",
+                                    fontWeight: "800",
+                                    cursor: "pointer",
+                                    transition: "all 0.15s ease",
+                                  }}
+                                >
+                                  +{amt.toLocaleString()}
+                                </button>
+                              )
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </div>
 
-                    <div
-                      className="input-group"
-                      style={{ gridColumn: "1 / -1" }}
-                    >
-                      <label
-                        className="input-label"
-                        style={{ color: "rgba(255,255,255,0.8)" }}
-                      >
-                        Student Photo
-                      </label>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "1.5rem",
-                          marginTop: "0.5rem",
-                        }}
-                      >
+                        {/* Active Fee Structure List */}
                         <div
                           style={{
-                            width: "80px",
-                            height: "80px",
-                            borderRadius: "50%",
-                            background: "rgba(255,255,255,0.1)",
-                            border: "2px dashed rgba(255,255,255,0.3)",
                             display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            overflow: "hidden",
+                            flexDirection: "column",
+                            gap: "0.6rem",
                             position: "relative",
+                            zIndex: 1,
                           }}
                         >
-                          {student.profilePic ? (
-                            <img
-                              src={student.profilePic}
-                              alt="Preview"
+                          {/* Recurring List */}
+                          <div>
+                            <span
                               style={{
-                                width: "100%",
-                                height: "100%",
-                                objectFit: "cover",
+                                fontSize: "0.75rem",
+                                fontWeight: "800",
+                                color: "#ffffff",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.05em",
+                                display: "block",
+                                marginBottom: "0.4rem",
                               }}
-                            />
-                          ) : (
-                            <Camera size={32} color="rgba(255,255,255,0.5)" />
+                            >
+                              🔄 Monthly Recurring Fees (
+                              {student.feeStructure.length})
+                            </span>
+                            {student.feeStructure.length === 0 ? (
+                              <p
+                                style={{
+                                  margin: 0,
+                                  padding: "0.6rem 1rem",
+                                  background: "rgba(30, 64, 175, 0.3)",
+                                  borderRadius: "10px",
+                                  fontSize: "0.825rem",
+                                  color: "rgba(255, 255, 255, 0.75)",
+                                  fontStyle: "italic",
+                                  border: "1px dashed rgba(255, 255, 255, 0.25)",
+                                }}
+                              >
+                                No monthly recurring fees added yet.
+                              </p>
+                            ) : (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "0.4rem",
+                                }}
+                              >
+                                {student.feeStructure.map((fee) => (
+                                  <div
+                                    key={fee.id}
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "center",
+                                      padding: "0.55rem 0.9rem",
+                                      background: "rgba(255, 255, 255, 0.15)",
+                                      border:
+                                        "1.5px solid rgba(255, 255, 255, 0.3)",
+                                      borderRadius: "10px",
+                                      backdropFilter: "blur(4px)",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "0.5rem",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontWeight: "700",
+                                          color: "#ffffff",
+                                          fontSize: "0.9rem",
+                                        }}
+                                      >
+                                        {fee.name}
+                                      </span>
+                                      <span
+                                        style={{
+                                          fontSize: "0.7rem",
+                                          padding: "0.15rem 0.45rem",
+                                          borderRadius: "4px",
+                                          background:
+                                            "rgba(255, 255, 255, 0.25)",
+                                          color: "#ffffff",
+                                          fontWeight: "800",
+                                        }}
+                                      >
+                                        Monthly
+                                      </span>
+                                    </div>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "0.8rem",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontWeight: "800",
+                                          color: "#ffffff",
+                                          fontSize: "0.95rem",
+                                        }}
+                                      >
+                                        ₨ {Number(fee.amount).toLocaleString()}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleRemoveFee(index, fee.id, false)
+                                        }
+                                        style={{
+                                          background: "rgba(239, 68, 68, 0.2)",
+                                          border: "1px solid rgba(239, 68, 68, 0.4)",
+                                          borderRadius: "6px",
+                                          color: "#fecaca",
+                                          cursor: "pointer",
+                                          padding: "0.25rem 0.35rem",
+                                          display: "flex",
+                                          alignItems: "center",
+                                        }}
+                                        title="Delete Fee"
+                                      >
+                                        <Trash2 size={15} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 1-Time Actions List */}
+                          <div style={{ marginTop: "0.5rem" }}>
+                            <span
+                              style={{
+                                fontSize: "0.75rem",
+                                fontWeight: "800",
+                                color: "#fef08a",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.05em",
+                                display: "block",
+                                marginBottom: "0.4rem",
+                              }}
+                            >
+                              ⚡ 1-Time Admission & Action Charges (
+                              {student.individualActions.length})
+                            </span>
+                            {student.individualActions.length === 0 ? (
+                              <p
+                                style={{
+                                  margin: 0,
+                                  padding: "0.6rem 1rem",
+                                  background: "rgba(30, 64, 175, 0.3)",
+                                  borderRadius: "10px",
+                                  fontSize: "0.825rem",
+                                  color: "rgba(255, 255, 255, 0.75)",
+                                  fontStyle: "italic",
+                                  border: "1px dashed rgba(255, 255, 255, 0.25)",
+                                }}
+                              >
+                                No 1-time charges added (e.g. Admission fee,
+                                Uniform, Books).
+                              </p>
+                            ) : (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "0.4rem",
+                                }}
+                              >
+                                {student.individualActions.map((act) => (
+                                  <div
+                                    key={act.id}
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "center",
+                                      padding: "0.55rem 0.9rem",
+                                      background: "rgba(255, 255, 255, 0.15)",
+                                      border:
+                                        "1.5px solid rgba(254, 240, 138, 0.4)",
+                                      borderRadius: "10px",
+                                      backdropFilter: "blur(4px)",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "0.5rem",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontWeight: "700",
+                                          color: "#ffffff",
+                                          fontSize: "0.9rem",
+                                        }}
+                                      >
+                                        {act.name}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleToggleActionStatus(
+                                            index,
+                                            act.id
+                                          )
+                                        }
+                                        className={`action-status-toggle ${
+                                          act.status === "paid"
+                                            ? "paid"
+                                            : "unpaid"
+                                        }`}
+                                        title="Click to toggle Paid/Unpaid status"
+                                      >
+                                        {act.status === "paid"
+                                          ? "✓ Paid"
+                                          : "● Unpaid"}
+                                      </button>
+                                    </div>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "0.8rem",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontWeight: "800",
+                                          color: "#fef08a",
+                                          fontSize: "0.95rem",
+                                        }}
+                                      >
+                                        ₨ {Number(act.amount).toLocaleString()}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleRemoveFee(index, act.id, true)
+                                        }
+                                        style={{
+                                          background: "rgba(239, 68, 68, 0.2)",
+                                          border: "1px solid rgba(239, 68, 68, 0.4)",
+                                          borderRadius: "6px",
+                                          color: "#fecaca",
+                                          cursor: "pointer",
+                                          padding: "0.25rem 0.35rem",
+                                          display: "flex",
+                                          alignItems: "center",
+                                        }}
+                                        title="Delete Action"
+                                      >
+                                        <Trash2 size={15} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* On-The-Spot Admission Payment Handler */}
+                        <div
+                          style={{
+                            background: student.markPaidAtAdmission
+                              ? "rgba(6, 95, 70, 0.5)"
+                              : "rgba(30, 64, 175, 0.35)",
+                            border: student.markPaidAtAdmission
+                              ? "2px solid #34d399"
+                              : "1.5px solid rgba(255, 255, 255, 0.25)",
+                            borderRadius: "14px",
+                            padding: "0.85rem 1.15rem",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.5rem",
+                            transition: "all 0.25s ease",
+                            position: "relative",
+                            zIndex: 1,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <label
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.6rem",
+                                cursor: "pointer",
+                                fontWeight: "700",
+                                fontSize: "0.9rem",
+                                color: "#ffffff",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={student.markPaidAtAdmission}
+                                onChange={(e) => {
+                                  const updated = [...students];
+                                  updated[index].markPaidAtAdmission =
+                                    e.target.checked;
+                                  setStudents(updated);
+                                }}
+                                style={{
+                                  width: "18px",
+                                  height: "18px",
+                                  accentColor: "#10b981",
+                                  cursor: "pointer",
+                                }}
+                              />
+                              <span>
+                                Mark Admission Dues as Paid at Counter
+                                (On-the-spot)
+                              </span>
+                            </label>
+
+                            {student.markPaidAtAdmission && (
+                              <span
+                                style={{
+                                  fontSize: "0.75rem",
+                                  fontWeight: "800",
+                                  background: "#065f46",
+                                  color: "#6ee7b7",
+                                  padding: "0.2rem 0.6rem",
+                                  borderRadius: "6px",
+                                  border: "1px solid #34d399",
+                                }}
+                              >
+                                PAID STAMP APPLIED
+                              </span>
+                            )}
+                          </div>
+
+                          {student.markPaidAtAdmission && (
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.75rem",
+                                marginTop: "0.25rem",
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: "0.8rem",
+                                  color: "rgba(255, 255, 255, 0.85)",
+                                  fontWeight: "700",
+                                }}
+                              >
+                                Payment Mode:
+                              </span>
+                              {[
+                                "Cash",
+                                "Bank Transfer",
+                                "EasyPaisa / JazzCash",
+                                "POS Card",
+                              ].map((mode) => (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...students];
+                                    updated[index].feePaymentMode = mode;
+                                    setStudents(updated);
+                                  }}
+                                  style={{
+                                    padding: "0.25rem 0.65rem",
+                                    borderRadius: "6px",
+                                    border:
+                                      student.feePaymentMode === mode
+                                        ? "2px solid #ffffff"
+                                        : "1px solid rgba(255, 255, 255, 0.35)",
+                                    background:
+                                      student.feePaymentMode === mode
+                                        ? "#10b981"
+                                        : "rgba(255, 255, 255, 0.2)",
+                                    color: "#ffffff",
+                                    fontSize: "0.75rem",
+                                    fontWeight: "800",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {mode}
+                                </button>
+                              ))}
+                            </div>
                           )}
                         </div>
-                        <div>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => handleImageUpload(index, e)}
-                            id={`photo-upload-${index}`}
-                            style={{ display: "none" }}
-                          />
-                          <label
-                            htmlFor={`photo-upload-${index}`}
-                            style={{
-                              display: "inline-block",
-                              padding: "0.6rem 1.2rem",
-                              background: "white",
-                              border: "1px solid #e2e8f0",
-                              borderRadius: "8px",
-                              cursor: "pointer",
-                              fontSize: "0.9rem",
-                              fontWeight: "600",
-                              color: "var(--text-main)",
-                              transition: "all 0.2s",
-                            }}
-                          >
-                            Upload Photo
-                          </label>
-                          <p
-                            style={{
-                              fontSize: "0.8rem",
-                              color: "var(--text-muted)",
-                              marginTop: "0.25rem",
-                            }}
-                          >
-                            JPG, PNG up to 2MB
-                          </p>
+
+                        {/* Live Financial Summary Bar */}
+                        <div className="finance-summary-bar">
+                          <div className="finance-summary-item">
+                            <span className="finance-summary-label">
+                              Monthly Recurring
+                            </span>
+                            <span className="finance-summary-val highlight">
+                              ₨ {monthlyTotal.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="finance-summary-item">
+                            <span className="finance-summary-label">
+                              1-Time Dues
+                            </span>
+                            <span
+                              className="finance-summary-val"
+                              style={{ color: "#fef08a" }}
+                            >
+                              ₨ {actionsTotal.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="finance-summary-item">
+                            <span className="finance-summary-label">
+                              Total at Admission
+                            </span>
+                            <span className="finance-summary-val grand">
+                              ₨ {grandTotal.toLocaleString()}
+                            </span>
+                          </div>
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => setStudentTab(index, "info")}
+                              style={{
+                                padding: "0.6rem 1.25rem",
+                                borderRadius: "10px",
+                                border: "2px solid #1e40af",
+                                background: "#ffffff",
+                                color: "#1e40af",
+                                fontWeight: "800",
+                                fontSize: "0.875rem",
+                                cursor: "pointer",
+                                boxShadow: "4px 4px 0px #1e40af",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.4rem",
+                              }}
+                            >
+                              <Check size={16} /> Done & Return
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </motion.div>
-              ))}
+              );
+              })}
             </AnimatePresence>
 
             <button
@@ -2658,16 +3410,16 @@ const Admission = () => {
                         style={{
                           display: "flex",
                           justifyContent: "space-between",
-                          alignItems: "flex-start",
-                          marginBottom: "0.5rem",
+                          alignItems: "center",
+                          marginBottom: "0.75rem",
                         }}
                       >
                         <div>
                           <h4
                             style={{
-                              fontSize: "1rem",
+                              fontSize: "1.05rem",
                               fontWeight: "800",
-                              margin: "0 0 0.25rem",
+                              margin: "0 0 0.2rem",
                               color: "#0f172a",
                             }}
                           >
@@ -2675,159 +3427,201 @@ const Admission = () => {
                           </h4>
                           <div
                             style={{
-                              fontSize: "1rem",
+                              fontSize: "0.9rem",
                               color: "#64748b",
-                              fontWeight: "500",
+                              fontWeight: "600",
                             }}
                           >
-                            {stu.className}
+                            Class: {stu.className} • Roll No: {stu.rollNo || "N/A"} • ADM No: {stu.admissionNo || "N/A"}
                           </div>
                         </div>
-                        <div
-                          style={{ textAlign: "right", fontSize: "0.95rem" }}
-                        >
+
+                        {stu.isPaidAtAdmission ? (
+                          <div className="pdf-paid-stamp">
+                            <span className="pdf-paid-stamp-text">PAID ✓</span>
+                            <span className="pdf-paid-stamp-sub">
+                              {stu.paymentMode || "Cash / Counter"}
+                            </span>
+                          </div>
+                        ) : (
                           <div
                             style={{
-                              color: "#475569",
-                              marginBottom: "0.25rem",
+                              display: "inline-flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              border: "2px dashed #f59e0b",
+                              borderRadius: "10px",
+                              padding: "0.3rem 0.8rem",
+                              background: "#fffbeb",
+                              color: "#b45309",
+                              fontWeight: "800",
+                              fontSize: "0.8rem",
                             }}
                           >
-                            Roll No:{" "}
-                            <span
-                              style={{ fontWeight: "700", color: "#0f172a" }}
-                            >
-                              {stu.rollNo || "N/A"}
+                            <span>DUE / UNPAID</span>
+                            <span style={{ fontSize: "0.7rem", fontWeight: "600" }}>
+                              Payable at Counter
                             </span>
                           </div>
-                          <div style={{ color: "#475569" }}>
-                            Admission No:{" "}
-                            <span
-                              style={{ fontWeight: "700", color: "#0f172a" }}
-                            >
-                              {stu.admissionNo || "N/A"}
-                            </span>
-                          </div>
-                        </div>
+                        )}
                       </div>
 
-                      <table
+                      {/* 1. Monthly Recurring Structure */}
+                      {stu.feeStructure && stu.feeStructure.length > 0 && (
+                        <div style={{ marginBottom: "0.75rem" }}>
+                          <span
+                            style={{
+                              fontSize: "0.8rem",
+                              fontWeight: "800",
+                              color: "#2563eb",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.5px",
+                              display: "block",
+                              marginBottom: "0.3rem",
+                            }}
+                          >
+                            1. Monthly Recurring Structure
+                          </span>
+                          <table
+                            style={{
+                              width: "100%",
+                              fontSize: "0.875rem",
+                              borderCollapse: "collapse",
+                            }}
+                          >
+                            <tbody>
+                              {stu.feeStructure.map((fee) => (
+                                <tr
+                                  key={fee.id}
+                                  style={{ borderBottom: "1px solid #f1f5f9" }}
+                                >
+                                  <td
+                                    style={{
+                                      padding: "0.35rem 0",
+                                      color: "#334155",
+                                      fontWeight: "500",
+                                    }}
+                                  >
+                                    {fee.name} (Monthly)
+                                  </td>
+                                  <td
+                                    style={{
+                                      textAlign: "right",
+                                      padding: "0.35rem 0",
+                                      fontWeight: "700",
+                                      color: "#0f172a",
+                                    }}
+                                  >
+                                    ₨ {Number(fee.amount).toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* 2. One-Time Admission & Action Charges */}
+                      {stu.individualActions && stu.individualActions.length > 0 && (
+                        <div style={{ marginBottom: "0.75rem" }}>
+                          <span
+                            style={{
+                              fontSize: "0.8rem",
+                              fontWeight: "800",
+                              color: "#d97706",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.5px",
+                              display: "block",
+                              marginBottom: "0.3rem",
+                            }}
+                          >
+                            2. One-Time Admission & Action Charges
+                          </span>
+                          <table
+                            style={{
+                              width: "100%",
+                              fontSize: "0.875rem",
+                              borderCollapse: "collapse",
+                            }}
+                          >
+                            <tbody>
+                              {stu.individualActions.map((act) => (
+                                <tr
+                                  key={act.id}
+                                  style={{ borderBottom: "1px solid #f1f5f9" }}
+                                >
+                                  <td
+                                    style={{
+                                      padding: "0.35rem 0",
+                                      color: "#334155",
+                                      fontWeight: "500",
+                                    }}
+                                  >
+                                    {act.name} (1-Time)
+                                  </td>
+                                  <td
+                                    style={{
+                                      textAlign: "right",
+                                      padding: "0.35rem 0",
+                                      fontWeight: "700",
+                                      color: "#0f172a",
+                                    }}
+                                  >
+                                    ₨ {Number(act.amount).toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {(!stu.feeStructure || stu.feeStructure.length === 0) &&
+                        (!stu.individualActions || stu.individualActions.length === 0) && (
+                          <p
+                            style={{
+                              margin: "0.5rem 0",
+                              fontSize: "0.85rem",
+                              fontStyle: "italic",
+                              color: "#94a3b8",
+                              textAlign: "center",
+                            }}
+                          >
+                            No specific fee items assigned during admission.
+                          </p>
+                        )}
+
+                      {/* Receipt Total Summary Row */}
+                      <div
                         style={{
-                          width: "100%",
-                          fontSize: "0.9rem",
-                          borderCollapse: "collapse",
+                          marginTop: "0.75rem",
+                          paddingTop: "0.75rem",
+                          borderTop: "2px solid #e2e8f0",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
                         }}
                       >
-                        <thead>
-                          <tr style={{ borderBottom: "2px solid #cbd5e1" }}>
-                            <th
-                              style={{
-                                textAlign: "left",
-                                padding: "0.75rem 0",
-                                color: "#64748b",
-                                fontWeight: "700",
-                                fontSize: "0.9rem",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              Fee Description
-                            </th>
-                            <th
-                              style={{
-                                textAlign: "right",
-                                padding: "0.75rem 0",
-                                color: "#64748b",
-                                fontWeight: "700",
-                                fontSize: "0.9rem",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              Amount
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {stu.feeStructure.map((fee) => (
-                            <tr
-                              key={fee.id}
-                              style={{ borderBottom: "1px solid #f1f5f9" }}
-                            >
-                              <td
-                                style={{
-                                  padding: "0.5rem 0",
-                                  color: "#334155",
-                                  fontWeight: "500",
-                                }}
-                              >
-                                {fee.name}
-                              </td>
-                              <td
-                                style={{
-                                  textAlign: "right",
-                                  padding: "0.5rem 0",
-                                  fontWeight: "700",
-                                  color: "#0f172a",
-                                }}
-                              >
-                                Rs {fee.amount.toLocaleString()}
-                              </td>
-                            </tr>
-                          ))}
-                          {stu.individualActions.map((act) => (
-                            <tr
-                              key={act.id}
-                              style={{ borderBottom: "1px solid #f1f5f9" }}
-                            >
-                              <td
-                                style={{
-                                  padding: "0.5rem 0",
-                                  color: "#334155",
-                                  fontWeight: "500",
-                                }}
-                              >
-                                {act.name}{" "}
-                                <span
-                                  style={{
-                                    fontSize: "0.8rem",
-                                    background: "#f1f5f9",
-                                    padding: "2px 6px",
-                                    borderRadius: "4px",
-                                    marginLeft: "6px",
-                                    color: "#64748b",
-                                  }}
-                                >
-                                  Action
-                                </span>
-                              </td>
-                              <td
-                                style={{
-                                  textAlign: "right",
-                                  padding: "0.5rem 0",
-                                  fontWeight: "700",
-                                  color: "#0f172a",
-                                }}
-                              >
-                                Rs {act.amount.toLocaleString()}
-                              </td>
-                            </tr>
-                          ))}
-                          {stu.feeStructure.length === 0 &&
-                            stu.individualActions.length === 0 && (
-                              <tr>
-                                <td
-                                  colSpan="2"
-                                  style={{
-                                    padding: "0.5rem 0",
-                                    fontStyle: "italic",
-                                    color: "#94a3b8",
-                                    textAlign: "center",
-                                  }}
-                                >
-                                  No fees assigned during admission
-                                </td>
-                              </tr>
-                            )}
-                        </tbody>
-                      </table>
+                        <div style={{ fontSize: "0.85rem", color: "#64748b" }}>
+                          Monthly Fee:{" "}
+                          <strong style={{ color: "#0f172a" }}>
+                            ₨ {(stu.monthlyTotal || 0).toLocaleString()}
+                          </strong>{" "}
+                          | 1-Time Dues:{" "}
+                          <strong style={{ color: "#0f172a" }}>
+                            ₨ {(stu.oneTimeTotal || 0).toLocaleString()}
+                          </strong>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "1.05rem",
+                            fontWeight: "900",
+                            color: stu.isPaidAtAdmission ? "#047857" : "#0f172a",
+                          }}
+                        >
+                          Total: ₨ {(stu.grandTotal || 0).toLocaleString()}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
