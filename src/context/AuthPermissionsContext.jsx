@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { doc, onSnapshot, getDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
-import { checkPermission, PERMISSIONS_LIST } from '../constants/permissions';
+import { checkPermission, PERMISSIONS_LIST, checkFeeTabAccess } from '../constants/permissions';
 
 const AuthPermissionsContext = createContext(null);
 
@@ -181,12 +181,17 @@ export const AuthPermissionsProvider = ({ children }) => {
         return nr === 'principal' || nr === 'superadmin';
     })();
 
+    const hasFeeTabAccess = (tabKey) => {
+        return checkFeeTabAccess(role, permissions, tabKey);
+    };
+
     const value = {
         role,
         schoolId,
         uid,
         permissions,
         hasAccess,
+        hasFeeTabAccess,
         isPrincipal,
         loading,
         userProfile: userProfile || sessionData,
@@ -211,6 +216,7 @@ export const useAuthPermissions = () => {
             role: 'principal',
             isPrincipal: true,
             hasAccess: () => true,
+            hasFeeTabAccess: () => true,
             permissions: {},
             loading: false
         };

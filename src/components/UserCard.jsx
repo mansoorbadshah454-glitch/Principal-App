@@ -1,10 +1,14 @@
 import React from 'react';
 import { User, Trash2, Edit2, Shield, ShieldAlert, ShieldCheck, Sparkles } from 'lucide-react';
-import { PERMISSIONS_LIST, checkPermission } from '../constants/permissions';
+import { PERMISSIONS_LIST, FEE_SUB_PERMISSIONS, checkPermission } from '../constants/permissions';
 
 const UserCard = ({ user, onDelete, onEdit, isPrincipal = true }) => {
     const activePermissions = PERMISSIONS_LIST.filter(perm => 
         checkPermission(user.role || 'school Admin', user.permissions, perm.id)
+    );
+
+    const activeFeeTabs = FEE_SUB_PERMISSIONS.filter(sub =>
+        checkPermission(user.role || 'school Admin', user.permissions, sub.id)
     );
 
     const hasAll = activePermissions.length === PERMISSIONS_LIST.length;
@@ -72,15 +76,29 @@ const UserCard = ({ user, onDelete, onEdit, isPrincipal = true }) => {
 
                     <div className="flex flex-wrap gap-1.5 min-h-[44px]">
                         {activePermissions.length > 0 ? (
-                            activePermissions.map(perm => (
-                                <span
-                                    key={perm.id}
-                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50/80 text-indigo-700 border border-indigo-100/70 shadow-2xs"
-                                    title={perm.description}
-                                >
-                                    {perm.label}
-                                </span>
-                            ))
+                            activePermissions.map(perm => {
+                                const isCollections = perm.id === 'canManageCollections';
+                                const label = isCollections
+                                    ? `Fee Collections (${activeFeeTabs.length}/5 Tabs)`
+                                    : perm.label;
+                                const tooltip = isCollections
+                                    ? `Tabs: ${activeFeeTabs.map(t => t.label).join(', ') || 'None'}`
+                                    : perm.description;
+
+                                return (
+                                    <span
+                                        key={perm.id}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border shadow-2xs ${
+                                            isCollections 
+                                                ? 'bg-amber-50/90 text-amber-800 border-amber-200/80' 
+                                                : 'bg-indigo-50/80 text-indigo-700 border-indigo-100/70'
+                                        }`}
+                                        title={tooltip}
+                                    >
+                                        {label}
+                                    </span>
+                                );
+                            })
                         ) : (
                             <span className="text-xs text-rose-500 italic flex items-center gap-1 pl-1 font-medium">
                                 <ShieldAlert size={13} />

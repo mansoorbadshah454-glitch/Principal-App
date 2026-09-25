@@ -6,7 +6,7 @@ import {
     CheckSquare, Square, ArrowUpRight, ArrowDownRight, Download,
     Printer, Search, CheckCircle2, User, FileText, Loader2, Sparkles, Building2, Phone, Calendar, Clock, DollarSign,
     Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity,
-    PieChart, BarChart3, Zap, ShieldCheck, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight,
+    PieChart, BarChart3, Zap, ShieldCheck, ShieldAlert, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight,
     Award, AlertTriangle, Check, RotateCcw, RotateCw, ZoomIn, ZoomOut, Maximize2, CalendarDays, History, Send
 } from 'lucide-react';
 import {
@@ -19,6 +19,8 @@ import CachedImage from '../components/CachedImage';
 import PayrollDashboard from '../components/PayrollDashboard';
 import OnlineSubmissionsDashboard from '../components/OnlineSubmissionsDashboard';
 import FinancesDashboard from '../components/FinancesDashboard';
+import { useAuthPermissions } from '../context/AuthPermissionsContext';
+import { checkFeeTabAccess, FEE_SUB_PERMISSIONS } from '../constants/permissions';
 import FeeArrearsMatrix, { 
     downloadStudentFeeCardPDF, 
     MONTH_NAMES, 
@@ -13750,6 +13752,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 };
 
 const Collections = () => {
+    const { role, permissions, isPrincipal } = useAuthPermissions();
     const location = useLocation();
     const searchParams = new URLSearchParams(location.search);
     const initialTab = searchParams.get('tab') || 'workflow';
@@ -13757,16 +13760,33 @@ const Collections = () => {
     const [preselectedStudentId, setPreselectedStudentId] = useState(searchParams.get('studentId') || '');
     const [activeTab, setActiveTab] = useState(initialTab);
 
+    // Calculate which tabs the current user has permission to access
+    const permittedTabs = useMemo(() => {
+        if (isPrincipal) {
+            return ['workflow', 'onlineSubmissions', 'monthlyMatrix', 'finances', 'payroll'];
+        }
+        return FEE_SUB_PERMISSIONS.filter(sub => 
+            checkFeeTabAccess(role, permissions, sub.tabKey)
+        ).map(sub => sub.tabKey);
+    }, [isPrincipal, role, permissions]);
+
+    // Auto-switch to the first permitted tab if activeTab is not permitted
+    useEffect(() => {
+        if (permittedTabs.length > 0 && !permittedTabs.includes(activeTab)) {
+            setActiveTab(permittedTabs[0]);
+        }
+    }, [permittedTabs, activeTab]);
+
     // Sync when URL query params change (e.g. from View Fee Card popup)
     useEffect(() => {
         const params = new URLSearchParams(location.search);
         const tab = params.get('tab');
         const cid = params.get('classId');
         const sid = params.get('studentId');
-        if (tab) setActiveTab(tab);
+        if (tab && (isPrincipal || permittedTabs.includes(tab))) setActiveTab(tab);
         if (cid !== null) setPreselectedClassId(cid || '');
         if (sid !== null) setPreselectedStudentId(sid || '');
-    }, [location.search]);
+    }, [location.search, permittedTabs, isPrincipal]);
 
     const [classes, setClasses] = useState([]);
     const [schoolId, setSchoolId] = useState(() => {
@@ -14218,133 +14238,159 @@ const Collections = () => {
                 )}
             </div>
 
-            {/* Tabs Navigation (Daily Workflow leftmost) */}
-            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.5rem' }}>
-                <button
-                    onClick={() => setActiveTab('workflow')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'workflow' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'workflow' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0'
-                    }}
-                >
-                    Daily Workflow
-                </button>
-                <button
-                    onClick={() => setActiveTab('onlineSubmissions')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'onlineSubmissions' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'onlineSubmissions' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0',
-                        display: 'flex', alignItems: 'center', gap: '0.5rem'
-                    }}
-                >
-                    <span>Online Submissions</span>
-                    {pendingOnlineCount > 0 && (
-                        <span style={{
-                            background: '#f59e0b', color: 'white', fontSize: '0.75rem',
-                            padding: '2px 8px', borderRadius: '12px', fontWeight: '800'
-                        }}>
-                            {pendingOnlineCount}
-                        </span>
-                    )}
-                </button>
-                <button
-                    onClick={() => setActiveTab('monthlyMatrix')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'monthlyMatrix' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'monthlyMatrix' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0',
-                        display: 'flex', alignItems: 'center', gap: '0.5rem'
-                    }}
-                >
-                    <span>Monthly Fee Matrix</span>
-                </button>
-                <button
-                    onClick={() => setActiveTab('finances')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'finances' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'finances' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0'
-                    }}
-                >
-                    Finances
-                </button>
-                <button
-                    onClick={() => setActiveTab('payroll')}
-                    style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
-                        color: activeTab === 'payroll' ? 'var(--primary)' : 'var(--text-secondary)',
-                        borderBottom: activeTab === 'payroll' ? '3px solid var(--primary)' : '3px solid transparent',
-                        transition: 'all 0.2s',
-                        borderRadius: '0'
-                    }}
-                >
-                    Payroll
-                </button>
+            {/* Tabs Navigation (Granular Permissions Guarded) */}
+            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.5rem', flexWrap: 'wrap' }}>
+                {permittedTabs.includes('workflow') && (
+                    <button
+                        onClick={() => setActiveTab('workflow')}
+                        style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                            color: activeTab === 'workflow' ? 'var(--primary)' : 'var(--text-secondary)',
+                            borderBottom: activeTab === 'workflow' ? '3px solid var(--primary)' : '3px solid transparent',
+                            transition: 'all 0.2s',
+                            borderRadius: '0'
+                        }}
+                    >
+                        Daily Workflow
+                    </button>
+                )}
+                {permittedTabs.includes('onlineSubmissions') && (
+                    <button
+                        onClick={() => setActiveTab('onlineSubmissions')}
+                        style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                            color: activeTab === 'onlineSubmissions' ? 'var(--primary)' : 'var(--text-secondary)',
+                            borderBottom: activeTab === 'onlineSubmissions' ? '3px solid var(--primary)' : '3px solid transparent',
+                            transition: 'all 0.2s',
+                            borderRadius: '0',
+                            display: 'flex', alignItems: 'center', gap: '0.5rem'
+                        }}
+                    >
+                        <span>Online Submissions</span>
+                        {pendingOnlineCount > 0 && (
+                            <span style={{
+                                background: '#f59e0b', color: 'white', fontSize: '0.75rem',
+                                padding: '2px 8px', borderRadius: '12px', fontWeight: '800'
+                            }}>
+                                {pendingOnlineCount}
+                            </span>
+                        )}
+                    </button>
+                )}
+                {permittedTabs.includes('monthlyMatrix') && (
+                    <button
+                        onClick={() => setActiveTab('monthlyMatrix')}
+                        style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                            color: activeTab === 'monthlyMatrix' ? 'var(--primary)' : 'var(--text-secondary)',
+                            borderBottom: activeTab === 'monthlyMatrix' ? '3px solid var(--primary)' : '3px solid transparent',
+                            transition: 'all 0.2s',
+                            borderRadius: '0',
+                            display: 'flex', alignItems: 'center', gap: '0.5rem'
+                        }}
+                    >
+                        <span>Monthly Fee Matrix</span>
+                    </button>
+                )}
+                {permittedTabs.includes('finances') && (
+                    <button
+                        onClick={() => setActiveTab('finances')}
+                        style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                            color: activeTab === 'finances' ? 'var(--primary)' : 'var(--text-secondary)',
+                            borderBottom: activeTab === 'finances' ? '3px solid var(--primary)' : '3px solid transparent',
+                            transition: 'all 0.2s',
+                            borderRadius: '0'
+                        }}
+                    >
+                        Finances
+                    </button>
+                )}
+                {permittedTabs.includes('payroll') && (
+                    <button
+                        onClick={() => setActiveTab('payroll')}
+                        style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: '0.5rem 1rem', fontSize: '1.1rem', fontWeight: '700',
+                            color: activeTab === 'payroll' ? 'var(--primary)' : 'var(--text-secondary)',
+                            borderBottom: activeTab === 'payroll' ? '3px solid var(--primary)' : '3px solid transparent',
+                            transition: 'all 0.2s',
+                            borderRadius: '0'
+                        }}
+                    >
+                        Payroll
+                    </button>
+                )}
             </div>
 
-            {/* Tab Content */}
-            {activeTab === 'workflow' && (
-                <DailyWorkflow
-                    schoolId={schoolId}
-                    classes={classes}
-                    currentAction={currentAction}
-                    schoolInfo={schoolInfo}
-                    feeSettings={feeSettings}
-                    preselectedClassId={preselectedClassId}
-                    preselectedStudentId={preselectedStudentId}
-                />
-            )}
+            {/* Tab Content & Restricted Access Fallback */}
+            {permittedTabs.length === 0 ? (
+                <div style={{ background: '#fff', borderRadius: '16px', padding: '3.5rem 2rem', textAlign: 'center', border: '1px dashed #cbd5e1', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.03)' }}>
+                    <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: '#fee2e2', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
+                        <ShieldAlert size={32} />
+                    </div>
+                    <h3 style={{ fontSize: '1.3rem', fontWeight: '700', color: '#1e293b', marginBottom: '0.5rem' }}>
+                        Fee Collections Access Restricted
+                    </h3>
+                    <p style={{ color: '#64748b', maxWidth: '460px', margin: '0 auto', fontSize: '0.95rem', lineHeight: '1.5' }}>
+                        You do not have active access permissions for any Fee Collection modules. Please contact your School Principal or System Administrator to grant required tab permissions.
+                    </p>
+                </div>
+            ) : (
+                <>
+                    {permittedTabs.includes('workflow') && activeTab === 'workflow' && (
+                        <DailyWorkflow
+                            schoolId={schoolId}
+                            classes={classes}
+                            currentAction={currentAction}
+                            schoolInfo={schoolInfo}
+                            feeSettings={feeSettings}
+                            preselectedClassId={preselectedClassId}
+                            preselectedStudentId={preselectedStudentId}
+                        />
+                    )}
 
-            {activeTab === 'finances' && (
-                <FinancesDashboard
-                    schoolId={schoolId}
-                    currentAction={currentAction}
-                    schoolInfo={schoolInfo}
-                    classes={classes}
-                />
-            )}
+                    {permittedTabs.includes('finances') && activeTab === 'finances' && (
+                        <FinancesDashboard
+                            schoolId={schoolId}
+                            currentAction={currentAction}
+                            schoolInfo={schoolInfo}
+                            classes={classes}
+                        />
+                    )}
 
-            {activeTab === 'payroll' && (
-                <PayrollDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
-            )}
+                    {permittedTabs.includes('payroll') && activeTab === 'payroll' && (
+                        <PayrollDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
+                    )}
 
-            {activeTab === 'onlineSubmissions' && (
-                <OnlineSubmissionsDashboard 
-                    schoolId={schoolId} 
-                    schoolInfo={schoolInfo} 
-                    classes={classes}
-                    feeSettings={feeSettings}
-                />
-            )}
+                    {permittedTabs.includes('onlineSubmissions') && activeTab === 'onlineSubmissions' && (
+                        <OnlineSubmissionsDashboard 
+                            schoolId={schoolId} 
+                            schoolInfo={schoolInfo} 
+                            classes={classes}
+                            feeSettings={feeSettings}
+                        />
+                    )}
 
-            {activeTab === 'monthlyMatrix' && (
-                <FeeArrearsMatrix
-                    schoolId={schoolId}
-                    classes={classes}
-                    schoolInfo={schoolInfo}
-                    feeSettings={feeSettings}
-                    currentAction={currentAction}
-                    onOpenNewActionModal={() => setShowModal(true)}
-                    onDeleteAction={handleDeleteAction}
-                    onSaveFeeSettings={handleSaveFeeSettings}
-                    setFeeSettings={setFeeSettings}
-                    isSavingFeeSettings={isSavingFeeSettings}
-                />
+                    {permittedTabs.includes('monthlyMatrix') && activeTab === 'monthlyMatrix' && (
+                        <FeeArrearsMatrix
+                            schoolId={schoolId}
+                            classes={classes}
+                            schoolInfo={schoolInfo}
+                            feeSettings={feeSettings}
+                            currentAction={currentAction}
+                            onOpenNewActionModal={() => setShowModal(true)}
+                            onDeleteAction={handleDeleteAction}
+                            onSaveFeeSettings={handleSaveFeeSettings}
+                            setFeeSettings={setFeeSettings}
+                            isSavingFeeSettings={isSavingFeeSettings}
+                        />
+                    )}
+                </>
             )}
 
             <ActionModal

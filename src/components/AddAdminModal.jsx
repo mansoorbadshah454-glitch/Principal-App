@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Save, Shield, Check, Loader2, CheckCheck, Square } from 'lucide-react';
+import { 
+    X, Save, Shield, Check, Loader2, CheckCheck, Square, 
+    ChevronDown, ChevronUp, Sparkles, Sliders, DollarSign, 
+    Smartphone, LayoutGrid, Users as UsersIcon, ShieldAlert,
+    Wallet, FileText, CheckCircle2
+} from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { doc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { db, functions } from '../firebase';
-import { PERMISSIONS_LIST, DEFAULT_ADMIN_PERMISSIONS } from '../constants/permissions';
+import { PERMISSIONS_LIST, DEFAULT_ADMIN_PERMISSIONS, FEE_SUB_PERMISSIONS } from '../constants/permissions';
 
 const normalizePermissions = (rawPerms) => {
     if (!rawPerms) return { ...DEFAULT_ADMIN_PERMISSIONS };
@@ -25,6 +30,18 @@ const normalizePermissions = (rawPerms) => {
         }
     });
 
+    const hasAnySubExplicit = FEE_SUB_PERMISSIONS.some(sub => typeof rawPerms[sub.id] === 'boolean');
+    FEE_SUB_PERMISSIONS.forEach(sub => {
+        if (typeof rawPerms[sub.id] === 'boolean') {
+            normalized[sub.id] = rawPerms[sub.id];
+        } else if (!hasAnySubExplicit && normalized.canManageCollections) {
+            // Legacy admin that had full collections access before sub-perms were introduced
+            normalized[sub.id] = true;
+        } else {
+            normalized[sub.id] = sub.isDefaultCashier && normalized.canManageCollections;
+        }
+    });
+
     return normalized;
 };
 
@@ -38,14 +55,94 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [showFeeSubOptions, setShowFeeSubOptions] = useState(true);
 
     const handlePermissionChange = (permId) => {
+        const nextState = !formData.permissions[permId];
+        const updatedPerms = {
+            ...formData.permissions,
+            [permId]: nextState
+        };
+
+        // If toggling Fee Collections
+        if (permId === 'canManageCollections') {
+            if (nextState) {
+                // If toggled ON, and all sub-permissions are currently false, default to Cashier preset
+                const anySubActive = FEE_SUB_PERMISSIONS.some(sub => formData.permissions[sub.id]);
+                if (!anySubActive) {
+                    FEE_SUB_PERMISSIONS.forEach(sub => {
+                        updatedPerms[sub.id] = sub.isDefaultCashier;
+                    });
+                }
+            } else {
+                // If toggled OFF, disable all sub-permissions
+                FEE_SUB_PERMISSIONS.forEach(sub => {
+                    updatedPerms[sub.id] = false;
+                });
+            }
+        }
+
         setFormData(prev => ({
             ...prev,
-            permissions: {
-                ...prev.permissions,
-                [permId]: !prev.permissions[permId]
+            permissions: updatedPerms
+        }));
+    };
+
+    const handleSubPermissionChange = (subId) => {
+        const nextSubState = !formData.permissions[subId];
+        const updatedPerms = {
+            ...formData.permissions,
+            [subId]: nextSubState
+        };
+
+        // If turning a sub-permission ON, ensure master collections permission is ON
+        if (nextSubState) {
+            updatedPerms.canManageCollections = true;
+        } else {
+            // If turning OFF, check if any remaining sub-permission is still ON
+            const hasOtherActive = FEE_SUB_PERMISSIONS.some(sub => sub.id !== subId && updatedPerms[sub.id]);
+            if (!hasOtherActive) {
+                // Optional: keep canManageCollections or set to false
+                // If no tabs are allowed, turn off master collections
+                updatedPerms.canManageCollections = false;
             }
+        }
+
+        setFormData(prev => ({
+            ...prev,
+            permissions: updatedPerms
+        }));
+    };
+
+    const applyFeePreset = (presetType) => {
+        const updated = {
+            ...formData.permissions,
+            canManageCollections: true
+        };
+
+        if (presetType === 'cashier') {
+            updated.canViewFeeDailyWorkflow = true;
+            updated.canViewFeeOnlineSubmissions = true;
+            updated.canViewFeeMatrix = false;
+            updated.canViewFeeFinances = false;
+            updated.canViewFeePayroll = false;
+        } else if (presetType === 'cashier_matrix') {
+            updated.canViewFeeDailyWorkflow = true;
+            updated.canViewFeeOnlineSubmissions = true;
+            updated.canViewFeeMatrix = true;
+            updated.canViewFeeFinances = false;
+            updated.canViewFeePayroll = false;
+        } else if (presetType === 'full') {
+            updated.canViewFeeDailyWorkflow = true;
+            updated.canViewFeeOnlineSubmissions = true;
+            updated.canViewFeeMatrix = true;
+            updated.canViewFeeFinances = true;
+            updated.canViewFeePayroll = true;
+        }
+
+        setFormData(prev => ({
+            ...prev,
+            permissions: updated
         }));
     };
 
@@ -53,6 +150,9 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
         const updated = {};
         PERMISSIONS_LIST.forEach(p => {
             updated[p.id] = select;
+        });
+        FEE_SUB_PERMISSIONS.forEach(s => {
+            updated[s.id] = select;
         });
         setFormData(prev => ({
             ...prev,
@@ -123,6 +223,9 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
         }
     };
 
+    const isCollectionsChecked = !!formData.permissions.canManageCollections;
+    const activeFeeSubCount = FEE_SUB_PERMISSIONS.filter(s => formData.permissions[s.id]).length;
+
     // Use React Portal to render the modal at the document body level
     return createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
@@ -135,7 +238,7 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                             <Shield className="text-indigo-600" size={24} />
                             {userToEdit ? 'Edit Admin Profile' : 'New Admin Account'}
                         </h2>
-                        <p className="text-xs text-slate-500 mt-1">Configure access rights and user details</p>
+                        <p className="text-xs text-slate-500 mt-1">Configure access rights and granular tab permissions</p>
                     </div>
                     <button
                         onClick={() => onClose(false)}
@@ -268,42 +371,147 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 {PERMISSIONS_LIST.map(perm => {
                                     const isChecked = !!formData.permissions[perm.id];
+                                    const isCollectionsPerm = perm.id === 'canManageCollections';
+
                                     return (
-                                        <label
-                                            key={perm.id}
-                                            className={`group flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all duration-200 ${isChecked
-                                                ? 'bg-indigo-50/60 border-indigo-200 shadow-sm ring-1 ring-indigo-500/10'
-                                                : 'bg-slate-50/50 border-slate-200/80 hover:bg-white hover:border-slate-300 hover:shadow-sm'
-                                                }`}
-                                        >
-                                            <div className={`mt-0.5 relative flex-shrink-0 w-5 h-5 rounded-md border-2 transition-all duration-200 flex items-center justify-center ${isChecked
-                                                ? 'bg-indigo-600 border-indigo-600'
-                                                : 'bg-white border-slate-300 group-hover:border-indigo-400'
-                                                }`}>
-                                                <Check size={12} className={`text-white transition-transform duration-200 ${isChecked ? 'scale-100' : 'scale-0'}`} strokeWidth={3} />
-                                            </div>
-                                            <input
-                                                type="checkbox"
-                                                className="hidden"
-                                                checked={isChecked}
-                                                onChange={() => handlePermissionChange(perm.id)}
-                                            />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center justify-between gap-1">
-                                                    <span className={`text-sm font-semibold transition-colors ${isChecked ? 'text-indigo-950' : 'text-slate-700 group-hover:text-slate-900'}`}>
-                                                        {perm.label}
-                                                    </span>
-                                                    {perm.category && (
-                                                        <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-medium">
-                                                            {perm.category}
-                                                        </span>
+                                        <React.Fragment key={perm.id}>
+                                            <div
+                                                className={`group flex items-start gap-3 p-3.5 rounded-xl border transition-all duration-200 ${isChecked
+                                                    ? 'bg-indigo-50/60 border-indigo-200 shadow-sm ring-1 ring-indigo-500/10'
+                                                    : 'bg-slate-50/50 border-slate-200/80 hover:bg-white hover:border-slate-300 hover:shadow-sm'
+                                                    } ${isCollectionsPerm && isChecked ? 'sm:col-span-2' : ''}`}
+                                            >
+                                                <div 
+                                                    onClick={() => handlePermissionChange(perm.id)}
+                                                    className={`mt-0.5 relative flex-shrink-0 w-5 h-5 rounded-md border-2 cursor-pointer transition-all duration-200 flex items-center justify-center ${isChecked
+                                                        ? 'bg-indigo-600 border-indigo-600'
+                                                        : 'bg-white border-slate-300 group-hover:border-indigo-400'
+                                                        }`}
+                                                >
+                                                    <Check size={12} className={`text-white transition-transform duration-200 ${isChecked ? 'scale-100' : 'scale-0'}`} strokeWidth={3} />
+                                                </div>
+
+                                                <div className="flex-1 min-w-0">
+                                                    <div 
+                                                        onClick={() => handlePermissionChange(perm.id)}
+                                                        className="flex items-center justify-between gap-1 cursor-pointer"
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-sm font-semibold transition-colors ${isChecked ? 'text-indigo-950' : 'text-slate-700 group-hover:text-slate-900'}`}>
+                                                                {perm.label}
+                                                            </span>
+                                                            {isCollectionsPerm && isChecked && (
+                                                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                                                                    {activeFeeSubCount}/5 Tabs Active
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {perm.category && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-medium">
+                                                                {perm.category}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p 
+                                                        onClick={() => handlePermissionChange(perm.id)}
+                                                        className="text-xs text-slate-400 mt-0.5 cursor-pointer"
+                                                    >
+                                                        {perm.description}
+                                                    </p>
+
+                                                    {/* Nested Fee Sub-Permissions Box (Granular Tab Controls) */}
+                                                    {isCollectionsPerm && isChecked && (
+                                                        <div className="mt-3.5 pt-3 border-t border-indigo-100 bg-white/80 rounded-xl p-3 shadow-2xs border border-indigo-50">
+                                                            {/* Sub Header & Presets */}
+                                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <Sliders size={13} className="text-indigo-600" />
+                                                                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                                                                        Fee Tabs & Sub-Permissions:
+                                                                    </span>
+                                                                </div>
+
+                                                                {/* Quick Presets */}
+                                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => applyFeePreset('cashier')}
+                                                                        className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/70 transition-all"
+                                                                        title="Only Daily Workflow & Online Submissions"
+                                                                    >
+                                                                        ⚡ Cashier Preset
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => applyFeePreset('cashier_matrix')}
+                                                                        className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/70 transition-all"
+                                                                        title="Daily Workflow + Online Submissions + Monthly Fee Matrix"
+                                                                    >
+                                                                        📊 Cashier + Matrix
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => applyFeePreset('full')}
+                                                                        className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/70 transition-all"
+                                                                        title="Unlock all 5 tabs including Finances & Staff Payroll"
+                                                                    >
+                                                                        💼 Full Finance
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* 5 Sub Toggles */}
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                                {FEE_SUB_PERMISSIONS.map(sub => {
+                                                                    const isSubActive = !!formData.permissions[sub.id];
+                                                                    const isSensitive = sub.id === 'canViewFeeFinances' || sub.id === 'canViewFeePayroll';
+
+                                                                    return (
+                                                                        <label
+                                                                            key={sub.id}
+                                                                            className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${isSubActive
+                                                                                ? isSensitive 
+                                                                                    ? 'bg-amber-50/70 border-amber-300 ring-1 ring-amber-400/20' 
+                                                                                    : 'bg-indigo-50/80 border-indigo-200 ring-1 ring-indigo-400/20'
+                                                                                : 'bg-white border-slate-200/80 hover:bg-slate-50'
+                                                                                }`}
+                                                                        >
+                                                                            <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border transition-all flex items-center justify-center ${isSubActive
+                                                                                ? isSensitive ? 'bg-amber-600 border-amber-600' : 'bg-indigo-600 border-indigo-600'
+                                                                                : 'bg-white border-slate-300'
+                                                                                }`}>
+                                                                                <Check size={10} className={`text-white transition-transform ${isSubActive ? 'scale-100' : 'scale-0'}`} strokeWidth={3} />
+                                                                            </div>
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                className="hidden"
+                                                                                checked={isSubActive}
+                                                                                onChange={() => handleSubPermissionChange(sub.id)}
+                                                                            />
+                                                                            <div className="flex-1 min-w-0">
+                                                                                <div className="flex items-center justify-between gap-1">
+                                                                                    <span className={`text-xs font-bold ${isSubActive ? 'text-slate-900' : 'text-slate-600'}`}>
+                                                                                        {sub.label}
+                                                                                    </span>
+                                                                                    {isSensitive && (
+                                                                                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-100 text-rose-700">
+                                                                                            Sensitive
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                                                                                    {sub.description}
+                                                                                </p>
+                                                                            </div>
+                                                                        </label>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
                                                     )}
                                                 </div>
-                                                <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">
-                                                    {perm.description}
-                                                </p>
                                             </div>
-                                        </label>
+                                        </React.Fragment>
                                     );
                                 })}
                             </div>

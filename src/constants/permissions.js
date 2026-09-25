@@ -127,6 +127,44 @@ export const PERMISSIONS_LIST = [
     }
 ];
 
+export const FEE_SUB_PERMISSIONS = [
+    {
+        id: 'canViewFeeDailyWorkflow',
+        label: 'Daily Workflow',
+        tabKey: 'workflow',
+        description: 'Counter fee collection, voucher payments, sibling search & receipt printing',
+        isDefaultCashier: true
+    },
+    {
+        id: 'canViewFeeOnlineSubmissions',
+        label: 'Online Submissions',
+        tabKey: 'onlineSubmissions',
+        description: 'Review and approve parent mobile payment slips and receipts',
+        isDefaultCashier: true
+    },
+    {
+        id: 'canViewFeeMatrix',
+        label: 'Monthly Fee Matrix',
+        tabKey: 'monthlyMatrix',
+        description: 'School-wide monthly arrears matrix, class defaulter registers & analytics',
+        isDefaultCashier: false
+    },
+    {
+        id: 'canViewFeeFinances',
+        label: 'Finances & Ledgers',
+        tabKey: 'finances',
+        description: 'School income, expense entries, bank ledger accounts & profit/loss',
+        isDefaultCashier: false
+    },
+    {
+        id: 'canViewFeePayroll',
+        label: 'Staff Payroll',
+        tabKey: 'payroll',
+        description: 'Teacher & staff salary disbursements, salary slips & payroll summaries',
+        isDefaultCashier: false
+    }
+];
+
 export const DEFAULT_ADMIN_PERMISSIONS = {
     canViewDashboard: true,
     canManageNewsFeed: true,
@@ -136,6 +174,12 @@ export const DEFAULT_ADMIN_PERMISSIONS = {
     canManageHRDocs: true,
     canManageParents: true,
     canManageCollections: false,
+    // Granular Fee Sub-Permissions
+    canViewFeeDailyWorkflow: true,
+    canViewFeeOnlineSubmissions: true,
+    canViewFeeMatrix: false,
+    canViewFeeFinances: false,
+    canViewFeePayroll: false,
     canManageStore: false,
     canManageTransport: false,
     canManagePaperGenerator: true,
@@ -161,6 +205,27 @@ export const checkPermission = (role, permissions = {}, permKey) => {
 
     if (!permKey) return true;
 
+    // Check if permKey is a Fee Sub-Permission
+    const isFeeSub = FEE_SUB_PERMISSIONS.some(sub => sub.id === permKey);
+    if (isFeeSub) {
+        // Must have master Fee Collections permission first
+        const hasMasterCollections = checkPermission(role, permissions, 'canManageCollections');
+        if (!hasMasterCollections) return false;
+
+        // If explicit boolean is set for this sub-permission
+        if (typeof permissions[permKey] === 'boolean') {
+            return permissions[permKey];
+        }
+
+        // Backward compatibility: If master is true but user was created before sub-permissions existed
+        const hasAnySubExplicit = FEE_SUB_PERMISSIONS.some(sub => typeof permissions[sub.id] === 'boolean');
+        if (!hasAnySubExplicit) {
+            return true; // Full access for legacy admins until explicitly edited
+        }
+
+        return false;
+    }
+
     // 1. Direct check if explicitly set as boolean (true or false)
     if (typeof permissions[permKey] === 'boolean') {
         return permissions[permKey];
@@ -182,4 +247,13 @@ export const checkPermission = (role, permissions = {}, permKey) => {
     }
 
     return false;
+};
+
+/**
+ * Helper to check access by tab key in Collections page
+ */
+export const checkFeeTabAccess = (role, permissions = {}, tabKey) => {
+    const sub = FEE_SUB_PERMISSIONS.find(s => s.tabKey === tabKey);
+    if (!sub) return true;
+    return checkPermission(role, permissions, sub.id);
 };
