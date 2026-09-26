@@ -6,9 +6,12 @@ import { db, auth, messaging } from '../firebase';
 import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
 import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info, CreditCard } from 'lucide-react';
+import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import PrincipalAiAssistant from '../components/PrincipalAiAssistant/PrincipalAiAssistant';
 
 const MainLayout = () => {
+    const { isPrincipal, hasAccess } = useAuthPermissions();
+    const canUseAi = isPrincipal || hasAccess('canUseAiAssistant');
     const [isSuspended, setIsSuspended] = useState(false);
     const [loading, setLoading] = useState(true);
     const [announcement, setAnnouncement] = useState(null);
@@ -383,7 +386,7 @@ const MainLayout = () => {
                     <Outlet />
                 </motion.div>
             </main>
-            {schoolId && <PrincipalAiAssistant schoolId={schoolId} />}
+            {schoolId && canUseAi && <PrincipalAiAssistant schoolId={schoolId} />}
         </div>
     );
 };

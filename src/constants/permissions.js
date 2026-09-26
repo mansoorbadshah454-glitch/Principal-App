@@ -124,6 +124,13 @@ export const PERMISSIONS_LIST = [
         description: 'Configure school profile, session setup and general settings',
         path: '/settings',
         category: 'Administration'
+    },
+    {
+        id: 'canUseAiAssistant',
+        label: 'School AI Copilot',
+        description: 'Access the smart AI Assistant for automated reports, student grades, and real-time school analytics',
+        path: '#ai-assistant',
+        category: 'Administration'
     }
 ];
 
@@ -188,7 +195,8 @@ export const DEFAULT_ADMIN_PERMISSIONS = {
     canManageSurveillance: false,
     canManageInbox: true,
     canManageUsers: false,
-    canManageSettings: false
+    canManageSettings: false,
+    canUseAiAssistant: false
 };
 
 /**
