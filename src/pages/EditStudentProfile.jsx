@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Save, Plus, Trash2, User, Wallet, AlertCircle, Loader2, CheckCircle2, ShieldCheck, Tag, Percent, DollarSign, Award, Bus, BookOpen, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Save, Plus, Trash2, User, Wallet, AlertCircle, Loader2, CheckCircle2, ShieldCheck, Tag, Percent, DollarSign, Award, Bus, BookOpen, AlertTriangle, Pencil, Check, X } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import CachedImage from '../components/CachedImage';
@@ -85,6 +85,11 @@ const EditStudentProfile = () => {
     // New Recurring Fee Input State
     const [newFeeCategory, setNewFeeCategory] = useState(RECURRING_CATEGORIES[0]);
     const [newFeeAmount, setNewFeeAmount] = useState('');
+
+    // Inline Edit Recurring Fee State
+    const [editingFeeId, setEditingFeeId] = useState(null);
+    const [editFeeCategory, setEditFeeCategory] = useState('');
+    const [editFeeAmount, setEditFeeAmount] = useState('');
 
     // New Individual Action State
     const [newActionCategory, setNewActionCategory] = useState(ACTION_CATEGORIES[0]);
@@ -328,7 +333,41 @@ const EditStudentProfile = () => {
         }));
     };
 
+    const handleStartEditFee = (fee) => {
+        setEditingFeeId(fee.id);
+        setEditFeeCategory(fee.name || RECURRING_CATEGORIES[0]);
+        setEditFeeAmount(fee.amount !== undefined ? String(fee.amount) : '');
+    };
+
+    const handleCancelEditFee = () => {
+        setEditingFeeId(null);
+        setEditFeeCategory('');
+        setEditFeeAmount('');
+    };
+
+    const handleSaveEditFee = (feeId) => {
+        if (!editFeeCategory || editFeeAmount === '' || Number(editFeeAmount) < 0) return;
+
+        setFeeStructure(prev => prev.map(item => {
+            if (item.id === feeId) {
+                return {
+                    ...item,
+                    name: editFeeCategory,
+                    amount: Number(editFeeAmount)
+                };
+            }
+            return item;
+        }));
+
+        setEditingFeeId(null);
+        setEditFeeCategory('');
+        setEditFeeAmount('');
+    };
+
     const removeRecurringFee = (id) => {
+        if (editingFeeId === id) {
+            handleCancelEditFee();
+        }
         setFeeStructure(prev => prev.filter(item => item.id !== id));
     };
 
@@ -862,20 +901,175 @@ const EditStudentProfile = () => {
                                 </p>
                             )}
                             
-                            {feeStructure.map((fee) => (
-                                <div key={fee.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        {fee.name.toLowerCase().includes('transport') ? <Bus size={16} color="#0284c7" /> : <BookOpen size={16} color="#4f46e5" />}
-                                        <span style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{fee.name}</span>
+                            {feeStructure.map((fee) => {
+                                const isEditingThis = editingFeeId === fee.id;
+
+                                if (isEditingThis) {
+                                    return (
+                                        <div
+                                            key={fee.id}
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                gap: '0.75rem',
+                                                padding: '0.65rem 0.85rem',
+                                                background: '#eff6ff',
+                                                borderRadius: '10px',
+                                                border: '1.5px solid #93c5fd',
+                                                boxShadow: '0 2px 4px rgba(37, 99, 235, 0.08)'
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1.5 }}>
+                                                <select
+                                                    value={editFeeCategory}
+                                                    onChange={(e) => setEditFeeCategory(e.target.value)}
+                                                    style={{
+                                                        width: '100%',
+                                                        padding: '0.5rem 0.65rem',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #93c5fd',
+                                                        background: 'white',
+                                                        fontSize: '0.85rem',
+                                                        fontWeight: '600',
+                                                        color: '#1e293b'
+                                                    }}
+                                                >
+                                                    {RECURRING_CATEGORIES.map(cat => (
+                                                        <option key={cat} value={cat}>{cat}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    placeholder="Amount (Rs)"
+                                                    value={editFeeAmount}
+                                                    onChange={(e) => setEditFeeAmount(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') handleSaveEditFee(fee.id);
+                                                        if (e.key === 'Escape') handleCancelEditFee();
+                                                    }}
+                                                    autoFocus
+                                                    style={{
+                                                        width: '100%',
+                                                        padding: '0.5rem 0.65rem',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #93c5fd',
+                                                        background: 'white',
+                                                        fontSize: '0.85rem',
+                                                        fontWeight: '700',
+                                                        color: '#0f172a'
+                                                    }}
+                                                />
+                                            </div>
+
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                <button
+                                                    type="button"
+                                                    title="Save Changes"
+                                                    onClick={() => handleSaveEditFee(fee.id)}
+                                                    disabled={!editFeeAmount || Number(editFeeAmount) < 0}
+                                                    style={{
+                                                        padding: '0.5rem 0.75rem',
+                                                        borderRadius: '8px',
+                                                        border: 'none',
+                                                        background: '#10b981',
+                                                        color: 'white',
+                                                        fontSize: '0.8rem',
+                                                        fontWeight: '700',
+                                                        cursor: (!editFeeAmount || Number(editFeeAmount) < 0) ? 'not-allowed' : 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.25rem'
+                                                    }}
+                                                >
+                                                    <Check size={15} /> Save
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="Cancel"
+                                                    onClick={handleCancelEditFee}
+                                                    style={{
+                                                        padding: '0.5rem 0.65rem',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #cbd5e1',
+                                                        background: 'white',
+                                                        color: '#64748b',
+                                                        fontSize: '0.8rem',
+                                                        fontWeight: '700',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center'
+                                                    }}
+                                                >
+                                                    <X size={15} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+
+                                return (
+                                    <div key={fee.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            {fee.name.toLowerCase().includes('transport') ? <Bus size={16} color="#0284c7" /> : <BookOpen size={16} color="#4f46e5" />}
+                                            <span style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{fee.name}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.95rem' }}>Rs {Number(fee.amount).toLocaleString()}</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                <button
+                                                    type="button"
+                                                    title="Edit Fee Item"
+                                                    onClick={() => handleStartEditFee(fee)}
+                                                    style={{
+                                                        background: '#e0e7ff',
+                                                        border: 'none',
+                                                        color: '#4338ca',
+                                                        cursor: 'pointer',
+                                                        padding: '0.35rem 0.6rem',
+                                                        borderRadius: '6px',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.25rem',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: '700',
+                                                        transition: 'all 0.15s'
+                                                    }}
+                                                    className="hover:bg-indigo-200"
+                                                >
+                                                    <Pencil size={13} /> Edit
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="Remove Fee Item"
+                                                    onClick={() => removeRecurringFee(fee.id)}
+                                                    style={{
+                                                        background: '#fee2e2',
+                                                        border: 'none',
+                                                        color: '#ef4444',
+                                                        cursor: 'pointer',
+                                                        padding: '0.35rem 0.6rem',
+                                                        borderRadius: '6px',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.25rem',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: '700',
+                                                        transition: 'all 0.15s'
+                                                    }}
+                                                    className="hover:bg-red-200"
+                                                >
+                                                    <Trash2 size={13} /> Remove
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                        <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.95rem' }}>Rs {Number(fee.amount).toLocaleString()}</span>
-                                        <button onClick={() => removeRecurringFee(fee.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem' }}>
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
 
                         {/* Add New Recurring Fee Item Form */}
