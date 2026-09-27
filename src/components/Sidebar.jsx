@@ -45,7 +45,7 @@ const NAV_GROUPS = [
         id: 'hr_staff',
         label: 'HR & Staff',
         items: [
-            { icon: Users, label: 'Teachers & Payroll', path: '/teachers', permission: 'canManageTeachers' },
+            { icon: Users, label: 'Teachers', path: '/teachers', permission: 'canManageTeachers' },
             { icon: UserCheck, label: 'Parents Directory', path: '/parents', permission: 'canManageParents' },
             { icon: UserCog, label: 'User Admin', path: '/users', permission: 'canManageUsers' },
             { icon: FileCheck, label: 'HR Documents', path: '/hr-documents', permission: 'canManageHRDocs', isNew: true }
