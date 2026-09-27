@@ -13,7 +13,7 @@ import { askGeminiAssistant } from './geminiService';
 const createWelcomeMessage = () => ({
     id: 'welcome-' + Date.now(),
     role: 'assistant',
-    text: `Salam Principal Sir! 👋 Main aapka **School AI Executive Copilot** hoon.\n\nAap mujh se school ka 100% verified live data foran pooch sakte hain:\n• **Kisi student ki fee paid hai ya pending arrears kitne hain?**\n• **Student ke exam marks aur terms result (1st term, final exam)?**\n• **Is saal ka profit pichlay saal se zyada tha ya kam?**\n• **Is saal kitne new admissions aaye aur kitne students left (SLC) hue?**\n• **Aaj cashier ne kitni fee collect ki?**\n\nMain aapki kya madad kar sakta hoon?`,
+    text: `Salam Principal Sir! 👋 Main aapka **School AI Executive Copilot** hoon.\n\nAap mujh se school ka 100% verified live data foran pooch sakte hain:\n• **Aaj kis teacher ne homework nahi diya ya class test schedule nahi kiya?**\n• **Kisi student ki fee paid hai ya pending arrears kitne hain?**\n• **Student ke exam marks aur terms result (1st term, final exam)?**\n• **Is saal ka profit pichlay saal se zyada tha ya kam?**\n• **Is saal kitne new admissions aaye aur kitne students left (SLC) hue?**\n• **Aaj cashier ne kitni fee collect ki?**\n\nMain aapki kya madad kar sakta hoon?`,
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 });
 

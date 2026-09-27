@@ -35,7 +35,10 @@ const URDU_WORD_MAP = {
     'چھوڑ': 'left', 'خارج': 'left slc', 'پتہ': 'address', 'ایڈریس': 'address',
     'فون': 'phone', 'موبائل': 'phone', 'والد': 'father', 'والدہ': 'mother',
     'بتاؤ': 'batao', 'بتائیں': 'batao', 'دکھاؤ': 'batao', 'مجھے': 'mujhe',
-    'کتنی': 'kitna', 'کتنا': 'kitna', 'کتنے': 'kitna', 'اسکا': 'iska', 'اسکی': 'iska', 'اسکے': 'iska'
+    'کتنی': 'kitna', 'کتنا': 'kitna', 'کتنے': 'kitna', 'اسکا': 'iska', 'اسکی': 'iska', 'اسکے': 'iska',
+    'ہوم ورک': 'homework', 'ہومورک': 'homework', 'ڈائری': 'homework diary', 'ٹیسٹ': 'test',
+    'اساتذہ': 'teachers', 'استاد': 'teacher', 'ٹیچر': 'teacher', 'کس': 'kis', 'کون': 'kaun',
+    'نہیں': 'nahi', 'دیا': 'diya', 'شیڈول': 'schedule', 'ٹائم ٹیبل': 'timetable'
 };
 
 const URDU_CHAR_MAP = {
@@ -65,6 +68,37 @@ export function transliterateUrduToRoman(text) {
         }
     }
     return out.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Standardize Urdu / Roman Urdu spelling variations
+ */
+export function standardizeKeywords(text) {
+    if (!text) return '';
+    let t = text.toString().toLowerCase();
+    
+    // Normalize homework variations
+    t = t.replace(/\b(hom\s*work|hm\s*work|home\s*work|homewrk|hmwork|h\.w|hw|homeworks|homworks)\b/gi, ' homework ');
+    
+    // Normalize teacher variations
+    t = t.replace(/\b(techer|tchr|ustad|astad|techers|teachers|asatza|asateza|ustaza)\b/gi, ' teacher ');
+    
+    // Normalize question / pronoun variations
+    t = t.replace(/\b(kes|kese|kisi|kon|kaun|konsa|kin|kisko)\b/gi, ' kis ');
+    
+    // Normalize negation variations
+    t = t.replace(/\b(nahe|nahen|nai|ny|nhi|nhe|nhn|mat|ni|nahi)\b/gi, ' nahi ');
+    
+    // Normalize verb variations (diya / deya / etc.)
+    t = t.replace(/\b(deya|dea|dia|dya|dena|deye|diye|deta|dete)\b/gi, ' diya ');
+    
+    // Normalize diary variations
+    t = t.replace(/\b(dary|dayri|dyri|diari|diarys|diaries)\b/gi, ' diary ');
+    
+    // Normalize test variations
+    t = t.replace(/\b(tst|tests|imtihan|exam|exams)\b/gi, ' test ');
+    
+    return t.replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -587,6 +621,195 @@ export async function getLiveSchoolContext(schoolId) {
             console.warn('[AI Data] Attendance fetch fallback:', e);
         }
 
+        // 9. Fetch Timetable & Today's Homework & Scheduled Tests Audit (Timetable vs Submissions Gap Analysis)
+        let timetableAudit = {
+            totalTimetableTeachers: 0,
+            todayHomeworkCount: 0,
+            missingHomeworkTeachers: [],
+            submittedHomeworkTeachers: [],
+            activeScheduledTests: []
+        };
+
+        try {
+            // 9a. Fetch Weekly Master Timetable
+            const ttDocRef = doc(db, `schools/${schoolId}/timetables`, 'weeklyMaster');
+            const ttSnap = await getDocFast(ttDocRef);
+            const timetableTeachersMap = {};
+
+            if (ttSnap && ttSnap.exists()) {
+                const ttData = ttSnap.data() || {};
+                const rows = ttData.rows || [];
+                rows.forEach(row => {
+                    if (!row || !row.teacherId) return;
+                    const tId = String(row.teacherId).trim();
+                    const matchedTeacher = teachers.find(t => t.id === tId || t.uid === tId);
+                    const tName = row.teacherName || row.name || matchedTeacher?.name || 'Teacher';
+                    const cells = row.cells || [];
+                    const activeSlots = [];
+
+                    cells.forEach(cell => {
+                        if (!cell) return;
+                        const cName = (cell.class || cell.className || '').toString().trim();
+                        const subj = (cell.subject || '').toString().trim();
+                        if (cName && cName.toUpperCase() !== 'FREE' && cName.toUpperCase() !== 'BREAK' && subj) {
+                            if (!activeSlots.some(s => s.className.toLowerCase() === cName.toLowerCase() && s.subject.toLowerCase() === subj.toLowerCase())) {
+                                activeSlots.push({ className: cName, subject: subj });
+                            }
+                        }
+                    });
+
+                    if (activeSlots.length > 0) {
+                        timetableTeachersMap[tId] = {
+                            teacherId: tId,
+                            teacherName: tName,
+                            slots: activeSlots
+                        };
+                    }
+                });
+            }
+
+            // Fallback if no weeklyMaster timetable configured yet: construct slots from teachers list
+            if (Object.keys(timetableTeachersMap).length === 0 && teachers.length > 0) {
+                teachers.forEach(t => {
+                    const assignedClasses = Array.isArray(t.assignedClasses) ? t.assignedClasses : (t.assignedClass ? [t.assignedClass] : []);
+                    const subjects = Array.isArray(t.displaySubjects) ? t.displaySubjects : (Array.isArray(t.subjects) ? t.subjects : (t.subject ? [t.subject] : []));
+                    const fallbackSlots = [];
+                    assignedClasses.forEach(clsName => {
+                        subjects.forEach(subj => {
+                            fallbackSlots.push({ className: clsName, subject: subj });
+                        });
+                    });
+                    if (fallbackSlots.length > 0) {
+                        timetableTeachersMap[t.id] = {
+                            teacherId: t.id,
+                            teacherName: t.name || 'Teacher',
+                            slots: fallbackSlots
+                        };
+                    }
+                });
+            }
+
+            timetableAudit.totalTimetableTeachers = Object.keys(timetableTeachersMap).length;
+
+            // 9b. Fetch Today's Homework & Scheduled Tests Across All Classes
+            const todayHomeworkList = [];
+            const scheduledTestsList = [];
+
+            const hwAndTestPromises = classes.map(async (cls) => {
+                const classId = cls.id;
+                const className = cls.name;
+
+                // 1. Fetch Class Homework
+                try {
+                    const hwRef = collection(db, `schools/${schoolId}/classes/${classId}/homework`);
+                    const hwSnap = await getDocsFast(hwRef);
+                    hwSnap.docs.forEach(hDoc => {
+                        const hData = hDoc.data();
+                        const hDate = hData.assignedDate || '';
+                        const created = parseTxDate(hData);
+                        const isToday = hDate === todayIso || (created && isSameDay(created, today));
+                        if (isToday) {
+                            todayHomeworkList.push({
+                                id: hDoc.id,
+                                classId,
+                                className: hData.className || className,
+                                subject: hData.subject || '',
+                                chapter: hData.chapter || '',
+                                topic: hData.topic || '',
+                                description: hData.description || '',
+                                teacherName: hData.teacherName || '',
+                                teacherId: hData.teacherId || '',
+                                status: hData.status || 'active'
+                            });
+                        }
+                    });
+                } catch (err) {}
+
+                // 2. Fetch Scheduled Tests
+                try {
+                    const stRef = collection(db, `schools/${schoolId}/classes/${classId}/scheduled_tests`);
+                    const stSnap = await getDocsFast(stRef);
+                    stSnap.docs.forEach(sDoc => {
+                        const sData = sDoc.data();
+                        scheduledTestsList.push({
+                            id: sDoc.id,
+                            classId,
+                            className: sData.className || className,
+                            subject: sData.subject || '',
+                            chapter: sData.chapter || '',
+                            paragraphs: sData.paragraphs || '',
+                            dateStr: sData.dateStr || '',
+                            timeStr: sData.timeStr || '',
+                            testType: sData.testType || 'Written',
+                            maxMarks: sData.maxMarks || 10,
+                            status: sData.status || 'scheduled'
+                        });
+                    });
+                } catch (err) {}
+            });
+
+            await Promise.all(hwAndTestPromises);
+            timetableAudit.todayHomeworkCount = todayHomeworkList.length;
+            timetableAudit.activeScheduledTests = scheduledTestsList.filter(t => t.status === 'scheduled');
+
+            // 9c. Gap Analysis (Timetable Slots vs Today's Homework)
+            const matchesSlot = (hwItem, slot) => {
+                const hwClass = normalize(hwItem.className);
+                const slotClass = normalize(slot.className);
+                const hwSubj = normalize(hwItem.subject);
+                const slotSubj = normalize(slot.subject);
+                const classMatches = hwClass.includes(slotClass) || slotClass.includes(hwClass) ||
+                                     hwClass.replace(/\s+/g, '') === slotClass.replace(/\s+/g, '');
+                const subjMatches = hwSubj.includes(slotSubj) || slotSubj.includes(hwSubj);
+                return classMatches && subjMatches;
+            };
+
+            Object.values(timetableTeachersMap).forEach(teacher => {
+                const missingSlots = [];
+                const givenSlots = [];
+
+                teacher.slots.forEach(slot => {
+                    const foundHw = todayHomeworkList.find(hw => matchesSlot(hw, slot));
+                    if (foundHw) {
+                        givenSlots.push({
+                            className: slot.className,
+                            subject: slot.subject,
+                            topic: foundHw.topic || foundHw.chapter || 'Assigned'
+                        });
+                    } else {
+                        missingSlots.push({
+                            className: slot.className,
+                            subject: slot.subject
+                        });
+                    }
+                });
+
+                if (missingSlots.length > 0) {
+                    timetableAudit.missingHomeworkTeachers.push({
+                        teacherId: teacher.teacherId,
+                        teacherName: teacher.teacherName,
+                        missingSlots,
+                        givenSlots,
+                        totalSlots: teacher.slots.length,
+                        isCompletelyMissing: givenSlots.length === 0
+                    });
+                }
+
+                if (givenSlots.length > 0) {
+                    timetableAudit.submittedHomeworkTeachers.push({
+                        teacherId: teacher.teacherId,
+                        teacherName: teacher.teacherName,
+                        givenSlots,
+                        missingSlots,
+                        totalSlots: teacher.slots.length,
+                        isComplete: missingSlots.length === 0
+                    });
+                }
+            });
+        } catch (e) {
+            console.warn('[AI Data] Timetable audit calculation notice:', e);
+        }
+
         return {
             schoolId,
             schoolName,
@@ -609,7 +832,8 @@ export async function getLiveSchoolContext(schoolId) {
             feeStats,
             financeAnalytics,
             exams,
-            attendanceStats
+            attendanceStats,
+            timetableAudit
         };
     } catch (error) {
         console.error('[AI Data] Fatal error compiling context:', error);
@@ -1082,8 +1306,9 @@ export function generateInstantAnswer(userQuestion, context, studentReport = nul
         return "Salam Principal Sir! Main aapke school ka live data load kar raha hoon. Barah-e-karam 1 second baad dobara poochiye.";
     }
 
-    const rawRoman = transliterateUrduToRoman(userQuestion);
-    const q = `${normalize(userQuestion)} ${normalize(rawRoman)}`;
+    const rawRoman = transliterateUrduToRoman(userQuestion || '');
+    const standardStr = standardizeKeywords((userQuestion || '') + ' ' + rawRoman);
+    const q = `${normalize(userQuestion)} ${normalize(rawRoman)} ${normalize(standardStr)}`;
 
     // 0. MAI TECH (SMC - Private) Limited & Technical Support / Help (High Precedence)
     const isHelpOrCompanyQuery = 
@@ -1164,7 +1389,80 @@ export function generateInstantAnswer(userQuestion, context, studentReport = nul
                `• Net Profit: **${formatCurrency(financeAnalytics.prevMonth.netProfit)}**`;
     }
 
-    // 3. Admissions & Left Students (SLC) Analytics
+    // 3. Homework Tracking & Timetable Audit (Aaj kis teacher ne homework nahi diya)
+    const isHomeworkQuery = q.includes('homework') || q.includes('diary') || ((q.includes('kis') || q.includes('teacher')) && (q.includes('nahi') || q.includes('diya')));
+    if (isHomeworkQuery) {
+        const audit = context?.timetableAudit;
+        if (!audit || audit.totalTimetableTeachers === 0) {
+            return `📋 **Homework & Timetable Audit:**\n• Abhi timetable ya homework records load nahi hue ya school timetable mein teachers add nahi hain.`;
+        }
+
+        const missing = audit.missingHomeworkTeachers || [];
+        const submitted = audit.submittedHomeworkTeachers || [];
+
+        if (missing.length === 0) {
+            return `🎉 **Zabardast! 100% Homework Completed!**\n\n` +
+                   `• **Date:** ${context.currentFormattedDate || 'Aaj'}\n` +
+                   `• Timetable ke mutabiq **tamam teachers** (${audit.totalTimetableTeachers}) ne apni classes ka homework mobile app par upload kar diya hai.`;
+        }
+
+        const completelyMissing = missing.filter(m => m.isCompletelyMissing);
+        const partiallyMissing = missing.filter(m => !m.isCompletelyMissing);
+
+        let report = `📋 **Timetable ke Mutabiq Aaj Ka Homework Audit (${context.currentFormattedDate || 'Aaj'}):**\n\n`;
+
+        if (completelyMissing.length > 0) {
+            report += `❌ **In Teachers ne aaj kisi bhi class ka homework upload nahi kiya (${completelyMissing.length}):**\n`;
+            completelyMissing.forEach((t, idx) => {
+                report += `${idx + 1}. **${t.teacherName}**:\n`;
+                t.missingSlots.forEach(s => {
+                    report += `   • **Class ${s.className}**: ${s.subject}\n`;
+                });
+            });
+            report += `\n`;
+        }
+
+        if (partiallyMissing.length > 0) {
+            report += `⚠️ **In Teachers ne kuch classes mein diya, magar baqi subjects miss hain (${partiallyMissing.length}):**\n`;
+            partiallyMissing.forEach((t, idx) => {
+                report += `${idx + 1}. **${t.teacherName}**:\n`;
+                t.missingSlots.forEach(s => {
+                    report += `   • ❌ **Class ${s.className}**: ${s.subject} *(Pending)*\n`;
+                });
+                t.givenSlots.forEach(s => {
+                    report += `   • ✅ Class ${s.className}: ${s.subject} *(Given: ${s.topic})*\n`;
+                });
+            });
+            report += `\n`;
+        }
+
+        report += `📊 **Summary:** Total ${audit.totalTimetableTeachers} teachers mein se **${submitted.filter(s => s.isComplete).length} ne complete**, **${partiallyMissing.length} ne partial**, aur **${completelyMissing.length} teachers ne bilkul homework nahi diya**.`;
+
+        return report;
+    }
+
+    // 4. Class Tests & Scheduled Tests
+    const isTestQuery = q.includes('test') || q.includes('tests') || q.includes('imtihan') || q.includes('schedule');
+    if (isTestQuery) {
+        const tests = context?.timetableAudit?.activeScheduledTests || [];
+        if (tests.length === 0) {
+            return `📝 **Class Tests Schedule (${context.currentFormattedDate || 'Aaj'}):**\n\n` +
+                   `• Abhi mobile app par koi active class test scheduled nahi mila.\n` +
+                   `• Teachers jab mobile app se test schedule karte hain, to yahan date, time, subject aur chapter show ho jayega.`;
+        }
+
+        let testList = `📝 **Active Scheduled Class Tests (${tests.length}):**\n\n`;
+        tests.forEach((t, idx) => {
+            testList += `${idx + 1}. **Class ${t.className} - ${t.subject}** (${t.testType} Test)\n` +
+                        `   • **Chapter / Topic:** ${t.chapter || t.paragraphs || 'General'}\n` +
+                        `   • **Date & Time:** ${t.dateStr} at ${t.timeStr}\n` +
+                        `   • **Max Marks:** ${t.maxMarks}\n\n`;
+        });
+
+        return testList.trim();
+    }
+
+    // 5. Admissions & Left Students (SLC) Analytics
     if (q.includes('admission') || q.includes('dakhila') || q.includes('left') || q.includes('slc') || q.includes('chor') || q.includes('kharij')) {
         const { admissionsStats, slcStats, year, prevYear, currentMonth } = context;
         return `📋 **Admissions & SLC (Left Students) Analytics:**\n\n` +
@@ -1354,7 +1652,7 @@ export function generateInstantAnswer(userQuestion, context, studentReport = nul
     }
 
     // 9. Classes & Strength
-    if (q.includes('class') || q.includes('classes') || q.includes('strength') || q.includes('kitne bache')) {
+    if ((q.includes('classes') || q.includes('strength') || q.includes('kitne bache') || q.includes('total student') || q.includes('total class')) && !q.includes('homework') && !q.includes('test') && !q.includes('teacher') && !q.includes('diya')) {
         const classBreakdown = context.classes.map(c => `• **${c.name}**: ${c.studentCount || (c.students ? c.students.length : 0)} students`).join('\n');
         return `🏫 **School Classes & Student Strength:**\n` +
                `• Total Enrolled: **${context.totalStudents} Students**\n` +
@@ -1362,7 +1660,7 @@ export function generateInstantAnswer(userQuestion, context, studentReport = nul
                `**Class-wise Details:**\n${classBreakdown || 'Koi class data mojood nahi.'}`;
     }
 
-    // 10. General School Overview
+    // 12. General School Overview
     return `🏫 **${context.schoolName} - AI Executive Overview:**\n` +
            `• Total Students: **${context.totalStudents}** (${context.classes.length} Classes)\n` +
            `• Total Teachers: **${context.teachers.length}** (${context.payrollStats.paidTeachers}/${context.payrollStats.totalTeachers} Paid)\n` +

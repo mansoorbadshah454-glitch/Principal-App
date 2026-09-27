@@ -1,4 +1,4 @@
-import { generateInstantAnswer, getDeepStudentProfile, formatCurrency, transliterateUrduToRoman } from './aiDataEngine';
+import { generateInstantAnswer, getDeepStudentProfile, formatCurrency, transliterateUrduToRoman, standardizeKeywords } from './aiDataEngine';
 
 const DEFAULT_MODEL = 'gemini-1.5-flash';
 
@@ -11,16 +11,20 @@ let lastActiveStudentCache = null;
 export async function askGeminiAssistant({ apiKey, userQuestion, context, conversationHistory = [] }) {
     const activeApiKey = (apiKey || import.meta.env?.VITE_GEMINI_API_KEY || '').trim();
     const rawRoman = transliterateUrduToRoman(userQuestion || '');
+    const standardStr = standardizeKeywords((userQuestion || '') + ' ' + rawRoman);
     const lowerQ = (userQuestion || '').toLowerCase();
-    const combinedQ = `${lowerQ} ${rawRoman.toLowerCase()}`;
+    const combinedQ = `${lowerQ} ${rawRoman.toLowerCase()} ${standardStr}`;
     
-    // 1. Check if this is a School-level Query or Help / Company Query
+    // 1. Check if this is a School-level Query, Timetable / Homework Audit, or Help / Company Query
     const isSchoolLevelQuery = 
         combinedQ.includes('profit') || combinedQ.includes('munafa') || combinedQ.includes('loss') || combinedQ.includes('nuqsan') ||
         combinedQ.includes('bachat') || combinedQ.includes('admission') || combinedQ.includes('dakhila') || combinedQ.includes('slc') ||
         combinedQ.includes('left') || (combinedQ.includes('cashier') && !combinedQ.includes('roll')) || 
         (combinedQ.includes('counter') && !combinedQ.includes('roll')) || (combinedQ.includes('attendance') && !combinedQ.includes('roll')) ||
         (combinedQ.includes('salary') && !combinedQ.includes('roll')) || (combinedQ.includes('tankhwah') && !combinedQ.includes('roll')) ||
+        combinedQ.includes('homework') || combinedQ.includes('home work') || combinedQ.includes('diary') || combinedQ.includes('timetable') ||
+        combinedQ.includes('time table') || combinedQ.includes('test') || combinedQ.includes('tests') || (combinedQ.includes('kis') && combinedQ.includes('teacher')) ||
+        (combinedQ.includes('nahi') && combinedQ.includes('diya')) || combinedQ.includes('schedule') ||
         combinedQ.includes('help') || combinedQ.includes('madad') || combinedQ.includes('support') || combinedQ.includes('mai tech') ||
         combinedQ.includes('mai') || combinedQ.includes('smc') || combinedQ.includes('company') || combinedQ.includes('developer') ||
         combinedQ.includes('mansoor') || combinedQ.includes('naqeeb') || combinedQ.includes('yaqoob') || combinedQ.includes('software') ||
@@ -184,6 +188,20 @@ Your Persona & Character:
 - TODAY'S ATTENDANCE:
   * Present: ${context?.attendanceStats?.presentStudents || 0} | Absent: ${context?.attendanceStats?.absentStudents || 0} (Rate: ${context?.attendanceStats?.attendanceRate || 'N/A'})
 
+- TIMETABLE VS HOMEWORK & CLASS TEST AUDIT (DATE: ${context?.currentFormattedDate || 'Today'}):
+  * Total Timetable Teachers Monitored: ${context?.timetableAudit?.totalTimetableTeachers || 0}
+  * Total Class Homework Uploaded Today: ${context?.timetableAudit?.todayHomeworkCount || 0}
+  * Total Active Scheduled Class Tests: ${context?.timetableAudit?.activeScheduledTests?.length || 0}
+  
+  * TEACHERS WHO MISSED HOMEWORK TODAY ACCORDING TO TIMETABLE:
+  ${JSON.stringify(context?.timetableAudit?.missingHomeworkTeachers || [], null, 2)}
+
+  * TEACHERS WHO COMPLETED HOMEWORK TODAY:
+  ${JSON.stringify(context?.timetableAudit?.submittedHomeworkTeachers || [], null, 2)}
+
+  * ACTIVE SCHEDULED CLASS TESTS:
+  ${JSON.stringify(context?.timetableAudit?.activeScheduledTests || [], null, 2)}
+
 ${studentReport && !studentReport.notFound ? `
 - SPECIFIC STUDENT 360° RECORD FOUND:
   * Name: ${studentReport.student?.name || studentReport.student?.studentName} (Roll No: ${studentReport.student?.rollNo || 'N/A'}, Class: ${studentReport.className})
@@ -209,12 +227,18 @@ ${studentReport && !studentReport.notFound ? `
 =======================================
 
 Guidelines for Answering:
-1. If asked about software help, support, bugs, training, backup, or company background, provide the MAI TECH support team details (Mansoor Ahmad: 0334-5722302, Naqeeb Jan: 0337-9204647, Muhammad Yaqoob: 0331-9656581) in a professional format.
-2. If asked about a student's phone, address, or parent details, provide the exact numbers from the Student 360 Record.
-3. If asked about profit comparison, cite the exact numbers from Financial Profit / Loss Comparison above.
-4. If asked about admissions or SLC left students, cite the exact numbers above.
-5. STRICT RULE FOR EXAMS: If an exam term has not been officially published to parents yet (or appears in Pending / Upcoming Terms), state clearly that the term is "⏳ Pending (Result abhi publish nahi hua)". Only show final scores for officially published terms, and NEVER duplicate subject entries.
-6. Keep answers clean, respectful, well-structured, and easy to read.
+1. If asked in ANY language or words (e.g. "aaj kis teacher ne homework nahi diya", "missing homework list", "test kisne schedule nahi kia", "diary update check"):
+   - Look up TIMETABLE VS HOMEWORK & CLASS TEST AUDIT above.
+   - List ONLY the teachers who have missing homework or tests for their assigned classes/subjects in the Timetable.
+   - For each missing teacher, clearly show their Name, Class, and Subject in a clean categorized bulleted format.
+   - If a teacher gave homework in one class but missed another, clearly distinguish the pending class.
+   - If all teachers have given homework, state: "Zabardast! Timetable ke mutabiq tamam teachers ne aaj ka homework upload kar diya hai."
+2. If asked about software help, support, bugs, training, backup, or company background, provide the MAI TECH support team details (Mansoor Ahmad: 0334-5722302, Naqeeb Jan: 0337-9204647, Muhammad Yaqoob: 0331-9656581) in a professional format.
+3. If asked about a student's phone, address, or parent details, provide the exact numbers from the Student 360 Record.
+4. If asked about profit comparison, cite the exact numbers from Financial Profit / Loss Comparison above.
+5. If asked about admissions or SLC left students, cite the exact numbers above.
+6. STRICT RULE FOR EXAMS: If an exam term has not been officially published to parents yet (or appears in Pending / Upcoming Terms), state clearly that the term is "⏳ Pending (Result abhi publish nahi hua)". Only show final scores for officially published terms, and NEVER duplicate subject entries.
+7. Keep answers clean, respectful, well-structured, and easy to read.
 `.trim();
 
     try {
