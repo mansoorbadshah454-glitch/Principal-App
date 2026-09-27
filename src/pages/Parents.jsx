@@ -125,7 +125,7 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
     };
 
     // Dynamic Theme Color based on name char code for variety
-    const seed = parent.name.charCodeAt(0) || 123;
+    const seed = String(parent.name || parent.id || 'Parent').charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
     const themeColor = isEven ? '#bc1888' : '#e6683c'; // Use IG palette colors
 

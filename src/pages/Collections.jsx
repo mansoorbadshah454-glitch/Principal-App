@@ -537,7 +537,7 @@ const CollectionClassCard = ({ cls, currentAction, schoolId }) => {
 
 
     // Dynamic Theme Color
-    const seed = cls.id.charCodeAt(0) || 123;
+    const seed = String(cls.id || cls.name || 'Class').charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
     const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
 

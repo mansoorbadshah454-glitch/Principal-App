@@ -9,6 +9,7 @@ import { auth, db } from '../firebase';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import GalaxyBackground from './GalaxyBackground';
+import appIcon from '../assets/app_icon_blue.png';
 
 const NAV_GROUPS = [
     {
@@ -158,15 +159,15 @@ const Sidebar = () => {
                 <div style={{
                     width: '42px',
                     height: '42px',
-                    background: 'linear-gradient(135deg, #4f46e5, #06b6d4)',
                     borderRadius: '12px',
+                    overflow: 'hidden',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    boxShadow: '0 4px 14px rgba(79, 70, 229, 0.4)',
+                    boxShadow: '0 4px 14px rgba(37, 99, 235, 0.35)',
                     flexShrink: 0
                 }}>
-                    <Shield color="white" size={24} />
+                    <img src={appIcon} alt="MAI SMS" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <div>
                     <h2 style={{ fontSize: '1.15rem', fontWeight: '800', letterSpacing: '-0.02em', margin: 0, lineHeight: 1.2 }}>

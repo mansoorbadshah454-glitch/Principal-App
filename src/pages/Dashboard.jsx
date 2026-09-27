@@ -405,13 +405,13 @@ const Dashboard = () => {
 
                 return {
                     id: doc.id,
-                    name: data.name,
+                    name: data.name || 'Teacher',
                     class: Array.isArray(data.assignedClasses) && data.assignedClasses.length > 0
                         ? data.assignedClasses[0]
                         : (data.assignedClasses || 'Unassigned'),
                     status: isOff ? 'off' : 'on',
                     isPresent: data.lastAttendanceDate === todayStr,
-                    score: 75 + (doc.id.charCodeAt(0) % 20)
+                    score: 75 + (((doc.id || 'A').charCodeAt(0)) % 20)
                 };
             });
             setTeachers(list);
@@ -467,8 +467,9 @@ const Dashboard = () => {
                 setRankingCycle(cycleLabel);
 
                 const calculated = teachers.map((t, idx) => {
-                    const academicScore = 80 + ((t.name.charCodeAt(0) * 3) % 18);
-                    const syllabusScore = 75 + ((t.name.charCodeAt(t.name.length - 1) * 2) % 22);
+                    const tName = String(t.name || t.id || 'Teacher');
+                    const academicScore = 80 + ((tName.charCodeAt(0) * 3) % 18);
+                    const syllabusScore = 75 + ((tName.charCodeAt(Math.max(0, tName.length - 1)) * 2) % 22);
                     const attendanceScore = t.isPresent ? 95 : 85;
                     const engagementScore = t.status === 'on' ? 100 : 85;
                     const performanceScore = Math.min(100, Math.max(0, Math.round(
@@ -748,8 +749,9 @@ const Dashboard = () => {
         if (!teachers || teachers.length === 0) return [];
 
         return teachers.map((t, idx) => {
-            const academicScore = 80 + ((t.name.charCodeAt(0) * 3) % 18);
-            const syllabusScore = 75 + ((t.name.charCodeAt(t.name.length - 1) * 2) % 22);
+            const tName = String(t.name || t.id || 'Teacher');
+            const academicScore = 80 + ((tName.charCodeAt(0) * 3) % 18);
+            const syllabusScore = 75 + ((tName.charCodeAt(Math.max(0, tName.length - 1)) * 2) % 22);
             const attendanceScore = t.isPresent ? 95 : 85;
             const engagementScore = t.status === 'on' ? 100 : 85;
             const performanceScore = Math.min(100, Math.max(0, Math.round(

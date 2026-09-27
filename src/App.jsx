@@ -7,6 +7,7 @@ import MainLayout from './layouts/MainLayout';
 import { AlertProvider } from './context/AlertContext';
 import { AuthPermissionsProvider } from './context/AuthPermissionsContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import appIcon from './assets/app_icon_blue.png';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Classes = lazy(() => import('./pages/Classes'));
@@ -83,8 +84,8 @@ function App() {
   if (loading) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc' }}>
-        <div className="brand-icon animate-pulse" style={{ width: '80px', height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '20px', background: 'linear-gradient(135deg, #4f46e5, #06b6d4)' }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+        <div className="brand-icon animate-pulse" style={{ width: '80px', height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '22px', overflow: 'hidden', boxShadow: '0 10px 25px -5px rgba(37, 99, 235, 0.35)' }}>
+          <img src={appIcon} alt="MAI SMS Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </div>
       </div>
     );

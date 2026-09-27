@@ -152,7 +152,7 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
     const { present: presentCount, absent: absentCount } = realStats;
 
     // Dynamic Theme Color based on odd/even id
-    const seed = cls.id.charCodeAt(0) || 123;
+    const seed = String(cls.id || cls.name || 'Class').charCodeAt(0) || 123;
     const isEven = seed % 2 === 0;
     const themeColor = isEven ? 'var(--primary)' : 'var(--secondary)';
     const themeLight = isEven ? '#e0e7ff' : '#ecfeff';

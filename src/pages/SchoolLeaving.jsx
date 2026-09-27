@@ -7,13 +7,14 @@ import {
     DollarSign, Wallet, CreditCard, Tag, Receipt, ExternalLink, Archive,
     Folder, FolderOpen, SearchCode, PlusCircle, Sliders, ZoomIn, ZoomOut,
     Maximize2, Shield, Stamp, FileSpreadsheet, Building2, User, Phone, MessageCircle, Activity,
-    Wifi, WifiOff, CloudUpload, BarChart3
+    Wifi, WifiOff, CloudUpload, BarChart3, UserCheck, UserX, Users2
 } from 'lucide-react';
-import { db, auth, storage } from '../firebase';
+import { db, auth, storage, functions } from '../firebase';
 import {
     collection, getDocs, doc, writeBatch, getDoc, updateDoc, deleteDoc,
-    query, orderBy, addDoc, serverTimestamp, setDoc, onSnapshot
+    query, orderBy, addDoc, serverTimestamp, setDoc, onSnapshot, where, limit
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { getDocsFast } from '../utils/cacheUtils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -564,6 +565,10 @@ export default function SchoolLeaving() {
     const [isIssuing, setIsIssuing] = useState(false);
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
+    // Linked Parent Account Status & Siblings Intelligence Engine
+    const [linkedParentInfo, setLinkedParentInfo] = useState(null);
+    const [loadingParentInfo, setLoadingParentInfo] = useState(false);
+
     // Ensure clean day mode background on .main-content while on School Leaving Studio
     useEffect(() => {
         const mainEl = document.querySelector('.main-content');
@@ -738,6 +743,49 @@ export default function SchoolLeaving() {
                     try {
                         await deleteDoc(doc(db, `schools/${sid}/students`, item.studentId));
                     } catch (e) {}
+
+                    // 5. Parent Account Lifecycle Sync (Auto-Delete if single child, Unlink if siblings)
+                    try {
+                        let pId = item.studentData?.parentId || item.studentData?.parentDetails?.parentId;
+                        let pDocData = null;
+                        if (pId) {
+                            const pSnap = await getDoc(doc(db, `schools/${sid}/parents`, pId));
+                            if (pSnap.exists()) pDocData = pSnap.data();
+                        }
+                        if (!pDocData) {
+                            const pPhone = (item.studentData?.phone || item.studentData?.parentPhone || item.studentData?.parentDetails?.phone || '').trim();
+                            if (pPhone) {
+                                const pQuery = query(collection(db, `schools/${sid}/parents`), where("phone", "==", pPhone), limit(1));
+                                const qSnap = await getDocsFast(pQuery);
+                                if (qSnap && !qSnap.empty) {
+                                    pId = qSnap.docs[0].id;
+                                    pDocData = qSnap.docs[0].data();
+                                }
+                            }
+                        }
+                        if (pId && pDocData) {
+                            const allLinks = Array.isArray(pDocData.linkedStudents) ? pDocData.linkedStudents : [];
+                            const remaining = allLinks.filter(s => s.studentId !== item.studentId);
+                            if (remaining.length === 0) {
+                                // Single child -> Delete parent account
+                                try {
+                                    const deleteUserFn = httpsCallable(functions, 'deleteSchoolUser');
+                                    await deleteUserFn({ targetUid: pId, role: 'parent', schoolId: sid });
+                                } catch (authErr) {
+                                    await deleteDoc(doc(db, `schools/${sid}/parents`, pId)).catch(() => {});
+                                    await deleteDoc(doc(db, 'global_users', pId)).catch(() => {});
+                                }
+                            } else {
+                                // Siblings exist -> Unlink student, keep parent active
+                                await updateDoc(doc(db, `schools/${sid}/parents`, pId), {
+                                    linkedStudents: remaining,
+                                    updatedAt: serverTimestamp()
+                                });
+                            }
+                        }
+                    } catch (pSyncErr) {
+                        console.warn("[SchoolLeaving] Offline parent sync note:", pSyncErr);
+                    }
 
                     // Remove from remaining queue
                     const idx = remainingQueue.findIndex(q => q.queueId === item.queueId);
@@ -968,6 +1016,99 @@ export default function SchoolLeaving() {
             setSlcSerialNo(`SLC-${new Date().getFullYear()}/${student.rollNo ? String(student.rollNo).padStart(3, '0') : String(Math.floor(Math.random() * 899) + 100)}`);
         }
     };
+
+    // 5.1 Auto-Resolve Linked Parent Account & Active Enrolled Siblings
+    useEffect(() => {
+        let isMounted = true;
+        if (!selectedStudent || !schoolId) {
+            setLinkedParentInfo(null);
+            setLoadingParentInfo(false);
+            return;
+        }
+
+        const resolveParent = async () => {
+            setLoadingParentInfo(true);
+            try {
+                let parentDocSnap = null;
+                let pId = selectedStudent.parentId || selectedStudent.parentDetails?.parentId;
+
+                // Priority 1: Direct fetch via parentId
+                if (pId) {
+                    try {
+                        const pRef = doc(db, `schools/${schoolId}/parents`, pId);
+                        const snap = await getDoc(pRef);
+                        if (snap.exists()) {
+                            parentDocSnap = snap;
+                        }
+                    } catch (e) {}
+                }
+
+                // Priority 2: Query by phone if not found directly
+                const stPhone = (selectedStudent.phone || selectedStudent.parentPhone || selectedStudent.parentDetails?.phone || '').trim();
+                if (!parentDocSnap && stPhone) {
+                    try {
+                        const pQuery = query(
+                            collection(db, `schools/${schoolId}/parents`),
+                            where("phone", "==", stPhone),
+                            limit(1)
+                        );
+                        const qSnap = await getDocsFast(pQuery);
+                        if (qSnap && !qSnap.empty) {
+                            parentDocSnap = qSnap.docs[0];
+                            pId = parentDocSnap.id;
+                        }
+                    } catch (e) {}
+                }
+
+                // Priority 3: Scan parents collection where linkedStudents contains this studentId
+                if (!parentDocSnap) {
+                    try {
+                        const allParentsSnap = await getDocsFast(collection(db, `schools/${schoolId}/parents`));
+                        if (allParentsSnap && !allParentsSnap.empty) {
+                            const match = allParentsSnap.docs.find(d => {
+                                const dData = d.data();
+                                return Array.isArray(dData.linkedStudents) && dData.linkedStudents.some(s => s.studentId === selectedStudent.id);
+                            });
+                            if (match) {
+                                parentDocSnap = match;
+                                pId = match.id;
+                            }
+                        }
+                    } catch (e) {}
+                }
+
+                if (parentDocSnap && isMounted) {
+                    const pData = parentDocSnap.data();
+                    const allLinked = Array.isArray(pData.linkedStudents) ? pData.linkedStudents : [];
+                    // Filter out the currently departing student to find other enrolled siblings
+                    const otherSiblings = allLinked.filter(s => s.studentId !== selectedStudent.id);
+
+                    setLinkedParentInfo({
+                        id: parentDocSnap.id,
+                        name: pData.name || selectedStudent.fatherName || 'Parent',
+                        phone: pData.phone || selectedStudent.phone || '',
+                        email: pData.email || '',
+                        allLinked,
+                        otherSiblings,
+                        isSingleChild: otherSiblings.length === 0
+                    });
+                } else if (isMounted) {
+                    setLinkedParentInfo(null);
+                }
+            } catch (err) {
+                console.warn("[SchoolLeaving] Failed resolving parent account:", err);
+                if (isMounted) setLinkedParentInfo(null);
+            } finally {
+                if (isMounted) setLoadingParentInfo(false);
+            }
+        };
+
+        resolveParent();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [selectedStudent, schoolId]);
 
     // 6. Fetch 50-Year SLC History Archive (With Offline Cache & Queue Merge)
     const fetchSLCHistory = async (sid = schoolId) => {
@@ -2018,6 +2159,117 @@ export default function SchoolLeaving() {
             const currentCls = classes.find(c => c.id === selectedClassId) || { name: 'Class 10' };
             const issueYear = parseInt(slcLeavingDate.split('-')[0]) || new Date().getFullYear();
 
+            // -------------------------------------------------------------
+            // Parent Account Lifecycle Evaluation (Auto-Delete if Single Child vs Keep Active if Siblings)
+            // -------------------------------------------------------------
+            let parentActionResult = { status: 'none', note: 'No linked parent account found.' };
+
+            if (typeof navigator !== 'undefined' && navigator.onLine && schoolId) {
+                try {
+                    let parentIdToProcess = linkedParentInfo?.id || selectedStudent.parentId || selectedStudent.parentDetails?.parentId;
+                    let parentDocData = null;
+
+                    if (parentIdToProcess) {
+                        try {
+                            const pRef = doc(db, `schools/${schoolId}/parents`, parentIdToProcess);
+                            const pSnap = await getDoc(pRef);
+                            if (pSnap.exists()) {
+                                parentDocData = pSnap.data();
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (!parentDocData) {
+                        const stPhone = (selectedStudent.phone || selectedStudent.parentPhone || selectedStudent.parentDetails?.phone || '').trim();
+                        if (stPhone) {
+                            try {
+                                const pQuery = query(collection(db, `schools/${schoolId}/parents`), where("phone", "==", stPhone), limit(1));
+                                const qSnap = await getDocsFast(pQuery);
+                                if (qSnap && !qSnap.empty) {
+                                    parentIdToProcess = qSnap.docs[0].id;
+                                    parentDocData = qSnap.docs[0].data();
+                                }
+                            } catch (e) {}
+                        }
+                    }
+
+                    if (!parentDocData) {
+                        try {
+                            const allParentsSnap = await getDocsFast(collection(db, `schools/${schoolId}/parents`));
+                            if (allParentsSnap && !allParentsSnap.empty) {
+                                const match = allParentsSnap.docs.find(d => {
+                                    const dData = d.data();
+                                    return Array.isArray(dData.linkedStudents) && dData.linkedStudents.some(s => s.studentId === selectedStudent.id);
+                                });
+                                if (match) {
+                                    parentIdToProcess = match.id;
+                                    parentDocData = match.data();
+                                }
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (parentIdToProcess && parentDocData) {
+                        const allLinked = Array.isArray(parentDocData.linkedStudents) ? parentDocData.linkedStudents : [];
+                        const remainingSiblings = allLinked.filter(s => s.studentId !== selectedStudent.id);
+
+                        if (remainingSiblings.length === 0) {
+                            // CASE 1: Single child on this parent account -> Delete parent completely!
+                            console.log(`[SchoolLeaving] Single child detected for parent ${parentIdToProcess}. Deleting parent account completely...`);
+                            try {
+                                const deleteUserFn = httpsCallable(functions, 'deleteSchoolUser');
+                                await deleteUserFn({
+                                    targetUid: parentIdToProcess,
+                                    role: 'parent',
+                                    schoolId: schoolId
+                                });
+                            } catch (authErr) {
+                                console.warn("[SchoolLeaving] Cloud function deleteSchoolUser error, falling back to direct Firestore cleanup:", authErr);
+                                await deleteDoc(doc(db, `schools/${schoolId}/parents`, parentIdToProcess)).catch(() => {});
+                                await deleteDoc(doc(db, 'global_users', parentIdToProcess)).catch(() => {});
+                            }
+
+                            parentActionResult = {
+                                status: 'deleted',
+                                parentId: parentIdToProcess,
+                                parentName: parentDocData.name || selectedStudent.fatherName || 'Parent',
+                                phone: parentDocData.phone || selectedStudent.phone || '',
+                                action: 'Deleted parent login & database record (Single child departed)',
+                                executedAt: new Date().toISOString()
+                            };
+                        } else {
+                            // CASE 2: Siblings exist -> Keep parent account active, unlink departing student
+                            console.log(`[SchoolLeaving] Parent ${parentIdToProcess} has ${remainingSiblings.length} remaining siblings. Keeping active and unlinking student...`);
+                            await updateDoc(doc(db, `schools/${schoolId}/parents`, parentIdToProcess), {
+                                linkedStudents: remainingSiblings,
+                                updatedAt: serverTimestamp()
+                            });
+
+                            parentActionResult = {
+                                status: 'kept_active',
+                                parentId: parentIdToProcess,
+                                parentName: parentDocData.name || selectedStudent.fatherName || 'Parent',
+                                phone: parentDocData.phone || selectedStudent.phone || '',
+                                remainingSiblingsCount: remainingSiblings.length,
+                                remainingSiblings: remainingSiblings.map(s => ({
+                                    studentId: s.studentId,
+                                    studentName: s.studentName,
+                                    className: s.className || ''
+                                })),
+                                action: `Unlinked ${selectedStudent.name}. Kept parent active for ${remainingSiblings.length} remaining child/children.`,
+                                executedAt: new Date().toISOString()
+                            };
+                        }
+                    }
+                } catch (pProcErr) {
+                    console.error("[SchoolLeaving] Error executing parent account logic:", pProcErr);
+                    parentActionResult = {
+                        status: 'error',
+                        error: pProcErr.message || 'Parent processing error'
+                    };
+                }
+            }
+
             const slcRecord = {
                 studentId: selectedStudent.id,
                 studentName: selectedStudent.name,
@@ -2081,6 +2333,7 @@ export default function SchoolLeaving() {
                     hasRealData: studentAttendanceData.hasRealData,
                     isManualOverride: studentAttendanceData.isManualOverride || false
                 },
+                parentAccountAction: parentActionResult,
                 issuedAt: new Date().toISOString(),
                 isPendingSync: (typeof navigator !== 'undefined' && !navigator.onLine)
             };
@@ -2152,10 +2405,18 @@ export default function SchoolLeaving() {
             // Generate & Download Official A4 SLC Certificate
             generateOfficialSlcPdf(slcRecord);
 
-            alert(`🎉 Official School Leaving Certificate ${slcRecord.certificateNo} issued!\n\n• Permanently archived in 50-Year Almaari\n• Removed from active classes & promotion lists\n• Disconnected from Teacher Mobile App & Parent Mobile App (Zero APK update needed)${!navigator.onLine ? '\n\n📴 Saved in Offline Mode — Will automatically sync with Cloud Database once internet is restored.' : ''}`);
+            let parentStatusMsg = '';
+            if (parentActionResult.status === 'deleted') {
+                parentStatusMsg = `\n• 👤 Parent Account (${parentActionResult.parentName || 'Parent'}): Single child was enrolled — Account has been automatically CLOSED & DELETED.`;
+            } else if (parentActionResult.status === 'kept_active') {
+                parentStatusMsg = `\n• 🛡️ Parent Account (${parentActionResult.parentName || 'Parent'}): Kept ACTIVE (${parentActionResult.remainingSiblingsCount} other enrolled sibling(s) still active in school).`;
+            }
+
+            alert(`🎉 Official School Leaving Certificate ${slcRecord.certificateNo} issued!\n\n• Permanently archived in 50-Year Almaari\n• Removed from active classes & promotion lists\n• Disconnected from Teacher Mobile App & Parent Mobile App (Zero APK update needed)${parentStatusMsg}${!navigator.onLine ? '\n\n📴 Saved in Offline Mode — Will automatically sync with Cloud Database once internet is restored.' : ''}`);
 
             // Reset current student selection cleanly
             setSelectedStudent(null);
+            setLinkedParentInfo(null);
         } catch (err) {
             console.error("Issuance failed:", err);
             alert("Error issuing SLC: " + err.message);
@@ -2895,6 +3156,33 @@ export default function SchoolLeaving() {
                                         <Printer size={13} className="text-cyan-700" />
                                         <span>Print</span>
                                     </button>
+
+                                    {linkedParentInfo && (
+                                        <span
+                                            className={`hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black border shadow-2xs ${
+                                                linkedParentInfo.isSingleChild
+                                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                                    : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                            }`}
+                                            title={
+                                                linkedParentInfo.isSingleChild
+                                                    ? 'Single child: Parent app account will be automatically deleted upon leaving'
+                                                    : `${linkedParentInfo.otherSiblings.length} sibling(s) enrolled: Parent account will remain active`
+                                            }
+                                        >
+                                            {linkedParentInfo.isSingleChild ? (
+                                                <>
+                                                    <UserX size={12} className="text-amber-600" />
+                                                    <span>Single Child (Parent Auto-Delete)</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <ShieldCheck size={12} className="text-emerald-600" />
+                                                    <span>{linkedParentInfo.otherSiblings.length} Sibling(s) (Parent Stays Active)</span>
+                                                </>
+                                            )}
+                                        </span>
+                                    )}
 
                                     <button
                                         type="button"
@@ -3695,6 +3983,77 @@ export default function SchoolLeaving() {
                                         </a>
                                     </div>
                                 </div>
+
+                                {/* Parent Account & Sibling Intelligence Banner */}
+                                {loadingParentInfo ? (
+                                    <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center gap-2 text-slate-600 text-xs shadow-2xs">
+                                        <Loader2 size={15} className="animate-spin text-indigo-600" />
+                                        <span className="font-medium">Inspecting linked Parent App account & enrolled siblings...</span>
+                                    </div>
+                                ) : linkedParentInfo ? (
+                                    linkedParentInfo.isSingleChild ? (
+                                        <div className="p-4 bg-gradient-to-r from-amber-50 to-rose-50 border border-amber-200/90 rounded-2xl shadow-xs space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-2xs">
+                                                        <UserX size={15} />
+                                                    </div>
+                                                    <div>
+                                                        <h5 className="font-black text-xs text-amber-950">Parent Account (Single Child Attached)</h5>
+                                                        <p className="text-[11px] text-amber-800 font-medium">
+                                                            Parent: <strong>{linkedParentInfo.name}</strong> {linkedParentInfo.phone ? `(${linkedParentInfo.phone})` : ''}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className="px-2.5 py-1 bg-rose-600 text-white rounded-lg text-[10px] font-black uppercase shadow-2xs">
+                                                    Auto-Delete on Leave
+                                                </span>
+                                            </div>
+                                            <p className="text-[11px] text-amber-900 leading-relaxed font-medium bg-white/70 p-2.5 rounded-xl border border-amber-200/60">
+                                                ⚠️ <strong>Parent Account Auto-Closure:</strong> Ye is parent ka akela student hai. School Leave / SLC issue hone par parent ka mobile app account khud-ba-khud <strong>DELETE</strong> ho jayega taake koi orphan ya dead account baki na rahe.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <div className="p-4 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/90 rounded-2xl shadow-xs space-y-2.5">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-7 h-7 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-2xs">
+                                                        <ShieldCheck size={15} />
+                                                    </div>
+                                                    <div>
+                                                        <h5 className="font-black text-xs text-emerald-950">Parent Account (Multi-Child Protection Active)</h5>
+                                                        <p className="text-[11px] text-emerald-800 font-medium">
+                                                            Parent: <strong>{linkedParentInfo.name}</strong> {linkedParentInfo.phone ? `(${linkedParentInfo.phone})` : ''}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase shadow-2xs">
+                                                    Account Stays Active
+                                                </span>
+                                            </div>
+                                            <div className="bg-white/80 p-2.5 rounded-xl border border-emerald-200/60 space-y-1.5">
+                                                <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-900">
+                                                    <Users2 size={13} className="text-emerald-700" />
+                                                    <span>Other Active Enrolled Siblings ({linkedParentInfo.otherSiblings.length}):</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                                    {linkedParentInfo.otherSiblings.map(s => (
+                                                        <span
+                                                            key={s.studentId}
+                                                            className="px-2.5 py-1 bg-emerald-100/90 text-emerald-900 border border-emerald-300/80 rounded-lg text-[11px] font-extrabold flex items-center gap-1 shadow-2xs"
+                                                        >
+                                                            <span>👤 {s.studentName}</span>
+                                                            <span className="text-emerald-700 font-semibold text-[10px]">({s.className || 'Class'})</span>
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                                <p className="text-[10px] text-emerald-700 font-medium pt-0.5">
+                                                    🛡️ <strong>Safety Guarantee:</strong> Parent ka account bilkul delete <strong>NAHI</strong> hoga. Sirf ye student unlink ho jayega aur baki bachay parent app me active rahenge.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )
+                                ) : null}
 
                                 {/* BIG GLOWING ACTION BUTTON: PROCEED TO CERTIFICATE CANVAS */}
                                 <button
