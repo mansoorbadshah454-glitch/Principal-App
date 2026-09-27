@@ -1129,7 +1129,6 @@ const Classes = () => {
                     const userData = JSON.parse(manualSession);
                     if (userData.schoolId) {
                         setSchoolId(userData.schoolId);
-                        return;
                     }
                 } catch (e) {
                     console.error("Session parse error", e);

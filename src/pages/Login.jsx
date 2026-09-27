@@ -91,30 +91,44 @@ const Login = () => {
             const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
             const user = userCredential.user;
 
-            // Secure Claim Check
-            const tokenResult = await user.getIdTokenResult();
-            const claims = tokenResult.claims;
+            // Secure Claim Check with Force Refresh
+            let tokenResult = await user.getIdTokenResult(true);
+            let claims = tokenResult.claims;
+            let role = claims.role;
+            let schoolId = claims.schoolId;
 
-            if (claims.role === 'principal' || claims.role === 'super_admin' || claims.role === 'school Admin') {
-                const schoolId = claims.schoolId;
+            // Document Fallback: If custom claims are still propagating, check global_users directly
+            if (!schoolId || !role) {
+                try {
+                    const userDocRef = doc(db, 'global_users', user.uid);
+                    const userDocSnap = await getDoc(userDocRef);
+                    if (userDocSnap.exists()) {
+                        const uData = userDocSnap.data();
+                        if (uData.schoolId) schoolId = uData.schoolId;
+                        if (uData.role) role = uData.role;
+                    }
+                } catch (docErr) {
+                    console.warn("Could not fetch global_users doc for fallback claims", docErr);
+                }
+            }
 
+            if (role === 'principal' || role === 'super_admin' || role === 'school Admin' || role === 'school_admin' || role === 'admin') {
                 if (!schoolId) {
                     await auth.signOut();
                     setError('Security Error: No School ID associated with this account.');
                     return;
                 }
 
-                if (schoolId !== normalizedSchoolId) {
+                if (schoolId !== normalizedSchoolId && role !== 'super_admin') {
                     await auth.signOut();
                     setError('Security Error: The provided School ID does not match your account.');
                     return;
                 }
 
-
                 localStorage.setItem('manual_session', JSON.stringify({
                     uid: user.uid,
                     schoolId: schoolId,
-                    role: claims.role,
+                    role: role,
                     email: user.email,
                     isManual: false
                 }));
