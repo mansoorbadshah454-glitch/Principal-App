@@ -8,7 +8,7 @@ import {
 import { db, auth, functions } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, setDoc, doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { cacheDashboardStats, getCachedDashboardStats } from '../utils/offlineDataEngine';
+import { cacheDashboardStats, getCachedDashboardStats, cacheDashboardFullData, getCachedDashboardFullData } from '../utils/offlineDataEngine';
 import {
     ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
     CartesianGrid, Tooltip, BarChart, Bar, Cell, LineChart, Line, RadialBarChart, RadialBar, Legend
@@ -79,32 +79,60 @@ const MetricTooltipPill = ({ label, value, fullTitle, weight }) => {
 const Dashboard = () => {
     const navigate = useNavigate();
 
-    // 1. Shared Data State
-    const [schoolId, setSchoolId] = useState(null);
-    const [currentUserId, setCurrentUserId] = useState('principal');
-    const [currentUserRole, setCurrentUserRole] = useState('principal');
-    const [currentUserName, setCurrentUserName] = useState('');
-
-    // messagingId is 'principal' for the principal, and UID for admins.
-    const messagingId = (currentUserRole === 'principal') ? 'principal' : currentUserId;
-
-    const [fetchedClasses, setFetchedClasses] = useState([]);
-    const [messages, setMessages] = useState([]);
-    const [teachers, setTeachers] = useState([]);
-    
-    const cachedInitialStats = useMemo(() => {
+    // 1. Instant Cached Session & School Initialization
+    const initialSession = useMemo(() => {
         try {
             const manualSession = localStorage.getItem('manual_session');
-            const sid = manualSession ? JSON.parse(manualSession)?.schoolId : null;
-            return getCachedDashboardStats(sid);
+            return manualSession ? JSON.parse(manualSession) : null;
         } catch (_) {
             return null;
         }
     }, []);
 
-    const [collectionStats, setCollectionStats] = useState(() => cachedInitialStats?.collectionStats || { paid: 0, unpaid: 0, total: 0 });
-    const [attendanceStats, setAttendanceStats] = useState(() => cachedInitialStats?.attendanceStats || { present: 0, absent: 0 });
-    const [statsLoaded, setStatsLoaded] = useState(() => Boolean(cachedInitialStats?.collectionStats));
+    const initialSchoolId = initialSession?.schoolId || null;
+
+    const cachedInitialData = useMemo(() => {
+        try {
+            if (!initialSchoolId) return null;
+            const full = getCachedDashboardFullData(initialSchoolId);
+            const stats = getCachedDashboardStats(initialSchoolId);
+            return {
+                ...stats,
+                ...full
+            };
+        } catch (_) {
+            return null;
+        }
+    }, [initialSchoolId]);
+
+    const [schoolId, setSchoolId] = useState(() => initialSchoolId);
+    const [currentUserId, setCurrentUserId] = useState(() => initialSession?.uid || 'principal');
+    const [currentUserRole, setCurrentUserRole] = useState(() => (initialSession?.role || 'principal').toLowerCase());
+    const [currentUserName, setCurrentUserName] = useState(() => {
+        if (!initialSession) return '';
+        if (initialSession.displayName) return initialSession.displayName;
+        if (initialSession.role === 'school Admin' && initialSession.email) {
+            const name = initialSession.email.split('@')[0];
+            return name.charAt(0).toUpperCase() + name.slice(1);
+        }
+        return initialSession.role === 'school Admin' ? 'Admin' : 'Principal';
+    });
+
+    // messagingId is 'principal' for the principal, and UID for admins.
+    const messagingId = (currentUserRole === 'principal') ? 'principal' : currentUserId;
+
+    const [fetchedClasses, setFetchedClasses] = useState(() => cachedInitialData?.classes || []);
+    const [messages, setMessages] = useState([]);
+    const [teachers, setTeachers] = useState(() => cachedInitialData?.teachers || []);
+
+    const [collectionStats, setCollectionStats] = useState(() => cachedInitialData?.collectionStats || { paid: 0, unpaid: 0, total: 0 });
+    const [attendanceStats, setAttendanceStats] = useState(() => cachedInitialData?.attendanceStats || { present: 0, absent: 0 });
+    const [atomicCounts, setAtomicCounts] = useState(() => cachedInitialData?.atomicCounts || { studentCount: null, parentCount: null, teacherCount: null });
+    const [statsLoaded, setStatsLoaded] = useState(() => Boolean(
+        cachedInitialData?.collectionStats?.total ||
+        cachedInitialData?.atomicCounts?.studentCount ||
+        (cachedInitialData?.classes && cachedInitialData.classes.length > 0)
+    ));
 
     // 2. UI State
     const [selectedTeacher, setSelectedTeacher] = useState(null);
@@ -116,8 +144,8 @@ const Dashboard = () => {
     const [selectedClass, setSelectedClass] = useState('all');
     const [showClassDropdown, setShowClassDropdown] = useState(false);
     const [rankingPage, setRankingPage] = useState(0);
-    const [rankingData, setRankingData] = useState([]);
-    const [rankingCycle, setRankingCycle] = useState('');
+    const [rankingData, setRankingData] = useState(() => cachedInitialData?.rankingData || []);
+    const [rankingCycle, setRankingCycle] = useState(() => cachedInitialData?.rankingCycle || '');
     const [isSyncingRankings, setIsSyncingRankings] = useState(false);
     const [lastRankingSync, setLastRankingSync] = useState(null);
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
@@ -266,8 +294,6 @@ const Dashboard = () => {
         return () => unsubscribe();
     }, [schoolId, messagingId, currentUserId]);
 
-    const [atomicCounts, setAtomicCounts] = useState({ studentCount: null, parentCount: null, teacherCount: null });
-
     // Fetch Atomic Counters
     useEffect(() => {
         if (!schoolId) return;
@@ -275,7 +301,9 @@ const Dashboard = () => {
             try {
                 const snap = await getDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'));
                 if (snap.exists()) {
-                    setAtomicCounts(snap.data());
+                    const cData = snap.data();
+                    setAtomicCounts(cData);
+                    cacheDashboardFullData(schoolId, { atomicCounts: cData });
                 }
             } catch (err) {
                 console.error("Dashboard: Error fetching atomic counters", err);
@@ -415,6 +443,9 @@ const Dashboard = () => {
                 };
             });
             setTeachers(list);
+            if (schoolId) {
+                cacheDashboardFullData(schoolId, { teachers: list });
+            }
         });
         return () => unsubscribe();
     }, [schoolId]);
@@ -435,6 +466,12 @@ const Dashboard = () => {
                 if (data.lastCalculatedAt) {
                     const dateObj = data.lastCalculatedAt.toDate ? data.lastCalculatedAt.toDate() : new Date(data.lastCalculatedAt);
                     setLastRankingSync(dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+                }
+                if (schoolId && Array.isArray(data.rankings)) {
+                    cacheDashboardFullData(schoolId, {
+                        rankingData: data.rankings,
+                        rankingCycle: data.cycle?.label || ''
+                    });
                 }
             }
         }, (err) => {
@@ -533,6 +570,9 @@ const Dashboard = () => {
 
             console.log(`[Dashboard] Found ${list.length} classes`);
             setFetchedClasses(list);
+            if (schoolId) {
+                cacheDashboardFullData(schoolId, { classes: list });
+            }
 
             if (list.length === 0) {
                 setCollectionStats({ paid: 0, unpaid: 0, total: 0 });
@@ -544,7 +584,12 @@ const Dashboard = () => {
     }, [schoolId]);
 
     // 4. Consolidated Student Listener (Fees, Attendance, Performance)
-    const [allClassesData, setAllClassesData] = useState(new Map());
+    const [allClassesData, setAllClassesData] = useState(() => {
+        if (cachedInitialData?.classStatsMap) {
+            return new Map(Object.entries(cachedInitialData.classStatsMap));
+        }
+        return new Map();
+    });
 
     useEffect(() => {
         if (!schoolId || fetchedClasses.length === 0) return;
@@ -573,10 +618,20 @@ const Dashboard = () => {
             setCollectionStats(newColStats);
             setAttendanceStats(newAttStats);
 
+            const classStatsObj = {};
+            classDataMap.forEach((val, key) => {
+                classStatsObj[key] = val;
+            });
+
             if (schoolId) {
                 cacheDashboardStats(schoolId, {
                     collectionStats: newColStats,
                     attendanceStats: newAttStats
+                });
+                cacheDashboardFullData(schoolId, {
+                    collectionStats: newColStats,
+                    attendanceStats: newAttStats,
+                    classStatsMap: classStatsObj
                 });
             }
 
@@ -778,7 +833,7 @@ const Dashboard = () => {
     }, [rankingData, teachers]);
 
     // 5. Attendance Chart Data (Real-time)
-    const [attendanceChartData, setAttendanceChartData] = useState([]);
+    const [attendanceChartData, setAttendanceChartData] = useState(() => cachedInitialData?.attendanceChartData || []);
 
     useEffect(() => {
         if (!schoolId) return;
@@ -825,6 +880,9 @@ const Dashboard = () => {
                 });
 
                 setAttendanceChartData(chartData);
+                if (schoolId) {
+                    cacheDashboardFullData(schoolId, { attendanceChartData: chartData });
+                }
             } else {
                 const classObj = fetchedClasses.find(c => c.name === selectedClass);
                 if (!classObj) {

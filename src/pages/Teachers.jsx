@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode, LayoutGrid, List } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Calendar, DownloadCloud, Scan, QrCode, LayoutGrid, List, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -20,9 +20,11 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
     const [editStep, setEditStep] = useState(1);
     const [isSaving, setIsSaving] = useState(false);
     const [isPressed, setIsPressed] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const [editedTeacher, setEditedTeacher] = useState({
         ...teacher,
         salary: teacher.salary || '',
+        password: teacher.password || teacher.manualPassword || '',
         subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
         assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
     });
@@ -46,6 +48,7 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
                 setEditedTeacher({
                     ...teacher,
                     salary: teacher.salary || '',
+                    password: teacher.password || teacher.manualPassword || '',
                     subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
                     assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
                 });
@@ -262,12 +265,20 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
                                         <ShieldCheck size={16} color={purpleAccent} />
                                         <input
-                                            type="text"
+                                            type={showPassword ? "text" : "password"}
                                             placeholder="Leave empty to keep same"
                                             value={editedTeacher.password || ''}
                                             onChange={(e) => setEditedTeacher({ ...editedTeacher, password: e.target.value })}
                                             style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: purpleAccent }}
+                                            title={showPassword ? "Hide password" : "View password"}
+                                        >
+                                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -731,9 +742,11 @@ const TeacherTableRow = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, tod
 const TeacherEditModal = ({ teacher, dbClasses, onCancel, onSave }) => {
     const [editStep, setEditStep] = useState(1);
     const [isSaving, setIsSaving] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const [editedTeacher, setEditedTeacher] = useState({
         ...teacher,
         salary: teacher.salary || '',
+        password: teacher.password || teacher.manualPassword || '',
         subjects: Array.isArray(teacher.displaySubjects) ? teacher.displaySubjects : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : [])),
         assignedClasses: Array.isArray(teacher.assignedClasses) ? teacher.assignedClasses : (teacher.assignedClass ? [teacher.assignedClass] : [])
     });
@@ -969,14 +982,25 @@ const TeacherEditModal = ({ teacher, dbClasses, onCancel, onSave }) => {
                                 </div>
 
                                 <div>
-                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>New Password (leave blank to keep current)</label>
-                                    <input
-                                        type="password"
-                                        placeholder="Enter new password"
-                                        value={editedTeacher.password || ''}
-                                        onChange={(e) => setEditedTeacher({ ...editedTeacher, password: e.target.value })}
-                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #ddd6fe', outline: 'none', fontSize: '0.9rem', background: 'white' }}
-                                    />
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Password</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                                        <ShieldCheck size={16} color={purpleAccent} />
+                                        <input
+                                            type={showPassword ? "text" : "password"}
+                                            placeholder="Leave empty to keep same"
+                                            value={editedTeacher.password || ''}
+                                            onChange={(e) => setEditedTeacher({ ...editedTeacher, password: e.target.value })}
+                                            style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: purpleAccent }}
+                                            title={showPassword ? "Hide password" : "View password"}
+                                        >
+                                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1115,6 +1139,7 @@ const Teachers = () => {
     const [showAddTeacher, setShowAddTeacher] = useState(false);
     const [step, setStep] = useState(1);
     const [isSubmittingTeacher, setIsSubmittingTeacher] = useState(false);
+    const [showAddTeacherPassword, setShowAddTeacherPassword] = useState(false);
     const [newTeacher, setNewTeacher] = useState({
         name: '',
         email: '',
@@ -1849,7 +1874,12 @@ const Teachers = () => {
                 console.log("Auth credentials updated successfully");
             }
 
-            if (!updateData.password) delete updateData.password; // Don't overwrite in FS if empty
+            if (isPasswordChanged) {
+                updateData.manualPassword = updateData.password.trim();
+                updateData.password = updateData.password.trim();
+            } else {
+                delete updateData.password; // Don't overwrite in FS if empty
+            }
             if (!updateData.username) delete updateData.username;
 
             await updateDoc(teacherRef, updateData);
@@ -2040,9 +2070,11 @@ const Teachers = () => {
                 console.log("Cloud Function Result:", result);
                 const newTeacherUid = result.data.uid;
 
-                // Immediately update the newly created document with the displaySubjects
+                // Immediately update the newly created document with the displaySubjects and password
                 await updateDoc(doc(db, `schools/${schoolId}/teachers`, newTeacherUid), {
-                    displaySubjects: newTeacher.subjects
+                    displaySubjects: newTeacher.subjects,
+                    password: newTeacher.password || '',
+                    manualPassword: newTeacher.password || ''
                 });
 
                 // Note: Doc creation is now handled entirely by the Cloud Function.
@@ -3111,13 +3143,25 @@ const Teachers = () => {
                                         <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
                                             Password
                                         </label>
-                                        <input
-                                            type="text" placeholder={isEditing ? "Leave blank to keep current password" : "Set a strong password"}
-                                            value={newTeacher.password}
-                                            onChange={(e) => setNewTeacher({ ...newTeacher, password: e.target.value })}
-                                            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
-                                            required={!isEditing}
-                                        />                                    </div>
+                                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                            <input
+                                                type={showAddTeacherPassword ? "text" : "password"}
+                                                placeholder={isEditing ? "Leave blank to keep current password" : "Set a strong password"}
+                                                value={newTeacher.password}
+                                                onChange={(e) => setNewTeacher({ ...newTeacher, password: e.target.value })}
+                                                style={{ width: '100%', padding: '0.75rem', paddingRight: '2.5rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
+                                                required={!isEditing}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowAddTeacherPassword(!showAddTeacherPassword)}
+                                                style={{ position: 'absolute', right: '0.75rem', background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: '#64748b' }}
+                                                title={showAddTeacherPassword ? "Hide password" : "View password"}
+                                            >
+                                                {showAddTeacherPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                            </button>
+                                        </div>
+                                    </div>
 
                                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                         <button

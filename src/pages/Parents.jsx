@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby, LayoutGrid, List, MessageSquare } from 'lucide-react';
+import { Plus, X, Search, Filter, BookOpen, Users, User, Phone, Mail, Trash2, Loader2, Star, MoreVertical, ChevronRight, ChevronLeft, Edit, ShieldCheck, Baby, LayoutGrid, List, MessageSquare, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db, functions } from '../firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, updateDoc, writeBatch, getDoc, serverTimestamp, limit } from 'firebase/firestore';
@@ -16,7 +16,11 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
     const [isEditing, setIsEditing] = useState(false);
     const [isMessaging, setIsMessaging] = useState(false);
     const [editStep, setEditStep] = useState(1);
-    const [editedParent, setEditedParent] = useState({ ...parent });
+    const [showPassword, setShowPassword] = useState(false);
+    const [editedParent, setEditedParent] = useState({
+        ...parent,
+        password: parent.password || parent.manualPassword || ''
+    });
     const [localMessageText, setLocalMessageText] = useState('');
 
     // Step 3 Student Linking State
@@ -33,7 +37,10 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                 setIsEditing(false);
                 setIsMessaging(false);
                 setEditStep(1);
-                setEditedParent({ ...parent }); // Reset on cancel
+                setEditedParent({
+                    ...parent,
+                    password: parent.password || parent.manualPassword || ''
+                }); // Reset on cancel
             }
         };
 
@@ -43,7 +50,7 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
         return () => {
             document.removeEventListener('mousedown', handleClickOutside);
         };
-    }, [isEditing, parent]);
+    }, [isEditing, isMessaging, parent]);
 
     // Fetch students for Step 3 within Card
     useEffect(() => {
@@ -347,11 +354,19 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#fffaff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
                                         <ShieldCheck size={16} color="#bc1888" />
                                         <input
-                                            type="text"
+                                            type={showPassword ? "text" : "password"}
                                             value={editedParent.password || ''}
                                             onChange={(e) => setEditedParent({ ...editedParent, password: e.target.value })}
                                             style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: '#bc1888' }}
+                                            title={showPassword ? "Hide password" : "View password"}
+                                        >
+                                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -868,7 +883,11 @@ const ParentTableRow = ({ parent, onDelete, onUpdate, onSendMessage, dbClasses, 
 const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
     const [editStep, setEditStep] = useState(1);
     const [isSaving, setIsSaving] = useState(false);
-    const [editedParent, setEditedParent] = useState({ ...parent });
+    const [showPassword, setShowPassword] = useState(false);
+    const [editedParent, setEditedParent] = useState({
+        ...parent,
+        password: parent.password || parent.manualPassword || ''
+    });
 
     // Step 3 Student Linking State
     const [selectedStepClassId, setSelectedStepClassId] = useState('');
@@ -1092,14 +1111,25 @@ const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
                                 </div>
 
                                 <div>
-                                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>New Password (leave blank to keep current)</label>
-                                    <input
-                                        type="password"
-                                        placeholder="Enter new password"
-                                        value={editedParent.password || ''}
-                                        onChange={(e) => setEditedParent({ ...editedParent, password: e.target.value })}
-                                        style={{ width: '100%', padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.9rem', background: 'white' }}
-                                    />
+                                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#bc1888', display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Password</label>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#fffaff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                                        <ShieldCheck size={16} color="#bc1888" />
+                                        <input
+                                            type={showPassword ? "text" : "password"}
+                                            placeholder="Leave empty to keep same"
+                                            value={editedParent.password || ''}
+                                            onChange={(e) => setEditedParent({ ...editedParent, password: e.target.value })}
+                                            style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(!showPassword)}
+                                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: '#bc1888' }}
+                                            title={showPassword ? "Hide password" : "View password"}
+                                        >
+                                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1371,6 +1401,7 @@ const Parents = () => {
     const [showAddParent, setShowAddParent] = useState(false);
     const [step, setStep] = useState(1);
     const [isSubmittingParent, setIsSubmittingParent] = useState(false);
+    const [showAddParentPassword, setShowAddParentPassword] = useState(false);
     const [newParent, setNewParent] = useState({
         name: '',
         email: '',
@@ -1624,6 +1655,13 @@ const Parents = () => {
                 });
             }
 
+            if (passwordChanged && updatedData.password) {
+                updatedData.manualPassword = updatedData.password;
+                updatedData.password = updatedData.password;
+            } else if (!updatedData.password) {
+                delete updatedData.password;
+            }
+
             const oldLinks = oldParent?.linkedStudents || [];
             const newLinks = updatedData.linkedStudents || [];
 
@@ -1762,6 +1800,13 @@ const Parents = () => {
                     occupation: newParent.occupation || '',
                     linkedStudents: newParent.linkedStudents
                 });
+
+                if (result?.data?.uid) {
+                    await updateDoc(doc(db, `schools/${activeSchoolId}/parents`, result.data.uid), {
+                        password: newParent.password || '',
+                        manualPassword: newParent.password || ''
+                    }).catch(() => {});
+                }
 
                 // Sync freshly linked students directly to their document subcollections
                 if (newParent.linkedStudents && newParent.linkedStudents.length > 0 && result?.data?.uid) {
@@ -2462,13 +2507,24 @@ const Parents = () => {
                                             <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
                                                 Password
                                             </label>
-                                            <input
-                                                type="text" placeholder="Set password"
-                                                value={newParent.password}
-                                                onChange={(e) => setNewParent({ ...newParent, password: e.target.value })}
-                                                style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
-                                                required
-                                            />
+                                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                                <input
+                                                    type={showAddParentPassword ? "text" : "password"}
+                                                    placeholder="Set password"
+                                                    value={newParent.password}
+                                                    onChange={(e) => setNewParent({ ...newParent, password: e.target.value })}
+                                                    style={{ width: '100%', padding: '0.75rem', paddingRight: '2.5rem', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }}
+                                                    required
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowAddParentPassword(!showAddParentPassword)}
+                                                    style={{ position: 'absolute', right: '0.75rem', background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: '#64748b' }}
+                                                    title={showAddParentPassword ? "Hide password" : "View password"}
+                                                >
+                                                    {showAddParentPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
 

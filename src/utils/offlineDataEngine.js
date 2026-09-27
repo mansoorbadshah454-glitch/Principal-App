@@ -166,3 +166,49 @@ export const getCachedDashboardStats = (schoolId) => {
         return null;
     }
 };
+
+/* ==========================================================================
+   3. EXTENDED DASHBOARD FULL CACHE (0ms Instant Hydration Engine)
+   ========================================================================== */
+
+export const cacheDashboardFullData = async (schoolId, fullData = {}) => {
+    if (!schoolId || !fullData) return;
+    try {
+        // Fast synchronous mirror for instant 0ms retrieval on next visit
+        try {
+            const existingRaw = localStorage.getItem(`cached_dash_full_${schoolId}`);
+            const existing = existingRaw ? JSON.parse(existingRaw) : {};
+            const merged = { ...existing, ...fullData, _cachedAt: Date.now() };
+            localStorage.setItem(`cached_dash_full_${schoolId}`, JSON.stringify(merged));
+        } catch (_) {}
+
+        const db = await openDataDB();
+        const tx = db.transaction(STORES.DASHBOARD, 'readwrite');
+        const store = tx.objectStore(STORES.DASHBOARD);
+
+        store.put({
+            key: `full_${schoolId}`,
+            schoolId,
+            ...fullData,
+            _cachedAt: Date.now()
+        });
+
+        return new Promise((resolve) => {
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+        });
+    } catch (err) {
+        console.warn('Error caching full dashboard data:', err);
+    }
+};
+
+export const getCachedDashboardFullData = (schoolId) => {
+    if (!schoolId) return null;
+    try {
+        const raw = localStorage.getItem(`cached_dash_full_${schoolId}`);
+        return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+        return null;
+    }
+};
+
