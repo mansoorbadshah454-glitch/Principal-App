@@ -194,7 +194,19 @@ export default function Exams() {
     const [showUploadToParentsModal, setShowUploadToParentsModal] = useState(false);
     const [isUploadingToParents, setIsUploadingToParents] = useState(false);
     const [uploadSuccessMessage, setUploadSuccessMessage] = useState(null);
-    const [isDemoMode, setIsDemoMode] = useState(() => localStorage.getItem('exams_demo_mode_active') === 'true');
+    const [isDemoMode, setIsDemoMode] = useState(() => {
+        try {
+            return String(schoolId || '').trim() === '6257' && localStorage.getItem('exams_demo_mode_active') === 'true';
+        } catch (_) {
+            return false;
+        }
+    });
+
+    useEffect(() => {
+        if (String(schoolId || '').trim() !== '6257' && isDemoMode) {
+            setIsDemoMode(false);
+        }
+    }, [schoolId, isDemoMode]);
     const [selectedStudentForModerate, setSelectedStudentForModerate] = useState(null);
     const [moderateSubjectMarks, setModerateSubjectMarks] = useState({});
     const [moderateStatusOverride, setModerateStatusOverride] = useState('auto'); // 'auto' | 'pass' | 'conditional_pass' | 'fail'
@@ -2283,24 +2295,26 @@ export default function Exams() {
                         </div>
 
                         <div className="flex flex-wrap items-center gap-3">
-                            <button
-                                onClick={() => {
-                                    const next = !isDemoMode;
-                                    setIsDemoMode(next);
-                                    localStorage.setItem('exams_demo_mode_active', String(next));
-                                    // Keep deselected by default on toggle
-                                    setSelectedStudentIdsForBatch(new Set());
-                                }}
-                                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm ${
-                                    isDemoMode 
-                                        ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40' 
-                                        : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
-                                }`}
-                                title="Toggle live sample students (3 Pass, 2 Fail, 1 Pending)"
-                            >
-                                <Sparkles className="w-3.5 h-3.5" />
-                                {isDemoMode ? 'Exit Demo Data' : '✨ Try Demo Data (Pass / Fail / Pending)'}
-                            </button>
+                            {String(schoolId) === '6257' && (
+                                <button
+                                    onClick={() => {
+                                        const next = !isDemoMode;
+                                        setIsDemoMode(next);
+                                        localStorage.setItem('exams_demo_mode_active', String(next));
+                                        // Keep deselected by default on toggle
+                                        setSelectedStudentIdsForBatch(new Set());
+                                    }}
+                                    className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm ${
+                                        isDemoMode 
+                                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40' 
+                                            : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
+                                    }`}
+                                    title="Toggle live sample students (3 Pass, 2 Fail, 1 Pending)"
+                                >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    {isDemoMode ? 'Exit Demo Data' : '✨ Try Demo Data (Pass / Fail / Pending)'}
+                                </button>
+                            )}
                             <button
                                 onClick={() => {
                                     const allIds = isDemoMode ? ['demo_1', 'demo_2', 'demo_3', 'demo_4', 'demo_5', 'demo_6'] : students.map(s => s.id);

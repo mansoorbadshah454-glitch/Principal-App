@@ -21,12 +21,19 @@ export default function SLCOverviewDashboard({
     onNavigateToStudio,
     demoMode = false
 }) {
+    // Strict Demo Guard: Only School ID 6257 is allowed demo mode
+    const isDemoSchool = String(schoolId || '').trim() === '6257';
+
     // Current reference year
     const currentYear = useMemo(() => new Date().getFullYear(), []);
     const [selectedYearFilter, setSelectedYearFilter] = useState(currentYear); // number or 'all'
-    const [isDemoActive, setIsDemoActive] = useState(demoMode);
+    const [isDemoActive, setIsDemoActive] = useState(() => isDemoSchool && Boolean(demoMode));
     const [students, setStudents] = useState([]);
     const [loadingAdmissions, setLoadingAdmissions] = useState(false);
+
+    useEffect(() => {
+        setIsDemoActive(isDemoSchool && Boolean(demoMode));
+    }, [isDemoSchool, demoMode]);
 
     // 1. Fetch Students/Admissions for Growth Comparison (Cached offline-first)
     useEffect(() => {
@@ -34,8 +41,8 @@ export default function SLCOverviewDashboard({
 
         const fetchAdmissionsData = async () => {
             if (!schoolId) {
-                // If demo mode or no session, provide mock admissions matching demo SLCs
-                if (isMounted) {
+                // If demo mode for school 6257, provide mock admissions matching demo SLCs
+                if (isDemoSchool && isMounted) {
                     setStudents(generateDemoAdmissions(currentYear));
                 }
                 return;
@@ -358,29 +365,31 @@ export default function SLCOverviewDashboard({
 
                     {/* Quick Session Filter Pills & Demo Toggle */}
                     <div className="flex flex-wrap items-center gap-3">
-                        {/* Demo Data Inject / Exit Master Button */}
-                        <button
-                            type="button"
-                            onClick={() => setIsDemoActive(prev => !prev)}
-                            className={`px-3.5 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shadow-md border ${
-                                isDemoActive
-                                    ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-400/80 ring-2 ring-rose-300/50'
-                                    : 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-400/80 ring-2 ring-emerald-300/50'
-                            }`}
-                            title={isDemoActive ? "Click to Exit Demo Data and show real school database" : "Click to Inject Demo Data for presentation"}
-                        >
-                            {isDemoActive ? (
-                                <>
-                                    <X size={14} className="stroke-[3]" />
-                                    <span>Exit Demo Data</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Sparkles size={14} className="animate-spin text-amber-200" />
-                                    <span>Inject Demo Data</span>
-                                </>
-                            )}
-                        </button>
+                        {/* Demo Data Inject / Exit Master Button (Only for Demo School 6257) */}
+                        {isDemoSchool && (
+                            <button
+                                type="button"
+                                onClick={() => setIsDemoActive(prev => !prev)}
+                                className={`px-3.5 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shadow-md border ${
+                                    isDemoActive
+                                        ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-400/80 ring-2 ring-rose-300/50'
+                                        : 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-400/80 ring-2 ring-emerald-300/50'
+                                }`}
+                                title={isDemoActive ? "Click to Exit Demo Data and show real school database" : "Click to Inject Demo Data for presentation"}
+                            >
+                                {isDemoActive ? (
+                                    <>
+                                        <X size={14} className="stroke-[3]" />
+                                        <span>Exit Demo Data</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles size={14} className="animate-spin text-amber-200" />
+                                        <span>Inject Demo Data</span>
+                                    </>
+                                )}
+                            </button>
+                        )}
 
                         {/* Option A: Quick Session Filter Pills + Historical Year Dropdown */}
                         <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl border border-blue-100 shadow-md">
@@ -780,28 +789,30 @@ export default function SLCOverviewDashboard({
                             </p>
                         </div>
                         {/* Demo Data Inject / Exit Button for Admissions vs Leavings Trend */}
-                        <button
-                            type="button"
-                            onClick={() => setIsDemoActive(prev => !prev)}
-                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center gap-1.5 border shrink-0 ${
-                                isDemoActive
-                                    ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                            }`}
-                            title={isDemoActive ? "Click to Exit Demo Data and restore real database" : "Click to Inject Demo Data into Trend Chart"}
-                        >
-                            {isDemoActive ? (
-                                <>
-                                    <X size={12} className="stroke-[3]" />
-                                    <span>Exit Demo</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Sparkles size={12} className="text-indigo-600" />
-                                    <span>Inject Demo Data</span>
-                                </>
-                            )}
-                        </button>
+                        {isDemoSchool && (
+                            <button
+                                type="button"
+                                onClick={() => setIsDemoActive(prev => !prev)}
+                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center gap-1.5 border shrink-0 ${
+                                    isDemoActive
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                        : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                }`}
+                                title={isDemoActive ? "Click to Exit Demo Data and restore real database" : "Click to Inject Demo Data into Trend Chart"}
+                            >
+                                {isDemoActive ? (
+                                    <>
+                                        <X size={12} className="stroke-[3]" />
+                                        <span>Exit Demo</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles size={12} className="text-indigo-600" />
+                                        <span>Inject Demo Data</span>
+                                    </>
+                                )}
+                            </button>
+                        )}
                     </div>
 
                     <div className="h-72 w-full pt-2">
@@ -859,28 +870,30 @@ export default function SLCOverviewDashboard({
                             </div>
                             <div className="flex items-center gap-2">
                                 {/* Demo Data Inject / Exit Button for Class-Wise Exit Leaderboard */}
-                                <button
-                                    type="button"
-                                    onClick={() => setIsDemoActive(prev => !prev)}
-                                    className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shrink-0 ${
-                                        isDemoActive
-                                            ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                                            : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                                    }`}
-                                    title={isDemoActive ? "Click to Exit Demo Data" : "Click to Inject Demo Data into Leaderboard"}
-                                >
-                                    {isDemoActive ? (
-                                        <>
-                                            <X size={11} className="stroke-[3]" />
-                                            <span>Exit Demo</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Sparkles size={11} className="text-amber-600" />
-                                            <span>Inject Demo</span>
-                                        </>
-                                    )}
-                                </button>
+                                {isDemoSchool && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsDemoActive(prev => !prev)}
+                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shrink-0 ${
+                                            isDemoActive
+                                                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                                : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                        }`}
+                                        title={isDemoActive ? "Click to Exit Demo Data" : "Click to Inject Demo Data into Leaderboard"}
+                                    >
+                                        {isDemoActive ? (
+                                            <>
+                                                <X size={11} className="stroke-[3]" />
+                                                <span>Exit Demo</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles size={11} className="text-amber-600" />
+                                                <span>Inject Demo</span>
+                                            </>
+                                        )}
+                                    </button>
+                                )}
                                 <span className="text-[10px] font-black px-2 py-0.5 bg-slate-100 text-slate-700 rounded-lg">
                                     {analytics.classLeaderboard.length} Classes
                                 </span>
@@ -973,28 +986,30 @@ export default function SLCOverviewDashboard({
                             </span>
                             <div className="flex items-center gap-2">
                                 {/* Demo Data Inject / Exit Button for Almari Vault */}
-                                <button
-                                    type="button"
-                                    onClick={() => setIsDemoActive(prev => !prev)}
-                                    className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shadow-xs ${
-                                        isDemoActive
-                                            ? 'bg-rose-500/90 text-white border-rose-300 hover:bg-rose-600'
-                                            : 'bg-white/20 text-white border-white/30 hover:bg-white/30 backdrop-blur-md'
-                                    }`}
-                                    title={isDemoActive ? "Click to Exit Demo Data and restore real Almari count" : "Click to Inject Demo Data (50-Year records) into Almari"}
-                                >
-                                    {isDemoActive ? (
-                                        <>
-                                            <X size={11} className="stroke-[3]" />
-                                            <span>Exit Demo</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Sparkles size={11} className="text-amber-200" />
-                                            <span>Inject Demo</span>
-                                        </>
-                                    )}
-                                </button>
+                                {isDemoSchool && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsDemoActive(prev => !prev)}
+                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shadow-xs ${
+                                            isDemoActive
+                                                ? 'bg-rose-500/90 text-white border-rose-300 hover:bg-rose-600'
+                                                : 'bg-white/20 text-white border-white/30 hover:bg-white/30 backdrop-blur-md'
+                                        }`}
+                                        title={isDemoActive ? "Click to Exit Demo Data and restore real Almari count" : "Click to Inject Demo Data (50-Year records) into Almari"}
+                                    >
+                                        {isDemoActive ? (
+                                            <>
+                                                <X size={11} className="stroke-[3]" />
+                                                <span>Exit Demo</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles size={11} className="text-amber-200" />
+                                                <span>Inject Demo</span>
+                                            </>
+                                        )}
+                                    </button>
+                                )}
                                 <span className="text-[10px] font-black px-3 py-1 bg-white/20 text-white rounded-full border border-white/30 shadow-xs backdrop-blur-md">
                                     Permanent Vault
                                 </span>
@@ -1058,28 +1073,30 @@ export default function SLCOverviewDashboard({
                             </div>
                             <div className="flex items-center gap-2">
                                 {/* Demo Data Inject / Exit Button for Why Students Leave */}
-                                <button
-                                    type="button"
-                                    onClick={() => setIsDemoActive(prev => !prev)}
-                                    className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shrink-0 ${
-                                        isDemoActive
-                                            ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                                            : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                    }`}
-                                    title={isDemoActive ? "Click to Exit Demo Data" : "Click to Inject Demo Data into Reasons"}
-                                >
-                                    {isDemoActive ? (
-                                        <>
-                                            <X size={11} className="stroke-[3]" />
-                                            <span>Exit Demo</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Sparkles size={11} className="text-indigo-600" />
-                                            <span>Inject Demo</span>
-                                        </>
-                                    )}
-                                </button>
+                                {isDemoSchool && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsDemoActive(prev => !prev)}
+                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shrink-0 ${
+                                            isDemoActive
+                                                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                                : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                        }`}
+                                        title={isDemoActive ? "Click to Exit Demo Data" : "Click to Inject Demo Data into Reasons"}
+                                    >
+                                        {isDemoActive ? (
+                                            <>
+                                                <X size={11} className="stroke-[3]" />
+                                                <span>Exit Demo</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles size={11} className="text-indigo-600" />
+                                                <span>Inject Demo</span>
+                                            </>
+                                        )}
+                                    </button>
+                                )}
                                 <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg">
                                     {analytics.reasonsList.length} Categories
                                 </span>

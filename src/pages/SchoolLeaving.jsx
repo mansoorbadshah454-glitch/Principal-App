@@ -637,8 +637,10 @@ export default function SchoolLeaving() {
                     }
                 }
             } else if (!sid) {
-                // If definitely no logged in user & no session, load demo fallback
-                injectMockDemoData();
+                // If definitely no logged in user & no session, load demo fallback ONLY if demo school 6257
+                if (String(schoolId).trim() === '6257') {
+                    injectMockDemoData();
+                }
             }
         });
 
@@ -1666,8 +1668,12 @@ export default function SchoolLeaving() {
         }
     };
 
-    // 7. Inject Rich 50-Year Demo Data
+    // 7. Inject Rich 50-Year Demo Data (Only for Demo School 6257)
     const injectMockDemoData = () => {
+        if (String(schoolId).trim() !== '6257') {
+            alert("Restricted: Demo SLC data injection is only available for Demo Account 6257.");
+            return;
+        }
         setDemoMode(true);
         const mockClasses = [
             { id: 'cls_10', name: 'Class 10 (Matric)' },
@@ -2354,18 +2360,20 @@ export default function SchoolLeaving() {
 
                 {/* Desk Actions */}
                 <div className="flex items-center gap-2.5">
-                    <button
-                        type="button"
-                        onClick={() => injectMockDemoData()}
-                        className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs ${
-                            demoMode
-                                ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
-                                : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
-                        }`}
-                    >
-                        <Sparkles size={14} className={demoMode ? 'text-slate-950' : 'text-purple-600'} />
-                        <span>{demoMode ? '✨ Demo Mode Active' : '✨ Inject Demo Data'}</span>
-                    </button>
+                    {String(schoolId) === '6257' && (
+                        <button
+                            type="button"
+                            onClick={() => injectMockDemoData()}
+                            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs ${
+                                demoMode
+                                    ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
+                                    : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
+                            }`}
+                        >
+                            <Sparkles size={14} className={demoMode ? 'text-slate-950' : 'text-purple-600'} />
+                            <span>{demoMode ? '✨ Demo Mode Active' : '✨ Inject Demo Data'}</span>
+                        </button>
+                    )}
 
                     <button
                         type="button"

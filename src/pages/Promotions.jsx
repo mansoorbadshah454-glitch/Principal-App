@@ -813,6 +813,7 @@ const Promotions = () => {
     }, [schoolId, selectedClass?.id, isDemoMode, classes]);
 
     const handleToggleDemoMode = () => {
+        if (String(schoolId).trim() !== '6257') return;
         const nextDemo = !isDemoMode;
         setIsDemoMode(nextDemo);
         localStorage.setItem('exams_demo_mode_active', String(nextDemo));
@@ -2454,19 +2455,21 @@ const Promotions = () => {
                         {/* Export & Print Action Buttons */}
                         <div className="flex items-center gap-2.5 flex-wrap">
                             {/* Demo Presentation Inject / Exit Toggle Button */}
-                            <button
-                                type="button"
-                                onClick={handleToggleDemoMode}
-                                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer ${
-                                    isDemoMode
-                                        ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40'
-                                        : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
-                                }`}
-                                title="Toggle realistic sample historical records for presentation"
-                            >
-                                <Sparkles size={14} />
-                                <span>{isDemoMode ? 'Exit Demo Data' : '✨ Inject Demo Data'}</span>
-                            </button>
+                            {String(schoolId) === '6257' && (
+                                <button
+                                    type="button"
+                                    onClick={handleToggleDemoMode}
+                                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer ${
+                                        isDemoMode
+                                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40'
+                                            : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
+                                    }`}
+                                    title="Toggle realistic sample historical records for presentation"
+                                >
+                                    <Sparkles size={14} />
+                                    <span>{isDemoMode ? 'Exit Demo Data' : '✨ Inject Demo Data'}</span>
+                                </button>
+                            )}
 
                             {/* Export to Excel / CSV */}
                             <button

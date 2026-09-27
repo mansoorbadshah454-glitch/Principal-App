@@ -9,12 +9,12 @@ const GalaxyBackground = () => {
 
         const ctx = canvas.getContext('2d');
         let animationFrameId;
-        let width = (canvas.width = canvas.parentElement?.offsetWidth || 280);
+        let width = (canvas.width = canvas.parentElement?.offsetWidth || window.innerWidth);
         let height = (canvas.height = canvas.parentElement?.offsetHeight || window.innerHeight);
 
         const handleResize = () => {
             if (!canvas.parentElement) return;
-            width = canvas.width = canvas.parentElement.offsetWidth || 280;
+            width = canvas.width = canvas.parentElement.offsetWidth || window.innerWidth;
             height = canvas.height = canvas.parentElement.offsetHeight || window.innerHeight;
         };
 

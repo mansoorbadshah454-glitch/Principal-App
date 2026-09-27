@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Crown, Sparkles, Lock, ArrowLeft, Phone, MessageSquare, CheckCircle2, Bus, Tv, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import GalaxyBackground from './GalaxyBackground';
@@ -36,6 +37,21 @@ const MODULE_DETAILS = {
 
 const PremiumUpgradePrompt = ({ moduleKey = 'transport', moduleName = 'This Module' }) => {
     const navigate = useNavigate();
+
+    useEffect(() => {
+        const mainEl = document.querySelector('.main-content');
+        if (mainEl) {
+            const prevPadding = mainEl.style.padding;
+            const prevBg = mainEl.style.backgroundColor;
+            mainEl.style.padding = '0px';
+            mainEl.style.backgroundColor = '#090d16';
+            return () => {
+                mainEl.style.padding = prevPadding;
+                mainEl.style.backgroundColor = prevBg;
+            };
+        }
+    }, []);
+
     const config = MODULE_DETAILS[moduleKey] || {
         title: moduleName,
         badge: 'Premium Add-on',
@@ -60,11 +76,12 @@ const PremiumUpgradePrompt = ({ moduleKey = 'transport', moduleName = 'This Modu
         window.location.href = 'tel:+923000000000';
     };
 
-    return (
+    const content = (
         <div
-            className="fixed md:left-[280px] left-0 top-0 right-0 bottom-0 z-20 flex items-center justify-center p-4 md:p-8 overflow-y-auto"
+            className="fixed md:left-[280px] left-0 top-0 right-0 bottom-0 z-30 flex items-center justify-center p-4 md:p-8 overflow-y-auto"
             style={{
-                background: 'linear-gradient(180deg, #090d16 0%, #0c1222 50%, #080c18 100%)'
+                background: 'linear-gradient(180deg, #090d16 0%, #0c1222 50%, #080c18 100%)',
+                minHeight: '100vh'
             }}
         >
             {/* Infinite Cosmic Galaxy Animation Layer */}
@@ -151,6 +168,8 @@ const PremiumUpgradePrompt = ({ moduleKey = 'transport', moduleName = 'This Modu
             </div>
         </div>
     );
+
+    return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 };
 
 export default PremiumUpgradePrompt;

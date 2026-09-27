@@ -69,16 +69,9 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
         }
     });
 
-    // Detect if this is the Principal's Demo Account
+    // Detect if this is the Principal's Demo Account 6257
     const isDemoAccount = React.useMemo(() => {
-        const sId = (schoolId || '').toLowerCase();
-        const isLocal = typeof window !== 'undefined' && (
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.port !== ''
-        );
-        const manualSession = typeof window !== 'undefined' ? localStorage.getItem('manual_session') : null;
-        return isLocal || sId.includes('demo') || sId.includes('test') || Boolean(manualSession);
+        return String(schoolId || '').trim() === '6257';
     }, [schoolId]);
 
     // Reset to overview whenever modal opens or student changes

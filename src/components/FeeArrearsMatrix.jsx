@@ -6,8 +6,8 @@ import {
     ChevronRight, ArrowLeft, Send, Phone, DollarSign, Download, 
     RefreshCw, Filter, ShieldCheck, ChevronDown, ChevronUp, Copy,
     Check, Sparkles, TrendingUp, AlertTriangle, UserX, Clock,
-    Lock, Plus, Trash2, ExternalLink, BookOpen, Bus, ShoppingBag, Award, Edit,
-    Eye, Printer, X, FileText
+    Lock, Plus, Trash2, ExternalLink, BookOpen, Bus, ShoppingBag, Award,
+    Eye, Printer, X, FileText, LayoutGrid, Table
 } from 'lucide-react';
 import { db } from '../firebase';
 import { 
@@ -427,6 +427,7 @@ const FeeArrearsMatrix = ({
     const [selectedClassId, setSelectedClassId] = useState(null);
     const [defaulterFilter, setDefaulterFilter] = useState('all'); // 'all', 'defaulters_only', 'paid_only', 'concession_only'
     const [searchQuery, setSearchQuery] = useState('');
+    const [classViewMode, setClassViewMode] = useState('grid'); // 'grid' | 'table'
 
     // Quick Collect Fee Modal State
     const [collectingStudent, setCollectingStudent] = useState(null);
@@ -434,6 +435,9 @@ const FeeArrearsMatrix = ({
     const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
     const [copiedPhone, setCopiedPhone] = useState(null);
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
+
+    // Strict Demo Account Guard (Only School ID 6257 can view and use demo injection)
+    const isDemoSchool = String(schoolId || '').trim() === '6257' || String(schoolInfo?.schoolId || '').trim() === '6257' || String(schoolInfo?.id || '').trim() === '6257';
 
     // Interactive Student Fee Card Modal State
     const [selectedFeeCardData, setSelectedFeeCardData] = useState(null);
@@ -732,6 +736,28 @@ const FeeArrearsMatrix = ({
         });
     }, [localClasses, processedStudents, selectedMonthIdx, selectedYear, currentAction, feeSettings]);
 
+    // Compute Overall Totals for Class Summary Table
+    const classTotals = useMemo(() => {
+        let totalStudents = 0;
+        let paidCount = 0;
+        let unpaidCount = 0;
+        let collectedAmount = 0;
+        let pendingAmount = 0;
+        let totalAmount = 0;
+        classBreakdown.forEach(c => {
+            totalStudents += c.totalStudents || 0;
+            paidCount += c.paidCount || 0;
+            unpaidCount += c.unpaidCount || 0;
+            collectedAmount += c.collectedAmount || 0;
+            pendingAmount += c.pendingAmount || 0;
+            totalAmount += c.totalAmount || 0;
+        });
+        const avgRecoveryRate = totalAmount > 0 
+            ? Math.min(100, Math.round((collectedAmount / totalAmount) * 100)) 
+            : 0;
+        return { totalStudents, paidCount, unpaidCount, collectedAmount, pendingAmount, totalAmount, avgRecoveryRate };
+    }, [classBreakdown]);
+
     // 4. Compute Student List for Level 3 (Defaulters Ledger) - SSOT Unified
     const activeStudentList = useMemo(() => {
         if (selectedMonthIdx === null) return [];
@@ -968,6 +994,11 @@ ${breakdownText}
     const handleInjectDemoData = async () => {
         if (!schoolId) {
             alert("School ID not found. Please log in or refresh.");
+            return;
+        }
+
+        if (!isDemoSchool) {
+            alert("Restricted: Demo data injection is only available for Demo Account 6257.");
             return;
         }
 
@@ -1388,28 +1419,30 @@ ${breakdownText}
                             <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#1e293b', margin: 0 }}>
                                 12-Month Yearly Matrix ({selectedYear})
                             </h3>
-                            <button
-                                onClick={handleInjectDemoData}
-                                disabled={isInjectingDemo}
-                                style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.4rem',
-                                    padding: '0.35rem 0.85rem',
-                                    borderRadius: '10px',
-                                    border: '1.5px solid #6366f1',
-                                    background: '#eef2ff',
-                                    color: '#4338ca',
-                                    fontWeight: '800',
-                                    fontSize: '0.8rem',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 2px 0px #6366f1'
-                                }}
-                                title="Set demo presentation data: Past months Green, Last month Red, Current month Orange"
-                            >
-                                <Sparkles size={14} color="#4f46e5" />
-                                {isInjectingDemo ? 'Injecting Demo...' : '✨ Inject Demo Data (Presentation)'}
-                            </button>
+                            {isDemoSchool && (
+                                <button
+                                    onClick={handleInjectDemoData}
+                                    disabled={isInjectingDemo}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.35rem 0.85rem',
+                                        borderRadius: '10px',
+                                        border: '1.5px solid #6366f1',
+                                        background: '#eef2ff',
+                                        color: '#4338ca',
+                                        fontWeight: '800',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 0px #6366f1'
+                                    }}
+                                    title="Set demo presentation data: Past months Green, Last month Red, Current month Orange"
+                                >
+                                    <Sparkles size={14} color="#4f46e5" />
+                                    {isInjectingDemo ? 'Injecting Demo...' : '✨ Inject Demo Data (Presentation)'}
+                                </button>
+                            )}
                         </div>
                         <p style={{ margin: '0.25rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
                             Click any month card to inspect class-wise recovery and open student defaulters.
@@ -2035,28 +2068,6 @@ ${breakdownText}
                                                                         <ShieldCheck size={16} /> Cleared
                                                                     </span>
                                                                 )}
-
-                                                                {/* Direct Edit Fee / Student Profile Link */}
-                                                                <button
-                                                                    onClick={() => navigate(`/student/edit/${st.classId || selectedClassId}/${st.id}?from=collections`)}
-                                                                    title="Edit Student Profile, Fees & Scholarship"
-                                                                    style={{
-                                                                        background: '#f8fafc',
-                                                                        color: '#475569',
-                                                                        border: '1px solid #e2e8f0',
-                                                                        borderRadius: '10px',
-                                                                        padding: '0.45rem 0.65rem',
-                                                                        fontSize: '0.75rem',
-                                                                        fontWeight: '700',
-                                                                        cursor: 'pointer',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '0.35rem'
-                                                                    }}
-                                                                >
-                                                                    <Edit size={13} color="#4f46e5" />
-                                                                    Edit Fee
-                                                                </button>
                                                             </div>
                                                         </td>
                                                     </tr>
@@ -2069,132 +2080,419 @@ ${breakdownText}
                         </div>
                     </div>
                 ) : (
-                    // === CLASS CARDS OVERVIEW (Main View) ===
+                    // === CLASS ARREARS SUMMARY (Main Overview: Grid or Table) ===
                     <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                             <div>
                                 <h3 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
                                     Class-Wise Arrears Summary ({selectedMonthMeta.monthName} {selectedYear})
                                 </h3>
                                 <p style={{ margin: '0.25rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
-                                    Click any class card or "Open Class Ledger" to view students, itemized balances, and locked collection.
+                                    Click any class or "Open Class Ledger" to view students, itemized balances, and locked collection.
                                 </p>
+                            </div>
+
+                            {/* View Switcher Toggle (Grid vs Table) */}
+                            <div style={{
+                                display: 'inline-flex',
+                                background: '#f1f5f9',
+                                padding: '3px',
+                                borderRadius: '12px',
+                                border: '1px solid #e2e8f0',
+                                gap: '3px'
+                            }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setClassViewMode('grid')}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.45rem 0.85rem',
+                                        borderRadius: '9px',
+                                        border: 'none',
+                                        background: classViewMode === 'grid' ? '#4f46e5' : 'transparent',
+                                        color: classViewMode === 'grid' ? '#ffffff' : '#64748b',
+                                        fontWeight: '800',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                        boxShadow: classViewMode === 'grid' ? '0 2px 6px rgba(79, 70, 229, 0.28)' : 'none'
+                                    }}
+                                    title="Card Grid View"
+                                >
+                                    <LayoutGrid size={14} />
+                                    <span>Grid</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setClassViewMode('table')}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.45rem 0.85rem',
+                                        borderRadius: '9px',
+                                        border: 'none',
+                                        background: classViewMode === 'table' ? '#4f46e5' : 'transparent',
+                                        color: classViewMode === 'table' ? '#ffffff' : '#64748b',
+                                        fontWeight: '800',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                        boxShadow: classViewMode === 'table' ? '0 2px 6px rgba(79, 70, 229, 0.28)' : 'none'
+                                    }}
+                                    title="Tabular List View"
+                                >
+                                    <Table size={14} />
+                                    <span>Table</span>
+                                </button>
                             </div>
                         </div>
 
-                        <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))',
-                            gap: '1.25rem'
-                        }}>
-                            {classBreakdown.map((c) => (
-                                <div
-                                    key={c.classId}
-                                    style={{
-                                        background: '#f8fafc',
-                                        borderRadius: '16px',
-                                        padding: '1.25rem',
-                                        border: '1px solid #e2e8f0',
-                                        boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        justifyContent: 'space-between',
-                                        gap: '0.85rem',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.15s ease'
-                                    }}
-                                    onClick={() => setSelectedClassId(c.classId)}
-                                >
-                                    <div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.35rem' }}>
-                                            <div>
-                                                <div style={{ fontWeight: '800', fontSize: '1.15rem', color: '#0f172a' }}>
-                                                    {c.className}
+                        {classViewMode === 'grid' ? (
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))',
+                                gap: '1.25rem'
+                            }}>
+                                {classBreakdown.map((c) => (
+                                    <div
+                                        key={c.classId}
+                                        style={{
+                                            background: '#f8fafc',
+                                            borderRadius: '16px',
+                                            padding: '1.25rem',
+                                            border: '1px solid #e2e8f0',
+                                            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            justifyContent: 'space-between',
+                                            gap: '0.85rem',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                        onClick={() => setSelectedClassId(c.classId)}
+                                    >
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.35rem' }}>
+                                                <div>
+                                                    <div style={{ fontWeight: '800', fontSize: '1.15rem', color: '#0f172a' }}>
+                                                        {c.className}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                        {c.teacherName}
+                                                    </div>
                                                 </div>
-                                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                                    {c.teacherName}
+                                                <span style={{
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '800',
+                                                    padding: '3px 8px',
+                                                    borderRadius: '10px',
+                                                    background: c.recoveryRate >= 85 ? '#dcfce7' : c.recoveryRate >= 50 ? '#fef3c7' : '#fee2e2',
+                                                    color: c.recoveryRate >= 85 ? '#166534' : c.recoveryRate >= 50 ? '#92400e' : '#991b1b'
+                                                }}>
+                                                    {c.recoveryRate}% Recovery
+                                                </span>
+                                            </div>
+
+                                            <div style={{ width: '100%', background: '#e2e8f0', height: '6px', borderRadius: '3px', margin: '0.6rem 0', overflow: 'hidden' }}>
+                                                <div style={{
+                                                    width: `${c.recoveryRate}%`,
+                                                    height: '100%',
+                                                    background: c.recoveryRate >= 85 ? '#10b981' : c.recoveryRate >= 50 ? '#f59e0b' : '#ef4444',
+                                                    borderRadius: '3px'
+                                                }} />
+                                            </div>
+
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                                                <div>
+                                                    <span style={{ color: '#059669', fontWeight: '800' }}>✓ {c.paidCount} Paid</span>
+                                                    <div style={{ color: '#64748b', fontSize: '0.75rem' }}>{formatPKR(c.collectedAmount)}</div>
+                                                </div>
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <span style={{ color: '#dc2626', fontWeight: '800' }}>✗ {c.unpaidCount} Defaulters</span>
+                                                    <div style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: '700' }}>{formatPKR(c.pendingAmount)}</div>
                                                 </div>
                                             </div>
-                                            <span style={{
-                                                fontSize: '0.75rem',
-                                                fontWeight: '800',
-                                                padding: '3px 8px',
-                                                borderRadius: '10px',
-                                                background: c.recoveryRate >= 85 ? '#dcfce7' : c.recoveryRate >= 50 ? '#fef3c7' : '#fee2e2',
-                                                color: c.recoveryRate >= 85 ? '#166534' : c.recoveryRate >= 50 ? '#92400e' : '#991b1b'
-                                            }}>
-                                                {c.recoveryRate}% Recovery
-                                            </span>
                                         </div>
 
-                                        <div style={{ width: '100%', background: '#e2e8f0', height: '6px', borderRadius: '3px', margin: '0.6rem 0', overflow: 'hidden' }}>
-                                            <div style={{
-                                                width: `${c.recoveryRate}%`,
-                                                height: '100%',
-                                                background: c.recoveryRate >= 85 ? '#10b981' : c.recoveryRate >= 50 ? '#f59e0b' : '#ef4444',
-                                                borderRadius: '3px'
-                                            }} />
-                                        </div>
-
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-                                            <div>
-                                                <span style={{ color: '#059669', fontWeight: '800' }}>✓ {c.paidCount} Paid</span>
-                                                <div style={{ color: '#64748b', fontSize: '0.75rem' }}>{formatPKR(c.collectedAmount)}</div>
-                                            </div>
-                                            <div style={{ textAlign: 'right' }}>
-                                                <span style={{ color: '#dc2626', fontWeight: '800' }}>✗ {c.unpaidCount} Defaulters</span>
-                                                <div style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: '700' }}>{formatPKR(c.pendingAmount)}</div>
-                                            </div>
+                                        {/* Dual Action Buttons */}
+                                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #e2e8f0', paddingTop: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
+                                            <button
+                                                onClick={() => setSelectedClassId(c.classId)}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '0.5rem',
+                                                    borderRadius: '8px',
+                                                    border: 'none',
+                                                    background: '#4f46e5',
+                                                    color: 'white',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '800',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    gap: '0.35rem'
+                                                }}
+                                            >
+                                                <Users size={13} />
+                                                Open Class Ledger
+                                            </button>
+                                            <button
+                                                onClick={() => navigate(`/collections/${c.classId}`)}
+                                                style={{
+                                                    padding: '0.5rem 0.75rem',
+                                                    borderRadius: '8px',
+                                                    border: '1px solid #cbd5e1',
+                                                    background: 'white',
+                                                    color: '#475569',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '800',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.25rem'
+                                                }}
+                                                title="Open Full Class Collection Register"
+                                            >
+                                                <ExternalLink size={12} />
+                                                Register
+                                            </button>
                                         </div>
                                     </div>
+                                ))}
+                            </div>
+                        ) : (
+                            /* === CLASS SUMMARY TABLE VIEW === */
+                            <div style={{
+                                background: 'white',
+                                borderRadius: '16px',
+                                border: '1px solid #e2e8f0',
+                                overflow: 'hidden',
+                                boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+                            }}>
+                                <div style={{ overflowX: 'auto' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                                        <thead>
+                                            <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                <th style={{ padding: '0.9rem 1.1rem', fontWeight: '800' }}>Class / Section</th>
+                                                <th style={{ padding: '0.9rem 1rem', fontWeight: '800' }}>Incharge Teacher</th>
+                                                <th style={{ padding: '0.9rem 1rem', fontWeight: '800', textAlign: 'center' }}>Students</th>
+                                                <th style={{ padding: '0.9rem 1rem', fontWeight: '800' }}>Paid / Collected</th>
+                                                <th style={{ padding: '0.9rem 1rem', fontWeight: '800' }}>Defaulters / Pending</th>
+                                                <th style={{ padding: '0.9rem 1rem', fontWeight: '800' }}>Total Dues</th>
+                                                <th style={{ padding: '0.9rem 1rem', fontWeight: '800', minWidth: '150px' }}>Recovery</th>
+                                                <th style={{ padding: '0.9rem 1.1rem', fontWeight: '800', textAlign: 'right' }}>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {classBreakdown.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={8} style={{ padding: '2.5rem', textAlign: 'center', color: '#94a3b8' }}>
+                                                        No classes found for this session.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                classBreakdown.map((c, idx) => (
+                                                    <tr
+                                                        key={c.classId}
+                                                        onClick={() => setSelectedClassId(c.classId)}
+                                                        style={{
+                                                            borderBottom: '1px solid #f1f5f9',
+                                                            background: idx % 2 === 0 ? '#ffffff' : '#fcfcfd',
+                                                            cursor: 'pointer',
+                                                            transition: 'background 0.15s ease'
+                                                        }}
+                                                        onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                                                        onMouseLeave={(e) => e.currentTarget.style.background = idx % 2 === 0 ? '#ffffff' : '#fcfcfd'}
+                                                    >
+                                                        {/* Class Name */}
+                                                        <td style={{ padding: '0.9rem 1.1rem' }}>
+                                                            <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#0f172a' }}>
+                                                                {c.className}
+                                                            </div>
+                                                        </td>
 
-                                    {/* Dual Action Buttons */}
-                                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #e2e8f0', paddingTop: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            onClick={() => setSelectedClassId(c.classId)}
-                                            style={{
-                                                flex: 1,
-                                                padding: '0.5rem',
-                                                borderRadius: '8px',
-                                                border: 'none',
-                                                background: '#4f46e5',
-                                                color: 'white',
-                                                fontSize: '0.75rem',
-                                                fontWeight: '800',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                gap: '0.35rem'
-                                            }}
-                                        >
-                                            <Users size={13} />
-                                            Open Class Ledger
-                                        </button>
-                                        <button
-                                            onClick={() => navigate(`/collections/${c.classId}`)}
-                                            style={{
-                                                padding: '0.5rem 0.75rem',
-                                                borderRadius: '8px',
-                                                border: '1px solid #cbd5e1',
-                                                background: 'white',
-                                                color: '#475569',
-                                                fontSize: '0.75rem',
-                                                fontWeight: '800',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.25rem'
-                                            }}
-                                            title="Open Full Class Collection Register"
-                                        >
-                                            <ExternalLink size={12} />
-                                            Register
-                                        </button>
-                                    </div>
+                                                        {/* Teacher Name */}
+                                                        <td style={{ padding: '0.9rem 1rem', color: '#475569', fontWeight: '600' }}>
+                                                            {c.teacherName}
+                                                        </td>
+
+                                                        {/* Total Students */}
+                                                        <td style={{ padding: '0.9rem 1rem', textAlign: 'center' }}>
+                                                            <span style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                minWidth: '32px',
+                                                                padding: '2px 8px',
+                                                                borderRadius: '10px',
+                                                                background: '#f1f5f9',
+                                                                color: '#334155',
+                                                                fontWeight: '800',
+                                                                fontSize: '0.8rem'
+                                                            }}>
+                                                                {c.totalStudents}
+                                                            </span>
+                                                        </td>
+
+                                                        {/* Paid Count & Amount */}
+                                                        <td style={{ padding: '0.9rem 1rem' }}>
+                                                            <div style={{ color: '#059669', fontWeight: '800', fontSize: '0.85rem' }}>
+                                                                ✓ {c.paidCount} Paid
+                                                            </div>
+                                                            <div style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: '600' }}>
+                                                                {formatPKR(c.collectedAmount)}
+                                                            </div>
+                                                        </td>
+
+                                                        {/* Unpaid Count & Amount */}
+                                                        <td style={{ padding: '0.9rem 1rem' }}>
+                                                            <div style={{ color: '#dc2626', fontWeight: '800', fontSize: '0.85rem' }}>
+                                                                ✗ {c.unpaidCount} Defaulters
+                                                            </div>
+                                                            <div style={{ color: '#dc2626', fontSize: '0.75rem', fontWeight: '700' }}>
+                                                                {formatPKR(c.pendingAmount)}
+                                                            </div>
+                                                        </td>
+
+                                                        {/* Total Dues */}
+                                                        <td style={{ padding: '0.9rem 1rem', fontWeight: '800', color: '#0f172a' }}>
+                                                            {formatPKR(c.totalAmount)}
+                                                        </td>
+
+                                                        {/* Recovery Rate Bar + Pill */}
+                                                        <td style={{ padding: '0.9rem 1rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                <div style={{ flex: 1, background: '#e2e8f0', height: '6px', borderRadius: '3px', overflow: 'hidden' }}>
+                                                                    <div style={{
+                                                                        width: `${c.recoveryRate}%`,
+                                                                        height: '100%',
+                                                                        background: c.recoveryRate >= 85 ? '#10b981' : c.recoveryRate >= 50 ? '#f59e0b' : '#ef4444',
+                                                                        borderRadius: '3px'
+                                                                    }} />
+                                                                </div>
+                                                                <span style={{
+                                                                    fontSize: '0.72rem',
+                                                                    fontWeight: '800',
+                                                                    padding: '2px 7px',
+                                                                    borderRadius: '8px',
+                                                                    background: c.recoveryRate >= 85 ? '#dcfce7' : c.recoveryRate >= 50 ? '#fef3c7' : '#fee2e2',
+                                                                    color: c.recoveryRate >= 85 ? '#166534' : c.recoveryRate >= 50 ? '#92400e' : '#991b1b',
+                                                                    whiteSpace: 'nowrap'
+                                                                }}>
+                                                                    {c.recoveryRate}%
+                                                                </span>
+                                                            </div>
+                                                        </td>
+
+                                                        {/* Actions */}
+                                                        <td style={{ padding: '0.9rem 1.1rem', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.4rem' }}>
+                                                                <button
+                                                                    onClick={() => setSelectedClassId(c.classId)}
+                                                                    style={{
+                                                                        padding: '0.4rem 0.75rem',
+                                                                        borderRadius: '8px',
+                                                                        border: 'none',
+                                                                        background: '#4f46e5',
+                                                                        color: 'white',
+                                                                        fontSize: '0.75rem',
+                                                                        fontWeight: '800',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.35rem',
+                                                                        boxShadow: '0 2px 4px rgba(79, 70, 229, 0.2)'
+                                                                    }}
+                                                                    title="Open Class Ledger"
+                                                                >
+                                                                    <Users size={12} />
+                                                                    Open Ledger
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => navigate(`/collections/${c.classId}`)}
+                                                                    style={{
+                                                                        padding: '0.4rem 0.65rem',
+                                                                        borderRadius: '8px',
+                                                                        border: '1px solid #cbd5e1',
+                                                                        background: 'white',
+                                                                        color: '#475569',
+                                                                        fontSize: '0.75rem',
+                                                                        fontWeight: '800',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.25rem'
+                                                                    }}
+                                                                    title="Open Full Class Collection Register"
+                                                                >
+                                                                    <ExternalLink size={12} />
+                                                                    Register
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                        {classBreakdown.length > 0 && (
+                                            <tfoot>
+                                                <tr style={{ background: '#f8fafc', borderTop: '2px solid #cbd5e1', fontWeight: '800' }}>
+                                                    <td style={{ padding: '0.9rem 1.1rem', color: '#0f172a' }}>
+                                                        Total ({classBreakdown.length} Classes)
+                                                    </td>
+                                                    <td style={{ padding: '0.9rem 1rem', color: '#64748b' }}>-</td>
+                                                    <td style={{ padding: '0.9rem 1rem', textAlign: 'center', color: '#0f172a' }}>
+                                                        <span style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            padding: '2px 8px',
+                                                            borderRadius: '10px',
+                                                            background: '#e2e8f0',
+                                                            color: '#0f172a',
+                                                            fontWeight: '900',
+                                                            fontSize: '0.82rem'
+                                                        }}>
+                                                            {classTotals.totalStudents}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '0.9rem 1rem' }}>
+                                                        <div style={{ color: '#059669' }}>✓ {classTotals.paidCount} Paid</div>
+                                                        <div style={{ color: '#047857', fontSize: '0.75rem' }}>{formatPKR(classTotals.collectedAmount)}</div>
+                                                    </td>
+                                                    <td style={{ padding: '0.9rem 1rem' }}>
+                                                        <div style={{ color: '#dc2626' }}>✗ {classTotals.unpaidCount} Defaulters</div>
+                                                        <div style={{ color: '#b91c1c', fontSize: '0.75rem' }}>{formatPKR(classTotals.pendingAmount)}</div>
+                                                    </td>
+                                                    <td style={{ padding: '0.9rem 1rem', color: '#0f172a' }}>
+                                                        {formatPKR(classTotals.totalAmount)}
+                                                    </td>
+                                                    <td style={{ padding: '0.9rem 1rem' }}>
+                                                        <span style={{
+                                                            fontSize: '0.75rem',
+                                                            fontWeight: '900',
+                                                            padding: '3px 8px',
+                                                            borderRadius: '8px',
+                                                            background: classTotals.avgRecoveryRate >= 85 ? '#dcfce7' : classTotals.avgRecoveryRate >= 50 ? '#fef3c7' : '#fee2e2',
+                                                            color: classTotals.avgRecoveryRate >= 85 ? '#166534' : classTotals.avgRecoveryRate >= 50 ? '#92400e' : '#991b1b'
+                                                        }}>
+                                                            {classTotals.avgRecoveryRate}% Avg
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '0.9rem 1.1rem', textAlign: 'right', color: '#64748b' }}>
+                                                        —
+                                                    </td>
+                                                </tr>
+                                            </tfoot>
+                                        )}
+                                    </table>
                                 </div>
-                            ))}
-                        </div>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

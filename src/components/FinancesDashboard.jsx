@@ -136,17 +136,12 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const [loading, setLoading] = useState(true);
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
-    // Detect if this is the Principal's Demo Account (Hide demo buttons on production schools)
+    // Detect if this is the Principal's Demo Account 6257 (Strictly hide demo buttons on all other schools)
     const isDemoAccount = useMemo(() => {
-        const sId = (schoolId || '').toLowerCase();
-        const isLocal = typeof window !== 'undefined' && (
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.port !== ''
-        );
-        const manualSession = typeof window !== 'undefined' ? localStorage.getItem('manual_session') : null;
-        return isLocal || sId.includes('demo') || sId.includes('test') || Boolean(manualSession) || localStorage.getItem('is_demo_mode') === 'true';
-    }, [schoolId]);
+        const sId = String(schoolId || '').trim();
+        const pId = String(parentSchoolInfo?.schoolId || parentSchoolInfo?.id || '').trim();
+        return sId === '6257' || pId === '6257';
+    }, [schoolId, parentSchoolInfo]);
 
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
     const [isPurgingDemo, setIsPurgingDemo] = useState(false);

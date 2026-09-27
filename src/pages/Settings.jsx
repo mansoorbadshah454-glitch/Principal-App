@@ -242,39 +242,13 @@ const Settings = () => {
     const [injectingDemo, setInjectingDemo] = useState(false);
     const [clearingDemo, setClearingDemo] = useState(false);
 
-    // Is this a demo account? Check local link (localhost/127.0.0.1), schoolId, schoolData.name, or session flags
+    // Is this the dedicated demo presentation account (School ID 6257)?
     const isDemoAccount = useMemo(() => {
-        // 1. Local environment check (localhost, 127.0.0.1, dev server port, local IP)
-        const isLocalHost = typeof window !== 'undefined' && (
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '[::1]' ||
-            window.location.hostname.includes('192.168.') ||
-            window.location.hostname.includes('10.') ||
-            window.location.port !== ''
-        );
-
-        const sId = (schoolId || '').toLowerCase();
-        const sName = (schoolData.name || '').toLowerCase();
-        const sEmail = (schoolData.email || '').toLowerCase();
-        const forceDemo = typeof window !== 'undefined' && (
-            localStorage.getItem('force_demo_billing_mode') === 'true' ||
-            localStorage.getItem('demo_mode') === 'true'
-        );
-        const isDemoDoc = Boolean(schoolData.isDemo || schoolData.isDemoSchool || schoolData.accountType === 'demo');
-
-        return (
-            isLocalHost ||
-            forceDemo ||
-            isDemoDoc ||
-            sId.includes('demo') ||
-            sName.includes('demo') ||
-            sEmail.includes('demo') ||
-            sId === 'demo_school' ||
-            sId === 'demo' ||
-            sId.includes('test')
-        );
-    }, [schoolId, schoolData.name, schoolData.email, schoolData.isDemo, schoolData.isDemoSchool, schoolData.accountType]);
+        const sId = String(schoolId || '').trim();
+        const docId = String(schoolData?.id || '').trim();
+        const schoolDocSchoolId = String(schoolData?.schoolId || '').trim();
+        return sId === '6257' || docId === '6257' || schoolDocSchoolId === '6257';
+    }, [schoolId, schoolData]);
 
     // Handle Dummy Data Injection for Demo Account
     const handleInjectDemoBillingData = async () => {
@@ -286,6 +260,11 @@ const Settings = () => {
             } catch (e) {}
         }
         if (!activeSchoolId) activeSchoolId = 'demo_school';
+
+        if (!isDemoAccount) {
+            alert("Restricted: Demo billing injection is only allowed on Demo Account 6257.");
+            return;
+        }
 
         setInjectingDemo(true);
         try {
@@ -417,6 +396,11 @@ const Settings = () => {
             } catch (e) {}
         }
         if (!activeSchoolId) activeSchoolId = 'demo_school';
+
+        if (!isDemoAccount) {
+            alert("Restricted: Clearing demo records is only allowed on Demo Account 6257.");
+            return;
+        }
 
         const confirmClear = window.confirm('Are you sure you want to remove all injected demo payment records?');
         if (!confirmClear) return;

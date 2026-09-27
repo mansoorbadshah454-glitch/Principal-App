@@ -2869,37 +2869,39 @@ const Transport = () => {
                                 </div>
 
                                 {/* Live GPS Simulator Button for Presentation */}
-                                <button
-                                    type="button"
-                                    onClick={toggleLiveSimulation}
-                                    className="btn hover-lift"
-                                    style={{
-                                        background: isSimulating ? 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)' : 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
-                                        color: 'white',
-                                        border: 'none',
-                                        padding: '0.5rem 0.95rem',
-                                        borderRadius: '8px',
-                                        fontSize: '0.78rem',
-                                        fontWeight: '800',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.4rem',
-                                        boxShadow: isSimulating ? '0 0 14px rgba(239, 68, 68, 0.45)' : '0 4px 12px rgba(139, 92, 246, 0.35)',
-                                        transition: 'all 0.2s ease'
-                                    }}
-                                >
-                                    {isSimulating ? (
-                                        <>
-                                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'white', animation: 'pulse 1s infinite' }}></span>
-                                            ⏹️ Stop Live Demo ({speed} km/h)
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span>🎮</span> 🚀 Simulate Live GPS Demo
-                                        </>
-                                    )}
-                                </button>
+                                {String(schoolId) === '6257' && (
+                                    <button
+                                        type="button"
+                                        onClick={toggleLiveSimulation}
+                                        className="btn hover-lift"
+                                        style={{
+                                            background: isSimulating ? 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)' : 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+                                            color: 'white',
+                                            border: 'none',
+                                            padding: '0.5rem 0.95rem',
+                                            borderRadius: '8px',
+                                            fontSize: '0.78rem',
+                                            fontWeight: '800',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.4rem',
+                                            boxShadow: isSimulating ? '0 0 14px rgba(239, 68, 68, 0.45)' : '0 4px 12px rgba(139, 92, 246, 0.35)',
+                                            transition: 'all 0.2s ease'
+                                        }}
+                                    >
+                                        {isSimulating ? (
+                                            <>
+                                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'white', animation: 'pulse 1s infinite' }}></span>
+                                                ⏹️ Stop Live Demo ({speed} km/h)
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span>🎮</span> 🚀 Simulate Live GPS Demo
+                                            </>
+                                        )}
+                                    </button>
+                                )}
 
                                 {currentOverviewVeh && currentOverviewVeh.driverPhone && (
                                     <button

@@ -954,11 +954,26 @@ const Dashboard = () => {
 
     const availableClasses = ['All School', ...fetchedClasses.map(c => c.name)];
 
+    // Strict Demo Account Check: Only school 6257 can view or trigger demo injection
+    const isDemoSchool = useMemo(() => {
+        try {
+            const sid = schoolId || (localStorage.getItem('manual_session') ? JSON.parse(localStorage.getItem('manual_session'))?.schoolId : '');
+            return String(sid || '').trim() === '6257';
+        } catch (_) {
+            return false;
+        }
+    }, [schoolId]);
+
     const handleInjectPerformanceDemoData = async () => {
         const session = localStorage.getItem('manual_session');
         const activeSchoolId = schoolId || (session ? JSON.parse(session).schoolId : null);
         if (!activeSchoolId) {
             alert("School ID not found. Please log in again.");
+            return;
+        }
+
+        if (String(activeSchoolId).trim() !== '6257') {
+            alert("Restricted: Demo performance injection is only allowed on Demo Account 6257.");
             return;
         }
 
@@ -1070,6 +1085,11 @@ const Dashboard = () => {
         const activeSchoolId = schoolId || (session ? JSON.parse(session).schoolId : null);
         if (!activeSchoolId) {
             alert("School ID not found. Please log in again.");
+            return;
+        }
+
+        if (String(activeSchoolId).trim() !== '6257') {
+            alert("Restricted: Demo syllabus injection is only allowed on Demo Account 6257.");
             return;
         }
 
@@ -1456,54 +1476,56 @@ const Dashboard = () => {
                             </h2>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-                                {/* Inject Demo Data Button */}
-                                <button
-                                    onClick={handleInjectPerformanceDemoData}
-                                    disabled={isInjectingDemo}
-                                    title="Inject realistic demo data for all 4 performance tabs"
-                                    style={{
-                                        padding: '0.65rem 1.1rem',
-                                        background: isInjectingDemo ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.22)',
-                                        backdropFilter: 'blur(10px)',
-                                        color: '#ffffff',
-                                        border: '1.5px solid rgba(255, 255, 255, 0.4)',
-                                        borderRadius: '12px',
-                                        fontSize: '0.88rem',
-                                        fontWeight: '700',
-                                        cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '0.45rem',
-                                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
-                                        transition: 'all 0.2s ease',
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        if (!isInjectingDemo) {
-                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.35)';
-                                            e.currentTarget.style.transform = 'translateY(-1px)';
-                                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.2)';
-                                        }
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        if (!isInjectingDemo) {
-                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.22)';
-                                            e.currentTarget.style.transform = 'translateY(0)';
-                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.12)';
-                                        }
-                                    }}
-                                >
-                                    {isInjectingDemo ? (
-                                        <>
-                                            <Loader2 size={16} className="animate-spin" />
-                                            <span>Injecting...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Sparkles size={16} color="#fde047" />
-                                            <span>Inject Demo Data</span>
-                                        </>
-                                    )}
-                                </button>
+                                {/* Inject Demo Data Button (Only for Demo School 6257) */}
+                                {isDemoSchool && (
+                                    <button
+                                        onClick={handleInjectPerformanceDemoData}
+                                        disabled={isInjectingDemo}
+                                        title="Inject realistic demo data for all 4 performance tabs"
+                                        style={{
+                                            padding: '0.65rem 1.1rem',
+                                            background: isInjectingDemo ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.22)',
+                                            backdropFilter: 'blur(10px)',
+                                            color: '#ffffff',
+                                            border: '1.5px solid rgba(255, 255, 255, 0.4)',
+                                            borderRadius: '12px',
+                                            fontSize: '0.88rem',
+                                            fontWeight: '700',
+                                            cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.45rem',
+                                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (!isInjectingDemo) {
+                                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.35)';
+                                                e.currentTarget.style.transform = 'translateY(-1px)';
+                                                e.currentTarget.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.2)';
+                                            }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (!isInjectingDemo) {
+                                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.22)';
+                                                e.currentTarget.style.transform = 'translateY(0)';
+                                                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.12)';
+                                            }
+                                        }}
+                                    >
+                                        {isInjectingDemo ? (
+                                            <>
+                                                <Loader2 size={16} className="animate-spin" />
+                                                <span>Injecting...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles size={16} color="#fde047" />
+                                                <span>Inject Demo Data</span>
+                                            </>
+                                        )}
+                                    </button>
+                                )}
 
                                 {/* Class Selector Dropdown */}
                                 <div style={{ position: 'relative' }}>
@@ -1965,51 +1987,53 @@ const Dashboard = () => {
                                         </div>
                                     </div>
 
-                                    {/* Demo Syllabus Inject Button */}
-                                    <button
-                                        onClick={handleInjectSyllabusDemoData}
-                                        disabled={isInjectingSyllabus}
-                                        title="Inject realistic demo syllabus for Class 1 to 5 for presentation"
-                                        style={{
-                                            padding: '0.55rem 0.95rem',
-                                            background: isInjectingSyllabus ? '#f1f5f9' : '#eff6ff',
-                                            color: '#1d4ed8',
-                                            border: '1.5px solid #bfdbfe',
-                                            borderRadius: '8px',
-                                            fontSize: '0.82rem',
-                                            fontWeight: '700',
-                                            cursor: isInjectingSyllabus ? 'not-allowed' : 'pointer',
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '0.45rem',
-                                            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
-                                            transition: 'all 0.2s ease',
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            if (!isInjectingSyllabus) {
-                                                e.currentTarget.style.background = '#dbeafe';
-                                                e.currentTarget.style.transform = 'translateY(-1px)';
-                                            }
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            if (!isInjectingSyllabus) {
-                                                e.currentTarget.style.background = '#eff6ff';
-                                                e.currentTarget.style.transform = 'translateY(0)';
-                                            }
-                                        }}
-                                    >
-                                        {isInjectingSyllabus ? (
-                                            <>
-                                                <Loader2 size={15} className="animate-spin" />
-                                                <span>Injecting...</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Sparkles size={15} color="#2563eb" />
-                                                <span>Inject Demo Syllabus (Class 1-5)</span>
-                                            </>
-                                        )}
-                                    </button>
+                                    {/* Demo Syllabus Inject Button (Only for Demo School 6257) */}
+                                    {isDemoSchool && (
+                                        <button
+                                            onClick={handleInjectSyllabusDemoData}
+                                            disabled={isInjectingSyllabus}
+                                            title="Inject realistic demo syllabus for Class 1 to 5 for presentation"
+                                            style={{
+                                                padding: '0.55rem 0.95rem',
+                                                background: isInjectingSyllabus ? '#f1f5f9' : '#eff6ff',
+                                                color: '#1d4ed8',
+                                                border: '1.5px solid #bfdbfe',
+                                                borderRadius: '8px',
+                                                fontSize: '0.82rem',
+                                                fontWeight: '700',
+                                                cursor: isInjectingSyllabus ? 'not-allowed' : 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '0.45rem',
+                                                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
+                                                transition: 'all 0.2s ease',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!isInjectingSyllabus) {
+                                                    e.currentTarget.style.background = '#dbeafe';
+                                                    e.currentTarget.style.transform = 'translateY(-1px)';
+                                                }
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (!isInjectingSyllabus) {
+                                                    e.currentTarget.style.background = '#eff6ff';
+                                                    e.currentTarget.style.transform = 'translateY(0)';
+                                                }
+                                            }}
+                                        >
+                                            {isInjectingSyllabus ? (
+                                                <>
+                                                    <Loader2 size={15} className="animate-spin" />
+                                                    <span>Injecting...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Sparkles size={15} color="#2563eb" />
+                                                    <span>Inject Demo Syllabus (Class 1-5)</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
                                 </div>
 
                                 <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem' }}>
