@@ -1106,6 +1106,9 @@ const Teachers = () => {
     const handleTimeTableCellChange = (rowIndex, colIndex, field, value) => {
         const newRows = [...timeTableRows];
         newRows[rowIndex].cells[colIndex][field] = value;
+        if (field === 'class') {
+            newRows[rowIndex].cells[colIndex].subject = '';
+        }
         setTimeTableRows(newRows);
     };
 
@@ -1152,26 +1155,22 @@ const Teachers = () => {
         fetchMasterTimetable();
     }, [schoolId]);
 
-    const getSubjectAssignmentInfo = (targetClass, subject, currentTeacherId, currentRowIndex) => {
+    const isSubjectAssignedElsewhere = (targetClass, subject, currentRowIndex, currentColIndex) => {
         if (!targetClass || !subject || targetClass === 'FREE' || targetClass === 'BREAK') {
-            return { isAssigned: false, assignedTeacherName: null };
+            return false;
         }
 
         for (let rIdx = 0; rIdx < timeTableRows.length; rIdx++) {
             const r = timeTableRows[rIdx];
-            const isDifferentTeacher = r.teacherId && currentTeacherId && r.teacherId !== currentTeacherId;
-            const isDifferentRow = rIdx !== currentRowIndex;
-
-            if (isDifferentTeacher || (!currentTeacherId && isDifferentRow)) {
-                const hasAssignment = (r.cells || []).some(c => c.class === targetClass && c.subject === subject);
-                if (hasAssignment) {
-                    const assignedTeacher = teachers.find(t => t.id === r.teacherId);
-                    const teacherName = assignedTeacher?.name || (r.teacherId ? 'Assigned' : 'Another Teacher');
-                    return { isAssigned: true, assignedTeacherName: teacherName };
+            for (let cIdx = 0; cIdx < (r.cells || []).length; cIdx++) {
+                if (rIdx === currentRowIndex && cIdx === currentColIndex) continue;
+                const cell = r.cells[cIdx];
+                if (cell && cell.class === targetClass && cell.subject === subject) {
+                    return true;
                 }
             }
         }
-        return { isAssigned: false, assignedTeacherName: null };
+        return false;
     };
 
     const handleDownloadTimetablePDF = () => {
@@ -1300,7 +1299,7 @@ const Teachers = () => {
         if (!schoolId) return;
         setIsPublishingTimeTable(true);
         try {
-            // Validation: Check for duplicate subject assignments across different teachers
+            // Validation: Check for duplicate subject assignments across the entire timetable
             const conflictMap = new Map();
             let conflictError = null;
 
@@ -1315,9 +1314,11 @@ const Teachers = () => {
                     if (conflictMap.has(key)) {
                         const existing = conflictMap.get(key);
                         if (existing.teacherId !== r.teacherId) {
-                            conflictError = `Conflict detected: "${c.subject}" for ${c.class} is assigned to both ${existing.teacherName} and ${teacherName}. Please resolve before publishing.`;
-                            break;
+                            conflictError = `Conflict detected: "${c.subject}" for ${c.class} is assigned to both ${existing.teacherName} and ${teacherName}. Each subject can only be assigned once.`;
+                        } else {
+                            conflictError = `Duplicate detected: "${c.subject}" for ${c.class} is assigned multiple times to ${teacherName}. Each subject can only be assigned once.`;
                         }
+                        break;
                     } else {
                         conflictMap.set(key, { teacherId: r.teacherId, teacherName });
                     }
@@ -2726,27 +2727,41 @@ const Teachers = () => {
                                                         ? selectedClassData.subjects 
                                                         : subjectOptions;
 
+                                                    // Filter available subjects: include if already selected in this cell OR not assigned anywhere else in timetable
+                                                    const availableSubjects = allowedSubjects.filter(s => {
+                                                        if (cell.subject === s) return true;
+                                                        return !isSubjectAssignedElsewhere(effectiveClass, s, rowIndex, colIndex);
+                                                    });
+
+                                                    const isAllAssigned = availableSubjects.length === 0 && !cell.subject;
+
                                                     return (
                                                         <select
                                                             value={cell.subject}
                                                             onChange={(e) => handleTimeTableCellChange(rowIndex, colIndex, 'subject', e.target.value)}
-                                                            style={{ width: '100%', padding: '0.25rem', borderRadius: '4px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '0.75rem', fontWeight: '500', color: '#475569', background: 'white', cursor: 'pointer' }}
+                                                            style={{ 
+                                                                width: '100%', 
+                                                                padding: '0.25rem', 
+                                                                borderRadius: '4px', 
+                                                                border: cell.subject ? '1px solid #93c5fd' : '1px solid #cbd5e1', 
+                                                                outline: 'none', 
+                                                                fontSize: '0.75rem', 
+                                                                fontWeight: cell.subject ? '600' : '500', 
+                                                                color: cell.subject ? '#1e293b' : '#64748b', 
+                                                                background: cell.subject ? '#f0f9ff' : 'white', 
+                                                                cursor: 'pointer' 
+                                                            }}
                                                         >
-                                                            <option value="">Select Subject</option>
-                                                            {allowedSubjects.map(s => {
-                                                                const assignment = getSubjectAssignmentInfo(effectiveClass, s, row.teacherId, rowIndex);
-                                                                const isAssignedToOther = assignment.isAssigned && cell.subject !== s;
-                                                                return (
-                                                                    <option 
-                                                                        key={s} 
-                                                                        value={s}
-                                                                        disabled={isAssignedToOther}
-                                                                        style={isAssignedToOther ? { color: '#94a3b8', fontStyle: 'italic', background: '#f8fafc' } : {}}
-                                                                    >
-                                                                        {s} {isAssignedToOther ? `(Assigned: ${assignment.assignedTeacherName})` : ''}
-                                                                    </option>
-                                                                );
-                                                            })}
+                                                            <option value="">
+                                                                {isAllAssigned 
+                                                                    ? 'All subjects assigned' 
+                                                                    : `Select Subject (${availableSubjects.length} left)`}
+                                                            </option>
+                                                            {availableSubjects.map(s => (
+                                                                <option key={s} value={s}>
+                                                                    {s}
+                                                                </option>
+                                                            ))}
                                                         </select>
                                                     );
                                                 })()}
