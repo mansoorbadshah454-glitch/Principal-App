@@ -4707,7 +4707,7 @@ const _DeprecatedOldFinances = ({ schoolId, currentAction, schoolInfo: parentSch
 };
 
 // --- Daily Workflow Fee Collection Widget ---
-const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselectedClassId, preselectedStudentId, feeSettings }) => {
+const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselectedClassId, preselectedStudentId, preselectedMonthIdx, feeSettings }) => {
     const navigate = useNavigate();
 
     // 1. Selector & Search States
@@ -6554,7 +6554,19 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     }, [activeChild, selectedStudent, studentHistoryTxs, dueInfo, currentAction, feeSettingsData]);
 
     // Selected Target Month Index (0-11) for billing & 12-Month Matrix
-    const [selectedTargetMonthIdx, setSelectedTargetMonthIdx] = useState(() => new Date().getMonth());
+    const [selectedTargetMonthIdx, setSelectedTargetMonthIdx] = useState(() => {
+        if (preselectedMonthIdx !== null && preselectedMonthIdx !== undefined && !isNaN(preselectedMonthIdx)) {
+            return Number(preselectedMonthIdx);
+        }
+        return new Date().getMonth();
+    });
+
+    // Auto-sync targeted month if passed dynamically from URL or Matrix
+    useEffect(() => {
+        if (preselectedMonthIdx !== null && preselectedMonthIdx !== undefined && !isNaN(preselectedMonthIdx)) {
+            setSelectedTargetMonthIdx(Number(preselectedMonthIdx));
+        }
+    }, [preselectedMonthIdx]);
     // Right Card View Mode: 'matrix' (12-Month Grid) | 'detail' (In-Card Categorized Sets Detailed Fee View)
     const [rightCardSubView, setRightCardSubView] = useState('matrix');
     const [selectedDetailMonthData, setSelectedDetailMonthData] = useState(null);
@@ -13758,6 +13770,10 @@ const Collections = () => {
     const initialTab = searchParams.get('tab') || 'workflow';
     const [preselectedClassId, setPreselectedClassId] = useState(searchParams.get('classId') || '');
     const [preselectedStudentId, setPreselectedStudentId] = useState(searchParams.get('studentId') || '');
+    const [preselectedMonthIdx, setPreselectedMonthIdx] = useState(() => {
+        const m = searchParams.get('month');
+        return (m !== null && m !== '' && !isNaN(parseInt(m, 10))) ? parseInt(m, 10) : null;
+    });
     const [activeTab, setActiveTab] = useState(initialTab);
 
     // Calculate which tabs the current user has permission to access
@@ -13783,9 +13799,13 @@ const Collections = () => {
         const tab = params.get('tab');
         const cid = params.get('classId');
         const sid = params.get('studentId');
+        const mid = params.get('month');
         if (tab && (isPrincipal || permittedTabs.includes(tab))) setActiveTab(tab);
         if (cid !== null) setPreselectedClassId(cid || '');
         if (sid !== null) setPreselectedStudentId(sid || '');
+        if (mid !== null && mid !== '' && !isNaN(parseInt(mid, 10))) {
+            setPreselectedMonthIdx(parseInt(mid, 10));
+        }
     }, [location.search, permittedTabs, isPrincipal]);
 
     const [classes, setClasses] = useState([]);
@@ -14271,6 +14291,7 @@ const Collections = () => {
                                 feeSettings={feeSettings}
                                 preselectedClassId={preselectedClassId}
                                 preselectedStudentId={preselectedStudentId}
+                                preselectedMonthIdx={preselectedMonthIdx}
                             />
                         </div>
                     )}

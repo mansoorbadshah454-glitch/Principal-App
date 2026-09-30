@@ -2385,6 +2385,8 @@ const FeeArrearsMatrix = ({
                             </div>
                         ) : (
                             <div style={{
+                                maxHeight: 'calc(100vh - 270px)',
+                                overflowY: 'auto',
                                 overflowX: 'auto',
                                 border: '1px solid #e2e8f0',
                                 borderRadius: '18px',
@@ -2393,17 +2395,19 @@ const FeeArrearsMatrix = ({
                                 position: 'relative'
                             }}>
                                 <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.82rem' }}>
-                                    <thead>
+                                    <thead style={{ position: 'sticky', top: 0, zIndex: 20 }}>
                                         <tr style={{ background: '#0f172a', color: 'white', textAlign: 'center' }}>
                                             {/* Frozen Left Columns */}
                                             <th style={{
                                                 position: 'sticky',
+                                                top: 0,
                                                 left: 0,
-                                                zIndex: 20,
+                                                zIndex: 30,
                                                 background: '#0f172a',
                                                 padding: '0.85rem 0.6rem',
                                                 fontWeight: '800',
                                                 borderRight: '1px solid #334155',
+                                                borderBottom: '1px solid #334155',
                                                 minWidth: '55px',
                                                 fontSize: '0.75rem'
                                             }}>
@@ -2411,12 +2415,14 @@ const FeeArrearsMatrix = ({
                                             </th>
                                             <th style={{
                                                 position: 'sticky',
+                                                top: 0,
                                                 left: '55px',
-                                                zIndex: 20,
+                                                zIndex: 30,
                                                 background: '#0f172a',
                                                 padding: '0.85rem 0.6rem',
                                                 fontWeight: '800',
                                                 borderRight: '1px solid #334155',
+                                                borderBottom: '1px solid #334155',
                                                 minWidth: '65px',
                                                 fontSize: '0.75rem'
                                             }}>
@@ -2424,13 +2430,15 @@ const FeeArrearsMatrix = ({
                                             </th>
                                             <th style={{
                                                 position: 'sticky',
+                                                top: 0,
                                                 left: '120px',
-                                                zIndex: 20,
+                                                zIndex: 30,
                                                 background: '#0f172a',
                                                 padding: '0.85rem 0.85rem',
                                                 fontWeight: '800',
                                                 textAlign: 'left',
                                                 borderRight: '2px solid #475569',
+                                                borderBottom: '1px solid #334155',
                                                 minWidth: '180px',
                                                 fontSize: '0.75rem'
                                             }}>
@@ -2442,11 +2450,15 @@ const FeeArrearsMatrix = ({
                                                 const isCurrentTargetMonth = mIdx === selectedMonthIdx;
                                                 return (
                                                     <th key={mIdx} style={{
+                                                        position: 'sticky',
+                                                        top: 0,
+                                                        zIndex: 20,
                                                         padding: '0.85rem 0.4rem',
                                                         fontWeight: '800',
                                                         minWidth: '78px',
                                                         fontSize: '0.75rem',
                                                         borderRight: '1px solid #334155',
+                                                        borderBottom: '1px solid #334155',
                                                         background: isCurrentTargetMonth ? '#1e293b' : '#0f172a',
                                                         color: isCurrentTargetMonth ? '#38bdf8' : '#e2e8f0'
                                                     }}>
@@ -2460,20 +2472,29 @@ const FeeArrearsMatrix = ({
 
                                             {/* Summary & Action Columns */}
                                             <th style={{
+                                                position: 'sticky',
+                                                top: 0,
+                                                zIndex: 20,
                                                 padding: '0.85rem 0.6rem',
                                                 fontWeight: '800',
                                                 minWidth: '95px',
                                                 fontSize: '0.75rem',
                                                 borderRight: '1px solid #334155',
+                                                borderBottom: '1px solid #334155',
                                                 background: '#881337',
                                                 color: '#fecdd3'
                                             }}>
                                                 Pending
                                             </th>
                                             <th style={{
+                                                position: 'sticky',
+                                                top: 0,
+                                                zIndex: 20,
                                                 padding: '0.85rem 0.6rem',
                                                 fontWeight: '800',
                                                 minWidth: '100px',
+                                                borderBottom: '1px solid #334155',
+                                                background: '#0f172a',
                                                 fontSize: '0.75rem'
                                             }}>
                                                 Actions
@@ -2845,43 +2866,25 @@ const FeeArrearsMatrix = ({
                                             <button
                                                 onClick={() => setSelectedClassId(c.classId)}
                                                 style={{
-                                                    flex: 1,
-                                                    padding: '0.5rem',
-                                                    borderRadius: '8px',
+                                                    width: '100%',
+                                                    padding: '0.6rem 0.85rem',
+                                                    borderRadius: '10px',
                                                     border: 'none',
                                                     background: '#4f46e5',
                                                     color: 'white',
-                                                    fontSize: '0.75rem',
+                                                    fontSize: '0.78rem',
                                                     fontWeight: '800',
                                                     cursor: 'pointer',
                                                     display: 'flex',
                                                     alignItems: 'center',
                                                     justifyContent: 'center',
-                                                    gap: '0.35rem'
+                                                    gap: '0.4rem',
+                                                    boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)',
+                                                    transition: 'all 0.15s ease'
                                                 }}
                                             >
-                                                <Users size={13} />
+                                                <Users size={14} />
                                                 Open Class Ledger
-                                            </button>
-                                            <button
-                                                onClick={() => navigate(`/collections/${c.classId}`)}
-                                                style={{
-                                                    padding: '0.5rem 0.75rem',
-                                                    borderRadius: '8px',
-                                                    border: '1px solid #cbd5e1',
-                                                    background: 'white',
-                                                    color: '#475569',
-                                                    fontSize: '0.75rem',
-                                                    fontWeight: '800',
-                                                    cursor: 'pointer',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.25rem'
-                                                }}
-                                                title="Open Full Class Collection Register"
-                                            >
-                                                <ExternalLink size={12} />
-                                                Register
                                             </button>
                                         </div>
                                     </div>
@@ -3017,7 +3020,7 @@ const FeeArrearsMatrix = ({
                                                                 <button
                                                                     onClick={() => setSelectedClassId(c.classId)}
                                                                     style={{
-                                                                        padding: '0.4rem 0.75rem',
+                                                                        padding: '0.45rem 0.85rem',
                                                                         borderRadius: '8px',
                                                                         border: 'none',
                                                                         background: '#4f46e5',
@@ -3028,32 +3031,13 @@ const FeeArrearsMatrix = ({
                                                                         display: 'inline-flex',
                                                                         alignItems: 'center',
                                                                         gap: '0.35rem',
-                                                                        boxShadow: '0 2px 4px rgba(79, 70, 229, 0.2)'
+                                                                        boxShadow: '0 2px 4px rgba(79, 70, 229, 0.25)',
+                                                                        transition: 'all 0.15s ease'
                                                                     }}
                                                                     title="Open Class Ledger"
                                                                 >
                                                                     <Users size={12} />
                                                                     Open Ledger
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => navigate(`/collections/${c.classId}`)}
-                                                                    style={{
-                                                                        padding: '0.4rem 0.65rem',
-                                                                        borderRadius: '8px',
-                                                                        border: '1px solid #cbd5e1',
-                                                                        background: 'white',
-                                                                        color: '#475569',
-                                                                        fontSize: '0.75rem',
-                                                                        fontWeight: '800',
-                                                                        cursor: 'pointer',
-                                                                        display: 'inline-flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '0.25rem'
-                                                                    }}
-                                                                    title="Open Full Class Collection Register"
-                                                                >
-                                                                    <ExternalLink size={12} />
-                                                                    Register
                                                                 </button>
                                                             </div>
                                                         </td>
@@ -3909,8 +3893,9 @@ const FeeArrearsMatrix = ({
                                             <button
                                                 onClick={() => {
                                                     const st = selectedFeeCardData.student;
+                                                    const targetMonth = selectedFeeCardData.targetMonthIdx !== undefined && selectedFeeCardData.targetMonthIdx !== null ? selectedFeeCardData.targetMonthIdx : '';
                                                     setSelectedFeeCardData(null);
-                                                    navigate(`/collections?tab=workflow&classId=${st.classId || selectedClassId}&studentId=${st.id}`);
+                                                    navigate(`/collections?tab=workflow&classId=${st.classId || selectedClassId}&studentId=${st.id}${targetMonth !== '' ? `&month=${targetMonth}` : ''}`);
                                                 }}
                                                 style={{
                                                     width: '100%',
