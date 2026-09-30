@@ -609,12 +609,17 @@ export const getStudentMonthFinancialStatus = (
         breakdown.isPaid = true;
     }
 
+    const proofUrl = feeHistoryEntry?.proofUrl || feeHistoryEntry?.proofImage || feeHistoryEntry?.paymentProofUrl || feeHistoryEntry?.screenshot || (matchingTx ? (matchingTx.proofUrl || matchingTx.screenshotUrl || matchingTx.paymentProofUrl) : null) || student?.lastPaymentProofUrl || null;
+
     return {
         monthIdx,
         monthNum,
         monthName,
         monthFullName,
         targetMonthKey,
+        isFuture: (targetYear > currentYearNum) || (targetYear === currentYearNum && monthIdx > currentMonthIdx),
+        isCurrent: (targetYear === currentYearNum && monthIdx === currentMonthIdx),
+        isPast: (targetYear < currentYearNum) || (targetYear === currentYearNum && monthIdx < currentMonthIdx),
         status,
         expectedAmount,
         paidAmount,
@@ -623,6 +628,7 @@ export const getStudentMonthFinancialStatus = (
         paymentDate: paymentDate && !isNaN(paymentDate.getTime()) ? paymentDate : null,
         paymentDateStr: paymentDate && !isNaN(paymentDate.getTime()) ? paymentDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : null,
         paymentMode,
+        proofUrl,
         is100PercentFree,
         breakdown,
         txData: matchingTx || null

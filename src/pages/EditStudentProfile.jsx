@@ -423,6 +423,10 @@ const EditStudentProfile = () => {
                 dob: profile.dob,
                 admissionDate: profile.admissionDate,
                 parentDetails: profile.parentDetails,
+                fatherName: profile.parentDetails?.fatherName || '',
+                fatherPhone: profile.parentDetails?.phone || profile.parentDetails?.fatherPhone || '',
+                phone: profile.parentDetails?.phone || profile.parentDetails?.fatherPhone || '',
+                parentPhone: profile.parentDetails?.phone || profile.parentDetails?.fatherPhone || '',
                 avatar: profile.avatar,
                 
                 // Itemized Fee Breakdowns

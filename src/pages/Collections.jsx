@@ -14034,14 +14034,19 @@ const Collections = () => {
         }
     };
 
-    // 3. Global Stats Aggregation
-    const [globalStats, setGlobalStats] = useState({
-        monthlyPaid: 0,
-        monthlyUnpaid: 0,
-        actionPaid: 0,
-        actionUnpaid: 0,
-        loading: true
-    });
+    // Tab Persistence & Instant 0ms Switch Hub
+    const [visitedTabs, setVisitedTabs] = useState(() => new Set([initialTab]));
+
+    useEffect(() => {
+        setVisitedTabs(prev => {
+            if (!prev.has(activeTab)) {
+                const next = new Set(prev);
+                next.add(activeTab);
+                return next;
+            }
+            return prev;
+        });
+    }, [activeTab]);
 
     const [pendingOnlineCount, setPendingOnlineCount] = useState(0);
 
@@ -14057,92 +14062,6 @@ const Collections = () => {
         }, (err) => console.error("Error listening to online submissions count:", err));
         return () => unsub();
     }, [schoolId]);
-
-    useEffect(() => {
-        if (loading || !schoolId || classes.length === 0) {
-            console.log("[Collections] Waiting for initialization - School:", schoolId, "Classes count:", classes.length);
-            return;
-        }
-
-        console.log("[Collections] Starting Global Aggregation for school:", schoolId);
-
-        const unsubscribers = [];
-        const classStatsMap = new Map();
-
-        const updateAggregates = () => {
-            let mPaid = 0;
-            let mUnpaid = 0;
-            let aPaid = 0;
-            let aUnpaid = 0;
-
-            classStatsMap.forEach((stats, cid) => {
-                mPaid += stats.monthlyPaid;
-                mUnpaid += stats.monthlyUnpaid;
-                aPaid += stats.actionPaid;
-                aUnpaid += stats.actionUnpaid;
-            });
-
-            console.log(`[Collections] TOTAL Aggregated - Monthly Paid: ${mPaid}, Unpaid: ${mUnpaid}`);
-
-            setGlobalStats({
-                monthlyPaid: mPaid,
-                monthlyUnpaid: mUnpaid,
-                actionPaid: aPaid,
-                actionUnpaid: aUnpaid,
-                loading: false
-            });
-        };
-
-        classes.forEach(cls => {
-            const q = query(collection(db, `schools/${schoolId}/classes/${cls.id}/students`));
-            const unsub = onSnapshot(q, (snapshot) => {
-                let cMonthlyPaid = 0;
-                let cMonthlyUnpaid = 0;
-                let cActionPaid = 0;
-                let cActionUnpaid = 0;
-
-                snapshot.docs.forEach(doc => {
-                    const data = doc.data();
-                    const monthlyStatus = data.monthlyFeeStatus || 'unpaid';
-                    if (monthlyStatus === 'paid') cMonthlyPaid++;
-                    else cMonthlyUnpaid++;
-
-                    if (currentAction) {
-                        const isTargeted = currentAction.targetAll ||
-                            (currentAction.targetClasses && currentAction.targetClasses.includes(cls.id));
-
-                        if (isTargeted) {
-                            const actionStatus = data.customPayments?.[currentAction.name]?.status;
-                            if (actionStatus === 'paid') cActionPaid++;
-                            else cActionUnpaid++;
-                        }
-                    }
-                });
-
-                console.log(`[Collections] Class ${cls.name} [${cls.id}] Snapshot: ${snapshot.size} students, Paid: ${cMonthlyPaid}`);
-
-                classStatsMap.set(cls.id, {
-                    monthlyPaid: cMonthlyPaid,
-                    monthlyUnpaid: cMonthlyUnpaid,
-                    actionPaid: cActionPaid,
-                    actionUnpaid: cActionUnpaid
-                });
-                updateAggregates();
-            }, (err) => {
-                console.warn(`[Collections] Class ${cls.name} stats listener warning:`, err);
-            });
-            unsubscribers.push(unsub);
-        });
-
-        return () => {
-            console.log("[Collections] Cleaning up global listeners");
-            unsubscribers.forEach(unsub => unsub());
-        };
-
-    }, [classes, currentAction, schoolId, loading]);
-    // Re-run if classes list or action changes
-
-
 
     return (
         <div className="animate-fade-in-up">
@@ -14327,7 +14246,7 @@ const Collections = () => {
                 )}
             </div>
 
-            {/* Tab Content & Restricted Access Fallback */}
+            {/* Tab Content & Restricted Access Fallback (0ms Instant State Preservation) */}
             {permittedTabs.length === 0 ? (
                 <div style={{ background: '#fff', borderRadius: '16px', padding: '3.5rem 2rem', textAlign: 'center', border: '1px dashed #cbd5e1', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.03)' }}>
                     <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: '#fee2e2', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
@@ -14342,53 +14261,63 @@ const Collections = () => {
                 </div>
             ) : (
                 <>
-                    {permittedTabs.includes('workflow') && activeTab === 'workflow' && (
-                        <DailyWorkflow
-                            schoolId={schoolId}
-                            classes={classes}
-                            currentAction={currentAction}
-                            schoolInfo={schoolInfo}
-                            feeSettings={feeSettings}
-                            preselectedClassId={preselectedClassId}
-                            preselectedStudentId={preselectedStudentId}
-                        />
+                    {permittedTabs.includes('workflow') && visitedTabs.has('workflow') && (
+                        <div style={{ display: activeTab === 'workflow' ? 'block' : 'none' }}>
+                            <DailyWorkflow
+                                schoolId={schoolId}
+                                classes={classes}
+                                currentAction={currentAction}
+                                schoolInfo={schoolInfo}
+                                feeSettings={feeSettings}
+                                preselectedClassId={preselectedClassId}
+                                preselectedStudentId={preselectedStudentId}
+                            />
+                        </div>
                     )}
 
-                    {permittedTabs.includes('finances') && activeTab === 'finances' && (
-                        <FinancesDashboard
-                            schoolId={schoolId}
-                            currentAction={currentAction}
-                            schoolInfo={schoolInfo}
-                            classes={classes}
-                        />
+                    {permittedTabs.includes('finances') && visitedTabs.has('finances') && (
+                        <div style={{ display: activeTab === 'finances' ? 'block' : 'none' }}>
+                            <FinancesDashboard
+                                schoolId={schoolId}
+                                currentAction={currentAction}
+                                schoolInfo={schoolInfo}
+                                classes={classes}
+                            />
+                        </div>
                     )}
 
-                    {permittedTabs.includes('payroll') && activeTab === 'payroll' && (
-                        <PayrollDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
+                    {permittedTabs.includes('payroll') && visitedTabs.has('payroll') && (
+                        <div style={{ display: activeTab === 'payroll' ? 'block' : 'none' }}>
+                            <PayrollDashboard schoolId={schoolId} schoolInfo={schoolInfo} />
+                        </div>
                     )}
 
-                    {permittedTabs.includes('onlineSubmissions') && activeTab === 'onlineSubmissions' && (
-                        <OnlineSubmissionsDashboard 
-                            schoolId={schoolId} 
-                            schoolInfo={schoolInfo} 
-                            classes={classes}
-                            feeSettings={feeSettings}
-                        />
+                    {permittedTabs.includes('onlineSubmissions') && visitedTabs.has('onlineSubmissions') && (
+                        <div style={{ display: activeTab === 'onlineSubmissions' ? 'block' : 'none' }}>
+                            <OnlineSubmissionsDashboard 
+                                schoolId={schoolId} 
+                                schoolInfo={schoolInfo} 
+                                classes={classes}
+                                feeSettings={feeSettings}
+                            />
+                        </div>
                     )}
 
-                    {permittedTabs.includes('monthlyMatrix') && activeTab === 'monthlyMatrix' && (
-                        <FeeArrearsMatrix
-                            schoolId={schoolId}
-                            classes={classes}
-                            schoolInfo={schoolInfo}
-                            feeSettings={feeSettings}
-                            currentAction={currentAction}
-                            onOpenNewActionModal={() => setShowModal(true)}
-                            onDeleteAction={handleDeleteAction}
-                            onSaveFeeSettings={handleSaveFeeSettings}
-                            setFeeSettings={setFeeSettings}
-                            isSavingFeeSettings={isSavingFeeSettings}
-                        />
+                    {permittedTabs.includes('monthlyMatrix') && visitedTabs.has('monthlyMatrix') && (
+                        <div style={{ display: activeTab === 'monthlyMatrix' ? 'block' : 'none' }}>
+                            <FeeArrearsMatrix
+                                schoolId={schoolId}
+                                classes={classes}
+                                schoolInfo={schoolInfo}
+                                feeSettings={feeSettings}
+                                currentAction={currentAction}
+                                onOpenNewActionModal={() => setShowModal(true)}
+                                onDeleteAction={handleDeleteAction}
+                                onSaveFeeSettings={handleSaveFeeSettings}
+                                setFeeSettings={setFeeSettings}
+                                isSavingFeeSettings={isSavingFeeSettings}
+                            />
+                        </div>
                     )}
                 </>
             )}
