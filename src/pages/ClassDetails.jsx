@@ -3,18 +3,20 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
     CheckCircle2, XCircle, MoreVertical, Search, Filter,
-    X, Trophy
+    X, Trophy, Camera, LayoutGrid
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
 import StudentProfileModal from '../components/StudentProfileModal';
 import StudentActionPopup from '../components/StudentActionPopup';
 import CachedImage from '../components/CachedImage';
+import ClassPhotoStudio from '../components/ClassPhotoStudio';
 
 
 const ClassDetails = () => {
     const { classId } = useParams();
     const navigate = useNavigate();
+    const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'photoStudio'
     const [classData, setClassData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'present', 'absent'
@@ -285,7 +287,7 @@ const ClassDetails = () => {
     return (
         <div className="animate-fade-in-up" style={{ width: '100%', margin: '0 auto' }}>
             {/* Header */}
-            <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <button
                     onClick={() => {
                         navigate('/classes');
@@ -303,6 +305,56 @@ const ClassDetails = () => {
                 </div>
             </div>
 
+            {/* View Switcher Tabs */}
+            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '2rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.85rem' }}>
+                <button
+                    onClick={() => setActiveTab('overview')}
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.65rem 1.25rem',
+                        borderRadius: '10px',
+                        border: 'none',
+                        fontSize: '0.95rem',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        background: activeTab === 'overview' ? '#6366f1' : 'white',
+                        color: activeTab === 'overview' ? 'white' : 'var(--text-secondary)',
+                        boxShadow: activeTab === 'overview' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
+                        transition: 'all 0.2s ease'
+                    }}
+                >
+                    <LayoutGrid size={18} />
+                    Students Overview
+                </button>
+                <button
+                    onClick={() => setActiveTab('photoStudio')}
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.65rem 1.25rem',
+                        borderRadius: '10px',
+                        border: 'none',
+                        fontSize: '0.95rem',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        background: activeTab === 'photoStudio' ? '#6366f1' : 'white',
+                        color: activeTab === 'photoStudio' ? 'white' : 'var(--text-secondary)',
+                        boxShadow: activeTab === 'photoStudio' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
+                        transition: 'all 0.2s ease'
+                    }}
+                >
+                    <Camera size={18} />
+                    📸 Photo Studio
+                </button>
+            </div>
+
+            {activeTab === 'photoStudio' ? (
+                <ClassPhotoStudio schoolId={schoolId} classId={classId} students={students} />
+            ) : (
+                <>
             {/* Top Stats Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem', marginBottom: '2.5rem' }}>
                 {stats.map((stat, idx) => (
@@ -491,6 +543,8 @@ const ClassDetails = () => {
                     );
                 })}
             </div>
+            </>
+            )}
 
             {/* Student Profile Modal */}
             <StudentProfileModal
