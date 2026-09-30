@@ -5300,7 +5300,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const [expenseProofPreview, setExpenseProofPreview] = useState(null);
     const [isSavingIncome, setIsSavingIncome] = useState(false);
     const [isSavingExpense, setIsSavingExpense] = useState(false);
-    const [rightCardTab, setRightCardTab] = useState('fee_slips'); // 'fee_slips' | 'finances_breakdown'
+    const [rightCardTab, setRightCardTab] = useState('all'); // 'all' | 'fee_slips' | 'incomes' | 'expenses'
 
     const handleIncomeProofChange = (e) => {
         const file = e.target.files?.[0];
@@ -5447,7 +5447,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         // 3. Clear Form & Switch to Breakdown View (<50ms)
         setForm({ name: '', amount: '', remarks: '' });
         if (clearProofFn) clearProofFn();
-        setRightCardTab('finances_breakdown');
+        setRightCardTab('all');
         setSaving(false);
 
         // 4. Background Non-Blocking Firestore Write
@@ -5545,24 +5545,36 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
     };
 
-    // Download Customized Daily Fee Collections PDF Report
-    const handleDownloadDailyReport = async () => {
-        if (todayTransactions.length === 0) {
-            alert("No fee collections recorded today yet to generate a daily report.");
+    // Download Master Consolidated Daily Financial Audit & Ledger PDF Report
+    const handleDownloadMasterDailyReport = async () => {
+        const totalFeeReceipts = todayTransactions.length;
+        const totalFeeAmount = todayTransactions.reduce((sum, t) => sum + (Number(t.totalPaid) || 0), 0);
+        const totalManualIncomes = (todayFinances.incomes || []).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+        const actionAmt = currentAction ? Number(currentAction.amount || 0) : 0;
+        const totalIncomes = totalManualIncomes + actionAmt;
+        const totalGrossInflow = totalFeeAmount + totalIncomes;
+        const totalExpenses = (todayFinances.expenses || []).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+        const netClosingBalance = totalGrossInflow - totalExpenses;
+        const totalAuditedRecords = totalFeeReceipts + (todayFinances.incomes || []).length + (todayFinances.expenses || []).length + (actionAmt > 0 ? 1 : 0);
+
+        if (totalAuditedRecords === 0) {
+            alert("No fee collections or financial transactions logged today yet to generate a daily master report.");
             return;
         }
+
         setIsGeneratingDailyPDF(true);
+        setIsGeneratingFinancesPDF(true);
         try {
             const doc = new jsPDF();
             const pageWidth = doc.internal.pageSize.getWidth();
             const pageHeight = doc.internal.pageSize.getHeight();
 
-            // 1. Premium Header Background Bar (Slate-900 / Navy)
+            // 1. Premium Header Background Bar (Dark Slate-900 / Navy)
             doc.setFillColor(15, 23, 42);
             doc.rect(0, 0, pageWidth, 48, 'F');
 
-            // Accent Brand Strip at top
-            doc.setFillColor(0, 120, 212);
+            // Accent Brand Strip at top (Indigo / Royal Blue)
+            doc.setFillColor(79, 70, 229);
             doc.rect(0, 0, pageWidth, 4, 'F');
 
             // 2. School Logo
@@ -5582,37 +5594,38 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
             // 3. School Header Text & Metadata
             const textX = hasLogo ? 46 : 14;
-            const currentSchoolName = (localSchoolInfo?.name || schoolInfo?.name || 'School Fee Collections').toUpperCase();
-            
-            doc.setFontSize(17);
+            const currentSchoolName = (localSchoolInfo?.name || schoolInfo?.name || 'School Fee Collections & Cash Ledger').toUpperCase();
+
+            doc.setFontSize(16);
             doc.setTextColor(255, 255, 255);
             doc.setFont("helvetica", "bold");
             doc.text(currentSchoolName, textX, 19);
 
-            doc.setFontSize(10.5);
+            doc.setFontSize(10);
             doc.setTextColor(56, 189, 248); // Sky-400
             doc.setFont("helvetica", "bold");
-            doc.text("DAILY FEE COLLECTIONS & REVENUE AUDIT REPORT", textX, 26);
+            doc.text("DAILY FINANCIAL AUDIT & MASTER CASH LEDGER REPORT", textX, 26);
 
-            doc.setFontSize(8);
+            doc.setFontSize(7.8);
             doc.setTextColor(203, 213, 225); // Slate-300
             doc.setFont("helvetica", "normal");
             const now = new Date();
             const printDate = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
             const printTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            doc.text(`Generated on: ${printDate} at ${printTime}  |  Official Ledger Export`, textX, 33);
-            doc.text(`Total Slips Audited Today: ${todayTransactions.length}  |  Status: 100% Reconciled & Verified`, textX, 39);
+            doc.text(`Audit Date: ${printDate} at ${printTime}  |  Official Daily Closing Export`, textX, 33);
+            doc.text(`Total Audited Entries: ${totalAuditedRecords} records (Slips: ${totalFeeReceipts}, Incomes: ${todayFinances.incomes.length + (actionAmt > 0 ? 1 : 0)}, Expenses: ${todayFinances.expenses.length})  |  Status: 100% Reconciled`, textX, 39);
 
-            // 4. Executive Summary KPI Grid (4 Stat Blocks)
+            // 4. Executive Summary KPI Grid (5 Stat Blocks)
             const startY = 55;
-            const cardWidth = (pageWidth - 28 - 9) / 4;
-            const cardHeight = 21;
+            const cardWidth = (pageWidth - 28 - 12) / 5;
+            const cardHeight = 22;
 
             const kpis = [
-                { label: "TOTAL COLLECTED", val: `Rs ${todayMetrics.totalAmount.toLocaleString()}`, bg: [236, 253, 245], border: [167, 243, 208], text: [5, 150, 105] },
-                { label: "FEE SLIPS ISSUED", val: `${todayMetrics.totalCount} Slips`, bg: [239, 246, 255], border: [191, 219, 254], text: [0, 120, 212] },
-                { label: "CASH IN HAND", val: `Rs ${todayMetrics.cashAmount.toLocaleString()} (${todayMetrics.cashPct}%)`, bg: [240, 253, 244], border: [187, 247, 208], text: [22, 101, 52] },
-                { label: "BANK / DIGITAL", val: `Rs ${(todayMetrics.bankAmount + todayMetrics.onlineAmount).toLocaleString()} (${todayMetrics.bankPct + todayMetrics.onlinePct}%)`, bg: [250, 245, 255], border: [233, 213, 255], text: [126, 34, 206] },
+                { label: "FEE COLLECTED", val: `Rs ${totalFeeAmount.toLocaleString()}`, sub: `${totalFeeReceipts} Slips`, bg: [239, 246, 255], border: [191, 219, 254], text: [0, 120, 212] },
+                { label: "OTHER INCOMES", val: `Rs ${totalIncomes.toLocaleString()}`, sub: `${todayFinances.incomes.length + (actionAmt > 0 ? 1 : 0)} Vouchers`, bg: [236, 253, 245], border: [167, 243, 208], text: [5, 150, 105] },
+                { label: "GROSS INFLOW", val: `Rs ${totalGrossInflow.toLocaleString()}`, sub: "Total Inflow", bg: [240, 253, 250], border: [153, 246, 228], text: [13, 148, 136] },
+                { label: "TOTAL EXPENSES", val: `Rs ${totalExpenses.toLocaleString()}`, sub: `${todayFinances.expenses.length} Vouchers`, bg: [254, 242, 242], border: [254, 202, 202], text: [220, 38, 38] },
+                { label: "NET CLOSING", val: `Rs ${netClosingBalance.toLocaleString()}`, sub: netClosingBalance >= 0 ? "Net Surplus" : "Net Deficit", bg: netClosingBalance >= 0 ? [240, 253, 244] : [254, 242, 242], border: netClosingBalance >= 0 ? [187, 247, 208] : [254, 202, 202], text: netClosingBalance >= 0 ? [22, 101, 52] : [185, 28, 28] },
             ];
 
             kpis.forEach((kpi, idx) => {
@@ -5622,31 +5635,36 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 doc.setLineWidth(0.3);
                 doc.roundedRect(x, startY, cardWidth, cardHeight, 2, 2, 'FD');
 
-                doc.setFontSize(6.5);
+                doc.setFontSize(5.8);
                 doc.setTextColor(100, 116, 139);
                 doc.setFont("helvetica", "bold");
-                doc.text(kpi.label, x + 3, startY + 6);
+                doc.text(kpi.label, x + 2.5, startY + 5.5);
 
-                doc.setFontSize(9.5);
+                doc.setFontSize(8.5);
                 doc.setTextColor(kpi.text[0], kpi.text[1], kpi.text[2]);
                 doc.setFont("helvetica", "bold");
-                doc.text(kpi.val, x + 3, startY + 14);
+                doc.text(kpi.val, x + 2.5, startY + 12.5);
+
+                doc.setFontSize(6);
+                doc.setTextColor(100, 116, 139);
+                doc.setFont("helvetica", "normal");
+                doc.text(kpi.sub, x + 2.5, startY + 18);
             });
 
-            // 5. Section Heading for Table
-            const tableStartY = startY + cardHeight + 8;
-            doc.setFontSize(10.5);
+            let currentTableY = startY + cardHeight + 8;
+
+            // --- SET A: STUDENT FEE COLLECTIONS LOG ---
+            doc.setFontSize(9.5);
             doc.setTextColor(15, 23, 42);
             doc.setFont("helvetica", "bold");
-            doc.text("ITEMIZED TRANSACTION LOG & PAYMENT PARTICULARS", 14, tableStartY);
+            doc.text("SET A: TODAY'S STUDENT FEE COLLECTIONS LOG", 14, currentTableY);
 
-            doc.setFontSize(7.5);
+            doc.setFontSize(7);
             doc.setTextColor(100, 116, 139);
             doc.setFont("helvetica", "normal");
-            doc.text(`Official ledger entries for today (Total: ${todayTransactions.length} records)`, 14, tableStartY + 5);
+            doc.text(`Itemized student receipts issued today (${totalFeeReceipts} records)`, 14, currentTableY + 4.5);
 
-            // 6. Format Data for autoTable
-            const tableRows = todayTransactions.map((tx, idx) => {
+            const feeRows = totalFeeReceipts > 0 ? todayTransactions.map((tx, idx) => {
                 const roll = tx.rollNo && tx.rollNo !== 'N/A' ? ` (Roll: ${tx.rollNo})` : '';
                 const studentField = `${tx.studentName || 'Student'}${roll}`;
                 const fatherField = tx.fatherName || 'N/A';
@@ -5665,24 +5683,24 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     timeField,
                     amtField
                 ];
-            });
+            }) : [[1, '-', 'No fee collections recorded today', '-', '-', '-', '-', 'Rs 0']];
 
             autoTable(doc, {
-                startY: tableStartY + 8,
+                startY: currentTableY + 7,
                 head: [['#', 'Slip #', 'Student Name', "Father's Name", 'Class', 'Mode', 'Time / Date', 'Amount Paid']],
-                body: tableRows,
+                body: feeRows,
                 theme: 'grid',
                 headStyles: {
                     fillColor: [15, 23, 42],
                     textColor: [255, 255, 255],
                     fontStyle: 'bold',
-                    fontSize: 8,
+                    fontSize: 7.5,
                     halign: 'left'
                 },
                 bodyStyles: {
-                    fontSize: 7.5,
+                    fontSize: 7,
                     textColor: [30, 41, 59],
-                    cellPadding: 2.2
+                    cellPadding: 2
                 },
                 alternateRowStyles: {
                     fillColor: [248, 250, 252]
@@ -5698,8 +5716,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     7: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], cellWidth: 24 }
                 },
                 foot: [[
-                    { content: 'GRAND TOTAL COLLECTED', colSpan: 7, styles: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], fontSize: 8.5 } },
-                    { content: `Rs ${todayMetrics.totalAmount.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], fontSize: 9, fillColor: [236, 253, 245] } }
+                    { content: 'SUBTOTAL (FEE COLLECTIONS)', colSpan: 7, styles: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], fontSize: 8 } },
+                    { content: `Rs ${totalFeeAmount.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105], fontSize: 8.5, fillColor: [236, 253, 245] } }
                 ]],
                 footStyles: {
                     fillColor: [241, 245, 249],
@@ -5713,307 +5731,256 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     doc.setTextColor(148, 163, 184);
                     doc.setFont("helvetica", "normal");
                     doc.text(str, pageWidth - 14, pageHeight - 8, { align: 'right' });
-                    doc.text("Computer Generated Official Fee Audit Report • Principal Office Management System", 14, pageHeight - 8);
+                    doc.text("Master Financial Audit & Daily Ledger • Principal Management System", 14, pageHeight - 8);
                 }
             });
 
-            // 7. Signature / Verification Footer at the end
-            let finalY = doc.lastAutoTable.finalY + 16;
-            if (finalY > pageHeight - 35) {
+            currentTableY = doc.lastAutoTable.finalY + 10;
+
+            // --- SET B: OTHER DIRECT INCOMES & INFLOWS ---
+            const incomeRows = [];
+            let incIdx = 1;
+            if (actionAmt > 0 && currentAction) {
+                incomeRows.push([
+                    incIdx++,
+                    'Global Action',
+                    `${currentAction.name || 'Campaign'}`,
+                    'Active targeted campaign collection',
+                    `Rs ${Number(actionAmt).toLocaleString()}`
+                ]);
+            }
+            (todayFinances.incomes || []).forEach(inc => {
+                incomeRows.push([
+                    incIdx++,
+                    inc.category || 'Income',
+                    inc.name || inc.title || 'Direct Revenue',
+                    inc.remarks || inc.type || 'General Inflow',
+                    `Rs ${Number(inc.amount || 0).toLocaleString()}`
+                ]);
+            });
+
+            if (incomeRows.length === 0) {
+                incomeRows.push([1, '-', 'No additional income vouchers recorded today', '-', 'Rs 0']);
+            }
+
+            if (currentTableY > pageHeight - 55) {
                 doc.addPage();
-                finalY = 30;
+                currentTableY = 20;
             }
 
-            const sigWidth = 55;
-            doc.setDrawColor(148, 163, 184);
-            doc.setLineWidth(0.5);
-
-            // Cashier Signature
-            doc.line(14, finalY + 12, 14 + sigWidth, finalY + 12);
-            doc.setFontSize(8);
-            doc.setTextColor(71, 85, 105);
-            doc.setFont("helvetica", "bold");
-            doc.text("Cashier / Fee Incharge", 14, finalY + 17);
-            doc.setFont("helvetica", "normal");
-            doc.setTextColor(148, 163, 184);
-            doc.text("Signature & Date", 14, finalY + 21);
-
-            // Principal / Admin Signature
-            const rightSigX = pageWidth - 14 - sigWidth;
-            doc.line(rightSigX, finalY + 12, rightSigX + sigWidth, finalY + 12);
-            doc.setFontSize(8);
-            doc.setTextColor(71, 85, 105);
-            doc.setFont("helvetica", "bold");
-            doc.text("Principal / Administrator", rightSigX, finalY + 17);
-            doc.setFont("helvetica", "normal");
-            doc.setTextColor(148, 163, 184);
-            doc.text("Official Stamp & Approval", rightSigX, finalY + 21);
-
-            const safeDateStr = todayMetrics.todayStr.replace(/ /g, '_').replace(/,/g, '');
-            const fileName = `Fee_Collections_Report_${safeDateStr}_${Date.now().toString().slice(-4)}.pdf`;
-            doc.save(fileName);
-        } catch (error) {
-            console.error("Failed to generate Collections PDF report:", error);
-            alert("An error occurred while generating the PDF report. Please try again.");
-        }
-        setIsGeneratingDailyPDF(false);
-    };
-
-    // Download Customized Finances (Income & Expenses Breakdown) PDF Report
-    const handleDownloadFinancesReport = async () => {
-        const totalManualIncomes = todayFinances.incomes.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-        const actionAmt = currentAction ? Number(currentAction.amount || 0) : 0;
-        const totalIncomes = totalManualIncomes + actionAmt;
-
-        const totalExpenses = todayFinances.expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-        const netBalance = totalIncomes - totalExpenses;
-
-        if (todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 && actionAmt === 0) {
-            alert("No income or expense entries recorded today yet to generate a daily report.");
-            return;
-        }
-
-        setIsGeneratingFinancesPDF(true);
-        try {
-            const doc = new jsPDF();
-            const pageWidth = doc.internal.pageSize.getWidth();
-            const pageHeight = doc.internal.pageSize.getHeight();
-
-            // 1. Premium Header Bar (Slate-900 / Navy)
-            doc.setFillColor(15, 23, 42);
-            doc.rect(0, 0, pageWidth, 48, 'F');
-
-            // Accent Brand Strip at top (Emerald Green)
-            doc.setFillColor(22, 163, 74);
-            doc.rect(0, 0, pageWidth, 4, 'F');
-
-            // 2. School Logo
-            let hasLogo = false;
-            let logoUrl = localSchoolInfo?.logo || schoolInfo?.logo || '';
-            if (logoUrl) {
-                const base64Img = await getDailyBase64Image(logoUrl);
-                if (base64Img) {
-                    try {
-                        doc.addImage(base64Img, 'PNG', 14, 10, 26, 26);
-                        hasLogo = true;
-                    } catch (err) {
-                        console.warn("Logo addImage fallback:", err);
-                    }
-                }
-            }
-
-            // 3. School Header Text & Metadata
-            const textX = hasLogo ? 46 : 14;
-            const currentSchoolName = (localSchoolInfo?.name || schoolInfo?.name || 'School Finances').toUpperCase();
-            
-            doc.setFontSize(17);
-            doc.setTextColor(255, 255, 255);
-            doc.setFont("helvetica", "bold");
-            doc.text(currentSchoolName, textX, 19);
-
-            doc.setFontSize(10.5);
-            doc.setTextColor(74, 222, 128); // Emerald-400
-            doc.setFont("helvetica", "bold");
-            doc.text("INCOME & EXPENSES BREAKDOWN AUDIT REPORT", textX, 26);
-
-            doc.setFontSize(8);
-            doc.setTextColor(203, 213, 225); // Slate-300
-            doc.setFont("helvetica", "normal");
-            const now = new Date();
-            const printDate = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-            const printTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            doc.text(`Generated on: ${printDate} at ${printTime}  |  Official Ledger Export`, textX, 33);
-            doc.text(`Total Records Audited Today: ${todayFinances.incomes.length + todayFinances.expenses.length + (currentAction ? 1 : 0)}  |  Financial Status: ${netBalance >= 0 ? 'Surplus / Positive' : 'Deficit / Negative'}`, textX, 39);
-
-            // 4. Executive Summary KPI Grid (3 Stat Blocks)
-            const startY = 55;
-            const cardWidth = (pageWidth - 28 - 6) / 3;
-            const cardHeight = 21;
-
-            const kpis = [
-                { label: "TOTAL INCOMES", val: `Rs ${totalIncomes.toLocaleString()}`, bg: [236, 253, 245], border: [167, 243, 208], text: [5, 150, 105] },
-                { label: "TOTAL EXPENSES", val: `Rs ${totalExpenses.toLocaleString()}`, bg: [254, 242, 242], border: [254, 202, 202], text: [220, 38, 38] },
-                { label: "NET PROFIT / BALANCE", val: `Rs ${netBalance.toLocaleString()}`, bg: netBalance >= 0 ? [240, 253, 244] : [254, 242, 242], border: netBalance >= 0 ? [187, 247, 208] : [254, 202, 202], text: netBalance >= 0 ? [22, 101, 52] : [185, 28, 28] },
-            ];
-
-            kpis.forEach((kpi, idx) => {
-                const x = 14 + idx * (cardWidth + 3);
-                doc.setFillColor(kpi.bg[0], kpi.bg[1], kpi.bg[2]);
-                doc.setDrawColor(kpi.border[0], kpi.border[1], kpi.border[2]);
-                doc.setLineWidth(0.3);
-                doc.roundedRect(x, startY, cardWidth, cardHeight, 2, 2, 'FD');
-
-                doc.setFontSize(6.5);
-                doc.setTextColor(100, 116, 139);
-                doc.setFont("helvetica", "bold");
-                doc.text(kpi.label, x + 3, startY + 6);
-
-                doc.setFontSize(9.5);
-                doc.setTextColor(kpi.text[0], kpi.text[1], kpi.text[2]);
-                doc.setFont("helvetica", "bold");
-                doc.text(kpi.val, x + 3, startY + 14);
-            });
-
-            // 5. Section Heading for Table
-            const tableStartY = startY + cardHeight + 8;
-            doc.setFontSize(10.5);
+            doc.setFontSize(9.5);
             doc.setTextColor(15, 23, 42);
             doc.setFont("helvetica", "bold");
-            doc.text("ITEMIZED FINANCIAL BREAKDOWN PARTICULARS", 14, tableStartY);
+            doc.text("SET B: OTHER INCOMES & DIRECT REVENUE INFLOWS", 14, currentTableY);
 
-            doc.setFontSize(7.5);
+            doc.setFontSize(7);
             doc.setTextColor(100, 116, 139);
             doc.setFont("helvetica", "normal");
-            doc.text(`Official ledger entries for today including active actions, incomes & expenses`, 14, tableStartY + 5);
-
-            // 6. Format Data for autoTable
-            const rows = [];
-            let counter = 1;
-
-            if (currentAction) {
-                rows.push([
-                    counter++,
-                    'Income',
-                    `${currentAction.name} (Global Action)`,
-                    'Global Action',
-                    'Active targeted campaign collection',
-                    `Rs ${Number(currentAction.amount || 0).toLocaleString()}`
-                ]);
-            }
-
-            todayFinances.incomes.forEach(inc => {
-                rows.push([
-                    counter++,
-                    'Income',
-                    inc.name,
-                    inc.type === 'permanent' ? 'Permanent' : 'One-time',
-                    inc.remarks || 'Income Entry',
-                    `Rs ${Number(inc.amount).toLocaleString()}`
-                ]);
-            });
-
-            todayFinances.expenses.forEach(exp => {
-                rows.push([
-                    counter++,
-                    'Expense',
-                    exp.name,
-                    exp.type === 'permanent' ? 'Permanent' : 'One-time',
-                    exp.remarks || 'Expense Entry',
-                    `Rs ${Number(exp.amount).toLocaleString()}`
-                ]);
-            });
+            doc.text(`Prospectus, canteen, grants, and miscellaneous inflows (${todayFinances.incomes.length + (actionAmt > 0 ? 1 : 0)} records)`, 14, currentTableY + 4.5);
 
             autoTable(doc, {
-                startY: tableStartY + 8,
-                head: [['#', 'Category', 'Description / Title', 'Type', 'Remarks / Notes', 'Amount (PKR)']],
-                body: rows,
+                startY: currentTableY + 7,
+                head: [['#', 'Category', 'Description / Title', 'Remarks / Source', 'Amount (PKR)']],
+                body: incomeRows,
                 theme: 'grid',
                 headStyles: {
-                    fillColor: [15, 23, 42],
+                    fillColor: [22, 101, 52],
                     textColor: [255, 255, 255],
                     fontStyle: 'bold',
-                    fontSize: 8,
+                    fontSize: 7.5,
                     halign: 'left'
                 },
                 bodyStyles: {
-                    fontSize: 7.5,
+                    fontSize: 7,
                     textColor: [30, 41, 59],
-                    cellPadding: 2.5
+                    cellPadding: 2
                 },
                 alternateRowStyles: {
-                    fillColor: [248, 250, 252]
+                    fillColor: [240, 253, 244]
                 },
                 columnStyles: {
                     0: { halign: 'center', cellWidth: 8 },
-                    1: { halign: 'center', fontStyle: 'bold', cellWidth: 20 },
-                    2: { halign: 'left', fontStyle: 'bold', cellWidth: 46 },
-                    3: { halign: 'center', cellWidth: 26 },
-                    4: { halign: 'left', cellWidth: 50 },
-                    5: { halign: 'right', fontStyle: 'bold', cellWidth: 32 }
+                    1: { halign: 'center', fontStyle: 'bold', textColor: [22, 101, 52], cellWidth: 32 },
+                    2: { halign: 'left', fontStyle: 'bold', cellWidth: 54 },
+                    3: { halign: 'left', cellWidth: 58 },
+                    4: { halign: 'right', fontStyle: 'bold', textColor: [22, 163, 74], cellWidth: 30 }
                 },
-                didParseCell: function(data) {
-                    if (data.section === 'body') {
-                        const cat = data.row.raw[1];
-                        if (data.column.index === 1 || data.column.index === 5) {
-                            if (cat === 'Income') {
-                                data.cell.styles.textColor = [22, 163, 74];
-                            } else if (cat === 'Expense') {
-                                data.cell.styles.textColor = [220, 38, 38];
-                            }
-                        }
-                    }
-                },
-                foot: [
-                    [
-                        { content: 'TOTAL INCOMES', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold', textColor: [22, 163, 74], fontSize: 8 } },
-                        { content: `Rs ${totalIncomes.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [22, 163, 74], fontSize: 8.5, fillColor: [236, 253, 245] } }
-                    ],
-                    [
-                        { content: 'TOTAL EXPENSES', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold', textColor: [220, 38, 38], fontSize: 8 } },
-                        { content: `Rs ${totalExpenses.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [220, 38, 38], fontSize: 8.5, fillColor: [254, 242, 242] } }
-                    ],
-                    [
-                        { content: 'NET SURPLUS / DEFICIT', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], fontSize: 9 } },
-                        { content: `Rs ${netBalance.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: netBalance >= 0 ? [22, 101, 52] : [185, 28, 28], fontSize: 9.5, fillColor: netBalance >= 0 ? [240, 253, 244] : [254, 242, 242] } }
-                    ]
-                ],
+                foot: [[
+                    { content: 'SUBTOTAL (OTHER INCOMES)', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], fontSize: 8 } },
+                    { content: `Rs ${totalIncomes.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [22, 163, 74], fontSize: 8.5, fillColor: [236, 253, 245] } }
+                ]],
                 footStyles: {
                     fillColor: [241, 245, 249],
                     lineWidth: 0.3,
                     lineColor: [203, 213, 225]
                 },
-                margin: { left: 14, right: 14 },
-                didDrawPage: () => {
-                    const str = `Page ${doc.internal.getNumberOfPages()}`;
-                    doc.setFontSize(7.5);
-                    doc.setTextColor(148, 163, 184);
-                    doc.setFont("helvetica", "normal");
-                    doc.text(str, pageWidth - 14, pageHeight - 8, { align: 'right' });
-                    doc.text("Computer Generated Official Income & Expenses Breakdown Report • Principal Office Management System", 14, pageHeight - 8);
-                }
+                margin: { left: 14, right: 14 }
             });
 
-            // 7. Signature / Verification Footer at the end
-            let finalY = doc.lastAutoTable.finalY + 16;
+            currentTableY = doc.lastAutoTable.finalY + 10;
+
+            // --- SET C: OPERATIONAL EXPENSES & OUTFLOWS ---
+            const expenseRows = [];
+            let expIdx = 1;
+            (todayFinances.expenses || []).forEach(exp => {
+                expenseRows.push([
+                    expIdx++,
+                    exp.category || 'Expense',
+                    exp.name || exp.title || 'Outflow',
+                    exp.remarks || exp.type || 'School Expense',
+                    `Rs ${Number(exp.amount || 0).toLocaleString()}`
+                ]);
+            });
+
+            if (expenseRows.length === 0) {
+                expenseRows.push([1, '-', 'No school expenses recorded today', '-', 'Rs 0']);
+            }
+
+            if (currentTableY > pageHeight - 55) {
+                doc.addPage();
+                currentTableY = 20;
+            }
+
+            doc.setFontSize(9.5);
+            doc.setTextColor(15, 23, 42);
+            doc.setFont("helvetica", "bold");
+            doc.text("SET C: TODAY'S SCHOOL EXPENSES & DISBURSEMENTS", 14, currentTableY);
+
+            doc.setFontSize(7);
+            doc.setTextColor(100, 116, 139);
+            doc.setFont("helvetica", "normal");
+            doc.text(`Itemized operational expenses, utilities, supplies & petty cash (${todayFinances.expenses.length} records)`, 14, currentTableY + 4.5);
+
+            autoTable(doc, {
+                startY: currentTableY + 7,
+                head: [['#', 'Category', 'Expense Title / Purpose', 'Remarks / Paid To', 'Amount (PKR)']],
+                body: expenseRows,
+                theme: 'grid',
+                headStyles: {
+                    fillColor: [153, 27, 27],
+                    textColor: [255, 255, 255],
+                    fontStyle: 'bold',
+                    fontSize: 7.5,
+                    halign: 'left'
+                },
+                bodyStyles: {
+                    fontSize: 7,
+                    textColor: [30, 41, 59],
+                    cellPadding: 2
+                },
+                alternateRowStyles: {
+                    fillColor: [254, 242, 242]
+                },
+                columnStyles: {
+                    0: { halign: 'center', cellWidth: 8 },
+                    1: { halign: 'center', fontStyle: 'bold', textColor: [185, 28, 28], cellWidth: 32 },
+                    2: { halign: 'left', fontStyle: 'bold', cellWidth: 54 },
+                    3: { halign: 'left', cellWidth: 58 },
+                    4: { halign: 'right', fontStyle: 'bold', textColor: [220, 38, 38], cellWidth: 30 }
+                },
+                foot: [[
+                    { content: 'SUBTOTAL (TOTAL EXPENSES)', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold', textColor: [15, 23, 42], fontSize: 8 } },
+                    { content: `Rs ${totalExpenses.toLocaleString()}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [220, 38, 38], fontSize: 8.5, fillColor: [254, 242, 242] } }
+                ]],
+                footStyles: {
+                    fillColor: [241, 245, 249],
+                    lineWidth: 0.3,
+                    lineColor: [203, 213, 225]
+                },
+                margin: { left: 14, right: 14 }
+            });
+
+            currentTableY = doc.lastAutoTable.finalY + 10;
+
+            // --- SET D: GRAND AUDIT RECONCILIATION SUMMARY BOX ---
+            if (currentTableY > pageHeight - 60) {
+                doc.addPage();
+                currentTableY = 20;
+            }
+
+            const summaryBoxWidth = pageWidth - 28;
+            doc.setFillColor(248, 250, 252);
+            doc.setDrawColor(203, 213, 225);
+            doc.setLineWidth(0.4);
+            doc.roundedRect(14, currentTableY, summaryBoxWidth, 22, 2, 2, 'FD');
+
+            doc.setFontSize(8.5);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(15, 23, 42);
+            doc.text("MASTER AUDIT RECONCILIATION SUMMARY", 18, currentTableY + 7);
+
+            doc.setFontSize(7.5);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(71, 85, 105);
+            doc.text(`Gross Total Inflows: Rs ${totalGrossInflow.toLocaleString()}  |  Total Expenses Outflow: Rs ${totalExpenses.toLocaleString()}`, 18, currentTableY + 14);
+
+            doc.setFontSize(9);
+            doc.setFont("helvetica", "bold");
+            if (netClosingBalance >= 0) {
+                doc.setTextColor(22, 101, 52);
+                doc.text(`NET CLOSING CASH IN HAND: +Rs ${netClosingBalance.toLocaleString()} (Surplus)`, summaryBoxWidth - 75, currentTableY + 12);
+            } else {
+                doc.setTextColor(185, 28, 28);
+                doc.text(`NET CLOSING DEFICIT: -Rs ${Math.abs(netClosingBalance).toLocaleString()}`, summaryBoxWidth - 75, currentTableY + 12);
+            }
+
+            // --- Signatures Footer ---
+            let finalY = currentTableY + 28;
             if (finalY > pageHeight - 35) {
                 doc.addPage();
                 finalY = 30;
             }
 
-            const sigWidth = 55;
+            const sigWidth = 50;
             doc.setDrawColor(148, 163, 184);
             doc.setLineWidth(0.5);
 
+            // Cashier Signature
+            doc.line(14, finalY + 10, 14 + sigWidth, finalY + 10);
+            doc.setFontSize(7.5);
+            doc.setTextColor(71, 85, 105);
+            doc.setFont("helvetica", "bold");
+            doc.text("Cashier / Fee Incharge", 14, finalY + 15);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(148, 163, 184);
+            doc.text("Signature & Date", 14, finalY + 19);
+
             // Accountant Signature
-            doc.line(14, finalY + 12, 14 + sigWidth, finalY + 12);
-            doc.setFontSize(8);
+            const midSigX = 14 + (pageWidth - 28 - sigWidth) / 2;
+            doc.line(midSigX, finalY + 10, midSigX + sigWidth, finalY + 10);
+            doc.setFontSize(7.5);
             doc.setTextColor(71, 85, 105);
             doc.setFont("helvetica", "bold");
-            doc.text("Accountant / Finance Incharge", 14, finalY + 17);
+            doc.text("Head Accountant / Auditor", midSigX, finalY + 15);
             doc.setFont("helvetica", "normal");
             doc.setTextColor(148, 163, 184);
-            doc.text("Signature & Date", 14, finalY + 21);
+            doc.text("Signature & Date", midSigX, finalY + 19);
 
-            // Principal / Admin Signature
+            // Principal Signature
             const rightSigX = pageWidth - 14 - sigWidth;
-            doc.line(rightSigX, finalY + 12, rightSigX + sigWidth, finalY + 12);
-            doc.setFontSize(8);
+            doc.line(rightSigX, finalY + 10, rightSigX + sigWidth, finalY + 10);
+            doc.setFontSize(7.5);
             doc.setTextColor(71, 85, 105);
             doc.setFont("helvetica", "bold");
-            doc.text("Principal / Administrator", rightSigX, finalY + 17);
+            doc.text("Principal / Administrator", rightSigX, finalY + 15);
             doc.setFont("helvetica", "normal");
             doc.setTextColor(148, 163, 184);
-            doc.text("Official Stamp & Approval", rightSigX, finalY + 21);
+            doc.text("Official Stamp & Approval", rightSigX, finalY + 19);
 
-            const safeDateStr = (todayMetrics?.todayStr || 'Report').replace(/ /g, '_').replace(/,/g, '');
-            const fileName = `Income_Expenses_Breakdown_${safeDateStr}_${Date.now().toString().slice(-4)}.pdf`;
+            const safeDateStr = (todayMetrics?.todayStr || 'Daily_Ledger').replace(/ /g, '_').replace(/,/g, '');
+            const fileName = `Master_Daily_Financial_Report_${safeDateStr}_${Date.now().toString().slice(-4)}.pdf`;
             doc.save(fileName);
         } catch (error) {
-            console.error("Failed to generate Finances PDF report:", error);
-            alert("An error occurred while generating the PDF report. Please try again.");
+            console.error("Failed to generate Master Collections PDF report:", error);
+            alert("An error occurred while generating the master PDF report. Please try again.");
         }
+        setIsGeneratingDailyPDF(false);
         setIsGeneratingFinancesPDF(false);
     };
+
+    // Aliases for full backward compatibility
+    const handleDownloadDailyReport = handleDownloadMasterDailyReport;
+    const handleDownloadFinancesReport = handleDownloadMasterDailyReport;
 
     // Fetch all parent accounts to link multiple children from parent account
     useEffect(() => {
@@ -7693,8 +7660,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             monthStatus = historyForMonth.status;
         } else if (monthHistoryEntry?.status === 'paid' || isTargetInPaidMonths) {
             monthStatus = 'paid';
-        } else if (st.monthlyFeeStatus === 'paid' && selectedTargetMonthIdx === new Date().getMonth()) {
-            monthStatus = 'paid';
         }
 
         const isBasePaid = monthStatus === 'paid';
@@ -7993,9 +7958,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             }
 
             const stHist = st.monthlyFeeHistory?.[targetMonthKey];
-            const stBasePaid = stHist?.status === 'paid' ||
-                               (Array.isArray(st.paidMonths) && st.paidMonths.includes(targetMonthKey)) ||
-                               (st.monthlyFeeStatus === 'paid' && selectedTargetMonthIdx === new Date().getMonth());
+            const isStPaidMonths = Array.isArray(st.paidMonths) && st.paidMonths.includes(targetMonthKey);
+            const stRelHist = (st.id === (activeChild?.id || selectedStudent?.id)) ? studentReliabilityData?.monthlyHistory?.find(m => (m.monthNum - 1) === selectedTargetMonthIdx) : null;
+            let stBasePaid = false;
+            if (stRelHist?.status) {
+                stBasePaid = (stRelHist.status === 'paid');
+            } else if (stHist?.status === 'paid' || isStPaidMonths) {
+                stBasePaid = true;
+            }
 
             const stUnpaidBase = stBasePaid ? 0 : stBaseFee;
             const stUnpaidArrears = stBasePaid ? 0 : prevArrears;
@@ -8057,9 +8027,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const targetMonthKey = `${currentYear}-${String(selectedTargetMonthIdx + 1).padStart(2, '0')}`;
         const allPaid = allFamilyList.every(s => {
             const hist = s.monthlyFeeHistory?.[targetMonthKey];
-            return hist?.status === 'paid' ||
-                   (Array.isArray(s.paidMonths) && s.paidMonths.includes(targetMonthKey)) ||
-                   (s.monthlyFeeStatus === 'paid' && selectedTargetMonthIdx === new Date().getMonth());
+            const isTargetInPm = Array.isArray(s.paidMonths) && s.paidMonths.includes(targetMonthKey);
+            const relHist = (s.id === (activeChild?.id || selectedStudent?.id)) ? studentReliabilityData?.monthlyHistory?.find(m => (m.monthNum - 1) === selectedTargetMonthIdx) : null;
+            if (relHist?.status) {
+                return relHist.status === 'paid';
+            }
+            return hist?.status === 'paid' || isTargetInPm;
         });
 
         const totalPendingDue = combinedPendingDue + (combinedPendingDue > 0 ? Number(fineAmount || 0) : 0);
@@ -8088,7 +8061,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             isFullyPaid: allFullyPaid,
             isPartiallyPaid
         };
-    }, [selectedStudent, detectedSiblings, selectedSiblingIds, siblingPaymentScope, activeChild, currentAction, fineAmount, classes, selectedTargetMonthIdx]);
+    }, [selectedStudent, detectedSiblings, selectedSiblingIds, siblingPaymentScope, activeChild, currentAction, fineAmount, classes, selectedTargetMonthIdx, studentReliabilityData]);
 
     // Active selectable items for the currently active student / month
     const activePayableItems = useMemo(() => {
@@ -9217,7 +9190,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 type="button"
                                 onClick={() => {
                                     setActiveDailyMode('fee_submission');
-                                    setRightCardTab('fee_slips');
                                 }}
                                 style={{
                                     padding: '0.65rem 0.85rem',
@@ -9243,7 +9215,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 type="button"
                                 onClick={() => {
                                     setActiveDailyMode('income_expense');
-                                    setRightCardTab('finances_breakdown');
                                 }}
                                 style={{
                                     padding: '0.65rem 0.85rem',
@@ -9279,11 +9250,14 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     border: '1px solid rgba(255,255,255,0.35)',
                                     cursor: 'pointer',
                                     backdropFilter: 'blur(4px)',
-                                    boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
                                 }}
-                                onClick={handleDownloadDailyReport}
+                                onClick={handleDownloadMasterDailyReport}
                             >
-                                📄 Daily PDF Report
+                                📄 Master Daily PDF Report
                             </span>
                         </div>
                     </div>
@@ -9871,21 +9845,21 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                     {detectedSiblings.length > 1 && siblingPaymentScope === 'family' ? (
                                                         /* MULTI-CHILD 1-BY-1 SIBLING SWIPER DECK */
                                                         <div style={{
-                                                            background: 'linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%)',
-                                                            border: '1.5px solid #7dd3fc',
+                                                            background: '#f1f5f9',
+                                                            border: '1.5px solid #cbd5e1',
                                                             borderRadius: '14px',
                                                             padding: '0.9rem',
                                                             marginBottom: '0.75rem',
-                                                            boxShadow: '0 4px 14px -2px rgba(2, 132, 199, 0.12)',
+                                                            boxShadow: '0 4px 14px -2px rgba(0, 0, 0, 0.05)',
                                                             position: 'relative'
                                                         }}>
                                                             {/* Deck Navigation Top Bar */}
                                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem', borderBottom: '1.5px solid #bae6fd', paddingBottom: '0.55rem' }}>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                    <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                         👨‍👩‍👧‍👦 Child {activeSiblingIndex + 1} of {detectedSiblings.length}
                                                                     </span>
-                                                                    <span style={{ fontSize: '0.65rem', background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                    <span style={{ fontSize: '0.74rem', background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '5px', fontWeight: '800' }}>
                                                                         Swipeable Card
                                                                     </span>
                                                                 </div>
@@ -9893,7 +9867,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             </div>
 
                                                             {/* Quick Sibling Selector Jump Tabs */}
-                                                            <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '0.65rem' }}>
+                                                            <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '0.75rem' }}>
                                                                 {detectedSiblings.map((sib, sIdx) => {
                                                                     const isCurrentActive = sib.id === (activeChild?.id || selectedStudent?.id);
                                                                     const isIncluded = selectedSiblingIds.includes(sib.id);
@@ -9903,23 +9877,23 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             type="button"
                                                                             onClick={() => setActiveSiblingId(sib.id)}
                                                                             style={{
-                                                                                padding: '3px 8px',
-                                                                                borderRadius: '6px',
-                                                                                border: isCurrentActive ? '1.5px solid #0284c7' : isIncluded ? '1px solid #bfdbfe' : '1px dashed #cbd5e1',
+                                                                                padding: '5px 11px',
+                                                                                borderRadius: '7px',
+                                                                                border: isCurrentActive ? '2px solid #0284c7' : isIncluded ? '1.5px solid #bfdbfe' : '1px dashed #cbd5e1',
                                                                                 background: isCurrentActive ? '#0284c7' : isIncluded ? '#eff6ff' : '#f8fafc',
-                                                                                color: isCurrentActive ? '#ffffff' : isIncluded ? '#1e40af' : '#64748b',
-                                                                                fontSize: '0.69rem',
+                                                                                color: isCurrentActive ? '#ffffff' : isIncluded ? '#1e40af' : '#475569',
+                                                                                fontSize: '0.82rem',
                                                                                 fontWeight: '800',
                                                                                 cursor: 'pointer',
                                                                                 display: 'flex',
                                                                                 alignItems: 'center',
-                                                                                gap: '4px',
+                                                                                gap: '5px',
                                                                                 whiteSpace: 'nowrap',
                                                                                 boxShadow: isCurrentActive ? '0 2px 6px rgba(2, 132, 199, 0.25)' : 'none',
                                                                                 transition: 'all 0.15s ease'
                                                                             }}
                                                                         >
-                                                                            <span>{isIncluded ? '✓' : '✗'}</span>
+                                                                            <span style={{ fontWeight: '900' }}>{isIncluded ? '✓' : '✗'}</span>
                                                                             <span>{sIdx + 1}. {sib.name.split(' ')[0]} ({sib.className || 'Class'})</span>
                                                                         </button>
                                                                     );
@@ -9927,28 +9901,28 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             </div>
 
                                                             {/* Active Child Student Identity Row */}
-                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem', background: '#ffffff', padding: '0.6rem 0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', background: '#ffffff', padding: '0.75rem 0.9rem', borderRadius: '10px', border: '1.5px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                                                     <div style={{
-                                                                        width: '42px',
-                                                                        height: '42px',
+                                                                        width: '46px',
+                                                                        height: '46px',
                                                                         borderRadius: '10px',
                                                                         background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
                                                                         color: '#ffffff',
                                                                         display: 'flex',
                                                                         alignItems: 'center',
                                                                         justifyContent: 'center',
-                                                                        fontWeight: '800',
-                                                                        fontSize: '0.95rem',
+                                                                        fontWeight: '900',
+                                                                        fontSize: '1.05rem',
                                                                         boxShadow: '0 3px 8px rgba(0, 120, 212, 0.25)'
                                                                     }}>
                                                                         {activeChild?.name?.slice(0, 2).toUpperCase() || 'ST'}
                                                                     </div>
                                                                     <div>
-                                                                        <h3 style={{ margin: 0, fontSize: '0.94rem', fontWeight: '900', color: '#0f172a' }}>
+                                                                        <h3 style={{ margin: 0, fontSize: '1.12rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.01em' }}>
                                                                             {activeChild?.name || selectedStudent.name}
                                                                         </h3>
-                                                                        <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '1px' }}>
+                                                                        <div style={{ fontSize: '0.85rem', color: '#475569', marginTop: '2px', fontWeight: '700' }}>
                                                                             {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}
                                                                         </div>
                                                                     </div>
@@ -9960,19 +9934,19 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     const shortMonth = monthLabel.slice(0, 3);
                                                                     if (activeChildFeeCalculation?.isFullyPaid) {
                                                                         return (
-                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '900', padding: '3px 9px', borderRadius: '6px', background: '#16a34a', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '3px', boxShadow: '0 2px 4px rgba(22, 163, 74, 0.3)' }}>
+                                                                            <span style={{ fontSize: '0.84rem', fontWeight: '900', padding: '4px 12px', borderRadius: '7px', background: '#16a34a', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 5px rgba(22, 163, 74, 0.3)' }}>
                                                                                 <span style={{ fontWeight: '900' }}>✓</span> Paid ({shortMonth})
                                                                             </span>
                                                                         );
                                                                     } else if (activeChildFeeCalculation?.isPartiallyPaid) {
                                                                         return (
-                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '900', padding: '3px 9px', borderRadius: '6px', background: '#d97706', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '3px', boxShadow: '0 2px 4px rgba(217, 119, 6, 0.3)' }}>
+                                                                            <span style={{ fontSize: '0.84rem', fontWeight: '900', padding: '4px 12px', borderRadius: '7px', background: '#d97706', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 5px rgba(217, 119, 6, 0.3)' }}>
                                                                                 <span>⚠️</span> Partial (Pending: Rs {Number(activeChildFeeCalculation.pendingDue || 0).toLocaleString()})
                                                                             </span>
                                                                         );
                                                                     } else {
                                                                         return (
-                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '900', padding: '3px 9px', borderRadius: '6px', background: '#dc2626', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '3px', boxShadow: '0 2px 4px rgba(220, 38, 38, 0.3)' }}>
+                                                                            <span style={{ fontSize: '0.84rem', fontWeight: '900', padding: '4px 12px', borderRadius: '7px', background: '#dc2626', color: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 5px rgba(220, 38, 38, 0.3)' }}>
                                                                                 <span style={{ fontWeight: '900' }}>✗</span> Unpaid ({shortMonth})
                                                                             </span>
                                                                         );
@@ -9985,25 +9959,25 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 display: 'flex',
                                                                 justifyContent: 'space-between',
                                                                 alignItems: 'center',
-                                                                marginBottom: '0.65rem',
+                                                                marginBottom: '0.75rem',
                                                                 background: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '#f0fdf4' : '#fff1f2',
-                                                                padding: '0.4rem 0.65rem',
+                                                                padding: '0.5rem 0.8rem',
                                                                 borderRadius: '8px',
-                                                                border: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '1px solid #bbf7d0' : '1px solid #fecdd3'
+                                                                border: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '1.5px solid #bbf7d0' : '1.5px solid #fecdd3'
                                                             }}>
-                                                                <span style={{ fontSize: '0.72rem', fontWeight: '800', color: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '#166534' : '#9f1239' }}>
+                                                                <span style={{ fontSize: '0.84rem', fontWeight: '800', color: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '#166534' : '#9f1239' }}>
                                                                     {selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '✓ Included in Current Bill' : '✗ Excluded from Current Bill'}
                                                                 </span>
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => toggleSiblingSelection(activeChild?.id || selectedStudent?.id)}
                                                                     style={{
-                                                                        padding: '2px 8px',
-                                                                        borderRadius: '5px',
-                                                                        border: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '1px solid #86efac' : '1px solid #f87171',
+                                                                        padding: '3px 10px',
+                                                                        borderRadius: '6px',
+                                                                        border: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '1.5px solid #86efac' : '1.5px solid #f87171',
                                                                         background: '#ffffff',
                                                                         color: selectedSiblingIds.includes(activeChild?.id || selectedStudent?.id) ? '#15803d' : '#dc2626',
-                                                                        fontSize: '0.68rem',
+                                                                        fontSize: '0.8rem',
                                                                         fontWeight: '800',
                                                                         cursor: 'pointer'
                                                                     }}
@@ -10013,27 +9987,27 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             </div>
 
                                                             {/* Categorized Fee Sets for This Child */}
-                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.65rem' }}>
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '0.75rem' }}>
                                                                 {/* Set 1: Permanent Monthly Fees */}
-                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <div style={{ background: '#ffffff', borderRadius: '9px', border: '1.5px solid #cbd5e1', padding: '0.65rem 0.85rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                        <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             <span>🎓</span> Permanent Monthly Fees
                                                                         </span>
-                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                        <span style={{ fontSize: '0.94rem', fontWeight: '900', color: '#0f172a' }}>
                                                                             Rs {Number(activeChildFeeCalculation?.set1PermanentTotal || 0).toLocaleString()}
                                                                         </span>
                                                                     </div>
                                                                     {(activeChildFeeCalculation?.permanentItems || []).length === 0 ? (
-                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No permanent monthly fees set.</div>
+                                                                        <div style={{ fontSize: '0.82rem', color: '#94a3b8', fontStyle: 'italic', padding: '3px 0' }}>No permanent monthly fees set.</div>
                                                                     ) : (
                                                                         (activeChildFeeCalculation?.permanentItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0', borderBottom: iIdx < (activeChildFeeCalculation.permanentItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
-                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.permanentItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#334155', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>{it.category === 'transport' ? '🚌' : '•'}</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
-                                                                                <span style={{ color: '#334155', fontWeight: '700' }}>
+                                                                                <span style={{ color: '#0f172a', fontWeight: '800' }}>
                                                                                     Rs {Number(it.amount || 0).toLocaleString()}
                                                                                 </span>
                                                                             </div>
@@ -10042,57 +10016,57 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 </div>
 
                                                                 {/* Set 2: Individual Actions & Fines (One-Off) */}
-                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b45309', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <div style={{ background: '#ffffff', borderRadius: '9px', border: '1.5px solid #cbd5e1', padding: '0.65rem 0.85rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                        <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#b45309', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             <span>⚡</span> Individual Actions & Fines
                                                                         </span>
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={() => setShowNewActionModal(true)}
                                                                                 style={{
-                                                                                    padding: '1px 6px',
-                                                                                    borderRadius: '4px',
+                                                                                    padding: '2px 8px',
+                                                                                    borderRadius: '5px',
                                                                                     background: '#fef3c7',
-                                                                                    border: '1px solid #fde047',
+                                                                                    border: '1.5px solid #fde047',
                                                                                     color: '#92400e',
-                                                                                    fontSize: '0.65rem',
+                                                                                    fontSize: '0.76rem',
                                                                                     fontWeight: '800',
                                                                                     cursor: 'pointer',
                                                                                     display: 'inline-flex',
                                                                                     alignItems: 'center',
-                                                                                    gap: '2px'
+                                                                                    gap: '3px'
                                                                                 }}
                                                                                 title="Add Fine, Exam Fee, Uniform, Tour, etc."
                                                                             >
                                                                                 + Add Item / Fine
                                                                             </button>
-                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b45309' }}>
+                                                                            <span style={{ fontSize: '0.94rem', fontWeight: '900', color: '#b45309' }}>
                                                                                 Rs {Number(activeChildFeeCalculation?.set2ActionsTotal || 0).toLocaleString()}
                                                                             </span>
                                                                         </div>
                                                                     </div>
                                                                     {(activeChildFeeCalculation?.actionItems || []).length === 0 ? (
-                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No actions or fines for this month.</div>
+                                                                        <div style={{ fontSize: '0.82rem', color: '#94a3b8', fontStyle: 'italic', padding: '3px 0' }}>No actions or fines for this month.</div>
                                                                     ) : (
                                                                         (activeChildFeeCalculation?.actionItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.actionItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
-                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 0', borderBottom: iIdx < (activeChildFeeCalculation.actionItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#334155', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>⚡</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
-                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                     {it.isPaid ? (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '2px 6px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                                                                                             ✓ Paid
                                                                                         </span>
                                                                                     ) : (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '2px 6px', borderRadius: '4px' }}>
                                                                                             Unpaid
                                                                                         </span>
                                                                                     )}
-                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#0f172a', fontWeight: '800' }}>
                                                                                         Rs {Number(it.amount || 0).toLocaleString()}
                                                                                     </span>
                                                                                     {!it.isPaid && it.id && (
@@ -10104,14 +10078,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                                 border: 'none',
                                                                                                 background: '#fee2e2',
                                                                                                 color: '#ef4444',
-                                                                                                borderRadius: '4px',
-                                                                                                width: '16px',
-                                                                                                height: '16px',
+                                                                                                borderRadius: '5px',
+                                                                                                width: '20px',
+                                                                                                height: '20px',
                                                                                                 display: 'inline-flex',
                                                                                                 alignItems: 'center',
                                                                                                 justifyContent: 'center',
                                                                                                 cursor: 'pointer',
-                                                                                                fontSize: '0.62rem',
+                                                                                                fontSize: '0.74rem',
+                                                                                                fontWeight: '800',
                                                                                                 padding: 0
                                                                                             }}
                                                                                         >
@@ -10125,35 +10100,35 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 </div>
 
                                                                 {/* Set 3: Store & Inventory Items */}
-                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#047857', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <div style={{ background: '#ffffff', borderRadius: '9px', border: '1.5px solid #cbd5e1', padding: '0.65rem 0.85rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                        <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#047857', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             <span>🛍️</span> Store & Inventory Items
                                                                         </span>
-                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#047857' }}>
+                                                                        <span style={{ fontSize: '0.94rem', fontWeight: '900', color: '#047857' }}>
                                                                             Rs {Number(activeChildFeeCalculation?.set3StoreTotal || 0).toLocaleString()}
                                                                         </span>
                                                                     </div>
                                                                     {(activeChildFeeCalculation?.storeItems || []).length === 0 ? (
-                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No store purchases recorded.</div>
+                                                                        <div style={{ fontSize: '0.82rem', color: '#94a3b8', fontStyle: 'italic', padding: '3px 0' }}>No store purchases recorded.</div>
                                                                     ) : (
                                                                         (activeChildFeeCalculation?.storeItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.storeItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
-                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 0', borderBottom: iIdx < (activeChildFeeCalculation.storeItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
+                                                                                <span style={{ color: '#334155', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>🛍️</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
-                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                     {it.isPaid ? (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '2px 6px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                                                                                             ✓ Paid
                                                                                         </span>
                                                                                     ) : (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '2px 6px', borderRadius: '4px' }}>
                                                                                             Unpaid
                                                                                         </span>
                                                                                     )}
-                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#0f172a', fontWeight: '800' }}>
                                                                                         Rs {Number(it.amount || 0).toLocaleString()}
                                                                                     </span>
                                                                                     {!it.isPaid && it.id && (
@@ -10165,14 +10140,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                                 border: 'none',
                                                                                                 background: '#fee2e2',
                                                                                                 color: '#ef4444',
-                                                                                                borderRadius: '4px',
-                                                                                                width: '16px',
-                                                                                                height: '16px',
+                                                                                                borderRadius: '5px',
+                                                                                                width: '20px',
+                                                                                                height: '20px',
                                                                                                 display: 'inline-flex',
                                                                                                 alignItems: 'center',
                                                                                                 justifyContent: 'center',
                                                                                                 cursor: 'pointer',
-                                                                                                fontSize: '0.62rem',
+                                                                                                fontSize: '0.74rem',
+                                                                                                fontWeight: '800',
                                                                                                 padding: 0
                                                                                             }}
                                                                                         >
@@ -10187,22 +10163,22 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                                                                 {/* Set 4: Previous Dues & Arrears (Only if present) */}
                                                                 {((activeChildFeeCalculation?.arrearsItems || []).length > 0 || (activeChildFeeCalculation?.set4ArrearsTotal || 0) > 0) && (
-                                                                    <div style={{ background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', padding: '0.5rem 0.7rem' }}>
-                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    <div style={{ background: '#fef2f2', borderRadius: '9px', border: '1.5px solid #fecaca', padding: '0.65rem 0.85rem' }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                            <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                 <span>⏳</span> Previous Dues / Arrears
                                                                             </span>
-                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b91c1c' }}>
+                                                                            <span style={{ fontSize: '0.94rem', fontWeight: '900', color: '#b91c1c' }}>
                                                                                 Rs {Number(activeChildFeeCalculation?.set4ArrearsTotal || 0).toLocaleString()}
                                                                             </span>
                                                                         </div>
                                                                         {(activeChildFeeCalculation?.arrearsItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0' }}>
-                                                                                <span style={{ color: '#991b1b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '3px 0' }}>
+                                                                                <span style={{ color: '#991b1b', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>⏳</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
-                                                                                <span style={{ color: '#b91c1c', fontWeight: '800' }}>
+                                                                                <span style={{ color: '#b91c1c', fontWeight: '900' }}>
                                                                                     Rs {Number(it.amount || 0).toLocaleString()}
                                                                                 </span>
                                                                             </div>
@@ -10211,10 +10187,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 )}
 
                                                                 {/* Child Subtotal Line */}
-                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}>
-                                                                    <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0f172a' }}>Child Subtotal:</span>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.65rem 0.9rem', borderRadius: '9px', border: '2px solid #cbd5e1' }}>
+                                                                    <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a' }}>Child Subtotal:</span>
                                                                     <div style={{ textAlign: 'right' }}>
-                                                                        <strong style={{ fontSize: '0.96rem', fontWeight: '900', color: activeChildFeeCalculation?.isFullyPaid ? '#15803d' : activeChildFeeCalculation?.isPartiallyPaid ? '#d97706' : '#0284c7' }}>
+                                                                        <strong style={{ fontSize: '1.12rem', fontWeight: '900', color: activeChildFeeCalculation?.isFullyPaid ? '#15803d' : activeChildFeeCalculation?.isPartiallyPaid ? '#d97706' : '#0284c7' }}>
                                                                             {activeChildFeeCalculation?.isFullyPaid
                                                                                 ? '✓ Paid'
                                                                                 : activeChildFeeCalculation?.isPartiallyPaid
@@ -10223,7 +10199,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             }
                                                                         </strong>
                                                                         {activeChildFeeCalculation?.isPartiallyPaid && (
-                                                                            <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>
+                                                                            <div style={{ fontSize: '0.78rem', color: '#475569', fontWeight: '700' }}>
                                                                                 Total: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
                                                                             </div>
                                                                         )}
@@ -10232,20 +10208,20 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             </div>
 
                                                             {/* Parent Details & Direct WhatsApp */}
-                                                            <div style={{ background: '#ffffff', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '0.65rem' }}>
+                                                            <div style={{ background: '#ffffff', padding: '0.7rem 0.9rem', borderRadius: '9px', border: '1.5px solid #e2e8f0', marginBottom: '0.75rem' }}>
                                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                                     <div>
-                                                                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>Parent / Guardian:</div>
-                                                                        <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        <div style={{ fontSize: '0.78rem', color: '#475569', fontWeight: '800' }}>Parent / Guardian:</div>
+                                                                        <div style={{ fontSize: '0.94rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             {officialFamilyFatherName}
                                                                             {activeParentAccount && (
-                                                                                <span style={{ fontSize: '0.6rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
+                                                                                <span style={{ fontSize: '0.72rem', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', fontWeight: '800' }}>
                                                                                     Verified
                                                                                 </span>
                                                                             )}
                                                                         </div>
                                                                         {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
-                                                                            <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '1px', fontWeight: '600' }}>
+                                                                            <div style={{ fontSize: '0.85rem', color: '#334155', marginTop: '2px', fontWeight: '700' }}>
                                                                                 📞 {activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone}
                                                                             </div>
                                                                         )}
@@ -10254,8 +10230,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             const parentAddr = activeChild?.address || activeChild?.parentDetails?.address || activeChild?.parentAddress || activeChild?.residentialAddress || activeChild?.homeAddress || selectedStudent?.address || selectedStudent?.parentDetails?.address || activeParentAccount?.address;
                                                                             if (parentAddr) {
                                                                                 return (
-                                                                                    <div style={{ fontSize: '0.71rem', color: '#64748b', marginTop: '2px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '3px' }}>
-                                                                                        <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>📍</span>
+                                                                                    <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '3px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                                                                                        <span style={{ fontSize: '0.85rem', flexShrink: 0 }}>📍</span>
                                                                                         <span style={{ wordBreak: 'break-word' }}>{parentAddr}</span>
                                                                                     </div>
                                                                                 );
@@ -10276,17 +10252,17 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                 window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
                                                                             }}
                                                                             style={{
-                                                                                padding: '4px 9px',
-                                                                                borderRadius: '6px',
+                                                                                padding: '5px 12px',
+                                                                                borderRadius: '7px',
                                                                                 background: '#f0fdf4',
-                                                                                border: '1px solid #86efac',
+                                                                                border: '1.5px solid #86efac',
                                                                                 color: '#15803d',
-                                                                                fontWeight: '700',
-                                                                                fontSize: '0.7rem',
+                                                                                fontWeight: '800',
+                                                                                fontSize: '0.82rem',
                                                                                 cursor: 'pointer',
                                                                                 display: 'inline-flex',
                                                                                 alignItems: 'center',
-                                                                                gap: '3px'
+                                                                                gap: '4px'
                                                                             }}
                                                                             title="Direct WhatsApp Reminder"
                                                                         >
@@ -10299,20 +10275,20 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             {/* Target Month Pill */}
                                                             <div style={{
                                                                 background: '#eff6ff',
-                                                                border: '1px solid #bfdbfe',
+                                                                border: '1.5px solid #bfdbfe',
                                                                 borderRadius: '8px',
-                                                                padding: '0.4rem 0.65rem',
+                                                                padding: '0.5rem 0.8rem',
                                                                 display: 'flex',
                                                                 alignItems: 'center',
                                                                 justifyContent: 'space-between',
-                                                                fontSize: '0.74rem',
-                                                                marginBottom: '0.65rem'
+                                                                fontSize: '0.85rem',
+                                                                marginBottom: '0.75rem'
                                                             }}>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#1e3a8a', fontWeight: '700' }}>
-                                                                    <CalendarDays size={14} color="#0078d4" />
-                                                                    <span>Target Month: <strong style={{ color: '#0078d4' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#1e3a8a', fontWeight: '800' }}>
+                                                                    <CalendarDays size={16} color="#0078d4" />
+                                                                    <span>Target Month: <strong style={{ color: '#0078d4', fontWeight: '900' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
                                                                 </div>
-                                                                <span style={{ fontSize: '0.66rem', color: '#0284c7', background: '#dbeafe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                <span style={{ fontSize: '0.76rem', color: '#0284c7', background: '#dbeafe', padding: '2px 8px', borderRadius: '5px', fontWeight: '800' }}>
                                                                     Active Matrix Month
                                                                 </span>
                                                             </div>
@@ -10404,35 +10380,35 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                     ) : (
                                                         /* SINGLE STUDENT PROFILE CARD */
                                                         <div style={{
-                                                            background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+                                                            background: '#f1f5f9',
                                                             border: '1.5px solid #cbd5e1',
                                                             borderRadius: '12px',
                                                             padding: '0.9rem',
                                                             marginBottom: '0.75rem',
                                                             boxShadow: '0 2px 8px -2px rgba(0,0,0,0.05)'
                                                         }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.65rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.65rem' }}>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                                                                     <div style={{
-                                                                        width: '44px',
-                                                                        height: '44px',
+                                                                        width: '46px',
+                                                                        height: '46px',
                                                                         borderRadius: '12px',
                                                                         background: 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
                                                                         color: '#ffffff',
                                                                         display: 'flex',
                                                                         alignItems: 'center',
                                                                         justifyContent: 'center',
-                                                                        fontWeight: '800',
-                                                                        fontSize: '1rem',
+                                                                        fontWeight: '900',
+                                                                        fontSize: '1.1rem',
                                                                         boxShadow: '0 3px 8px rgba(0, 120, 212, 0.25)'
                                                                     }}>
                                                                         {activeChild?.name?.slice(0, 2).toUpperCase() || 'ST'}
                                                                     </div>
                                                                     <div>
-                                                                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                        <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.01em' }}>
                                                                             {activeChild?.name || selectedStudent.name}
                                                                         </h3>
-                                                                        <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
+                                                                        <div style={{ fontSize: '0.86rem', color: '#475569', marginTop: '2px', fontWeight: '700' }}>
                                                                             {activeChild?.className || selectedStudent.className} &bull; Roll #{activeChild?.rollNo || selectedStudent.rollNo || 'N/A'}
                                                                         </div>
                                                                     </div>
@@ -10444,9 +10420,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     if (mStatus === 'paid') {
                                                                         return (
                                                                             <span style={{
-                                                                                fontSize: '0.72rem',
+                                                                                fontSize: '0.82rem',
                                                                                 fontWeight: '900',
-                                                                                padding: '3px 9px',
+                                                                                padding: '4px 10px',
                                                                                 borderRadius: '6px',
                                                                                 background: '#16a34a',
                                                                                 color: '#ffffff',
@@ -10461,9 +10437,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     } else if (mStatus === 'overdue') {
                                                                         return (
                                                                             <span style={{
-                                                                                fontSize: '0.72rem',
+                                                                                fontSize: '0.82rem',
                                                                                 fontWeight: '900',
-                                                                                padding: '3px 9px',
+                                                                                padding: '4px 10px',
                                                                                 borderRadius: '6px',
                                                                                 background: '#dc2626',
                                                                                 color: '#ffffff',
@@ -10478,9 +10454,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     } else if (mStatus === 'partial') {
                                                                         return (
                                                                             <span style={{
-                                                                                fontSize: '0.72rem',
+                                                                                fontSize: '0.82rem',
                                                                                 fontWeight: '900',
-                                                                                padding: '3px 9px',
+                                                                                padding: '4px 10px',
                                                                                 borderRadius: '6px',
                                                                                 background: '#d97706',
                                                                                 color: '#ffffff',
@@ -10495,9 +10471,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     } else {
                                                                         return (
                                                                             <span style={{
-                                                                                fontSize: '0.72rem',
+                                                                                fontSize: '0.82rem',
                                                                                 fontWeight: '900',
-                                                                                padding: '3px 9px',
+                                                                                padding: '4px 10px',
                                                                                 borderRadius: '6px',
                                                                                 background: '#dc2626',
                                                                                 color: '#ffffff',
@@ -10514,20 +10490,20 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             </div>
 
                                                             {/* Parent Contact Details */}
-                                                            <div style={{ background: '#f8fafc', padding: '0.65rem 0.75rem', borderRadius: '9px', border: '1px solid #e2e8f0', marginBottom: '0.65rem' }}>
+                                                            <div style={{ background: '#ffffff', padding: '0.65rem 0.75rem', borderRadius: '9px', border: '1px solid #cbd5e1', marginBottom: '0.65rem' }}>
                                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                                     <div>
-                                                                        <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Parent / Guardian:</div>
-                                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '800' }}>Parent / Guardian:</div>
+                                                                        <div style={{ fontSize: '0.94rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             {officialFamilyFatherName}
                                                                             {activeParentAccount && (
-                                                                                <span style={{ fontSize: '0.62rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
+                                                                                <span style={{ fontSize: '0.68rem', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px', fontWeight: '800' }}>
                                                                                     Verified
                                                                                 </span>
                                                                             )}
                                                                         </div>
                                                                         {(activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone) && (
-                                                                            <div style={{ fontSize: '0.74rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>
+                                                                            <div style={{ fontSize: '0.85rem', color: '#334155', marginTop: '3px', fontWeight: '700' }}>
                                                                                 📞 {activeChild?.parentDetails?.fatherPhone || activeChild?.fatherPhone || activeChild?.phone}
                                                                             </div>
                                                                         )}
@@ -10536,8 +10512,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             const parentAddr = activeChild?.address || activeChild?.parentDetails?.address || activeChild?.parentAddress || activeChild?.residentialAddress || activeChild?.homeAddress || selectedStudent?.address || selectedStudent?.parentDetails?.address || activeParentAccount?.address;
                                                                             if (parentAddr) {
                                                                                 return (
-                                                                                    <div style={{ fontSize: '0.71rem', color: '#64748b', marginTop: '2px', fontWeight: '600', display: 'flex', alignItems: 'flex-start', gap: '3px' }}>
-                                                                                        <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>📍</span>
+                                                                                    <div style={{ fontSize: '0.82rem', color: '#475569', marginTop: '3px', fontWeight: '700', display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                                                                                        <span style={{ fontSize: '0.85rem', flexShrink: 0 }}>📍</span>
                                                                                         <span style={{ wordBreak: 'break-word' }}>{parentAddr}</span>
                                                                                     </div>
                                                                                 );
@@ -10558,17 +10534,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                 window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
                                                                             }}
                                                                             style={{
-                                                                                padding: '5px 10px',
+                                                                                padding: '6px 12px',
                                                                                 borderRadius: '7px',
                                                                                 background: '#f0fdf4',
-                                                                                border: '1px solid #86efac',
+                                                                                border: '1.5px solid #86efac',
                                                                                 color: '#15803d',
-                                                                                fontWeight: '700',
-                                                                                fontSize: '0.72rem',
+                                                                                fontWeight: '800',
+                                                                                fontSize: '0.8rem',
                                                                                 cursor: 'pointer',
                                                                                 display: 'inline-flex',
                                                                                 alignItems: 'center',
-                                                                                gap: '4px'
+                                                                                gap: '4px',
+                                                                                boxShadow: '0 1px 3px rgba(21, 128, 61, 0.15)'
                                                                             }}
                                                                             title="Direct WhatsApp Reminder"
                                                                         >
@@ -10579,27 +10556,27 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             </div>
 
                                                             {/* Categorized Fee Sets for Single Student */}
-                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.65rem' }}>
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginBottom: '0.75rem' }}>
                                                                 {/* Set 1: Permanent Monthly Fees */}
-                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.6rem 0.8rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                        <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             <span>🎓</span> Permanent Monthly Fees
                                                                         </span>
-                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0f172a' }}>
+                                                                        <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a' }}>
                                                                             Rs {Number(activeChildFeeCalculation?.set1PermanentTotal || 0).toLocaleString()}
                                                                         </span>
                                                                     </div>
                                                                     {(activeChildFeeCalculation?.permanentItems || []).length === 0 ? (
-                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No permanent monthly fees set.</div>
+                                                                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No permanent monthly fees set.</div>
                                                                     ) : (
                                                                         (activeChildFeeCalculation?.permanentItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0', borderBottom: iIdx < (activeChildFeeCalculation.permanentItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
-                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.84rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.permanentItems.length - 1) ? '1px dashed #e2e8f0' : 'none' }}>
+                                                                                <span style={{ color: '#334155', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>{it.category === 'transport' ? '🚌' : '•'}</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
-                                                                                <span style={{ color: '#334155', fontWeight: '700' }}>
+                                                                                <span style={{ color: '#0f172a', fontWeight: '800' }}>
                                                                                     Rs {Number(it.amount || 0).toLocaleString()}
                                                                                 </span>
                                                                             </div>
@@ -10608,9 +10585,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 </div>
 
                                                                 {/* Set 2: Individual Actions & Fines (One-Off) */}
-                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b45309', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.6rem 0.8rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                        <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#b45309', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             <span>⚡</span> Individual Actions & Fines
                                                                         </span>
                                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -10618,47 +10595,47 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                 type="button"
                                                                                 onClick={() => setShowNewActionModal(true)}
                                                                                 style={{
-                                                                                    padding: '1px 6px',
-                                                                                    borderRadius: '4px',
+                                                                                    padding: '2px 8px',
+                                                                                    borderRadius: '5px',
                                                                                     background: '#fef3c7',
                                                                                     border: '1px solid #fde047',
                                                                                     color: '#92400e',
-                                                                                    fontSize: '0.65rem',
-                                                                                    fontWeight: '800',
+                                                                                    fontSize: '0.74rem',
+                                                                                    fontWeight: '900',
                                                                                     cursor: 'pointer',
                                                                                     display: 'inline-flex',
                                                                                     alignItems: 'center',
-                                                                                    gap: '2px'
+                                                                                    gap: '3px'
                                                                                 }}
                                                                                 title="Add Fine, Exam Fee, Uniform, Tour, etc."
                                                                             >
                                                                                 + Add Item / Fine
                                                                             </button>
-                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b45309' }}>
+                                                                            <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#b45309' }}>
                                                                                 Rs {Number(activeChildFeeCalculation?.set2ActionsTotal || 0).toLocaleString()}
                                                                             </span>
                                                                         </div>
                                                                     </div>
                                                                     {(activeChildFeeCalculation?.actionItems || []).length === 0 ? (
-                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No actions or fines for this month.</div>
+                                                                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No actions or fines for this month.</div>
                                                                     ) : (
                                                                         (activeChildFeeCalculation?.actionItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.actionItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
-                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.84rem', padding: '4px 0', borderBottom: iIdx < (activeChildFeeCalculation.actionItems.length - 1) ? '1px dashed #e2e8f0' : 'none' }}>
+                                                                                <span style={{ color: '#334155', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>⚡</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
                                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                                                     {it.isPaid ? (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '900', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '2px 6px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
                                                                                             ✓ Paid
                                                                                         </span>
                                                                                     ) : (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '900', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '2px 6px', borderRadius: '4px' }}>
                                                                                             Unpaid
                                                                                         </span>
                                                                                     )}
-                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#0f172a', fontWeight: '800' }}>
                                                                                         Rs {Number(it.amount || 0).toLocaleString()}
                                                                                     </span>
                                                                                     {!it.isPaid && it.id && (
@@ -10671,13 +10648,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                                 background: '#fee2e2',
                                                                                                 color: '#ef4444',
                                                                                                 borderRadius: '4px',
-                                                                                                width: '16px',
-                                                                                                height: '16px',
+                                                                                                width: '18px',
+                                                                                                height: '18px',
                                                                                                 display: 'inline-flex',
                                                                                                 alignItems: 'center',
                                                                                                 justifyContent: 'center',
                                                                                                 cursor: 'pointer',
-                                                                                                fontSize: '0.62rem',
+                                                                                                fontSize: '0.7rem',
                                                                                                 padding: 0
                                                                                             }}
                                                                                         >
@@ -10691,35 +10668,35 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 </div>
 
                                                                 {/* Set 3: Store & Inventory Items */}
-                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.5rem 0.7rem' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#047857', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', padding: '0.6rem 0.8rem' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                        <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#047857', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                             <span>🛍️</span> Store & Inventory Items
                                                                         </span>
-                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#047857' }}>
+                                                                        <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#047857' }}>
                                                                             Rs {Number(activeChildFeeCalculation?.set3StoreTotal || 0).toLocaleString()}
                                                                         </span>
                                                                     </div>
                                                                     {(activeChildFeeCalculation?.storeItems || []).length === 0 ? (
-                                                                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No store purchases recorded.</div>
+                                                                        <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic', padding: '2px 0' }}>No store purchases recorded.</div>
                                                                     ) : (
                                                                         (activeChildFeeCalculation?.storeItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '3px 0', borderBottom: iIdx < (activeChildFeeCalculation.storeItems.length - 1) ? '1px dashed #f1f5f9' : 'none' }}>
-                                                                                <span style={{ color: '#475569', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.84rem', padding: '4px 0', borderBottom: iIdx < (activeChildFeeCalculation.storeItems.length - 1) ? '1px dashed #e2e8f0' : 'none' }}>
+                                                                                <span style={{ color: '#334155', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>🛍️</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
                                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                                                     {it.isPaid ? (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '1px 5px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '900', background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '2px 6px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
                                                                                             ✓ Paid
                                                                                         </span>
                                                                                     ) : (
-                                                                                        <span style={{ fontSize: '0.62rem', fontWeight: '800', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '1px 5px', borderRadius: '4px' }}>
+                                                                                        <span style={{ fontSize: '0.74rem', fontWeight: '900', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', padding: '2px 6px', borderRadius: '4px' }}>
                                                                                             Unpaid
                                                                                         </span>
                                                                                     )}
-                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#334155', fontWeight: '700' }}>
+                                                                                    <span style={{ color: it.isPaid ? '#64748b' : '#0f172a', fontWeight: '800' }}>
                                                                                         Rs {Number(it.amount || 0).toLocaleString()}
                                                                                     </span>
                                                                                     {!it.isPaid && it.id && (
@@ -10732,13 +10709,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                                 background: '#fee2e2',
                                                                                                 color: '#ef4444',
                                                                                                 borderRadius: '4px',
-                                                                                                width: '16px',
-                                                                                                height: '16px',
+                                                                                                width: '18px',
+                                                                                                height: '18px',
                                                                                                 display: 'inline-flex',
                                                                                                 alignItems: 'center',
                                                                                                 justifyContent: 'center',
                                                                                                 cursor: 'pointer',
-                                                                                                fontSize: '0.62rem',
+                                                                                                fontSize: '0.7rem',
                                                                                                 padding: 0
                                                                                             }}
                                                                                         >
@@ -10753,22 +10730,22 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                                                                 {/* Set 4: Previous Dues & Arrears (Only if present) */}
                                                                 {((activeChildFeeCalculation?.arrearsItems || []).length > 0 || (activeChildFeeCalculation?.set4ArrearsTotal || 0) > 0) && (
-                                                                    <div style={{ background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', padding: '0.5rem 0.7rem' }}>
-                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                                                                            <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                    <div style={{ background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', padding: '0.6rem 0.8rem' }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                            <span style={{ fontSize: '0.86rem', fontWeight: '900', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                 <span>⏳</span> Previous Dues / Arrears
                                                                             </span>
-                                                                            <span style={{ fontSize: '0.74rem', fontWeight: '800', color: '#b91c1c' }}>
+                                                                            <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#b91c1c' }}>
                                                                                 Rs {Number(activeChildFeeCalculation?.set4ArrearsTotal || 0).toLocaleString()}
                                                                             </span>
                                                                         </div>
                                                                         {(activeChildFeeCalculation?.arrearsItems || []).map((it, iIdx) => (
-                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.73rem', padding: '2px 0' }}>
-                                                                                <span style={{ color: '#991b1b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                            <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.84rem', padding: '3px 0' }}>
+                                                                                <span style={{ color: '#991b1b', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                                     <span>⏳</span>
                                                                                     <span>{it.name}</span>
                                                                                 </span>
-                                                                                <span style={{ color: '#b91c1c', fontWeight: '800' }}>
+                                                                                <span style={{ color: '#b91c1c', fontWeight: '900' }}>
                                                                                     Rs {Number(it.amount || 0).toLocaleString()}
                                                                                 </span>
                                                                             </div>
@@ -10777,10 +10754,10 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 )}
 
                                                                 {/* Subtotal Line */}
-                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}>
-                                                                    <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0f172a' }}>Total Due:</span>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ffffff', padding: '0.6rem 0.85rem', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}>
+                                                                    <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a' }}>Total Due:</span>
                                                                     <div style={{ textAlign: 'right' }}>
-                                                                        <strong style={{ fontSize: '0.96rem', fontWeight: '900', color: activeChildFeeCalculation?.isFullyPaid ? '#15803d' : activeChildFeeCalculation?.isPartiallyPaid ? '#d97706' : '#0284c7' }}>
+                                                                        <strong style={{ fontSize: '1.25rem', fontWeight: '900', color: activeChildFeeCalculation?.isFullyPaid ? '#15803d' : activeChildFeeCalculation?.isPartiallyPaid ? '#d97706' : '#0284c7' }}>
                                                                             {activeChildFeeCalculation?.isFullyPaid
                                                                                 ? '✓ Paid'
                                                                                 : activeChildFeeCalculation?.isPartiallyPaid
@@ -10789,7 +10766,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             }
                                                                         </strong>
                                                                         {activeChildFeeCalculation?.isPartiallyPaid && (
-                                                                            <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>
+                                                                            <div style={{ fontSize: '0.76rem', color: '#64748b', fontWeight: '700' }}>
                                                                                 Total: Rs {Number(activeChildFeeCalculation?.totalDue || 0).toLocaleString()}
                                                                             </div>
                                                                         )}
@@ -10802,18 +10779,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 background: '#eff6ff',
                                                                 border: '1px solid #bfdbfe',
                                                                 borderRadius: '8px',
-                                                                padding: '0.45rem 0.75rem',
+                                                                padding: '0.55rem 0.85rem',
                                                                 display: 'flex',
                                                                 alignItems: 'center',
                                                                 justifyContent: 'space-between',
-                                                                fontSize: '0.75rem',
+                                                                fontSize: '0.85rem',
                                                                 marginBottom: detectedSiblings.length > 1 ? '0.75rem' : '0'
                                                             }}>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#1e3a8a', fontWeight: '700' }}>
-                                                                    <CalendarDays size={14} color="#0078d4" />
-                                                                    <span>Target Month: <strong style={{ color: '#0078d4' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#1e3a8a', fontWeight: '800' }}>
+                                                                    <CalendarDays size={16} color="#0078d4" />
+                                                                    <span>Target Month: <strong style={{ color: '#0078d4', fontWeight: '900' }}>{MONTH_NAMES[selectedTargetMonthIdx]} {new Date().getFullYear()}</strong></span>
                                                                 </div>
-                                                                <span style={{ fontSize: '0.68rem', color: '#0284c7', background: '#dbeafe', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
+                                                                <span style={{ fontSize: '0.76rem', color: '#0284c7', background: '#dbeafe', padding: '2px 8px', borderRadius: '4px', fontWeight: '900' }}>
                                                                     Active Matrix Month
                                                                 </span>
                                                             </div>
@@ -10825,12 +10802,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         type="button"
                                                                         onClick={() => setSiblingPaymentScope('single')}
                                                                         style={{
-                                                                            padding: '0.45rem 0.5rem',
+                                                                            padding: '0.5rem 0.6rem',
                                                                             borderRadius: '7px',
                                                                             border: siblingPaymentScope === 'single' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
                                                                             background: siblingPaymentScope === 'single' ? '#0284c7' : '#ffffff',
                                                                             color: siblingPaymentScope === 'single' ? '#ffffff' : '#334155',
-                                                                            fontSize: '0.72rem',
+                                                                            fontSize: '0.82rem',
                                                                             fontWeight: '800',
                                                                             cursor: 'pointer',
                                                                             display: 'flex',
@@ -10849,12 +10826,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             setSelectedSiblingIds(detectedSiblings.map(s => s.id));
                                                                         }}
                                                                         style={{
-                                                                            padding: '0.45rem 0.5rem',
+                                                                            padding: '0.5rem 0.6rem',
                                                                             borderRadius: '7px',
                                                                             border: siblingPaymentScope === 'family' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
                                                                             background: siblingPaymentScope === 'family' ? '#0284c7' : '#ffffff',
                                                                             color: siblingPaymentScope === 'family' ? '#ffffff' : '#334155',
-                                                                            fontSize: '0.72rem',
+                                                                            fontSize: '0.82rem',
                                                                             fontWeight: '800',
                                                                             cursor: 'pointer',
                                                                             display: 'flex',
@@ -10873,9 +10850,12 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
                                                     {/* BIG STEP 1 CTA BUTTON TO SWIPE TO STEP 2 */}
                                                     {(() => {
-                                                        const isLocked = feeCalculation?.isFullyPaid || (feeCalculation?.pendingDue <= 0 && feeCalculation?.isPaid);
-                                                        const isPartial = feeCalculation?.isPartiallyPaid && (feeCalculation?.pendingDue > 0);
-                                                        const pendingAmount = Number(feeCalculation?.pendingDue || 0);
+                                                        const activeCalc = (siblingPaymentScope === 'family' && detectedSiblings.length > 1)
+                                                            ? feeCalculation
+                                                            : (activeChildFeeCalculation || feeCalculation);
+                                                        const isLocked = Boolean(activeCalc?.isFullyPaid || (Number(activeCalc?.pendingDue ?? 0) <= 0 && activeCalc?.isPaid));
+                                                        const isPartial = Boolean(activeCalc?.isPartiallyPaid && (Number(activeCalc?.pendingDue ?? 0) > 0));
+                                                        const pendingAmount = Number(activeCalc?.pendingDue || 0);
 
                                                         return (
                                                             <button
@@ -10886,7 +10866,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 }}
                                                                 style={{
                                                                     width: '100%',
-                                                                    padding: '0.85rem',
+                                                                    padding: '0.9rem',
                                                                     borderRadius: '12px',
                                                                     background: isLocked
                                                                         ? 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)'
@@ -10896,7 +10876,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     border: 'none',
                                                                     color: '#ffffff',
                                                                     fontWeight: '900',
-                                                                    fontSize: '0.92rem',
+                                                                    fontSize: '0.98rem',
                                                                     cursor: isLocked ? 'not-allowed' : 'pointer',
                                                                     display: 'flex',
                                                                     alignItems: 'center',
@@ -10909,21 +10889,21 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             >
                                                                 {isLocked ? (
                                                                     <>
-                                                                        <CheckCircle2 size={18} />
+                                                                        <CheckCircle2 size={20} />
                                                                         <span>✓ Fee Already Paid ({MONTH_NAMES[selectedTargetMonthIdx] || 'Month'})</span>
                                                                     </>
                                                                 ) : isPartial ? (
                                                                     <>
-                                                                        <Wallet size={18} />
+                                                                        <Wallet size={20} />
                                                                         <span>Collect Remaining Balance (Rs {pendingAmount.toLocaleString()})</span>
                                                                     </>
                                                                 ) : (
                                                                     <>
-                                                                        <Wallet size={18} />
+                                                                        <Wallet size={20} />
                                                                         <span>
-                                                                            {feeCalculation?.isMultiFamily
-                                                                                ? `Record Fee for Family (${feeCalculation.activeSiblingsCount})`
-                                                                                : `Record Fee / Collect Payment`
+                                                                            {activeCalc?.isMultiFamily
+                                                                                ? `Record Fee for Family (${activeCalc.activeSiblingsCount}) • Rs ${Number(activeCalc?.totalDue || 0).toLocaleString()}`
+                                                                                : `Record Fee / Collect Payment (Rs ${Number(activeCalc?.totalDue || 0).toLocaleString()})`
                                                                             }
                                                                         </span>
                                                                     </>
@@ -13111,204 +13091,375 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             )}
                         </div>
                     ) : (
-                        /* RIGHT PANEL WHEN NO STUDENT IS SELECTED OR IN INCOME/EXPENSE MODE: Today's Ledger */
+                        /* RIGHT PANEL WHEN NO STUDENT IS SELECTED OR IN INCOME/EXPENSE MODE: Consolidated Master Ledger & Daily Log */
                         <div className="card" style={{
                             background: '#ffffff',
                             borderRadius: '14px',
-                            padding: '1.4rem',
+                            padding: '1.3rem',
                             border: '1px solid #e2e8f0',
                             boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
                         }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    {rightCardTab === 'fee_slips' ? (
-                                        <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                            <Clock size={16} color="#0078d4" /> Today's Fee Collections Log
+                            {/* Card Header & Controls */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1.5px solid #e2e8f0', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.6rem' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4338ca' }}>
+                                            <Activity size={18} />
+                                        </div>
+                                        <h3 style={{ fontSize: '1.12rem', fontWeight: '900', color: '#0f172a', margin: 0, letterSpacing: '-0.01em' }}>
+                                            Today's Consolidated Cash & Activity Ledger
                                         </h3>
-                                    ) : (
-                                        <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                            <TrendingUp size={16} color="#16a34a" /> Today's Income & Expenses
-                                        </h3>
-                                    )}
+                                    </div>
+                                    <span style={{ fontSize: '0.84rem', color: '#475569', marginLeft: '2.5rem', fontWeight: '600' }}>
+                                        Unified live log of Fee Collections, Incomes & Expenses
+                                    </span>
                                 </div>
 
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                    <div style={{ display: 'flex', background: '#f1f5f9', padding: '2px', borderRadius: '7px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    {/* Multi-Tab Filter Switcher */}
+                                    <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setRightCardTab('all')}
+                                            style={{
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                border: 'none',
+                                                background: rightCardTab === 'all' ? '#ffffff' : 'transparent',
+                                                color: rightCardTab === 'all' ? '#4338ca' : '#475569',
+                                                fontWeight: '800',
+                                                fontSize: '0.8rem',
+                                                cursor: 'pointer',
+                                                boxShadow: rightCardTab === 'all' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                                            }}
+                                        >
+                                            All ({todayTransactions.length + (todayFinances.incomes || []).length + (todayFinances.expenses || []).length})
+                                        </button>
                                         <button
                                             type="button"
                                             onClick={() => setRightCardTab('fee_slips')}
                                             style={{
-                                                padding: '3px 8px',
-                                                borderRadius: '5px',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
                                                 border: 'none',
                                                 background: rightCardTab === 'fee_slips' ? '#ffffff' : 'transparent',
-                                                color: rightCardTab === 'fee_slips' ? '#0078d4' : '#64748b',
-                                                fontWeight: '700',
-                                                fontSize: '0.72rem',
-                                                cursor: 'pointer'
+                                                color: rightCardTab === 'fee_slips' ? '#0078d4' : '#475569',
+                                                fontWeight: '800',
+                                                fontSize: '0.8rem',
+                                                cursor: 'pointer',
+                                                boxShadow: rightCardTab === 'fee_slips' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
                                             }}
                                         >
-                                            Slips ({recentTransactions.length})
+                                            Slips ({todayTransactions.length})
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => setRightCardTab('finances_breakdown')}
+                                            onClick={() => setRightCardTab('incomes')}
                                             style={{
-                                                padding: '3px 8px',
-                                                borderRadius: '5px',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
                                                 border: 'none',
-                                                background: rightCardTab === 'finances_breakdown' ? '#ffffff' : 'transparent',
-                                                color: rightCardTab === 'finances_breakdown' ? '#16a34a' : '#64748b',
-                                                fontWeight: '700',
-                                                fontSize: '0.72rem',
-                                                cursor: 'pointer'
+                                                background: rightCardTab === 'incomes' ? '#ffffff' : 'transparent',
+                                                color: rightCardTab === 'incomes' ? '#16a34a' : '#475569',
+                                                fontWeight: '800',
+                                                fontSize: '0.8rem',
+                                                cursor: 'pointer',
+                                                boxShadow: rightCardTab === 'incomes' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
                                             }}
                                         >
-                                            Ledger ({todayFinances.incomes.length + todayFinances.expenses.length})
+                                            Incomes ({(todayFinances.incomes || []).length})
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setRightCardTab('expenses')}
+                                            style={{
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                border: 'none',
+                                                background: rightCardTab === 'expenses' ? '#ffffff' : 'transparent',
+                                                color: rightCardTab === 'expenses' ? '#dc2626' : '#475569',
+                                                fontWeight: '800',
+                                                fontSize: '0.8rem',
+                                                cursor: 'pointer',
+                                                boxShadow: rightCardTab === 'expenses' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                                            }}
+                                        >
+                                            Expenses ({(todayFinances.expenses || []).length})
                                         </button>
                                     </div>
+
+                                    {/* Master Daily PDF Download */}
                                     <button
                                         type="button"
-                                        onClick={rightCardTab === 'fee_slips' ? handleDownloadDailyReport : handleDownloadFinancesReport}
+                                        onClick={handleDownloadMasterDailyReport}
+                                        disabled={isGeneratingDailyPDF}
                                         style={{
-                                            padding: '4px 9px',
-                                            borderRadius: '6px',
-                                            background: '#0078d4',
+                                            padding: '5px 12px',
+                                            borderRadius: '7px',
+                                            background: '#4338ca',
                                             color: '#ffffff',
                                             border: 'none',
-                                            fontWeight: '700',
-                                            fontSize: '0.72rem',
-                                            cursor: 'pointer',
+                                            fontWeight: '800',
+                                            fontSize: '0.8rem',
+                                            cursor: isGeneratingDailyPDF ? 'wait' : 'pointer',
                                             display: 'inline-flex',
                                             alignItems: 'center',
-                                            gap: '3px'
+                                            gap: '5px',
+                                            boxShadow: '0 2px 5px rgba(67, 56, 202, 0.25)'
                                         }}
+                                        title="Download Master Consolidated PDF Audit Report"
                                     >
-                                        <Download size={12} /> PDF
+                                        {isGeneratingDailyPDF ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Master PDF
                                     </button>
                                 </div>
                             </div>
 
-                            {rightCardTab === 'fee_slips' ? (
-                                loadingTransactions ? (
-                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem' }}>
-                                        Loading today's receipts...
+                            {/* Consolidated Mini Metrics Strip */}
+                            {(() => {
+                                const feeAmt = todayMetrics.totalAmount || 0;
+                                const incAmt = (todayFinances.incomes || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+                                const expAmt = (todayFinances.expenses || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+                                const netClosing = (feeAmt + incAmt) - expAmt;
+
+                                return (
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                                        gap: '0.6rem',
+                                        marginBottom: '1rem',
+                                        background: '#f8fafc',
+                                        padding: '0.75rem',
+                                        borderRadius: '10px',
+                                        border: '1.5px solid #e2e8f0'
+                                    }}>
+                                        <div style={{ background: '#ffffff', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1.5px solid #bfdbfe' }}>
+                                            <div style={{ fontSize: '0.74rem', fontWeight: '800', color: '#0078d4', textTransform: 'uppercase', letterSpacing: '0.02em' }}>Fee Collected</div>
+                                            <div style={{ fontSize: '1.05rem', fontWeight: '900', color: '#0f172a', margin: '2px 0' }}>Rs {feeAmt.toLocaleString()}</div>
+                                            <div style={{ fontSize: '0.76rem', color: '#475569', fontWeight: '700' }}>{todayTransactions.length} Slips Issued</div>
+                                        </div>
+                                        <div style={{ background: '#ffffff', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1.5px solid #bbf7d0' }}>
+                                            <div style={{ fontSize: '0.74rem', fontWeight: '800', color: '#16a34a', textTransform: 'uppercase', letterSpacing: '0.02em' }}>Other Incomes</div>
+                                            <div style={{ fontSize: '1.05rem', fontWeight: '900', color: '#166534', margin: '2px 0' }}>+Rs {incAmt.toLocaleString()}</div>
+                                            <div style={{ fontSize: '0.76rem', color: '#475569', fontWeight: '700' }}>{(todayFinances.incomes || []).length} Inflow Entries</div>
+                                        </div>
+                                        <div style={{ background: '#ffffff', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1.5px solid #fecaca' }}>
+                                            <div style={{ fontSize: '0.74rem', fontWeight: '800', color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.02em' }}>Total Expenses</div>
+                                            <div style={{ fontSize: '1.05rem', fontWeight: '900', color: '#991b1b', margin: '2px 0' }}>-Rs {expAmt.toLocaleString()}</div>
+                                            <div style={{ fontSize: '0.76rem', color: '#475569', fontWeight: '700' }}>{(todayFinances.expenses || []).length} Outflow Entries</div>
+                                        </div>
+                                        <div style={{ background: netClosing >= 0 ? '#f0fdf4' : '#fef2f2', padding: '0.5rem 0.75rem', borderRadius: '8px', border: `1.5px solid ${netClosing >= 0 ? '#86efac' : '#fca5a5'}` }}>
+                                            <div style={{ fontSize: '0.74rem', fontWeight: '800', color: netClosing >= 0 ? '#15803d' : '#b91c1c', textTransform: 'uppercase', letterSpacing: '0.02em' }}>Net Closing Cash</div>
+                                            <div style={{ fontSize: '1.05rem', fontWeight: '900', color: netClosing >= 0 ? '#166534' : '#991b1b', margin: '2px 0' }}>Rs {netClosing.toLocaleString()}</div>
+                                            <div style={{ fontSize: '0.76rem', color: netClosing >= 0 ? '#16a34a' : '#dc2626', fontWeight: '700' }}>{netClosing >= 0 ? 'Surplus Balance' : 'Cash Deficit'}</div>
+                                        </div>
                                     </div>
-                                ) : todayTransactions.length === 0 ? (
-                                    <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.82rem', background: '#f8fafc', borderRadius: '8px' }}>
-                                        <p style={{ margin: 0, fontWeight: '700', color: '#64748b' }}>No fee collections recorded today yet.</p>
-                                        <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Select a student on the left to collect fee and issue an instant receipt.</span>
+                                );
+                            })()}
+
+                            {/* Main Scrollable Content Area */}
+                            <div style={{ maxHeight: '420px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }} className="custom-scrollbar">
+                                {loadingTransactions ? (
+                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.88rem', fontWeight: '700' }}>
+                                        Loading today's ledger records...
                                     </div>
                                 ) : (
-                                    <div style={{ maxHeight: '340px', overflowY: 'auto' }} className="custom-scrollbar">
-                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                                            <thead>
-                                                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Slip #</th>
-                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Student</th>
-                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Class</th>
-                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Amount</th>
-                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700' }}>Mode</th>
-                                                    <th style={{ padding: '0.45rem 0.65rem', color: '#475569', fontWeight: '700', textAlign: 'right' }}>Slip</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {todayTransactions.map((tx) => (
-                                                    <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                        <td style={{ padding: '0.45rem 0.65rem', fontWeight: '700', color: '#0078d4' }}>{tx.receiptNo}</td>
-                                                        <td style={{ padding: '0.45rem 0.65rem', fontWeight: '600', color: '#0f172a' }}>{tx.studentName}</td>
-                                                        <td style={{ padding: '0.45rem 0.65rem', color: '#475569' }}>{tx.className}</td>
-                                                        <td style={{ padding: '0.45rem 0.65rem', fontWeight: '700', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
-                                                        <td style={{ padding: '0.45rem 0.65rem' }}>
-                                                            <span style={{ color: '#0f172a', fontWeight: '600', fontSize: '0.72rem' }}>{tx.paymentMode || 'Cash'}</span>
-                                                        </td>
-                                                        <td style={{ padding: '0.45rem 0.65rem', textAlign: 'right' }}>
-                                                            <div style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
-                                                                {tx.proofUrl && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setProofModal({
-                                                                            isOpen: true,
-                                                                            url: tx.proofUrl,
-                                                                            title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
-                                                                        })}
-                                                                        style={{
-                                                                            padding: '0.2rem 0.45rem',
-                                                                            borderRadius: '5px',
-                                                                            border: '1px solid #86efac',
-                                                                            background: '#f0fdf4',
-                                                                            color: '#15803d',
-                                                                            fontWeight: '700',
-                                                                            fontSize: '0.7rem',
-                                                                            cursor: 'pointer'
-                                                                        }}
-                                                                        title="View Proof"
-                                                                    >
-                                                                        <Eye size={11} />
-                                                                    </button>
-                                                                )}
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        setReceiptData(tx);
-                                                                        setReceiptModalOpen(true);
-                                                                    }}
-                                                                    style={{
-                                                                        padding: '0.2rem 0.45rem',
-                                                                        borderRadius: '5px',
-                                                                        border: '1px solid #cbd5e1',
-                                                                        background: '#ffffff',
-                                                                        color: '#0f172a',
-                                                                        fontWeight: '700',
-                                                                        fontSize: '0.7rem',
-                                                                        cursor: 'pointer',
-                                                                        display: 'inline-flex',
-                                                                        alignItems: 'center',
-                                                                        gap: '3px'
-                                                                    }}
-                                                                    title="Slip"
-                                                                >
-                                                                    <Printer size={11} /> Slip
-                                                                </button>
+                                    <>
+                                        {/* SECTION 1: Fee Collections Log */}
+                                        {(rightCardTab === 'all' || rightCardTab === 'fee_slips') && (
+                                            <div style={{ border: '1.5px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden' }}>
+                                                <div style={{ background: '#f8fafc', padding: '0.6rem 0.85rem', borderBottom: '1.5px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                        <Wallet size={16} color="#0078d4" /> Fee Collections Log ({todayTransactions.length})
+                                                    </span>
+                                                    <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#0078d4' }}>
+                                                        Rs {(todayMetrics.totalAmount || 0).toLocaleString()}
+                                                    </span>
+                                                </div>
+
+                                                {todayTransactions.length === 0 ? (
+                                                    <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600' }}>
+                                                        No student fee collections recorded today yet.
+                                                    </div>
+                                                ) : (
+                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+                                                        <thead>
+                                                            <tr style={{ background: '#f1f5f9', borderBottom: '1.5px solid #e2e8f0', textAlign: 'left' }}>
+                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Slip #</th>
+                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Student</th>
+                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Class</th>
+                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Amount</th>
+                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Mode</th>
+                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800', textAlign: 'right' }}>Slip</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {todayTransactions.map((tx) => (
+                                                                <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                    <td style={{ padding: '0.55rem 0.75rem', fontWeight: '800', color: '#0078d4' }}>{tx.receiptNo}</td>
+                                                                    <td style={{ padding: '0.55rem 0.75rem', fontWeight: '700', color: '#0f172a' }}>{tx.studentName}</td>
+                                                                    <td style={{ padding: '0.55rem 0.75rem', color: '#475569', fontWeight: '600' }}>{tx.className}</td>
+                                                                    <td style={{ padding: '0.55rem 0.75rem', fontWeight: '800', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
+                                                                    <td style={{ padding: '0.55rem 0.75rem' }}>
+                                                                        <span style={{ color: '#0f172a', fontWeight: '700', fontSize: '0.78rem' }}>{tx.paymentMode || 'Cash'}</span>
+                                                                    </td>
+                                                                    <td style={{ padding: '0.55rem 0.75rem', textAlign: 'right' }}>
+                                                                        <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+                                                                            {tx.proofUrl && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => setProofModal({
+                                                                                        isOpen: true,
+                                                                                        url: tx.proofUrl,
+                                                                                        title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
+                                                                                    })}
+                                                                                    style={{
+                                                                                        padding: '0.25rem 0.5rem',
+                                                                                        borderRadius: '5px',
+                                                                                        border: '1.5px solid #86efac',
+                                                                                        background: '#f0fdf4',
+                                                                                        color: '#15803d',
+                                                                                        fontWeight: '800',
+                                                                                        fontSize: '0.76rem',
+                                                                                        cursor: 'pointer'
+                                                                                    }}
+                                                                                    title="View Proof"
+                                                                                >
+                                                                                    <Eye size={12} />
+                                                                                </button>
+                                                                            )}
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    setReceiptData(tx);
+                                                                                    setReceiptModalOpen(true);
+                                                                                }}
+                                                                                style={{
+                                                                                    padding: '0.25rem 0.55rem',
+                                                                                    borderRadius: '5px',
+                                                                                    border: '1.5px solid #cbd5e1',
+                                                                                    background: '#ffffff',
+                                                                                    color: '#0f172a',
+                                                                                    fontWeight: '800',
+                                                                                    fontSize: '0.76rem',
+                                                                                    cursor: 'pointer',
+                                                                                    display: 'inline-flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '4px'
+                                                                                }}
+                                                                                title="Print Slip"
+                                                                            >
+                                                                                <Printer size={12} /> Slip
+                                                                            </button>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* SECTION 2: Other Incomes Log */}
+                                        {(rightCardTab === 'all' || rightCardTab === 'incomes') && (
+                                            <div style={{ border: '1.5px solid #bbf7d0', borderRadius: '10px', overflow: 'hidden' }}>
+                                                <div style={{ background: '#f0fdf4', padding: '0.6rem 0.85rem', borderBottom: '1.5px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                        <TrendingUp size={16} color="#16a34a" /> Today's Incomes & Inflow ({(todayFinances.incomes || []).length})
+                                                    </span>
+                                                    <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#16a34a' }}>
+                                                        +Rs {(todayFinances.incomes || []).reduce((s, i) => s + (Number(i.amount) || 0), 0).toLocaleString()}
+                                                    </span>
+                                                </div>
+
+                                                {(todayFinances.incomes || []).length === 0 ? (
+                                                    <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff' }}>
+                                                        No additional income vouchers logged today.
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ padding: '0.6rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                        {todayFinances.incomes.map((inc) => (
+                                                             <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.55rem 0.8rem', background: '#f0fdf4', borderRadius: '8px', border: '1.5px solid #bbf7d0', fontSize: '0.84rem' }}>
+                                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                                    <div style={{ fontWeight: '800', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                        <span>{inc.name || inc.title || inc.category || 'Income'}</span>
+                                                                        <span style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: '800' }}>
+                                                                            {inc.type === 'permanent' ? 'Monthly' : 'One-time'}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>{inc.remarks || 'Direct Revenue'}</div>
+                                                                </div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                                                    <span style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.94rem' }}>+Rs {Number(inc.amount || 0).toLocaleString()}</span>
+                                                                    {inc.proofUrl && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setProofModal({ isOpen: true, url: inc.proofUrl, title: `${inc.name} - Proof` })}
+                                                                            style={{ padding: '3px 7px', borderRadius: '5px', border: '1.5px solid #86efac', background: '#ffffff', color: '#15803d', cursor: 'pointer', fontSize: '0.74rem', fontWeight: '800' }}
+                                                                            title="View Proof"
+                                                                        >
+                                                                            <Eye size={12} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )
-                            ) : (
-                                /* Finances Breakdown (Incomes & Expenses) */
-                                <div style={{ maxHeight: '340px', overflowY: 'auto' }} className="custom-scrollbar">
-                                    {todayFinances.incomes.length === 0 && todayFinances.expenses.length === 0 ? (
-                                        <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.82rem' }}>
-                                            No additional income or expense vouchers recorded today.
-                                        </div>
-                                    ) : (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                            {todayFinances.incomes.map((inc) => (
-                                                <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0', fontSize: '0.8rem' }}>
-                                                    <div>
-                                                        <div style={{ fontWeight: '700', color: '#166534' }}>{inc.category || inc.title || 'Income'}</div>
-                                                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{inc.remarks || inc.note || 'Direct Revenue'}</div>
+                                                        ))}
                                                     </div>
-                                                    <span style={{ fontWeight: '800', color: '#16a34a' }}>+Rs {Number(inc.amount || 0).toLocaleString()}</span>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* SECTION 3: School Expenses Log */}
+                                        {(rightCardTab === 'all' || rightCardTab === 'expenses') && (
+                                            <div style={{ border: '1.5px solid #fecaca', borderRadius: '10px', overflow: 'hidden' }}>
+                                                <div style={{ background: '#fef2f2', padding: '0.6rem 0.85rem', borderBottom: '1.5px solid #fecaca', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                        <TrendingUp size={16} color="#dc2626" style={{ transform: 'rotate(180deg)' }} /> Today's Expenses & Outflow ({(todayFinances.expenses || []).length})
+                                                    </span>
+                                                    <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#dc2626' }}>
+                                                        -Rs {(todayFinances.expenses || []).reduce((s, e) => s + (Number(e.amount) || 0), 0).toLocaleString()}
+                                                    </span>
                                                 </div>
-                                            ))}
-                                            {todayFinances.expenses.map((exp) => (
-                                                <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca', fontSize: '0.8rem' }}>
-                                                    <div>
-                                                        <div style={{ fontWeight: '700', color: '#991b1b' }}>{exp.category || exp.title || 'Expense'}</div>
-                                                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{exp.remarks || exp.note || 'School Outflow'}</div>
+
+                                                {(todayFinances.expenses || []).length === 0 ? (
+                                                    <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff' }}>
+                                                        No school expense vouchers logged today.
                                                     </div>
-                                                    <span style={{ fontWeight: '800', color: '#dc2626' }}>-Rs {Number(exp.amount || 0).toLocaleString()}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
+                                                ) : (
+                                                    <div style={{ padding: '0.6rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                        {todayFinances.expenses.map((exp) => (
+                                                            <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.55rem 0.8rem', background: '#fef2f2', borderRadius: '8px', border: '1.5px solid #fecaca', fontSize: '0.84rem' }}>
+                                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                                    <div style={{ fontWeight: '800', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                        <span>{exp.name || exp.title || exp.category || 'Expense'}</span>
+                                                                        <span style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', fontWeight: '800' }}>
+                                                                            {exp.type === 'permanent' ? 'Monthly' : 'One-time'}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>{exp.remarks || 'School Outflow'}</div>
+                                                                </div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                                                    <span style={{ fontWeight: '900', color: '#dc2626', fontSize: '0.94rem' }}>-Rs {Number(exp.amount || 0).toLocaleString()}</span>
+                                                                    {exp.proofUrl && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setProofModal({ isOpen: true, url: exp.proofUrl, title: `${exp.name} - Proof` })}
+                                                                            style={{ padding: '3px 7px', borderRadius: '5px', border: '1.5px solid #fca5a5', background: '#ffffff', color: '#b91c1c', cursor: 'pointer', fontSize: '0.74rem', fontWeight: '800' }}
+                                                                            title="View Proof"
+                                                                        >
+                                                                            <Eye size={12} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
