@@ -4,7 +4,8 @@ import {
     Smartphone, Landmark, AlertCircle, ArrowUpRight, Check, X, Loader2,
     ZoomIn, ZoomOut, RotateCcw, RotateCw, Users, ShieldCheck, FileCheck, RefreshCw, 
     AlertTriangle, Copy, Calendar, CheckCheck, Sparkles, CreditCard, ArrowRight,
-    Volume2, VolumeX, Bell, UserCheck, ChevronRight, Hash, Tag, Receipt
+    Volume2, VolumeX, Bell, UserCheck, ChevronRight, ChevronLeft, ChevronDown, Hash, Tag, Receipt,
+    Trash2, Zap
 } from 'lucide-react';
 import { db } from '../firebase';
 import { 
@@ -12,6 +13,9 @@ import {
 } from 'firebase/firestore';
 import { calculateItemizedFeeBreakdown, MONTH_NAMES, MONTH_SHORT, formatPKR, isMonthKeySettled } from '../utils/feePipeline';
 import { cacheStudentsOffline, getCachedStudentsOffline } from '../utils/offlineFeeEngine';
+import { playShopifyChachingSound } from '../utils/audioAlerts';
+
+const ITEMS_PER_PAGE = 25;
 
 const OnlineSubmissionsDashboard = ({ 
     schoolId, 
@@ -36,7 +40,13 @@ const OnlineSubmissionsDashboard = ({
     // Filters
     const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'approved', 'rejected', 'needs_reupload'
     const [filterMethod, setFilterMethod] = useState('all'); // 'all', 'easypaisa', 'jazzcash', 'bank', 'family'
+    const currentMonthIso = useMemo(() => new Date().toISOString().slice(0, 7), []);
+    const [historySelectedMonth, setHistorySelectedMonth] = useState(currentMonthIso);
     const [searchQuery, setSearchQuery] = useState('');
+
+    // Pagination States (25 items per page)
+    const [pendingPage, setPendingPage] = useState(1);
+    const [historyPage, setHistoryPage] = useState(1);
     
     // Canvas & Slip Viewer States
     const [selectedProofUrl, setSelectedProofUrl] = useState(null);
@@ -47,7 +57,15 @@ const OnlineSubmissionsDashboard = ({
     const [reuploadSub, setReuploadSub] = useState(null);
     const [reuploadNote, setReuploadNote] = useState('');
     const [processingId, setProcessingId] = useState(null);
-    const [copiedTrx, setCopiedTrx] = useState('');
+    const [isInjectingDemo, setIsInjectingDemo] = useState(false);
+
+    // 🔒 Strict Gatekeeper: Demo Injection & Mock Slips are EXCLUSIVELY active for Demo Presentation Account (School ID: 6257)
+    // On ANY other school account, these buttons are 100% hidden and restricted.
+    const isDemoAccount = useMemo(() => {
+        const sId = String(schoolId || '').trim();
+        const pId = String(schoolInfo?.schoolId || schoolInfo?.id || '').trim();
+        return sId === '6257' || pId === '6257' || sId.includes('6257') || pId.includes('6257');
+    }, [schoolId, schoolInfo]);
 
     // Audio & Real-time Live Alert States
     const [audioEnabled, setAudioEnabled] = useState(true);
@@ -56,25 +74,7 @@ const OnlineSubmissionsDashboard = ({
 
     const playPaymentChime = () => {
         if (!audioEnabled) return;
-        try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return;
-            const ctx = new AudioCtx();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-            osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.12); // E5
-            osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.25); // G5
-            gain.gain.setValueAtTime(0.25, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start();
-            osc.stop(ctx.currentTime + 0.45);
-        } catch (e) {
-            console.warn("Audio chime error:", e);
-        }
+        playShopifyChachingSound();
     };
 
     const handleZoomIn = () => {
@@ -232,14 +232,100 @@ const OnlineSubmissionsDashboard = ({
         return { monthKey, monthName, mIdx, yr };
     };
 
-    // Pending vs History lists
+    // Helper to resolve accurate monthKey (YYYY-MM) for any submission
+    const getSubmissionMonthKey = (sub) => {
+        if (!sub) return currentMonthIso;
+        if (sub.month) {
+            const info = parseMonthInfo(sub.month);
+            if (info?.monthKey) return info.monthKey;
+        }
+        const dateStr = sub.approvedAt || sub.submittedAt || sub.createdAt || sub.rejectedAt || '';
+        if (dateStr && dateStr.length >= 7) return dateStr.slice(0, 7);
+        return currentMonthIso;
+    };
+
+    // Map of approved students & parents by monthKey to auto-resolve superseded rejections
+    const approvedSettlementMap = useMemo(() => {
+        const map = new Set();
+        submissions.forEach(sub => {
+            if (sub.status === 'approved') {
+                const mKey = getSubmissionMonthKey(sub);
+                if (sub.studentId) map.add(`${sub.studentId}_${mKey}`);
+                if (sub.parentId) map.add(`${sub.parentId}_${mKey}`);
+                if (Array.isArray(sub.familyStudents)) {
+                    sub.familyStudents.forEach(fs => {
+                        const sid = fs.studentId || fs.id;
+                        if (sid) map.add(`${sid}_${mKey}`);
+                    });
+                }
+                if (Array.isArray(sub.approvedSiblings)) {
+                    sub.approvedSiblings.forEach(fs => {
+                        const sid = fs.studentId || fs.id;
+                        if (sid) map.add(`${sid}_${mKey}`);
+                    });
+                }
+            }
+        });
+        return map;
+    }, [submissions]);
+
+    // Check if a rejected / re-upload submission has been superseded by a subsequent approved payment
+    const isSubmissionSuperseded = (sub) => {
+        if (sub.status !== 'rejected' && sub.status !== 'needs_reupload') return false;
+        if (sub.superseded || sub.resolvedByApproved) return true;
+        const mKey = getSubmissionMonthKey(sub);
+
+        if (sub.studentId && approvedSettlementMap.has(`${sub.studentId}_${mKey}`)) return true;
+        if (sub.parentId && approvedSettlementMap.has(`${sub.parentId}_${mKey}`)) return true;
+        if (Array.isArray(sub.familyStudents) && sub.familyStudents.some(fs => approvedSettlementMap.has(`${(fs.studentId || fs.id)}_${mKey}`))) return true;
+
+        return false;
+    };
+
+    // Pending vs History lists (with smart superseded-rejection filtering)
     const pendingSubs = useMemo(() => {
         return submissions.filter(s => (s.status || 'pending') === 'pending');
     }, [submissions]);
 
     const historySubs = useMemo(() => {
-        return submissions.filter(s => (s.status || 'pending') !== 'pending');
-    }, [submissions]);
+        return submissions.filter(s => {
+            if ((s.status || 'pending') === 'pending') return false;
+            if (isSubmissionSuperseded(s)) return false;
+            return true;
+        });
+    }, [submissions, approvedSettlementMap]);
+
+    // List of historical months ordered from January to December
+    const historyMonthOptions = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const seenYears = new Set([currentYear]);
+
+        // Detect any other years from past submissions
+        submissions.forEach(s => {
+            const mKey = getSubmissionMonthKey(s);
+            if (mKey && mKey.length === 7) {
+                const yr = parseInt(mKey.split('-')[0], 10);
+                if (!isNaN(yr)) seenYears.add(yr);
+            }
+        });
+
+        const sortedYears = Array.from(seenYears).sort((a, b) => b - a); // Newer year first (e.g. 2026, then 2025)
+        const options = [];
+
+        sortedYears.forEach(year => {
+            for (let mIdx = 0; mIdx < 12; mIdx++) {
+                const monthKey = `${year}-${String(mIdx + 1).padStart(2, '0')}`;
+                const isCurrent = monthKey === currentMonthIso;
+                options.push({
+                    value: monthKey,
+                    label: `${MONTH_NAMES[mIdx]} ${year}${isCurrent ? ' (Current)' : ''}`
+                });
+            }
+        });
+
+        options.push({ value: 'all', label: '🌐 All Months (Lifetime History)' });
+        return options;
+    }, [currentMonthIso, submissions]);
 
     // Auto-select first pending submission if none selected or if selected is no longer pending
     useEffect(() => {
@@ -342,6 +428,14 @@ const OnlineSubmissionsDashboard = ({
                     className: fs.className || 'Class',
                     classId: fs.classId || '',
                     rollNo: fs.rollNo || '',
+                    monthlyFee: Number(fs.monthlyFee || fs.tuitionFee || (fs.subtotal && !fs.transportFee && !fs.storeDues && !fs.actionFee ? fs.subtotal : 0)),
+                    transportFee: Number(fs.transportFee || 0),
+                    storeDues: Number(fs.storeDues || 0),
+                    storePurchases: fs.storePurchases || [],
+                    actionFee: Number(fs.actionFee || 0),
+                    actions: fs.actions || [],
+                    concessionType: fs.concessionType || '',
+                    isScholarship: Boolean(fs.isScholarship),
                     subtotal: Number(fs.subtotal || 0)
                 }));
             } else if (activeSub.studentId) {
@@ -351,6 +445,14 @@ const OnlineSubmissionsDashboard = ({
                     className: activeSub.className || 'Class',
                     classId: activeSub.classId || '',
                     rollNo: activeSub.rollNo || '',
+                    monthlyFee: Number(activeSub.monthlyFee || activeSub.tuitionFee || (activeSub.amount && !activeSub.transportFee && !activeSub.storeDues && !activeSub.actionFee ? activeSub.amount : 0)),
+                    transportFee: Number(activeSub.transportFee || 0),
+                    storeDues: Number(activeSub.storeDues || 0),
+                    storePurchases: activeSub.storePurchases || [],
+                    actionFee: Number(activeSub.actionFee || 0),
+                    actions: activeSub.actions || [],
+                    concessionType: activeSub.concessionType || '',
+                    isScholarship: Boolean(activeSub.isScholarship),
                     subtotal: Number(activeSub.amount || 0)
                 }];
             }
@@ -366,13 +468,42 @@ const OnlineSubmissionsDashboard = ({
                 subMonthInfo.yr
             );
 
+            // Merge any specific heads passed in payload
+            if (st.transportFee && !breakdown.transportFee) {
+                breakdown.transportFee = st.transportFee;
+            }
+            if (st.storeDues && !breakdown.storeDues) {
+                breakdown.storeDues = st.storeDues;
+                breakdown.storePurchases = st.storePurchases || [];
+            }
+            if (st.actionFee && !breakdown.actionFee) {
+                breakdown.actionFee = st.actionFee;
+                breakdown.actions = st.actions || [];
+            }
+            if (st.concessionType && !breakdown.concessionType) {
+                breakdown.concessionType = st.concessionType;
+                breakdown.isScholarship = true;
+            }
+
+            // Calculate true total dues
+            let calculatedDue = (Number(breakdown.tuitionPayable || breakdown.baseTuition || st.monthlyFee || 0))
+                + (Number(breakdown.transportFee || st.transportFee || 0))
+                + (Number(breakdown.storeDues || st.storeDues || 0))
+                + (Number(breakdown.actionFee || st.actionFee || 0))
+                + (Number(breakdown.penaltyFine || 0));
+
+            if (calculatedDue === 0 && st.subtotal > 0) {
+                calculatedDue = st.subtotal;
+                breakdown.tuitionPayable = st.subtotal;
+            }
+
             const isPrimary = (st.id === targetStudentId) || (activeSub.isFamilyCombined && activeSub.familyStudents?.some(fs => fs.studentId === st.id));
             const isSettled = isMonthKeySettled(st, subMonthInfo.monthKey, subMonthInfo.yr);
 
             return {
                 ...st,
                 breakdown,
-                calculatedDue: breakdown.totalPayable,
+                calculatedDue,
                 isPrimary,
                 isSettled
             };
@@ -442,13 +573,38 @@ const OnlineSubmissionsDashboard = ({
         return pendingSubs.filter(s => applyCommonSearch(s) && applyMethodFilter(s));
     }, [pendingSubs, searchQuery, filterMethod]);
 
+    // Monthly Scoped History list
+    const monthHistorySubs = useMemo(() => {
+        if (historySelectedMonth === 'all') return historySubs;
+        return historySubs.filter(s => getSubmissionMonthKey(s) === historySelectedMonth);
+    }, [historySubs, historySelectedMonth]);
+
     const filteredHistoryList = useMemo(() => {
-        return historySubs.filter(s => {
+        return monthHistorySubs.filter(s => {
             if (!applyCommonSearch(s) || !applyMethodFilter(s)) return false;
             if (filterStatus === 'all') return true;
             return s.status === filterStatus;
         });
-    }, [historySubs, searchQuery, filterMethod, filterStatus]);
+    }, [monthHistorySubs, searchQuery, filterMethod, filterStatus]);
+
+    // Reset pagination to page 1 whenever filters or search query change
+    useEffect(() => {
+        setPendingPage(1);
+        setHistoryPage(1);
+    }, [searchQuery, filterMethod, filterStatus, historySelectedMonth]);
+
+    // Pagination calculations (25 records per page)
+    const pendingTotalPages = Math.max(1, Math.ceil(filteredCounterList.length / ITEMS_PER_PAGE));
+    const paginatedPendingList = useMemo(() => {
+        const start = (pendingPage - 1) * ITEMS_PER_PAGE;
+        return filteredCounterList.slice(start, start + ITEMS_PER_PAGE);
+    }, [filteredCounterList, pendingPage]);
+
+    const historyTotalPages = Math.max(1, Math.ceil(filteredHistoryList.length / ITEMS_PER_PAGE));
+    const paginatedHistoryList = useMemo(() => {
+        const start = (historyPage - 1) * ITEMS_PER_PAGE;
+        return filteredHistoryList.slice(start, start + ITEMS_PER_PAGE);
+    }, [filteredHistoryList, historyPage]);
 
     // Handle Approve (Executes Atomic Batch with Multi-Sibling Support)
     const handleApprove = async (subToApprove) => {
@@ -594,6 +750,25 @@ const OnlineSubmissionsDashboard = ({
                 approvedAt: nowIso,
                 receiptNo,
                 approvedSiblings: payingStudents.map(s => ({ studentId: s.id, studentName: s.name, className: s.className }))
+            });
+
+            // 3b. Mark any prior rejected / re-upload submissions for the same students & month as superseded
+            submissions.forEach(prevSub => {
+                if (prevSub.id !== sub.id && (prevSub.status === 'rejected' || prevSub.status === 'needs_reupload')) {
+                    const prevMKey = getSubmissionMonthKey(prevSub);
+                    if (prevMKey === monthKey) {
+                        const matchesStudent = payingStudents.some(st => st.id === prevSub.studentId) || (sub.parentId && prevSub.parentId === sub.parentId);
+                        if (matchesStudent) {
+                            const prevSubRef = doc(db, `schools/${schoolId}/paymentSubmissions`, prevSub.id);
+                            batch.update(prevSubRef, {
+                                superseded: true,
+                                supersededBy: sub.id,
+                                resolvedByApproved: true,
+                                resolvedAt: nowIso
+                            });
+                        }
+                    }
+                }
             });
 
             // 4. Send In-App Notification to Parent
@@ -748,6 +923,242 @@ const OnlineSubmissionsDashboard = ({
         }
     };
 
+    // =========================================================================
+    // 🧪 DEMO SLIPS INJECTOR & PURGE ENGINE (PREVIEW TESTING)
+    // =========================================================================
+    const MOCK_DEMO_SLIPS = [
+        { 
+            student: 'Muhammad Ali', father: 'Tariq Mehmood', class: 'Class 5', phone: '03001234567', method: 'EasyPaisa', amount: 4500,
+            monthlyFee: 3000, transportFee: 1500
+        },
+        { 
+            student: 'Fatima Zahra', father: 'Zahid Hussain', class: 'Class 8', phone: '03019876543', method: 'JazzCash', amount: 5200,
+            monthlyFee: 4000, storeDues: 1200, storePurchases: [{ title: 'Uniform & Oxford Books Pack', amount: 1200 }]
+        },
+        { 
+            student: 'Ayan Ahmed', father: 'Ahmed Bilal', class: 'Class 2', phone: '03124567890', method: 'Bank Transfer (Meezan)', amount: 6000,
+            monthlyFee: 4000, transportFee: 1500, actionFee: 500, actions: [{ name: 'Midterm Assessment Charges', amount: 500 }]
+        },
+        { 
+            student: 'Zainab Bibi', father: 'Muhammad Asif', class: 'Class 9', phone: '03215678901', method: 'EasyPaisa', amount: 7500,
+            monthlyFee: 6000, transportFee: 1500
+        },
+        { 
+            student: 'Usman Khan', father: 'Kamran Khan', class: 'Class 10', phone: '03337890123', method: 'JazzCash', amount: 8000,
+            monthlyFee: 6500, actionFee: 1500, actions: [{ name: 'Science Lab & Board Reg Charges', amount: 1500 }]
+        },
+        { 
+            student: 'Ayesha Tariq', father: 'Tariq Jameel', class: 'Class 4', phone: '03456789012', method: 'Bank Transfer (HBL)', amount: 4200,
+            monthlyFee: 3500, storeDues: 700, storePurchases: [{ title: 'Annual Stationery & Workbooks', amount: 700 }]
+        },
+        { 
+            student: 'Hamza Malik', father: 'Shahid Malik', class: 'Class 1', phone: '03023456789', method: 'EasyPaisa', amount: 3800,
+            monthlyFee: 3800
+        },
+        { 
+            student: 'Mahnoor Shah', father: 'Syed Imran Shah', class: 'Class 7', phone: '03158901234', method: 'JazzCash', amount: 5500,
+            monthlyFee: 4000, transportFee: 1500
+        },
+        { 
+            student: 'Ibrahim Riaz', father: 'Riaz Ahmed', class: 'Class 3', phone: '03229012345', method: 'Bank Transfer (UBL)', amount: 4600,
+            monthlyFee: 3500, storeDues: 1100, storePurchases: [{ title: 'School Bag & Notebooks', amount: 1100 }]
+        },
+        { 
+            student: 'Dua Fatima', father: 'Naveed Akhtar', class: 'Nursery', phone: '03340123456', method: 'EasyPaisa', amount: 3500,
+            monthlyFee: 3500
+        },
+        { 
+            student: 'Bilal Hassan', father: 'Hassan Raza', class: 'Class 6', phone: '03461234567', method: 'JazzCash', amount: 4800,
+            monthlyFee: 3600, transportFee: 1200
+        },
+        { 
+            student: 'Khadija Tul Kubra', father: 'Muhammad Waqas', class: 'Class 2', phone: '03032345678', method: 'Bank Transfer (Alfalah)', amount: 4000,
+            monthlyFee: 3500, actionFee: 500, actions: [{ name: 'Sports Day & Activity Fee', amount: 500 }]
+        },
+        { 
+            student: 'Abdul Hadi', father: 'Kashif Mehmood', class: 'Class 5', phone: '03133456789', method: 'EasyPaisa', amount: 4500,
+            monthlyFee: 3000, transportFee: 1500
+        },
+        { 
+            student: 'Hoorain Imran', father: 'Imran Ashraf', class: 'KG', phone: '03234567890', method: 'JazzCash', amount: 3500,
+            monthlyFee: 3500
+        },
+        { 
+            student: 'Huzaifa Siddiqui', father: 'Siddique Akbar', class: 'Class 9', phone: '03355678901', method: 'Bank Transfer (Meezan)', amount: 7200,
+            monthlyFee: 5500, transportFee: 1700
+        },
+        { 
+            student: 'Maryam Noor', father: 'Noor Muhammad', class: 'Class 1', phone: '03476789012', method: 'EasyPaisa', amount: 3800,
+            monthlyFee: 3800
+        },
+        { 
+            student: 'Affan Farooq', father: 'Farooq Azam', class: 'Class 3', phone: '03047890123', method: 'JazzCash', amount: 4200,
+            monthlyFee: 3200, transportFee: 1000
+        },
+        { 
+            student: 'Anaya Rehman', father: 'Abdul Rehman', class: 'Class 8', phone: '03148901234', method: 'Bank Transfer (Faysal)', amount: 5600,
+            monthlyFee: 4500, storeDues: 1100, storePurchases: [{ title: 'Winter Jacket & Badge', amount: 1100 }]
+        },
+        { 
+            student: 'Subhan Butt', father: 'Babar Butt', class: 'Class 4', phone: '03249012345', method: 'EasyPaisa', amount: 4400,
+            monthlyFee: 3200, transportFee: 1200
+        },
+        { 
+            student: 'Emaan Zahid', father: 'Zahid Mehmood', class: 'Class 7', phone: '03360123456', method: 'JazzCash', amount: 5300,
+            monthlyFee: 4000, transportFee: 1300
+        },
+        { 
+            student: 'Arham & Manahil (Family)', father: 'Dr. Shahzad Ali', class: 'Class 2 & Class 6', phone: '03009988776', method: 'Bank Transfer (Meezan)', amount: 11500,
+            isFamilyCombined: true,
+            familyStudents: [
+                { studentName: 'Arham Shahzad', className: 'Class 2', rollNo: '12', monthlyFee: 3500, transportFee: 1500, subtotal: 5000 },
+                { studentName: 'Manahil Shahzad', className: 'Class 6', rollNo: '08', monthlyFee: 4500, transportFee: 1500, storeDues: 500, storePurchases: [{ title: 'Science Kit', amount: 500 }], subtotal: 6500 }
+            ]
+        },
+        { 
+            student: 'Hashir, Rayan & Zoya (Family)', father: 'Muhammad Zubair', class: 'Class 1, 4 & 7', phone: '03112233445', method: 'JazzCash', amount: 15800,
+            isFamilyCombined: true,
+            familyStudents: [
+                { studentName: 'Hashir Zubair', className: 'Class 1', rollNo: '05', monthlyFee: 3000, transportFee: 1500, subtotal: 4500 },
+                { studentName: 'Rayan Zubair', className: 'Class 4', rollNo: '19', monthlyFee: 3500, transportFee: 1500, storeDues: 300, storePurchases: [{ title: 'Diary & Badge', amount: 300 }], subtotal: 5300 },
+                { studentName: 'Zoya Zubair', className: 'Class 7', rollNo: '03', monthlyFee: 4000, transportFee: 1500, actionFee: 500, actions: [{ name: 'Annual Exam Fee', amount: 500 }], subtotal: 6000 }
+            ]
+        },
+        { 
+            student: 'Saad Ur Rehman', father: 'Attiq Ur Rehman', class: 'Class 10', phone: '03223344556', method: 'EasyPaisa', amount: 8500,
+            monthlyFee: 6500, transportFee: 2000
+        },
+        { 
+            student: 'Minahil Tariq', father: 'Tariq Bashir', class: 'Class 5', phone: '03334455667', method: 'Bank Transfer (HBL)', amount: 4900,
+            monthlyFee: 3500, transportFee: 1400
+        },
+        { 
+            student: 'Abdullah Qureshi', father: 'Tanveer Qureshi', class: 'Class 6', phone: '03445566778', method: 'JazzCash', amount: 5100,
+            monthlyFee: 3800, transportFee: 1300
+        }
+    ];
+
+    const createMockSlipDataUrl = (studentName, amount, trxId, method) => {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="850" viewBox="0 0 600 850">
+            <rect width="600" height="850" fill="#f8fafc" rx="20"/>
+            <rect width="600" height="150" fill="#065f46" rx="20"/>
+            <text x="300" y="60" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle">TRANSACTION RECEIPT</text>
+            <text x="300" y="100" font-family="Arial, sans-serif" font-size="16" fill="#a7f3d0" text-anchor="middle">Official Payment Proof • Verified Channel</text>
+            <circle cx="300" cy="210" r="45" fill="#ecfdf5" stroke="#10b981" stroke-width="4"/>
+            <text x="300" y="222" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#059669" text-anchor="middle">✓</text>
+            <text x="300" y="290" font-family="Arial, sans-serif" font-size="15" fill="#64748b" text-anchor="middle">Amount Paid</text>
+            <text x="300" y="335" font-family="Arial, sans-serif" font-size="36" font-weight="900" fill="#0f172a" text-anchor="middle">PKR ${Number(amount).toLocaleString()}</text>
+            <rect x="40" y="370" width="520" height="360" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+            <text x="70" y="420" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Student / Family:</text>
+            <text x="530" y="420" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#0f172a" text-anchor="end">${studentName}</text>
+            <line x1="70" y1="440" x2="530" y2="440" stroke="#f1f5f9" stroke-width="1.5"/>
+            <text x="70" y="480" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Payment Channel:</text>
+            <text x="530" y="480" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#047857" text-anchor="end">${method}</text>
+            <line x1="70" y1="500" x2="530" y2="500" stroke="#f1f5f9" stroke-width="1.5"/>
+            <text x="70" y="540" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Transaction ID (TRX):</text>
+            <text x="530" y="540" font-family="Courier, monospace" font-size="16" font-weight="bold" fill="#1e293b" text-anchor="end">${trxId}</text>
+            <line x1="70" y1="560" x2="530" y2="560" stroke="#f1f5f9" stroke-width="1.5"/>
+            <text x="70" y="600" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Fee Month:</text>
+            <text x="530" y="600" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#4338ca" text-anchor="end">October 2026</text>
+            <line x1="70" y1="620" x2="530" y2="620" stroke="#f1f5f9" stroke-width="1.5"/>
+            <text x="70" y="660" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Verification Status:</text>
+            <text x="530" y="660" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#16a34a" text-anchor="end">SUCCESSFUL (PENDING APPROVAL)</text>
+            <line x1="70" y1="680" x2="530" y2="680" stroke="#f1f5f9" stroke-width="1.5"/>
+            <text x="300" y="780" font-family="Arial, sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">Official Slip Uploaded by Parent via Mobile App</text>
+        </svg>`;
+        return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+    };
+
+    const handleInjectDemoData = async () => {
+        if (!schoolId) {
+            alert("School ID is missing.");
+            return;
+        }
+        if (!isDemoAccount) {
+            alert("Restricted: Demo data injection is only available for Demo Presentation Account 6257.");
+            return;
+        }
+        setIsInjectingDemo(true);
+        try {
+            const batch = writeBatch(db);
+            const now = Date.now();
+
+            MOCK_DEMO_SLIPS.forEach((item, index) => {
+                const subDocRef = doc(collection(db, `schools/${schoolId}/paymentSubmissions`));
+                const trxId = item.method.includes('EasyPaisa') ? `EP-${Math.floor(1000000000 + Math.random() * 9000000000)}` : (item.method.includes('JazzCash') ? `JC-${Math.floor(1000000000 + Math.random() * 9000000000)}` : `BNK-${Math.floor(100000000 + Math.random() * 900000000)}`);
+                const submittedAt = new Date(now - (index * 12 * 60 * 1000)).toISOString();
+
+                const payload = {
+                    id: subDocRef.id,
+                    isDemo: true,
+                    studentName: item.student,
+                    studentId: `demo_st_${index + 1}`,
+                    parentName: item.father,
+                    parentPhone: item.phone,
+                    parentId: `demo_parent_${index + 1}`,
+                    className: item.class,
+                    rollNo: `${10 + index}`,
+                    amount: item.amount,
+                    monthlyFee: item.monthlyFee || item.amount,
+                    transportFee: item.transportFee || 0,
+                    storeDues: item.storeDues || 0,
+                    storePurchases: item.storePurchases || [],
+                    actionFee: item.actionFee || 0,
+                    actions: item.actions || [],
+                    concessionType: item.concessionType || '',
+                    paymentMethod: item.method,
+                    transactionId: trxId,
+                    month: 'October 2026',
+                    status: 'pending',
+                    submittedAt,
+                    createdAt: submittedAt,
+                    isFamilyCombined: Boolean(item.isFamilyCombined),
+                    familyStudents: item.familyStudents || null,
+                    proofUrl: createMockSlipDataUrl(item.student, item.amount, trxId, item.method),
+                    notes: 'Demo slip generated for preview and layout inspection'
+                };
+
+                batch.set(subDocRef, payload);
+            });
+
+            await batch.commit();
+        } catch (err) {
+            console.error("Error injecting demo slips:", err);
+            alert("Failed to inject demo data: " + err.message);
+        } finally {
+            setIsInjectingDemo(false);
+        }
+    };
+
+    const handleClearDemoData = async () => {
+        if (!schoolId) return;
+        if (!window.confirm("Are you sure you want to delete all injected demo slips?")) return;
+
+        setIsInjectingDemo(true);
+        try {
+            const demoSubs = submissions.filter(s => s.isDemo);
+            if (demoSubs.length === 0) {
+                alert("No demo slips found to clear.");
+                return;
+            }
+
+            const batch = writeBatch(db);
+            demoSubs.forEach(s => {
+                const ref = doc(db, `schools/${schoolId}/paymentSubmissions`, s.id);
+                batch.delete(ref);
+            });
+
+            await batch.commit();
+        } catch (err) {
+            console.error("Error clearing demo slips:", err);
+            alert("Failed to clear demo data: " + err.message);
+        } finally {
+            setIsInjectingDemo(false);
+        }
+    };
+
+    const demoSlipsCount = useMemo(() => submissions.filter(s => s.isDemo).length, [submissions]);
+
     const getMethodBadge = (method) => {
         const m = (method || '').toLowerCase();
         if (m.includes('easypaisa')) {
@@ -763,9 +1174,122 @@ const OnlineSubmissionsDashboard = ({
     };
 
     const pendingCount = pendingSubs.length;
-    const approvedCount = submissions.filter(s => s.status === 'approved').length;
-    const rejectedCount = submissions.filter(s => s.status === 'rejected').length;
-    const reuploadCount = submissions.filter(s => s.status === 'needs_reupload').length;
+    const approvedCount = useMemo(() => monthHistorySubs.filter(s => s.status === 'approved').length, [monthHistorySubs]);
+    const rejectedCount = useMemo(() => monthHistorySubs.filter(s => s.status === 'rejected').length, [monthHistorySubs]);
+    const reuploadCount = useMemo(() => monthHistorySubs.filter(s => s.status === 'needs_reupload').length, [monthHistorySubs]);
+    const totalMonthApprovedAmount = useMemo(() => {
+        return monthHistorySubs
+            .filter(s => s.status === 'approved')
+            .reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+    }, [monthHistorySubs]);
+
+    const selectedMonthLabel = useMemo(() => {
+        const opt = historyMonthOptions.find(o => o.value === historySelectedMonth);
+        return opt ? opt.label.replace(' (Current)', '').replace('🗓️ ', '') : historySelectedMonth;
+    }, [historyMonthOptions, historySelectedMonth]);
+
+    // Renders sleek pagination bar for tables
+    const renderPagination = (currentPage, totalPages, totalItems, onPageChange, itemLabel = 'records') => {
+        if (totalItems === 0) return null;
+        
+        const startItem = (currentPage - 1) * ITEMS_PER_PAGE + 1;
+        const endItem = Math.min(currentPage * ITEMS_PER_PAGE, totalItems);
+
+        const getPageNumbers = () => {
+            const pages = [];
+            if (totalPages <= 7) {
+                for (let i = 1; i <= totalPages; i++) pages.push(i);
+            } else {
+                if (currentPage <= 4) {
+                    pages.push(1, 2, 3, 4, 5, '...', totalPages);
+                } else if (currentPage >= totalPages - 3) {
+                    pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+                } else {
+                    pages.push(1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages);
+                }
+            }
+            return pages;
+        };
+
+        return (
+            <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                flexWrap: 'wrap', gap: '0.85rem', padding: '0.9rem 1.25rem',
+                background: '#f8fafc', borderTop: '1px solid #e2e8f0',
+                borderBottomLeftRadius: '18px', borderBottomRightRadius: '18px'
+            }}>
+                <div style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600' }}>
+                    Showing <strong style={{ color: '#0f172a' }}>{startItem}</strong> to <strong style={{ color: '#0f172a' }}>{endItem}</strong> of <strong style={{ color: '#0f172a' }}>{totalItems}</strong> {itemLabel}
+                </div>
+
+                {totalPages > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <button
+                            type="button"
+                            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+                            disabled={currentPage === 1}
+                            style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                                padding: '0.4rem 0.75rem', borderRadius: '8px',
+                                border: '1px solid #cbd5e1', background: currentPage === 1 ? '#f1f5f9' : '#ffffff',
+                                color: currentPage === 1 ? '#94a3b8' : '#334155',
+                                fontSize: '0.8rem', fontWeight: '700',
+                                cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
+                            }}
+                        >
+                            <ChevronLeft size={15} /> Prev
+                        </button>
+
+                        {getPageNumbers().map((p, idx) => {
+                            if (p === '...') {
+                                return (
+                                    <span key={`dots-${idx}`} style={{ padding: '0.4rem 0.5rem', color: '#94a3b8', fontSize: '0.82rem', fontWeight: '700' }}>
+                                        ...
+                                    </span>
+                                );
+                            }
+                            const isSelected = p === currentPage;
+                            return (
+                                <button
+                                    key={`page-${p}`}
+                                    type="button"
+                                    onClick={() => onPageChange(p)}
+                                    style={{
+                                        minWidth: '34px', height: '34px', padding: '0 0.5rem',
+                                        borderRadius: '8px', border: isSelected ? 'none' : '1px solid #cbd5e1',
+                                        background: isSelected ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : '#ffffff',
+                                        color: isSelected ? '#ffffff' : '#334155',
+                                        fontSize: '0.82rem', fontWeight: isSelected ? '900' : '700',
+                                        cursor: 'pointer',
+                                        boxShadow: isSelected ? '0 2px 6px rgba(79, 70, 229, 0.3)' : 'none',
+                                        transition: 'all 0.15s'
+                                    }}
+                                >
+                                    {p}
+                                </button>
+                            );
+                        })}
+
+                        <button
+                            type="button"
+                            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+                            disabled={currentPage === totalPages}
+                            style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                                padding: '0.4rem 0.75rem', borderRadius: '8px',
+                                border: '1px solid #cbd5e1', background: currentPage === totalPages ? '#f1f5f9' : '#ffffff',
+                                color: currentPage === totalPages ? '#94a3b8' : '#334155',
+                                fontSize: '0.8rem', fontWeight: '700',
+                                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer'
+                            }}
+                        >
+                            Next <ChevronRight size={15} />
+                        </button>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingBottom: '2.5rem' }}>
@@ -896,12 +1420,62 @@ const OnlineSubmissionsDashboard = ({
                             background: activeSubTab === 'history' ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
                             color: activeSubTab === 'history' ? 'white' : '#475569'
                         }}>
-                            {historySubs.length} Records
+                            {monthHistorySubs.length} Records
                         </span>
                     </button>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    {isDemoAccount && demoSlipsCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={handleClearDemoData}
+                            disabled={isInjectingDemo}
+                            style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                                padding: '0.5rem 0.85rem', borderRadius: '10px',
+                                border: '1px solid #fecaca', background: '#fef2f2',
+                                color: '#b91c1c', fontSize: '0.8rem', fontWeight: '800',
+                                cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                transition: 'all 0.15s'
+                            }}
+                            title="Remove all injected demo slips from the system (Presentation Demo Only)"
+                        >
+                            <Trash2 size={15} />
+                            <span>Clear Demo ({demoSlipsCount})</span>
+                        </button>
+                    )}
+
+                    {isDemoAccount && (
+                        <button
+                            type="button"
+                            onClick={handleInjectDemoData}
+                            disabled={isInjectingDemo}
+                            style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                                padding: '0.5rem 0.95rem', borderRadius: '10px', border: 'none',
+                                background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                color: '#ffffff', fontSize: '0.8rem', fontWeight: '800',
+                                cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                boxShadow: '0 2px 6px rgba(245, 158, 11, 0.3)',
+                                transition: 'all 0.15s'
+                            }}
+                            title="Inject 25 realistic mock slips (JazzCash, EasyPaisa, Banks, Family Combined) for School ID 6257 presentation"
+                        >
+                            {isInjectingDemo ? (
+                                <>
+                                    <Loader2 size={15} className="animate-spin" />
+                                    <span>Injecting...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Zap size={15} />
+                                    <span>⚡ Inject 25 Demo Slips</span>
+                                </>
+                            )}
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         onClick={() => setAudioEnabled(!audioEnabled)}
@@ -919,45 +1493,88 @@ const OnlineSubmissionsDashboard = ({
                 </div>
             </div>
 
-            {/* Sub-Header Channel Filters & Search */}
+            {/* Sub-Header Channel Filters, Month Filter & Search */}
             <div style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                flexWrap: 'wrap', gap: '1rem', background: 'white', padding: '0.85rem 1.25rem',
+                flexWrap: 'wrap', gap: '0.85rem', background: 'white', padding: '0.85rem 1.25rem',
                 borderRadius: '16px', border: '1px solid #e2e8f0'
             }}>
-                <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginRight: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                        <Filter size={15} /> Channel:
-                    </span>
-                    {[
-                        { id: 'all', label: 'All Channels' },
-                        { id: 'easypaisa', label: '🟢 EasyPaisa' },
-                        { id: 'jazzcash', label: '🔴 JazzCash' },
-                        { id: 'bank', label: '🔵 Bank Transfer' },
-                        { id: 'family', label: '🟣 Family Combined' }
-                    ].map(pill => (
-                        <button
-                            key={pill.id}
-                            type="button"
-                            onClick={() => setFilterMethod(pill.id)}
-                            style={{
-                                padding: '0.35rem 0.8rem', borderRadius: '20px', fontSize: '0.8rem', fontWeight: '700',
-                                border: filterMethod === pill.id ? '1px solid #4f46e5' : '1px solid #e2e8f0',
-                                cursor: 'pointer',
-                                background: filterMethod === pill.id ? '#e0e7ff' : '#f8fafc',
-                                color: filterMethod === pill.id ? '#3730a3' : '#475569',
-                                transition: 'all 0.15s'
-                            }}
-                        >
-                            {pill.label}
-                        </button>
-                    ))}
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {/* Channel Selector */}
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <Filter size={15} /> Channel:
+                        </span>
+                        <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                            <select
+                                value={filterMethod}
+                                onChange={(e) => setFilterMethod(e.target.value)}
+                                style={{
+                                    padding: '0.45rem 2.25rem 0.45rem 0.85rem',
+                                    borderRadius: '10px',
+                                    fontSize: '0.82rem',
+                                    fontWeight: '700',
+                                    border: filterMethod !== 'all' ? '1.5px solid #4f46e5' : '1px solid #cbd5e1',
+                                    background: filterMethod !== 'all' ? '#e0e7ff' : '#f8fafc',
+                                    color: filterMethod !== 'all' ? '#3730a3' : '#334155',
+                                    cursor: 'pointer',
+                                    outline: 'none',
+                                    appearance: 'none',
+                                    WebkitAppearance: 'none',
+                                    MozAppearance: 'none',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <option value="all">All Channels</option>
+                                <option value="easypaisa">🟢 EasyPaisa</option>
+                                <option value="jazzcash">🔴 JazzCash</option>
+                                <option value="bank">🔵 Bank Transfer</option>
+                                <option value="family">🟣 Family Combined</option>
+                            </select>
+                            <ChevronDown size={14} style={{ position: 'absolute', right: '10px', pointerEvents: 'none', color: filterMethod !== 'all' ? '#3730a3' : '#64748b' }} />
+                        </div>
+                    </div>
+
+                    {/* Month Selector in History Tab */}
+                    {activeSubTab === 'history' && (
+                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                <Calendar size={15} /> Month:
+                            </span>
+                            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                                <select
+                                    value={historySelectedMonth}
+                                    onChange={(e) => setHistorySelectedMonth(e.target.value)}
+                                    style={{
+                                        padding: '0.45rem 2.25rem 0.45rem 0.85rem',
+                                        borderRadius: '10px',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '700',
+                                        border: historySelectedMonth !== 'all' ? '1.5px solid #4f46e5' : '1px solid #cbd5e1',
+                                        background: historySelectedMonth !== 'all' ? '#eef2ff' : '#f8fafc',
+                                        color: historySelectedMonth !== 'all' ? '#3730a3' : '#334155',
+                                        cursor: 'pointer',
+                                        outline: 'none',
+                                        appearance: 'none',
+                                        WebkitAppearance: 'none',
+                                        MozAppearance: 'none',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                >
+                                    {historyMonthOptions.map(opt => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                </select>
+                                <ChevronDown size={14} style={{ position: 'absolute', right: '10px', pointerEvents: 'none', color: historySelectedMonth !== 'all' ? '#3730a3' : '#64748b' }} />
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {activeSubTab === 'history' && (
-                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
                         {[
-                            { id: 'all', label: 'All Statuses' },
+                            { id: 'all', label: `All (${monthHistorySubs.length})` },
                             { id: 'approved', label: `Approved (${approvedCount})`, color: '#16a34a' },
                             { id: 'rejected', label: `Rejected (${rejectedCount})`, color: '#dc2626' },
                             { id: 'needs_reupload', label: `Re-upload (${reuploadCount})`, color: '#d97706' }
@@ -1024,19 +1641,58 @@ const OnlineSubmissionsDashboard = ({
                             <p style={{ color: '#64748b', fontSize: '0.92rem', maxWidth: '480px', margin: '0 auto 1.5rem' }}>
                                 There are no pending online submissions requiring verification right now. Any newly submitted slips from Parent Mobile App will pop-up here automatically in real time.
                             </p>
-                            <button
-                                type="button"
-                                onClick={() => setActiveSubTab('history')}
-                                style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                                    padding: '0.65rem 1.35rem', borderRadius: '10px', border: 'none',
-                                    background: '#4f46e5', color: 'white', fontWeight: '700', cursor: 'pointer',
-                                    boxShadow: '0 4px 6px -1px rgba(79, 70, 229, 0.3)'
-                                }}
-                            >
-                                <span>Review Online Fee History</span>
-                                <ArrowRight size={16} />
-                            </button>
+                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                {isDemoAccount && (
+                                    <button
+                                        type="button"
+                                        onClick={handleInjectDemoData}
+                                        disabled={isInjectingDemo}
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                                            padding: '0.65rem 1.35rem', borderRadius: '10px', border: 'none',
+                                            background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                            color: 'white', fontWeight: '800', cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                            boxShadow: '0 4px 10px rgba(245, 158, 11, 0.35)',
+                                            transition: 'all 0.15s'
+                                        }}
+                                    >
+                                        {isInjectingDemo ? <Loader2 size={17} className="animate-spin" /> : <Zap size={17} />}
+                                        <span>⚡ Inject 25 Demo Slips (Preview Mode)</span>
+                                    </button>
+                                )}
+
+                                {isDemoAccount && demoSlipsCount > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={handleClearDemoData}
+                                        disabled={isInjectingDemo}
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                                            padding: '0.65rem 1.25rem', borderRadius: '10px',
+                                            border: '1px solid #fecaca', background: '#fef2f2',
+                                            color: '#b91c1c', fontWeight: '800', cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                            transition: 'all 0.15s'
+                                        }}
+                                    >
+                                        <Trash2 size={16} />
+                                        <span>Clear Demo Slips ({demoSlipsCount})</span>
+                                    </button>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveSubTab('history')}
+                                    style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                                        padding: '0.65rem 1.35rem', borderRadius: '10px', border: 'none',
+                                        background: '#4f46e5', color: 'white', fontWeight: '700', cursor: 'pointer',
+                                        boxShadow: '0 4px 6px -1px rgba(79, 70, 229, 0.3)'
+                                    }}
+                                >
+                                    <span>Review Online Fee History</span>
+                                    <ArrowRight size={16} />
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -1351,12 +2007,12 @@ const OnlineSubmissionsDashboard = ({
                                                                         </div>
                                                                     </div>
                                                                     <strong style={{ color: '#1e3a8a', fontSize: '0.9rem' }}>
-                                                                        Rs. {Number(bd.tuitionPayable || bd.baseTuition || 0).toLocaleString()}
+                                                                        Rs. {Number(bd.tuitionPayable || bd.baseTuition || st.monthlyFee || (st.calculatedDue - (bd.transportFee || 0) - (bd.storeDues || 0) - (bd.actionFee || 0)) || 0).toLocaleString()}
                                                                     </strong>
                                                                 </div>
 
                                                                 {/* 2. Transport Fee if any */}
-                                                                {Number(bd.transportFee || 0) > 0 && (
+                                                                {Number(bd.transportFee || st.transportFee || 0) > 0 && (
                                                                     <div style={{
                                                                         background: '#fefce8', borderRadius: '10px',
                                                                         border: '1px solid #fef08a', padding: '0.65rem 0.85rem',
@@ -1367,13 +2023,13 @@ const OnlineSubmissionsDashboard = ({
                                                                             <strong style={{ color: '#854d0e' }}>Transport Charges</strong>
                                                                         </div>
                                                                         <strong style={{ color: '#713f12', fontSize: '0.9rem' }}>
-                                                                            Rs. {Number(bd.transportFee).toLocaleString()}
+                                                                            Rs. {Number(bd.transportFee || st.transportFee).toLocaleString()}
                                                                         </strong>
                                                                     </div>
                                                                 )}
 
                                                                 {/* 3. Store Purchases / Uniform / Books if any */}
-                                                                {Number(bd.storeDues || 0) > 0 && (
+                                                                {Number(bd.storeDues || st.storeDues || 0) > 0 && (
                                                                     <div style={{
                                                                         background: '#faf5ff', borderRadius: '10px',
                                                                         border: '1px solid #e9d5ff', padding: '0.65rem 0.85rem',
@@ -1385,7 +2041,7 @@ const OnlineSubmissionsDashboard = ({
                                                                                 <strong style={{ color: '#6b21a8' }}>Store / Uniform & Books</strong>
                                                                             </div>
                                                                             <strong style={{ color: '#581c87', fontSize: '0.9rem' }}>
-                                                                                Rs. {Number(bd.storeDues).toLocaleString()}
+                                                                                Rs. {Number(bd.storeDues || st.storeDues).toLocaleString()}
                                                                             </strong>
                                                                         </div>
                                                                         {Array.isArray(bd.storePurchases) && bd.storePurchases.length > 0 && (
@@ -1401,7 +2057,7 @@ const OnlineSubmissionsDashboard = ({
                                                                 )}
 
                                                                 {/* 4. Exams & Action Charges if any */}
-                                                                {Number(bd.actionFee || 0) > 0 && (
+                                                                {Number(bd.actionFee || st.actionFee || 0) > 0 && (
                                                                     <div style={{
                                                                         background: '#f0fdf4', borderRadius: '10px',
                                                                         border: '1px solid #bbf7d0', padding: '0.65rem 0.85rem',
@@ -1413,7 +2069,7 @@ const OnlineSubmissionsDashboard = ({
                                                                                 <strong style={{ color: '#166534' }}>Exams & Special Charges</strong>
                                                                             </div>
                                                                             <strong style={{ color: '#14532d', fontSize: '0.9rem' }}>
-                                                                                Rs. {Number(bd.actionFee).toLocaleString()}
+                                                                                Rs. {Number(bd.actionFee || st.actionFee).toLocaleString()}
                                                                             </strong>
                                                                         </div>
                                                                         {Array.isArray(bd.actions) && bd.actions.length > 0 && (
@@ -1425,6 +2081,32 @@ const OnlineSubmissionsDashboard = ({
                                                                                 ))}
                                                                             </div>
                                                                         )}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* 4.1 Other Recurring / Custom Items if any */}
+                                                                {Array.isArray(bd.recurringItems) && bd.recurringItems.length > 0 && (
+                                                                    <div style={{
+                                                                        background: '#f8fafc', borderRadius: '10px',
+                                                                        border: '1px solid #e2e8f0', padding: '0.65rem 0.85rem',
+                                                                        fontSize: '0.8rem'
+                                                                    }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                                <span style={{ fontSize: '1rem' }}>💻</span>
+                                                                                <strong style={{ color: '#334155' }}>Other Charges & Services</strong>
+                                                                            </div>
+                                                                            <strong style={{ color: '#0f172a', fontSize: '0.9rem' }}>
+                                                                                Rs. {Number(bd.recurringItems.reduce((s, i) => s + (Number(i.amount) || 0), 0)).toLocaleString()}
+                                                                            </strong>
+                                                                        </div>
+                                                                        <div style={{ fontSize: '0.74rem', color: '#64748b', paddingLeft: '1.4rem' }}>
+                                                                            {bd.recurringItems.map((item, idx) => (
+                                                                                <span key={idx} style={{ marginRight: '0.6rem' }}>
+                                                                                    • {item.name || 'Charge'} (Rs. {Number(item.amount || 0).toLocaleString()})
+                                                                                </span>
+                                                                            ))}
+                                                                        </div>
                                                                     </div>
                                                                 )}
 
@@ -1717,10 +2399,51 @@ const OnlineSubmissionsDashboard = ({
                             <p style={{ color: '#64748b' }}>Loading pending queue...</p>
                         </div>
                     ) : filteredCounterList.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '3.5rem', border: '1px dashed #cbd5e1', margin: '1rem', borderRadius: '14px' }}>
+                        <div style={{ textAlign: 'center', padding: '3.5rem 2rem', border: '1.5px dashed #cbd5e1', margin: '1.5rem', borderRadius: '16px' }}>
                             <CheckCircle2 size={38} color="#059669" style={{ margin: '0 auto 0.75rem' }} />
-                            <h3 style={{ fontSize: '1.15rem', fontWeight: '800', color: '#334155' }}>Pending Queue is Empty!</h3>
-                            <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>All submitted slips have been verified and processed.</p>
+                            <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#334155', marginBottom: '0.35rem' }}>Pending Queue is Empty!</h3>
+                            <p style={{ color: '#94a3b8', fontSize: '0.88rem', marginBottom: '1.35rem' }}>All submitted slips have been verified and processed.</p>
+                            
+                            {isDemoAccount && (
+                                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                    <button
+                                        type="button"
+                                        onClick={handleInjectDemoData}
+                                        disabled={isInjectingDemo}
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: '0.45rem',
+                                            padding: '0.6rem 1.25rem', borderRadius: '10px', border: 'none',
+                                            background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                            color: 'white', fontWeight: '800', fontSize: '0.88rem',
+                                            cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                            boxShadow: '0 3px 8px rgba(245, 158, 11, 0.3)',
+                                            transition: 'all 0.15s'
+                                        }}
+                                    >
+                                        {isInjectingDemo ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
+                                        <span>⚡ Inject 25 Demo Slips (Preview Mode)</span>
+                                    </button>
+
+                                    {demoSlipsCount > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={handleClearDemoData}
+                                            disabled={isInjectingDemo}
+                                            style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: '0.45rem',
+                                                padding: '0.6rem 1.15rem', borderRadius: '10px',
+                                                border: '1px solid #fecaca', background: '#fef2f2',
+                                                color: '#b91c1c', fontWeight: '800', fontSize: '0.88rem',
+                                                cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                                transition: 'all 0.15s'
+                                            }}
+                                        >
+                                            <Trash2 size={15} />
+                                            <span>Clear Demo Slips ({demoSlipsCount})</span>
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div style={{ overflowX: 'auto' }}>
@@ -1738,7 +2461,7 @@ const OnlineSubmissionsDashboard = ({
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredCounterList.map((sub) => {
+                                    {paginatedPendingList.map((sub) => {
                                         const badge = getMethodBadge(sub.paymentMethod);
                                         const isFamily = Boolean(sub.isFamilyCombined && sub.familyStudents?.length > 0);
                                         const isDuplicateTrx = sub.transactionId && trxCountMap[(sub.transactionId || '').trim()] > 1;
@@ -1805,6 +2528,7 @@ const OnlineSubmissionsDashboard = ({
                                     })}
                                 </tbody>
                             </table>
+                            {renderPagination(pendingPage, pendingTotalPages, filteredCounterList.length, setPendingPage, 'pending slips')}
                         </div>
                     )}
                 </div>
@@ -1814,7 +2538,56 @@ const OnlineSubmissionsDashboard = ({
             {/* TAB 2: 📜 ONLINE FEE HISTORY & AUDIT LEDGER                               */}
             {/* ========================================================================= */}
             {activeSubTab === 'history' && (
-                <div style={{ background: 'white', borderRadius: '18px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {/* Monthly Financial & Audit Summary Banner */}
+                    <div style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        flexWrap: 'wrap', gap: '1rem', background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+                        padding: '1.1rem 1.4rem', borderRadius: '16px', color: 'white',
+                        boxShadow: '0 4px 14px rgba(49, 46, 129, 0.18)'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                            <div style={{
+                                width: '44px', height: '44px', borderRadius: '12px',
+                                background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center',
+                                justifyContent: 'center', border: '1px solid rgba(255,255,255,0.2)'
+                            }}>
+                                <Receipt size={22} color="#a5b4fc" />
+                            </div>
+                            <div>
+                                <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#c7d2fe', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    {historySelectedMonth === 'all' ? 'Lifetime Online Fee History' : `Online Fee Ledger • ${selectedMonthLabel}`}
+                                </div>
+                                <div style={{ fontSize: '1.35rem', fontWeight: '900', color: 'white', marginTop: '0.1rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                    Rs. {totalMonthApprovedAmount.toLocaleString()}
+                                    <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#86efac', background: 'rgba(34, 197, 94, 0.2)', padding: '2px 8px', borderRadius: '6px', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
+                                        ✓ Verified Collection
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.55rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <div style={{ background: 'rgba(255,255,255,0.1)', padding: '0.45rem 0.85rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700', border: '1px solid rgba(255,255,255,0.15)' }}>
+                                📊 Records: <span style={{ color: '#ffffff', fontWeight: '800' }}>{monthHistorySubs.length}</span>
+                            </div>
+                            <div style={{ background: 'rgba(34, 197, 94, 0.2)', padding: '0.45rem 0.85rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.3)', color: '#86efac' }}>
+                                ✓ Approved: {approvedCount}
+                            </div>
+                            {rejectedCount > 0 && (
+                                <div style={{ background: 'rgba(239, 68, 68, 0.2)', padding: '0.45rem 0.85rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}>
+                                    ✕ Active Rejected: {rejectedCount}
+                                </div>
+                            )}
+                            {reuploadCount > 0 && (
+                                <div style={{ background: 'rgba(245, 158, 11, 0.2)', padding: '0.45rem 0.85rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#fde68a' }}>
+                                    ↻ Re-upload: {reuploadCount}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div style={{ background: 'white', borderRadius: '18px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
                     {loading ? (
                         <div style={{ textAlign: 'center', padding: '3.5rem' }}>
                             <Loader2 size={32} className="animate-spin" color="#4f46e5" style={{ margin: '0 auto 1rem' }} />
@@ -1842,7 +2615,7 @@ const OnlineSubmissionsDashboard = ({
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredHistoryList.map((sub) => {
+                                    {paginatedHistoryList.map((sub) => {
                                         const badge = getMethodBadge(sub.paymentMethod);
                                         const isApproved = sub.status === 'approved';
                                         const isRejected = sub.status === 'rejected';
@@ -1954,8 +2727,10 @@ const OnlineSubmissionsDashboard = ({
                                     })}
                                 </tbody>
                             </table>
+                            {renderPagination(historyPage, historyTotalPages, filteredHistoryList.length, setHistoryPage, 'history records')}
                         </div>
                     )}
+                </div>
                 </div>
             )}
 

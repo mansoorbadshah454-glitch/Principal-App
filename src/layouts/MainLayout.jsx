@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Sidebar from '../components/Sidebar';
 import { db, auth, messaging } from '../firebase';
-import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, collection, query, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
-import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info, CreditCard } from 'lucide-react';
+import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info, CreditCard, Sparkles } from 'lucide-react';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import PrincipalAiAssistant from '../components/PrincipalAiAssistant/PrincipalAiAssistant';
+import { playShopifyChachingSound } from '../utils/audioAlerts';
 
 const MainLayout = () => {
     const { isPrincipal, hasAccess } = useAuthPermissions();
@@ -16,7 +17,10 @@ const MainLayout = () => {
     const [loading, setLoading] = useState(true);
     const [announcement, setAnnouncement] = useState(null);
     const [schoolId, setSchoolId] = useState('');
+    const [globalPaymentToast, setGlobalPaymentToast] = useState(null);
+    const prevGlobalPendingCountRef = useRef(null);
     const location = useLocation();
+    const navigate = useNavigate();
     const mainContentRef = useRef(null);
     const isUserInteractingRef = useRef(false);
     const prevLocationRef = useRef(location.pathname);
@@ -195,14 +199,57 @@ const MainLayout = () => {
                 console.warn("Announcement snapshot error (ignorable):", error);
             });
 
+            // Global Real-time Listener for Incoming Online Fee Submissions (Shopify Sound + Floating Toast across all tabs)
+            const subsRef = collection(db, `schools/${currentSchoolId}/paymentSubmissions`);
+            const qSubs = query(subsRef);
+            let isInitialSubLoad = true;
+
+            const unsubSubmissions = onSnapshot(qSubs, (snapshot) => {
+                let pendingCount = 0;
+                let latestPending = null;
+
+                snapshot.forEach((d) => {
+                    const data = d.data();
+                    if ((data.status || 'pending') === 'pending') {
+                        pendingCount++;
+                        if (!latestPending || new Date(data.submittedAt || 0) > new Date(latestPending.submittedAt || 0)) {
+                            latestPending = { id: d.id, ...data };
+                        }
+                    }
+                });
+
+                if (!isInitialSubLoad) {
+                    if (prevGlobalPendingCountRef.current !== null && pendingCount > prevGlobalPendingCountRef.current) {
+                        playShopifyChachingSound();
+                        if (latestPending) {
+                            setGlobalPaymentToast(latestPending);
+                        }
+                    }
+                }
+                isInitialSubLoad = false;
+                prevGlobalPendingCountRef.current = pendingCount;
+            }, (err) => {
+                console.warn("Global payment submissions listener notice:", err);
+            });
+
             return () => {
                 unsubStatus();
                 unsubAnnounce();
+                unsubSubmissions();
             };
         } else {
             setLoading(false);
         }
     }, []);
+
+    // Auto dismiss global payment toast after 8 seconds
+    useEffect(() => {
+        if (!globalPaymentToast) return;
+        const timer = setTimeout(() => {
+            setGlobalPaymentToast(null);
+        }, 8000);
+        return () => clearTimeout(timer);
+    }, [globalPaymentToast]);
 
     const dismissAnnouncement = async () => {
         if (!announcement || !schoolId) return;
@@ -345,6 +392,92 @@ const MainLayout = () => {
                         onMouseOut={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
                     >
                         <X size={16} />
+                    </button>
+                </div>
+            )}
+
+            {/* Global Real-time Online Fee Slip Audio Alert & Toast */}
+            {globalPaymentToast && (
+                <div
+                    onClick={() => {
+                        navigate('/collections');
+                        setGlobalPaymentToast(null);
+                    }}
+                    style={{
+                        position: 'fixed',
+                        top: '24px',
+                        right: '24px',
+                        zIndex: 10000,
+                        background: 'linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)',
+                        color: 'white',
+                        padding: '1rem 1.25rem',
+                        borderRadius: '18px',
+                        boxShadow: '0 20px 30px -8px rgba(6, 78, 59, 0.45), 0 8px 10px -4px rgba(0,0,0,0.15)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '1rem',
+                        maxWidth: '420px',
+                        border: '1.5px solid rgba(167, 243, 208, 0.35)',
+                        cursor: 'pointer',
+                        animation: 'slideInRightToast 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+                        backdropFilter: 'blur(8px)'
+                    }}
+                >
+                    <style>{`
+                        @keyframes slideInRightToast {
+                            from { transform: translateX(100%); opacity: 0; }
+                            to { transform: translateX(0); opacity: 1; }
+                        }
+                    `}</style>
+                    <div style={{
+                        width: '46px',
+                        height: '46px',
+                        borderRadius: '14px',
+                        background: 'rgba(255,255,255,0.18)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: '1px solid rgba(255,255,255,0.25)',
+                        flexShrink: 0
+                    }}>
+                        <CreditCard size={24} color="#a7f3d0" />
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: '800', color: '#a7f3d0', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <Sparkles size={12} /> New Online Fee Received!
+                        </div>
+                        <div style={{ fontSize: '0.98rem', fontWeight: '800', color: '#ffffff', marginTop: '0.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            Rs. {Number(globalPaymentToast.amount || 0).toLocaleString()} • {globalPaymentToast.studentName || (globalPaymentToast.isFamilyCombined ? 'Family Fee' : 'Student')}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#d1fae5', marginTop: '0.1rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <span>{globalPaymentToast.paymentMethod || 'Online'}</span>
+                            <span>•</span>
+                            <span style={{ textDecoration: 'underline' }}>Click to verify slip</span>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setGlobalPaymentToast(null);
+                        }}
+                        style={{
+                            background: 'rgba(255,255,255,0.15)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            color: '#ffffff',
+                            padding: '0.45rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                        }}
+                        title="Dismiss"
+                    >
+                        <X size={15} />
                     </button>
                 </div>
             )}
