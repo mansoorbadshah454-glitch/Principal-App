@@ -140,8 +140,8 @@ const Promotions = () => {
     // --- Tab 2: Promoted History State ---
     const [promotionHistory, setPromotionHistory] = useState([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
-    const [historySession, setHistorySession] = useState('2024-2025');
-    const [historyClassFilter, setHistoryClassFilter] = useState(() => localStorage.getItem('promotions_history_class_filter') || '');
+    const [historySession, setHistorySession] = useState('2025-2026');
+    const [historyClassFilter, setHistoryClassFilter] = useState(() => localStorage.getItem('promotions_history_class_filter') || 'all');
     const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
     const [historySearchQuery, setHistorySearchQuery] = useState('');
     const [isExportingCsv, setIsExportingCsv] = useState(false);
@@ -1242,7 +1242,7 @@ const Promotions = () => {
             }
 
             // If empty or demo mode is active, enrich with multi-session & multi-class demo history
-            if (records.length === 0 || isDemoMode || String(schoolId) === '6257') {
+            if (isDemoAccount && isDemoMode) {
                 const demoRecords = getDemoPromotionHistory(classes);
                 const existingIds = new Set(records.map(r => r.id));
                 demoRecords.forEach(dr => {
@@ -1257,7 +1257,11 @@ const Promotions = () => {
             setPromotionHistory(records);
         } catch (error) {
             console.error("Error fetching promotion history:", error);
-            setPromotionHistory(getDemoPromotionHistory(classes));
+            if (isDemoAccount && isDemoMode) {
+                setPromotionHistory(getDemoPromotionHistory(classes));
+            } else {
+                setPromotionHistory([]);
+            }
         } finally {
             setLoadingHistory(false);
         }
@@ -1273,8 +1277,9 @@ const Promotions = () => {
     useEffect(() => {
         if (classes.length > 0) {
             setHistoryClassFilter(prev => {
-                if (!prev || prev === 'all' || !classes.some(c => c.id === prev)) {
-                    return classes[0].id;
+                if (prev === 'all') return 'all';
+                if (!prev || !classes.some(c => c.id === prev)) {
+                    return 'all';
                 }
                 return prev;
             });
@@ -2843,13 +2848,14 @@ const Promotions = () => {
                                     </label>
                                     <div className="relative min-w-[220px]">
                                         <select
-                                            value={historyClassFilter || classes[0]?.id || ''}
+                                            value={historyClassFilter || 'all'}
                                             onChange={(e) => {
                                                 setHistoryClassFilter(e.target.value);
                                                 localStorage.setItem('promotions_history_class_filter', e.target.value);
                                             }}
                                             className="w-full bg-slate-50 hover:bg-slate-100/80 border border-slate-200 text-slate-800 text-xs sm:text-sm font-bold rounded-xl px-3.5 py-2.5 pr-9 focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-colors cursor-pointer appearance-none"
                                         >
+                                            <option value="all">🏫 All Classes Archive</option>
                                             {classes.map(cls => (
                                                 <option key={cls.id} value={cls.id}>
                                                     {cls.name} • ({cls.students || 0} Students)
@@ -2965,7 +2971,9 @@ const Promotions = () => {
                             <History size={44} className="text-slate-300 mx-auto mb-3" />
                             <h4 className="font-bold text-slate-700 text-base">No Historical Records Found</h4>
                             <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                                No promotion records match the selected session or class. Click "✨ Inject Demo Data" above to view realistic presentation sample records.
+                                {isDemoAccount
+                                    ? 'No promotion records match the selected session or class. Click "✨ Inject Demo Promoted History" above to view sample presentation records.'
+                                    : 'No promotion records match the selected session or class. Once promotions are processed in the "Promotions" tab, permanent archive records will appear here.'}
                             </p>
                         </div>
                     ) : (
