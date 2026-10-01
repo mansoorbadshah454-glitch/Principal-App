@@ -112,59 +112,99 @@ const Admission = () => {
     };
   }, [showReceipt]);
 
-  // Safe helper to convert any remote image URL to Base64 for guaranteed PDF rendering
+  // Multi-Strategy Base64 Image Loader (Bypasses Storage CORS with proxies & timeouts)
   const fetchBase64ImageSafe = async (imageUrl) => {
-    if (!imageUrl) return "";
-    if (typeof imageUrl === "string" && imageUrl.startsWith("data:")) return imageUrl;
-    
-    // Method 1: fetch blob with CORS
+    if (!imageUrl || typeof imageUrl !== "string") return "";
+    const cleanUrl = imageUrl.trim();
+    if (!cleanUrl) return "";
+    if (cleanUrl.startsWith("data:image/")) return cleanUrl;
+
+    // Strategy 1: Direct CORS fetch with 1.5s timeout
     try {
-      const response = await fetch(imageUrl, { mode: "cors" });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const response = await fetch(cleanUrl, { mode: "cors", signal: controller.signal });
+      clearTimeout(timeoutId);
       if (response.ok) {
         const blob = await response.blob();
-        return await new Promise((resolve) => {
+        const base64 = await new Promise((resolve) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result);
-          reader.onerror = () => resolve(imageUrl);
+          reader.onerror = () => resolve(null);
           reader.readAsDataURL(blob);
         });
+        if (base64 && typeof base64 === "string" && base64.startsWith("data:image/")) {
+          return base64;
+        }
       }
-    } catch (e) {
-      console.warn("fetchBase64 blob failed, trying canvas fallback:", e);
+    } catch (e) {}
+
+    // Strategy 2: Proxy fallback (weserv / allorigins)
+    const proxyUrls = [
+      `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl.replace(/^https?:\/\//, ""))}&output=png`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`
+    ];
+
+    for (const pUrl of proxyUrls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const res = await fetch(pUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const blob = await res.blob();
+          const base64 = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+          if (base64 && typeof base64 === "string" && base64.startsWith("data:image/")) {
+            return base64;
+          }
+        }
+      } catch (err) {}
     }
 
-    // Method 2: Image element + offscreen canvas
+    // Strategy 3: Offscreen Canvas (non-blocking)
     try {
-      return await new Promise((resolve) => {
+      const canvasBase64 = await new Promise((resolve) => {
         const img = new Image();
+        const timer = setTimeout(() => resolve(null), 1200);
         img.crossOrigin = "Anonymous";
         img.onload = () => {
+          clearTimeout(timer);
           try {
             const canvas = document.createElement("canvas");
-            canvas.width = img.naturalWidth || img.width;
-            canvas.height = img.naturalHeight || img.height;
+            canvas.width = img.naturalWidth || img.width || 200;
+            canvas.height = img.naturalHeight || img.height || 200;
             const ctx = canvas.getContext("2d");
             ctx.drawImage(img, 0, 0);
             resolve(canvas.toDataURL("image/png"));
           } catch (err) {
-            console.warn("Canvas export fallback failed:", err);
-            resolve(imageUrl);
+            resolve(null);
           }
         };
-        img.onerror = () => resolve(imageUrl);
-        img.src = imageUrl;
+        img.onerror = () => {
+          clearTimeout(timer);
+          resolve(null);
+        };
+        img.src = cleanUrl;
       });
-    } catch (err) {
-      console.warn("Image fallback error:", err);
-      return imageUrl;
-    }
+      if (canvasBase64 && canvasBase64.startsWith("data:image/")) return canvasBase64;
+    } catch (err) {}
+
+    return cleanUrl;
   };
 
   const handleDownloadPDF = async () => {
     setIsDownloading(true);
     try {
       const elements = document.querySelectorAll(".admission-receipt");
-      if (!elements || elements.length === 0) return;
+      if (!elements || elements.length === 0) {
+        setIsDownloading(false);
+        return;
+      }
 
       const pdf = new jsPDF("p", "mm", "a4");
       const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -172,14 +212,15 @@ const Admission = () => {
       for (let i = 0; i < elements.length; i++) {
         const el = elements[i];
 
-        // Ensure all images inside el have fully loaded into DOM
+        // Ensure all images inside el have loaded (with max 1.2s safeguard)
         const imgElements = Array.from(el.querySelectorAll("img"));
         await Promise.all(
           imgElements.map((img) => {
             if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
             return new Promise((res) => {
-              img.onload = res;
-              img.onerror = res;
+              const timer = setTimeout(res, 1200);
+              img.onload = () => { clearTimeout(timer); res(); };
+              img.onerror = () => { clearTimeout(timer); res(); };
             });
           })
         );
@@ -190,27 +231,31 @@ const Admission = () => {
         el.style.filter = "none";
         el.style.boxShadow = "none";
 
-        const canvas = await html2canvas(el, {
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
-          logging: false,
-          backgroundColor: "#ffffff",
-        });
-        const imgData = canvas.toDataURL("image/jpeg", 1.0);
+        try {
+          const canvas = await html2canvas(el, {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            logging: false,
+            backgroundColor: "#ffffff",
+          });
+          const imgData = canvas.toDataURL("image/jpeg", 0.95);
 
-        const imgProps = pdf.getImageProperties(imgData);
-        const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
+          const imgProps = pdf.getImageProperties(imgData);
+          const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
 
-        if (i > 0) {
-          pdf.addPage();
+          if (i > 0) {
+            pdf.addPage();
+          }
+
+          pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, imgHeight);
+        } catch (canvasErr) {
+          console.warn("html2canvas capture warning:", canvasErr);
+        } finally {
+          // Restore styles
+          el.style.filter = originalFilter;
+          el.style.boxShadow = originalBoxShadow;
         }
-
-        pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, imgHeight);
-
-        // Restore styles
-        el.style.filter = originalFilter;
-        el.style.boxShadow = originalBoxShadow;
       }
 
       pdf.save("admission_receipts.pdf");
@@ -3639,7 +3684,6 @@ const Admission = () => {
                             <img
                               src={receiptData.schoolLogo}
                               alt="School Logo"
-                              crossOrigin="anonymous"
                               style={{
                                 width: "100%",
                                 height: "100%",
