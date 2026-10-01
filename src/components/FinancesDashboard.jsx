@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-    Wallet, Users, ChevronRight, ChevronLeft, Ban, CheckCircle, Plus, Trash2, Edit2, X, 
+    Wallet, Users, ChevronRight, ChevronLeft, ArrowLeft, Ban, CheckCircle, Plus, Trash2, Edit2, X, 
     CheckSquare, Square, ArrowUpRight, ArrowDownRight, Download,
     Printer, Search, CheckCircle2, User, FileText, Loader2, Sparkles, Building2, Phone, Calendar, Clock, DollarSign,
-    Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity,
+    Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, TrendingDown, Receipt, Activity,
     PieChart, BarChart3, Zap, ShieldCheck, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight,
     Award, AlertTriangle, Check, RotateCcw, RotateCw, ZoomIn, ZoomOut, Maximize2, CalendarDays, History, Send,
-    Sliders, HelpCircle, ArrowDown, ArrowUp, AlertCircle, Database, PlayCircle
+    Sliders, HelpCircle, ArrowDown, ArrowUp, AlertCircle, Database, PlayCircle,
+    ChevronDown, ChevronUp
 } from 'lucide-react';
 import {
     ResponsiveContainer, BarChart, Bar, AreaChart, Area, PieChart as RechartsPie, Pie, Cell,
@@ -21,6 +22,15 @@ import {
     getDocs, writeBatch, serverTimestamp, orderBy, limit, where
 } from 'firebase/firestore';
 import { getDocsFast, getDocFast } from '../utils/cacheUtils';
+import { 
+    getTrustedPktDate, 
+    getTrustedPktIsoDate, 
+    getTrustedPktYear, 
+    getTrustedPktMonth, 
+    getTrustedPktTimeString, 
+    isDayPastLocked,
+    syncPakistanTime 
+} from '../utils/pakistanTimeEngine';
 
 const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
@@ -127,11 +137,11 @@ const CustomPieTooltip = ({ active, payload }) => {
 };
 
 const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolInfo, classes = [] }) => {
-    const today = new Date();
-    const currentYearNum = today.getFullYear();
-    const currentMonthNum = today.getMonth() + 1; // 1-12
+    // 🇵🇰 Trusted Atomic Pakistan Standard Time (Independent of laptop date/time tampering)
+    const currentYearNum = getTrustedPktYear();
+    const currentMonthNum = getTrustedPktMonth();
     const currentIsoMonth = `${currentYearNum}-${String(currentMonthNum).padStart(2, '0')}`;
-    const todayIsoDate = getLocalIsoDate(today);
+    const todayIsoDate = getTrustedPktIsoDate();
 
     const [loading, setLoading] = useState(true);
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -140,7 +150,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const isDemoAccount = useMemo(() => {
         const sId = String(schoolId || '').trim();
         const pId = String(parentSchoolInfo?.schoolId || parentSchoolInfo?.id || '').trim();
-        return sId === '6257' || pId === '6257' || sId.includes('6257') || pId.includes('6257');
+        return sId === '6257' || pId === '6257';
     }, [schoolId, parentSchoolInfo]);
 
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
@@ -168,12 +178,20 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const [schoolInfo, setSchoolInfo] = useState(parentSchoolInfo || { name: 'School Report', logo: '' });
 
     // Modals & UI States
+    const [monthlyLedgerTab, setMonthlyLedgerTab] = useState('fee_slips'); // 'fee_slips' | 'incomes' | 'expenses'
+    const [ledgerPage, setLedgerPage] = useState(1);
     const [searchLedger, setSearchLedger] = useState('');
     const [modeLedgerFilter, setModeLedgerFilter] = useState('all'); // 'all' | 'Cash' | 'Online' | 'EasyPaisa' | 'JazzCash' | 'Bank'
+    const [ledgerViewMode, setLedgerViewMode] = useState('daily'); // 'daily' | 'all'
+    const [selectedDayIso, setSelectedDayIso] = useState(null);
+    const [dayCardTab, setDayCardTab] = useState('all'); // 'all' | 'fee_slips' | 'incomes' | 'expenses'
+    const [expandedDailyDates, setExpandedDailyDates] = useState({}); // { [dateIso]: true / false }
+    const [dailyDateSearch, setDailyDateSearch] = useState('');
     const [selectedReceiptForModal, setSelectedReceiptForModal] = useState(null);
     const [receiptModalOpen, setReceiptModalOpen] = useState(false);
     const [proofModalState, setProofModalState] = useState({ isOpen: false, url: '', title: '' });
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+    const [isGeneratingDailyPDF, setIsGeneratingDailyPDF] = useState(false);
 
     // Unified Add / Edit Modal State for Incomes & Expenses
     const [financeModalState, setFinanceModalState] = useState({ isOpen: false, category: 'incomes', item: null });
@@ -188,13 +206,12 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     });
     const [isSavingFinance, setIsSavingFinance] = useState(false);
 
-    // Dynamic Year List: starts from 2025 and auto-increments with current and future years
+    // Dynamic Rolling 5-Year List: Always maintains the active 5-year window [currentYear - 4 ... currentYear]
     const availableYears = useMemo(() => {
-        const startYear = 2025;
-        const endYear = Math.max(2025, currentYearNum);
+        const currentYear = currentYearNum;
         const years = [];
-        for (let y = startYear; y <= endYear; y++) {
-            years.push(y);
+        for (let i = 4; i >= 0; i--) {
+            years.push(currentYear - i);
         }
         return years;
     }, [currentYearNum]);
@@ -396,34 +413,74 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         };
     }, [schoolId]);
 
-    // 4. Fetch Payroll Meta for All Available Years (2025+) / Months
+    // 4. Fetch & Live Listen to Payroll Meta for Selected Year/Month (Padded & Unpadded Firestore doc IDs)
     useEffect(() => {
         if (!schoolId) return;
         let isMounted = true;
-        const fetchPayrollData = async () => {
+        const unsubs = [];
+
+        // 4.1 Initial Multi-Year fetch (2025+) for YoY charts
+        const fetchAllPayrollData = async () => {
             try {
                 const yearsToFetch = availableYears;
                 for (const yr of yearsToFetch) {
                     for (let m = 1; m <= 12; m++) {
-                        const payrollDocId = `${yr}_${m}`;
-                        const payrollRef = doc(db, `schools/${schoolId}/settings`, `payroll_${payrollDocId}`);
-                        const snap = await getDocFast(payrollRef);
-                        if (snap.exists() && isMounted) {
-                            const data = snap.data();
+                        const mPadded = String(m).padStart(2, '0');
+                        // Try 2-digit padded doc ID (e.g. payroll_2026_10)
+                        const pRefPadded = doc(db, `schools/${schoolId}/settings`, `payroll_${yr}_${mPadded}`);
+                        const snapPadded = await getDocFast(pRefPadded);
+                        if (snapPadded.exists() && isMounted) {
+                            const data = snapPadded.data();
                             setPayrollMetaByMonth(prev => ({
                                 ...prev,
-                                [payrollDocId]: data.teachers || {}
+                                [`${yr}_${mPadded}`]: data.teachers || {},
+                                [`${yr}_${m}`]: data.teachers || {}
                             }));
+                        } else {
+                            // Fallback unpadded doc ID (e.g. payroll_2026_1)
+                            const pRefUnpadded = doc(db, `schools/${schoolId}/settings`, `payroll_${yr}_${m}`);
+                            const snapUnpadded = await getDocFast(pRefUnpadded);
+                            if (snapUnpadded.exists() && isMounted) {
+                                const data = snapUnpadded.data();
+                                setPayrollMetaByMonth(prev => ({
+                                    ...prev,
+                                    [`${yr}_${mPadded}`]: data.teachers || {},
+                                    [`${yr}_${m}`]: data.teachers || {}
+                                }));
+                            }
                         }
                     }
                 }
             } catch (e) {
-                console.warn("Payroll fetch note:", e);
+                console.warn("Payroll initial fetch note:", e);
             }
         };
-        fetchPayrollData();
-        return () => { isMounted = false; };
-    }, [schoolId, availableYears]);
+
+        fetchAllPayrollData();
+
+        // 4.2 Real-time Active Month Listener (Instantly syncs when Principal marks a teacher as Paid in Payroll tab)
+        const activeMonth = selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum;
+        const activePadded = String(activeMonth).padStart(2, '0');
+        const liveDocRef = doc(db, `schools/${schoolId}/settings`, `payroll_${selectedYear}_${activePadded}`);
+
+        const unsubLive = onSnapshot(liveDocRef, (snap) => {
+            if (!isMounted) return;
+            const data = snap.exists() ? snap.data() : { teachers: {} };
+            setPayrollMetaByMonth(prev => ({
+                ...prev,
+                [`${selectedYear}_${activePadded}`]: data.teachers || {},
+                [`${selectedYear}_${activeMonth}`]: data.teachers || {}
+            }));
+        }, (err) => {
+            console.warn("Live payroll listener note:", err);
+        });
+        unsubs.push(unsubLive);
+
+        return () => { 
+            isMounted = false; 
+            unsubs.forEach(u => u());
+        };
+    }, [schoolId, availableYears, selectedYear, selectedMonthMode, customSelectedMonthNum, currentMonthNum]);
 
     // 5. Keep LocalStorage Offline Vault in Sync with Live Data (100% Offline Resilience)
     useEffect(() => {
@@ -441,6 +498,131 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             // LocalStorage trap
         }
     }, [schoolId, feeTransactions, financesData, storeSales, payrollMetaByMonth, teachersList]);
+
+    // =========================================================================
+    // 4.1 AUTOMATIC 5-YEAR ROLLING RETENTION & CLEANUP ENGINE
+    // Automatically archives and prunes data older than 5 years to keep DB lean and fast
+    // =========================================================================
+    useEffect(() => {
+        if (!schoolId || !isOnline) return;
+
+        const run5YearRetentionCleanup = async () => {
+            try {
+                const cutoffYear = currentYearNum - 4; // e.g. If current year is 2026, cutoff is 2022. < 2022 is expired.
+                const checkKey = `school_5year_retention_check_${schoolId}`;
+                const lastCheck = localStorage.getItem(checkKey);
+                if (lastCheck === `${currentYearNum}_${currentMonthNum}`) {
+                    return; // Already checked this month
+                }
+
+                // Check for expired transactions in memory or firestore
+                const expiredTxs = (feeTransactions || []).filter(tx => {
+                    let y = 0;
+                    if (tx.dateIso) y = Number(tx.dateIso.split('-')[0]);
+                    else if (tx.timestamp?.seconds) y = new Date(tx.timestamp.seconds * 1000).getFullYear();
+                    return y > 0 && y < cutoffYear;
+                });
+
+                const expiredIncomes = (financesData.incomes || []).filter(i => {
+                    const d = new Date(i.createdAt || i.date);
+                    return !isNaN(d.getTime()) && d.getFullYear() < cutoffYear;
+                });
+
+                const expiredExpenses = (financesData.expenses || []).filter(e => {
+                    const d = new Date(e.createdAt || e.date);
+                    return !isNaN(d.getTime()) && d.getFullYear() < cutoffYear;
+                });
+
+                const expiredSales = (storeSales || []).filter(s => {
+                    const d = new Date(s.dateIso || s.date || s.createdAt);
+                    return !isNaN(d.getTime()) && d.getFullYear() < cutoffYear;
+                });
+
+                if (expiredTxs.length > 0 || expiredIncomes.length > 0 || expiredExpenses.length > 0 || expiredSales.length > 0) {
+                    const batch = writeBatch(db);
+
+                    // 1. Group expired data into a lightweight permanent Annual Summary Archive
+                    const expiredYearsSet = new Set();
+                    expiredTxs.forEach(t => {
+                        const y = Number((t.dateIso || '').split('-')[0]) || (t.timestamp?.seconds ? new Date(t.timestamp.seconds * 1000).getFullYear() : 0);
+                        if (y > 0 && y < cutoffYear) expiredYearsSet.add(y);
+                    });
+
+                    expiredYearsSet.forEach(expYr => {
+                        const yrTxs = expiredTxs.filter(t => (t.dateIso || '').startsWith(String(expYr)));
+                        const yrFeePaid = yrTxs.reduce((sum, t) => sum + (Number(t.totalPaid) || 0), 0);
+                        const yrIncomes = expiredIncomes.filter(i => (i.createdAt || i.date || '').startsWith(String(expYr)));
+                        const yrIncomeTotal = yrIncomes.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+                        const yrExpenses = expiredExpenses.filter(e => (e.createdAt || e.date || '').startsWith(String(expYr)));
+                        const yrExpenseTotal = yrExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+                        const archiveDocRef = doc(db, `schools/${schoolId}/settings`, `archive_year_${expYr}`);
+                        batch.set(archiveDocRef, {
+                            archivedYear: expYr,
+                            totalFeeCollected: yrFeePaid,
+                            totalDirectIncome: yrIncomeTotal,
+                            totalExpenses: yrExpenseTotal,
+                            receiptCount: yrTxs.length,
+                            archivedAt: serverTimestamp()
+                        }, { merge: true });
+                    });
+
+                    // 2. Batch Delete expired fee transactions
+                    expiredTxs.forEach(t => {
+                        const tRef = doc(db, `schools/${schoolId}/feeTransactions`, t.id);
+                        batch.delete(tRef);
+                    });
+
+                    // 3. Batch Delete expired store sales
+                    expiredSales.forEach(s => {
+                        const sRef = doc(db, `schools/${schoolId}/store_sales`, s.id);
+                        batch.delete(sRef);
+                    });
+
+                    // 4. Clean settings/finances array
+                    const cleanIncomes = (financesData.incomes || []).filter(i => {
+                        const d = new Date(i.createdAt || i.date);
+                        return isNaN(d.getTime()) || d.getFullYear() >= cutoffYear;
+                    });
+                    const cleanExpenses = (financesData.expenses || []).filter(e => {
+                        const d = new Date(e.createdAt || e.date);
+                        return isNaN(d.getTime()) || d.getFullYear() >= cutoffYear;
+                    });
+                    const finRef = doc(db, `schools/${schoolId}/settings/finances`);
+                    batch.set(finRef, { incomes: cleanIncomes, expenses: cleanExpenses }, { merge: true });
+
+                    // 5. Delete expired payroll metadata docs
+                    expiredYearsSet.forEach(expYr => {
+                        for (let m = 1; m <= 12; m++) {
+                            const pRef = doc(db, `schools/${schoolId}/settings`, `payroll_${expYr}_${m}`);
+                            batch.delete(pRef);
+                        }
+                    });
+
+                    await batch.commit();
+
+                    // Update local state
+                    setFeeTransactions(prev => prev.filter(t => {
+                        let y = 0;
+                        if (t.dateIso) y = Number(t.dateIso.split('-')[0]);
+                        else if (t.timestamp?.seconds) y = new Date(t.timestamp.seconds * 1000).getFullYear();
+                        return y >= cutoffYear;
+                    }));
+                    setStoreSales(prev => prev.filter(s => {
+                        const d = new Date(s.dateIso || s.date || s.createdAt);
+                        return isNaN(d.getTime()) || d.getFullYear() >= cutoffYear;
+                    }));
+                    setFinancesData({ incomes: cleanIncomes, expenses: cleanExpenses });
+                }
+
+                localStorage.setItem(checkKey, `${currentYearNum}_${currentMonthNum}`);
+            } catch (err) {
+                console.warn("5-Year Retention Cleanup note:", err);
+            }
+        };
+
+        run5YearRetentionCleanup();
+    }, [schoolId, isOnline, currentYearNum, currentMonthNum, feeTransactions, financesData, storeSales]);
 
     // =========================================================================
     // 5. DEMO FINANCIAL DATA INJECTOR (Presentation Ready, Multi-Year & Store)
@@ -798,38 +980,66 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         const totalDirectIncomes = scopedIncomes.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
         const totalOperationalExpenses = scopedExpenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
-        // Teacher Salaries Paid from Payroll for Selected Scope
+        // Teacher Salaries Paid from Payroll for Selected Scope (100% Live Connected to Payroll Tab)
         let totalTeacherSalariesPaid = 0;
-        let totalStaffCount = teachersList.length || 4;
+        const totalStaffCount = teachersList.length || 0;
+        const totalStaffBudget = teachersList.reduce((sum, t) => sum + (Number(t.salary || t.baseSalary || t.monthlySalary || 0)), 0);
         let staffPaidCount = 0;
+
+        const getTeacherPaidAmt = (tMeta) => {
+            if (!tMeta || !tMeta.isPaid) return 0;
+            return Number(tMeta.paidAmount ?? tMeta.netSalary ?? 0);
+        };
 
         if (isAllYearMode) {
             for (let m = 1; m <= 12; m++) {
-                const pMeta = payrollMetaByMonth[`${selectedYear}_${m}`] || {};
-                Object.values(pMeta).forEach(tMeta => {
-                    if (tMeta.isPaid) {
-                        totalTeacherSalariesPaid += (Number(tMeta.paidAmount) || 0);
-                    }
-                });
-            }
-        } else if (!isTodayMode) {
-            const pMeta = payrollMetaByMonth[`${selectedYear}_${activeMonthNum}`] || {};
-            if (Object.keys(pMeta).length > 0) {
-                Object.values(pMeta).forEach(tMeta => {
-                    if (tMeta.isPaid) {
-                        staffPaidCount += 1;
-                        totalTeacherSalariesPaid += (Number(tMeta.paidAmount) || 0);
-                    }
-                });
-            } else {
+                const mPadded = String(m).padStart(2, '0');
+                const pMeta = payrollMetaByMonth[`${selectedYear}_${mPadded}`] || payrollMetaByMonth[`${selectedYear}_${m}`] || {};
                 teachersList.forEach(t => {
                     const tMeta = pMeta[t.id];
-                    if (tMeta?.isPaid) {
+                    if (tMeta && tMeta.isPaid) {
+                        totalTeacherSalariesPaid += getTeacherPaidAmt(tMeta);
                         staffPaidCount += 1;
-                        totalTeacherSalariesPaid += (Number(tMeta.paidAmount) || Number(t.baseSalary) || 0);
                     }
                 });
             }
+        } else if (isTodayMode) {
+            // Today Mode: Strictly calculate teacher salaries actually disbursed on today's date for current teachers
+            const mPadded = String(activeMonthNum).padStart(2, '0');
+            const pMeta = payrollMetaByMonth[`${selectedYear}_${mPadded}`] || payrollMetaByMonth[`${selectedYear}_${activeMonthNum}`] || {};
+            teachersList.forEach(t => {
+                const tMeta = pMeta[t.id];
+                if (tMeta && tMeta.isPaid) {
+                    let isPaidToday = false;
+                    if (tMeta.paidDate) {
+                        const d = new Date(tMeta.paidDate);
+                        if (!isNaN(d.getTime()) && getLocalIsoDate(d) === todayIsoDate) {
+                            isPaidToday = true;
+                        }
+                    }
+                    if (tMeta.paidAt?.seconds) {
+                        const d = new Date(tMeta.paidAt.seconds * 1000);
+                        if (getLocalIsoDate(d) === todayIsoDate) {
+                            isPaidToday = true;
+                        }
+                    }
+                    if (isPaidToday) {
+                        staffPaidCount += 1;
+                        totalTeacherSalariesPaid += getTeacherPaidAmt(tMeta);
+                    }
+                }
+            });
+        } else {
+            // Month Mode (Current Month or Selected Custom Month)
+            const mPadded = String(activeMonthNum).padStart(2, '0');
+            const pMeta = payrollMetaByMonth[`${selectedYear}_${mPadded}`] || payrollMetaByMonth[`${selectedYear}_${activeMonthNum}`] || {};
+            teachersList.forEach(t => {
+                const tMeta = pMeta[t.id];
+                if (tMeta && tMeta.isPaid) {
+                    staffPaidCount += 1;
+                    totalTeacherSalariesPaid += getTeacherPaidAmt(tMeta);
+                }
+            });
         }
 
         const isSelectedYearFuture = selectedYear > currentYearNum;
@@ -837,11 +1047,10 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         const isSelectedYearCurrent = selectedYear === currentYearNum;
         const isFutureScope = isSelectedYearFuture || (isSelectedYearCurrent && !isAllYearMode && !isTodayMode && activeMonthNum > currentMonthNum);
 
-        // Projected Staff Baseline Salaries for Future Months (Fixed Monthly Payroll Commitment)
-        const staffBaseCommitment = teachersList.reduce((sum, t) => sum + (Number(t.baseSalary) || 35000), 0) || 147000;
-        const effectiveSalariesPaid = (isFutureScope && totalTeacherSalariesPaid === 0) ? staffBaseCommitment : totalTeacherSalariesPaid;
+        // Effective Salaries Paid (Actual disbursed salary outflow)
+        const effectiveSalariesPaid = totalTeacherSalariesPaid;
 
-        // Grand Totals (Actual for past/current, Projected Fixed for Future)
+        // Grand Totals (Actual Inflow - Actual Outflows)
         const grossRevenue = totalFeePaid + totalDirectIncomes;
         const totalOutflow = totalOperationalExpenses + effectiveSalariesPaid;
         const netProfit = grossRevenue - totalOutflow;
@@ -1084,10 +1293,12 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             let monthTeacherSalaries = 0;
             let monthTeachersPaidCount = 0;
             if (!isFuture) {
-                const pMetaCur = payrollMetaByMonth[`${selectedYear}_${mNum}`] || {};
-                Object.values(pMetaCur).forEach(tm => {
-                    if (tm.isPaid) {
-                        monthTeacherSalaries += (Number(tm.paidAmount) || 0);
+                const mPadded = String(mNum).padStart(2, '0');
+                const pMetaCur = payrollMetaByMonth[`${selectedYear}_${mPadded}`] || payrollMetaByMonth[`${selectedYear}_${mNum}`] || {};
+                teachersList.forEach(t => {
+                    const tm = pMetaCur[t.id];
+                    if (tm && tm.isPaid) {
+                        monthTeacherSalaries += (Number(tm.paidAmount ?? tm.netSalary) || 0);
                         monthTeachersPaidCount += 1;
                     }
                 });
@@ -1168,7 +1379,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                 growthText = `healthy revenue stream recorded`;
             }
 
-            const digitalSharePct = grossRevenue > 0 ? Math.round((onlineFees / grossRevenue) * 100) : 0;
+            const digitalSharePct = totalFeePaid > 0 ? Math.round((onlineFees / totalFeePaid) * 100) : 0;
             smartInsight = `💡 Financial Insight: In ${monthLabel} ${selectedYear}, ${growthText} with a ${profitMarginPercent}% Net Profit Margin and ${digitalSharePct}% digital online collection share.`;
         }
 
@@ -1242,6 +1453,434 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             return true;
         });
     }, [calculatedMetrics.scopedTxs, searchLedger, modeLedgerFilter]);
+
+    // 7.1 Daily Ledger Aggregator (Day-by-Day Financial Intelligence: Full Month 1st to Last Day)
+    const dailyLedgerData = useMemo(() => {
+        const groups = {};
+
+        const getSanitizedIsoDate = (rawStr) => {
+            if (!rawStr) return '';
+            if (typeof rawStr === 'string') {
+                if (rawStr.includes('T')) return rawStr.split('T')[0];
+                if (/^\d{4}-\d{2}-\d{2}$/.test(rawStr)) return rawStr;
+                const d = new Date(rawStr);
+                if (!isNaN(d.getTime())) return getLocalIsoDate(d);
+            }
+            return '';
+        };
+
+        // Determine the strict target month (1-12) and year (e.g. 2026)
+        const targetMonth = (selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum) || currentMonthNum;
+        const targetYear = selectedYear || currentYearNum;
+        const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+        const monthStr = String(targetMonth).padStart(2, '0');
+
+        // 1. Initialize STRICTLY and ONLY the days of the selected month (1st to last day)
+        for (let d = 1; d <= daysInMonth; d++) {
+            const dayStr = String(d).padStart(2, '0');
+            const isoDate = `${targetYear}-${monthStr}-${dayStr}`;
+            groups[isoDate] = {
+                dateIso: isoDate,
+                dayNumber: d,
+                monthNum: targetMonth,
+                yearNum: targetYear,
+                totalFeePaid: 0,
+                counterCashFees: 0,
+                cashCount: 0,
+                onlineFees: 0,
+                easyPaisaFees: 0,
+                easyPaisaCount: 0,
+                jazzCashFees: 0,
+                jazzCashCount: 0,
+                bankFees: 0,
+                bankCount: 0,
+                otherDigitalFees: 0,
+                otherDigitalCount: 0,
+                totalDirectIncome: 0,
+                totalExpenses: 0,
+                txs: [],
+                incomes: [],
+                expenses: []
+            };
+        }
+
+        // A. Match Fee Transactions STRICTLY to this selected month's initialized dates
+        (feeTransactions || []).forEach(tx => {
+            let isoDate = getSanitizedIsoDate(tx.dateIso);
+            if (!isoDate && tx.timestamp?.seconds) {
+                isoDate = getLocalIsoDate(new Date(tx.timestamp.seconds * 1000));
+            }
+            if (!isoDate && tx.dateString) {
+                isoDate = getSanitizedIsoDate(tx.dateString);
+            }
+
+            // ONLY attach if date matches this selected month's initialized days!
+            if (isoDate && groups[isoDate]) {
+                const amount = Number(tx.totalPaid) || 0;
+                groups[isoDate].totalFeePaid += amount;
+                groups[isoDate].txs.push(tx);
+
+                const mode = (tx.paymentMode || 'Cash').toLowerCase();
+                const collectedBy = (tx.collectedBy || '').toLowerCase();
+                const isOnlineTx = mode.startsWith('online') || collectedBy.includes('online') || mode.includes('transfer') || mode.includes('easy') || mode.includes('jazz') || mode.includes('bank');
+
+                if (mode === 'cash' && !isOnlineTx) {
+                    groups[isoDate].counterCashFees += amount;
+                    groups[isoDate].cashCount += 1;
+                } else if (mode.includes('easypaisa') || mode.includes('easy')) {
+                    groups[isoDate].easyPaisaFees += amount;
+                    groups[isoDate].onlineFees += amount;
+                    groups[isoDate].easyPaisaCount += 1;
+                } else if (mode.includes('jazzcash') || mode.includes('jazz')) {
+                    groups[isoDate].jazzCashFees += amount;
+                    groups[isoDate].onlineFees += amount;
+                    groups[isoDate].jazzCashCount += 1;
+                } else if (mode.includes('bank')) {
+                    groups[isoDate].bankFees += amount;
+                    groups[isoDate].onlineFees += amount;
+                    groups[isoDate].bankCount += 1;
+                } else {
+                    groups[isoDate].otherDigitalFees += amount;
+                    groups[isoDate].onlineFees += amount;
+                    groups[isoDate].otherDigitalCount += 1;
+                }
+            }
+        });
+
+        // B. Match Direct Incomes STRICTLY to this selected month's initialized dates
+        (financesData.incomes || []).forEach(inc => {
+            const dStr = inc.createdAt || inc.date;
+            const isoDate = getSanitizedIsoDate(dStr);
+            if (isoDate && groups[isoDate]) {
+                const amount = Number(inc.amount) || 0;
+                groups[isoDate].totalDirectIncome += amount;
+                groups[isoDate].incomes.push(inc);
+            }
+        });
+
+        // C. Match Operational Expenses STRICTLY to this selected month's initialized dates
+        (financesData.expenses || []).forEach(exp => {
+            const isSalary = (exp.category || '').toLowerCase() === 'salary' || (exp.id || '').startsWith('payroll-');
+            if (isSalary) return;
+            const dStr = exp.createdAt || exp.date;
+            const isoDate = getSanitizedIsoDate(dStr);
+            if (isoDate && groups[isoDate]) {
+                const amount = Number(exp.amount) || 0;
+                groups[isoDate].totalExpenses += amount;
+                groups[isoDate].expenses.push(exp);
+            }
+        });
+
+        // Transform into Array & Format Dates
+        const list = Object.values(groups).map(g => {
+            const dateObj = new Date(g.yearNum, g.monthNum - 1, g.dayNumber);
+            let dayName = '';
+            let displayDate = g.dateIso;
+            if (!isNaN(dateObj.getTime())) {
+                dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+                displayDate = dateObj.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+            }
+            const grossInflow = g.totalFeePaid + g.totalDirectIncome;
+            const netBalance = grossInflow - g.totalExpenses;
+            const netCashDrawer = (g.counterCashFees + g.totalDirectIncome) - g.totalExpenses;
+            const hasActivity = (g.totalFeePaid > 0 || g.txs.length > 0 || g.totalDirectIncome > 0 || g.totalExpenses > 0);
+            const isLocked = g.dateIso < todayIsoDate;
+            const isToday = g.dateIso === todayIsoDate;
+            const isFuture = g.dateIso > todayIsoDate;
+
+            return {
+                ...g,
+                dayName,
+                displayDate,
+                grossInflow,
+                netBalance,
+                netCashDrawer,
+                hasActivity,
+                isLocked,
+                isToday,
+                isFuture
+            };
+        });
+
+        // Strict Chronological order: Day 1 to Last Day of Month
+        list.sort((a, b) => a.dayNumber - b.dayNumber);
+        return list;
+    }, [feeTransactions, financesData, selectedMonthMode, customSelectedMonthNum, currentMonthNum, selectedYear, currentYearNum, todayIsoDate]);
+
+    // Active selected day data (only when selectedDayIso is explicitly selected)
+    // Auto-select today (or 1st day of month) if current selectedDayIso is not in active month
+    useEffect(() => {
+        if (!dailyLedgerData || dailyLedgerData.length === 0) return;
+        const exists = dailyLedgerData.some(d => d.dateIso === selectedDayIso);
+        if (!exists) {
+            const todayDay = dailyLedgerData.find(d => d.isToday);
+            if (todayDay) {
+                setSelectedDayIso(todayDay.dateIso);
+            } else {
+                setSelectedDayIso(dailyLedgerData[0].dateIso);
+            }
+        }
+    }, [dailyLedgerData, selectedDayIso]);
+
+    // Active selected day data
+    const activeDayData = useMemo(() => {
+        if (!dailyLedgerData || dailyLedgerData.length === 0) return null;
+        if (selectedDayIso) {
+            const found = dailyLedgerData.find(d => d.dateIso === selectedDayIso);
+            if (found) return found;
+        }
+        return dailyLedgerData.find(d => d.isToday) || dailyLedgerData[0] || null;
+    }, [dailyLedgerData, selectedDayIso]);
+
+    // Active Day Index for previous/next navigation
+    const activeDayIndex = useMemo(() => {
+        if (!activeDayData || !dailyLedgerData) return -1;
+        return dailyLedgerData.findIndex(d => d.dateIso === activeDayData.dateIso);
+    }, [activeDayData, dailyLedgerData]);
+
+    const handlePrevDay = () => {
+        if (activeDayIndex > 0) {
+            setSelectedDayIso(dailyLedgerData[activeDayIndex - 1].dateIso);
+        }
+    };
+
+    const handleNextDay = () => {
+        if (activeDayIndex >= 0 && activeDayIndex < dailyLedgerData.length - 1) {
+            setSelectedDayIso(dailyLedgerData[activeDayIndex + 1].dateIso);
+        }
+    };
+
+    // Calendar Month Flipping & Quick Jump to Today
+    const handlePrevMonth = () => {
+        let currentM = selectedMonthMode === 'current' ? currentMonthNum : (customSelectedMonthNum || currentMonthNum);
+        let currentY = selectedYear || currentYearNum;
+        if (currentM === 1) {
+            currentM = 12;
+            currentY = currentY - 1;
+        } else {
+            currentM = currentM - 1;
+        }
+        setSelectedYear(currentY);
+        setCustomSelectedMonthNum(currentM);
+        setSelectedMonthMode('custom_month');
+        setInspectedMonthNum(currentM);
+    };
+
+    const handleNextMonth = () => {
+        let currentM = selectedMonthMode === 'current' ? currentMonthNum : (customSelectedMonthNum || currentMonthNum);
+        let currentY = selectedYear || currentYearNum;
+        if (currentM === 12) {
+            currentM = 1;
+            currentY = currentY + 1;
+        } else {
+            currentM = currentM + 1;
+        }
+        setSelectedYear(currentY);
+        setCustomSelectedMonthNum(currentM);
+        setSelectedMonthMode('custom_month');
+        setInspectedMonthNum(currentM);
+    };
+
+    const handleJumpToToday = () => {
+        setSelectedYear(currentYearNum);
+        setCustomSelectedMonthNum(currentMonthNum);
+        setSelectedMonthMode('current');
+        setInspectedMonthNum(currentMonthNum);
+        setSelectedDayIso(todayIsoDate);
+    };
+
+    // Calendar Grid Calculation for 7-column layout (Mon - Sun)
+    const calendarGridCells = useMemo(() => {
+        const targetMonth = (selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum) || currentMonthNum;
+        const targetYear = selectedYear || currentYearNum;
+        
+        // In JS: 0 = Sun, 1 = Mon, ..., 6 = Sat
+        const firstDayOfWeek = new Date(targetYear, targetMonth - 1, 1).getDay();
+        // Convert to Monday-start (0 = Mon, 1 = Tue, ..., 6 = Sun)
+        const leadingEmptyCount = (firstDayOfWeek + 6) % 7;
+        
+        const cells = [];
+        for (let i = 0; i < leadingEmptyCount; i++) {
+            cells.push({ type: 'empty', key: `empty_${i}` });
+        }
+
+        (dailyLedgerData || []).forEach(day => {
+            cells.push({
+                type: 'day',
+                key: day.dateIso,
+                day
+            });
+        });
+
+        return cells;
+    }, [selectedMonthMode, customSelectedMonthNum, currentMonthNum, selectedYear, currentYearNum, dailyLedgerData]);
+
+    // =========================================================================
+    // MONTHLY CONSOLIDATED LEDGER FILTERING & PAGINATION (25 Rows per page)
+    // =========================================================================
+    const filteredMonthlyTxs = useMemo(() => {
+        const txs = calculatedMetrics?.scopedTxs || [];
+        return txs.filter(tx => {
+            if (modeLedgerFilter !== 'all') {
+                const mode = (tx.paymentMode || 'Cash').toLowerCase();
+                if (modeLedgerFilter === 'Cash' && mode !== 'cash') return false;
+                if (modeLedgerFilter === 'Online' && mode === 'cash') return false;
+                if (modeLedgerFilter === 'EasyPaisa' && !mode.includes('easy')) return false;
+                if (modeLedgerFilter === 'JazzCash' && !mode.includes('jazz')) return false;
+                if (modeLedgerFilter === 'Bank' && !mode.includes('bank')) return false;
+            }
+            if (searchLedger.trim()) {
+                const q = searchLedger.toLowerCase();
+                const matchName = (tx.studentName || '').toLowerCase().includes(q);
+                const matchRoll = (tx.rollNo || '').toLowerCase().includes(q);
+                const matchClass = (tx.className || '').toLowerCase().includes(q);
+                const matchRec = (tx.receiptNo || tx.id || '').toLowerCase().includes(q);
+                const matchTrx = (tx.trxId || tx.transactionId || tx.referenceId || tx.senderAccount || '').toLowerCase().includes(q);
+                const matchFather = (tx.fatherName || '').toLowerCase().includes(q);
+                if (!matchName && !matchRoll && !matchClass && !matchRec && !matchTrx && !matchFather) return false;
+            }
+            return true;
+        });
+    }, [calculatedMetrics?.scopedTxs, searchLedger, modeLedgerFilter]);
+
+    const filteredMonthlyIncomes = useMemo(() => {
+        const incomes = calculatedMetrics?.scopedIncomes || [];
+        if (!searchLedger.trim()) return incomes;
+        const q = searchLedger.toLowerCase();
+        return incomes.filter(inc => {
+            const matchName = (inc.name || inc.title || '').toLowerCase().includes(q);
+            const matchCat = (inc.category || '').toLowerCase().includes(q);
+            const matchRem = (inc.remarks || '').toLowerCase().includes(q);
+            return matchName || matchCat || matchRem;
+        });
+    }, [calculatedMetrics?.scopedIncomes, searchLedger]);
+
+    const filteredMonthlyExpenses = useMemo(() => {
+        const expenses = calculatedMetrics?.scopedExpenses || [];
+        if (!searchLedger.trim()) return expenses;
+        const q = searchLedger.toLowerCase();
+        return expenses.filter(exp => {
+            const matchName = (exp.name || exp.title || '').toLowerCase().includes(q);
+            const matchCat = (exp.category || '').toLowerCase().includes(q);
+            const matchRem = (exp.remarks || '').toLowerCase().includes(q);
+            return matchName || matchCat || matchRem;
+        });
+    }, [calculatedMetrics?.scopedExpenses, searchLedger]);
+
+    const rowsPerPage = 25;
+    const paginatedMonthlyTxs = useMemo(() => {
+        const start = (ledgerPage - 1) * rowsPerPage;
+        return filteredMonthlyTxs.slice(start, start + rowsPerPage);
+    }, [filteredMonthlyTxs, ledgerPage]);
+
+    const paginatedMonthlyIncomes = useMemo(() => {
+        const start = (ledgerPage - 1) * rowsPerPage;
+        return filteredMonthlyIncomes.slice(start, start + rowsPerPage);
+    }, [filteredMonthlyIncomes, ledgerPage]);
+
+    const paginatedMonthlyExpenses = useMemo(() => {
+        const start = (ledgerPage - 1) * rowsPerPage;
+        return filteredMonthlyExpenses.slice(start, start + rowsPerPage);
+    }, [filteredMonthlyExpenses, ledgerPage]);
+
+    const totalMonthlyLedgerCount = useMemo(() => {
+        if (monthlyLedgerTab === 'fee_slips') return filteredMonthlyTxs.length;
+        if (monthlyLedgerTab === 'incomes') return filteredMonthlyIncomes.length;
+        if (monthlyLedgerTab === 'expenses') return filteredMonthlyExpenses.length;
+        return 0;
+    }, [monthlyLedgerTab, filteredMonthlyTxs.length, filteredMonthlyIncomes.length, filteredMonthlyExpenses.length]);
+
+    const totalMonthlyLedgerPages = Math.max(1, Math.ceil(totalMonthlyLedgerCount / rowsPerPage));
+    const ledgerStartIndex = (ledgerPage - 1) * rowsPerPage;
+    const ledgerEndIndex = Math.min(ledgerStartIndex + rowsPerPage, totalMonthlyLedgerCount);
+
+    // Unified Consolidated Chronological Feed for the Active Selected Day
+    const unifiedDayEntries = useMemo(() => {
+        if (!activeDayData) return [];
+        const entries = [];
+
+        // 1. Fee Receipts
+        (activeDayData.txs || []).forEach(tx => {
+            entries.push({
+                id: tx.id || tx.receiptNo,
+                type: 'fee_slip',
+                typeName: 'Fee Receipt',
+                title: tx.studentName || 'Student Fee',
+                subtitle: `${tx.className || 'Class'} ${tx.rollNo && tx.rollNo !== '-' ? `• Roll: ${tx.rollNo}` : ''}`,
+                subDetail: tx.receiptNo ? `Slip #${tx.receiptNo}` : 'Receipt',
+                extraInfo: tx.fatherName ? `S/D of ${tx.fatherName}` : '',
+                amount: Number(tx.totalPaid || 0),
+                flowType: 'inflow',
+                paymentMode: tx.paymentMode || 'Cash',
+                time: tx.timeString || 'Daily Entry',
+                raw: tx,
+                proofUrl: tx.proofUrl
+            });
+        });
+
+        // 2. Direct Incomes
+        (activeDayData.incomes || []).forEach(inc => {
+            entries.push({
+                id: inc.id || `inc_${Math.random()}`,
+                type: 'income',
+                typeName: 'Direct Income',
+                title: inc.name || inc.title || 'Direct Revenue',
+                subtitle: `${inc.category || 'General'} • ${inc.type === 'permanent' ? 'Monthly' : 'One-time'}`,
+                subDetail: 'Direct Inflow Voucher',
+                extraInfo: inc.remarks || 'Direct School Income',
+                amount: Number(inc.amount || 0),
+                flowType: 'inflow',
+                paymentMode: 'Direct Inflow',
+                time: inc.date ? new Date(inc.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged',
+                raw: inc,
+                proofUrl: inc.proofUrl
+            });
+        });
+
+        // 3. Operational Expenses
+        (activeDayData.expenses || []).forEach(exp => {
+            entries.push({
+                id: exp.id || `exp_${Math.random()}`,
+                type: 'expense',
+                typeName: 'Operational Expense',
+                title: exp.name || exp.title || 'School Outflow',
+                subtitle: `${exp.category || 'Operational'} • ${exp.type === 'permanent' ? 'Monthly' : 'One-time'}`,
+                subDetail: 'Expense Voucher',
+                extraInfo: exp.remarks || 'School Operational Cost',
+                amount: Number(exp.amount || 0),
+                flowType: 'outflow',
+                paymentMode: 'Disbursed',
+                time: exp.date ? new Date(exp.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged',
+                raw: exp,
+                proofUrl: exp.proofUrl
+            });
+        });
+
+        return entries;
+    }, [activeDayData]);
+
+    // Filtered Unified Entries based on user search in day view
+    const filteredUnifiedDayEntries = useMemo(() => {
+        return unifiedDayEntries.filter(entry => {
+            if (dailyDateSearch.trim()) {
+                const q = dailyDateSearch.toLowerCase();
+                const matchTitle = (entry.title || '').toLowerCase().includes(q);
+                const matchSub = (entry.subtitle || '').toLowerCase().includes(q);
+                const matchExtra = (entry.extraInfo || '').toLowerCase().includes(q);
+                const matchDetail = (entry.subDetail || '').toLowerCase().includes(q);
+                if (!matchTitle && !matchSub && !matchExtra && !matchDetail) return false;
+            }
+            return true;
+        });
+    }, [unifiedDayEntries, dailyDateSearch]);
+
+    // 7.3 Toggle Accordion for a Specific Day
+    const toggleDailyAccordion = (dateIso) => {
+        setExpandedDailyDates(prev => ({
+            ...prev,
+            [dateIso]: !prev[dateIso]
+        }));
+    };
 
     // 8. Handlers for Opening, Adding & Editing Direct Incomes and Operational Expenses
     const handleOpenFinanceModal = (category, item = null) => {
@@ -1431,6 +2070,203 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         setIsGeneratingPDF(false);
     };
 
+    // 9.1 Single-Day Financial Closing & Fee Audit PDF Export (100% Offline, Zero DB Reads)
+    const handleDownloadSingleDayReport = async (dayGroup) => {
+        if (!dayGroup) return;
+        setIsGeneratingDailyPDF(true);
+        try {
+            const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+            const pageWidth = doc.internal.pageSize.getWidth();
+
+            doc.setFillColor(15, 23, 42); // Slate-900
+            doc.rect(0, 0, pageWidth, 45, 'F');
+
+            let hasLogo = false;
+            let base64Logo = localStorage.getItem(`school_logo_base64_${schoolId}`);
+            if (base64Logo) {
+                try {
+                    doc.addImage(base64Logo, 'PNG', 14, 10, 24, 24);
+                    hasLogo = true;
+                } catch (e) {}
+            }
+
+            const headerTextX = hasLogo ? 44 : 14;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(16);
+            doc.setTextColor(255, 255, 255);
+            doc.text((schoolInfo.name || 'SCHOOL REPORT').toUpperCase(), headerTextX, 19);
+
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(148, 163, 184);
+            doc.text(`Daily Financial Closing & Fee Collection Audit Statement`, headerTextX, 26);
+
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(56, 189, 248); // Sky blue
+            doc.text(`Audit Date: ${dayGroup.displayDate} (${dayGroup.dayName})`, headerTextX, 33);
+
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(203, 213, 225);
+            doc.text(`Generated: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()} | 100% Offline Verified`, headerTextX, 39);
+
+            // 1. Daily Financial Breakdown Table
+            let startY = 53;
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(15, 23, 42);
+            doc.text("1. Daily Cash Inflow & Outflow Summary", 14, startY);
+
+            const summaryData = [
+                ['Counter Cash Fees (Cash in Drawer)', `${dayGroup.txs.filter(t => (t.paymentMode||'').toLowerCase() === 'cash').length} Receipts`, `Rs ${dayGroup.counterCashFees.toLocaleString()}`],
+                ['Online Fees (EasyPaisa)', `${dayGroup.txs.filter(t => (t.paymentMode||'').toLowerCase().includes('easy')).length} Receipts`, `Rs ${dayGroup.easyPaisaFees.toLocaleString()}`],
+                ['Online Fees (JazzCash)', `${dayGroup.txs.filter(t => (t.paymentMode||'').toLowerCase().includes('jazz')).length} Receipts`, `Rs ${dayGroup.jazzCashFees.toLocaleString()}`],
+                ['Online Fees (Bank Transfer)', `${dayGroup.txs.filter(t => (t.paymentMode||'').toLowerCase().includes('bank')).length} Receipts`, `Rs ${dayGroup.bankFees.toLocaleString()}`],
+                ['Direct Incomes (Store / Canteen / Other)', `${dayGroup.incomes.length} Recorded Heads`, `Rs ${dayGroup.totalDirectIncome.toLocaleString()}`],
+                ['Gross Total Inflow', `${dayGroup.txs.length + dayGroup.incomes.length} Inflow Heads`, `Rs ${dayGroup.grossInflow.toLocaleString()}`],
+                ['Operational Expenses / Vouchers', `${dayGroup.expenses.length} Expense Entries`, `Rs ${dayGroup.totalExpenses.toLocaleString()}`],
+                ['Net Daily Balance / Cash Surplus', dayGroup.netBalance >= 0 ? 'Surplus Inflow' : 'Deficit', `Rs ${dayGroup.netBalance.toLocaleString()}`]
+            ];
+
+            autoTable(doc, {
+                startY: startY + 3,
+                head: [['Financial Head', 'Details / Transaction Count', 'Amount (PKR)']],
+                body: summaryData,
+                theme: 'grid',
+                headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5 },
+                styles: { fontSize: 8, cellPadding: 2.8 },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 75 },
+                    1: { textColor: [100, 116, 139] },
+                    2: { halign: 'right', fontStyle: 'bold' }
+                }
+            });
+
+            let nextY = doc.lastAutoTable.finalY + 8;
+
+            // 2. Itemized Fee Receipts Table
+            if (dayGroup.txs.length > 0) {
+                if (nextY > 235) { doc.addPage(); nextY = 20; }
+                doc.setFontSize(11);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(15, 23, 42);
+                doc.text(`2. Itemized Student Fee Receipts (${dayGroup.txs.length})`, 14, nextY);
+
+                const txRows = dayGroup.txs.map((tx, idx) => [
+                    idx + 1,
+                    tx.receiptNo || tx.id || '-',
+                    tx.studentName || 'Student',
+                    `${tx.className || '-'} ${tx.rollNo && tx.rollNo !== '-' ? `(Roll: ${tx.rollNo})` : ''}`,
+                    tx.paymentMode || 'Cash',
+                    tx.timeString || '-',
+                    `Rs ${Number(tx.totalPaid || 0).toLocaleString()}`
+                ]);
+
+                autoTable(doc, {
+                    startY: nextY + 3,
+                    head: [['#', 'Receipt #', 'Student Name', 'Class (Roll)', 'Payment Mode', 'Time', 'Paid (PKR)']],
+                    body: txRows,
+                    theme: 'striped',
+                    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+                    styles: { fontSize: 7.5, cellPadding: 2.2 },
+                    columnStyles: {
+                        0: { cellWidth: 8, halign: 'center' },
+                        1: { fontStyle: 'bold', cellWidth: 28 },
+                        2: { fontStyle: 'bold' },
+                        4: { halign: 'center' },
+                        5: { halign: 'center', textColor: [100, 116, 139] },
+                        6: { halign: 'right', fontStyle: 'bold', textColor: [22, 101, 52] }
+                    }
+                });
+                nextY = doc.lastAutoTable.finalY + 8;
+            }
+
+            // 3. Direct Incomes Table if any
+            if (dayGroup.incomes.length > 0) {
+                if (nextY > 240) { doc.addPage(); nextY = 20; }
+                doc.setFontSize(11);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(15, 23, 42);
+                doc.text(`3. Daily Direct Incomes & Receipts (${dayGroup.incomes.length})`, 14, nextY);
+
+                const incRows = dayGroup.incomes.map((inc, idx) => [
+                    idx + 1,
+                    inc.name || inc.title || inc.category || 'Direct Income',
+                    inc.category || 'General',
+                    inc.type === 'permanent' ? 'Monthly Fixed' : 'One-Time',
+                    inc.remarks || '-',
+                    `Rs ${Number(inc.amount || 0).toLocaleString()}`
+                ]);
+
+                autoTable(doc, {
+                    startY: nextY + 3,
+                    head: [['#', 'Income Title / Source', 'Category', 'Type', 'Remarks', 'Amount (PKR)']],
+                    body: incRows,
+                    theme: 'striped',
+                    headStyles: { fillColor: [22, 101, 52], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+                    styles: { fontSize: 7.5, cellPadding: 2.2 },
+                    columnStyles: {
+                        0: { cellWidth: 8, halign: 'center' },
+                        1: { fontStyle: 'bold' },
+                        3: { halign: 'center' },
+                        5: { halign: 'right', fontStyle: 'bold', textColor: [22, 101, 52] }
+                    }
+                });
+                nextY = doc.lastAutoTable.finalY + 8;
+            }
+
+            // 4. Operational Expenses Table if any
+            if (dayGroup.expenses.length > 0) {
+                if (nextY > 240) { doc.addPage(); nextY = 20; }
+                doc.setFontSize(11);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(15, 23, 42);
+                doc.text(`4. Daily Operational Expenses (${dayGroup.expenses.length})`, 14, nextY);
+
+                const expRows = dayGroup.expenses.map((e, idx) => [
+                    idx + 1,
+                    e.name || 'Expense Item',
+                    e.category || 'General',
+                    e.remarks || '-',
+                    `Rs ${Number(e.amount || 0).toLocaleString()}`
+                ]);
+
+                autoTable(doc, {
+                    startY: nextY + 3,
+                    head: [['#', 'Expense Title', 'Category', 'Remarks', 'Amount (PKR)']],
+                    body: expRows,
+                    theme: 'striped',
+                    headStyles: { fillColor: [185, 28, 28], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+                    styles: { fontSize: 7.5, cellPadding: 2.2 },
+                    columnStyles: {
+                        0: { cellWidth: 8, halign: 'center' },
+                        1: { fontStyle: 'bold' },
+                        4: { halign: 'right', fontStyle: 'bold', textColor: [185, 28, 28] }
+                    }
+                });
+                nextY = doc.lastAutoTable.finalY + 8;
+            }
+
+            // Signature Block
+            if (nextY > 250) { doc.addPage(); nextY = 20; } else { nextY = Math.max(nextY + 12, 260); }
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(100, 116, 139);
+            doc.line(14, nextY, 70, nextY);
+            doc.text("Cashier / Accountant Signature", 14, nextY + 4);
+
+            doc.line(pageWidth - 70, nextY, pageWidth - 14, nextY);
+            doc.text("Principal / Administrator Verification", pageWidth - 70, nextY + 4);
+
+            doc.save(`Daily_Financial_Audit_${dayGroup.dateIso}.pdf`);
+        } catch (err) {
+            console.error("Daily PDF error:", err);
+            alert("Could not generate daily PDF report: " + err.message);
+        }
+        setIsGeneratingDailyPDF(false);
+    };
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', padding: '0.5rem 0' }}>
             
@@ -1492,82 +2328,108 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     </div>
                 </div>
 
-                {/* Right Time-Machine Controls */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                {/* Right Time-Machine Controls (Rock-solid flex layout) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     
-                    {/* Timeframe Scope Switcher */}
+                    {/* Timeframe Scope Switcher (Modern 2D Segmented Control Toggle) */}
                     <div style={{
                         display: 'inline-flex',
                         alignItems: 'center',
                         background: '#f1f5f9',
-                        padding: '3px',
+                        padding: '4px',
                         borderRadius: '12px',
-                        border: '1px solid #e2e8f0'
+                        border: '1.5px solid #e2e8f0',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.04)',
+                        flexShrink: 0,
+                        gap: '2px'
                     }}>
+                        {/* 1. Today */}
                         <button
+                            type="button"
                             onClick={() => setSelectedMonthMode('today')}
                             style={{
                                 border: 'none',
-                                background: selectedMonthMode === 'today' ? '#ffffff' : 'transparent',
-                                color: selectedMonthMode === 'today' ? '#0078d4' : '#64748b',
-                                fontWeight: selectedMonthMode === 'today' ? '800' : '600',
-                                padding: '6px 12px',
+                                background: selectedMonthMode === 'today' ? '#0078d4' : 'transparent',
+                                color: selectedMonthMode === 'today' ? '#ffffff' : '#475569',
+                                fontWeight: selectedMonthMode === 'today' ? '800' : '700',
+                                padding: '6px 14px',
                                 borderRadius: '9px',
-                                fontSize: '0.8rem',
+                                fontSize: '0.82rem',
                                 cursor: 'pointer',
-                                boxShadow: selectedMonthMode === 'today' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                                display: 'flex',
+                                boxShadow: selectedMonthMode === 'today' ? '0 2px 6px rgba(0, 120, 212, 0.35)' : 'none',
+                                display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px',
+                                gap: '6px',
                                 transition: 'all 0.15s ease'
                             }}
                         >
-                            ⚡ Today
+                            <Zap 
+                                size={14} 
+                                strokeWidth={2.5} 
+                                style={{ color: selectedMonthMode === 'today' ? '#ffffff' : '#64748b' }} 
+                            />
+                            <span>Today</span>
                         </button>
+
+                        {/* 2. This Month */}
                         <button
+                            type="button"
                             onClick={() => setSelectedMonthMode('current')}
                             style={{
                                 border: 'none',
-                                background: selectedMonthMode === 'current' ? '#ffffff' : 'transparent',
-                                color: selectedMonthMode === 'current' ? '#0078d4' : '#64748b',
-                                fontWeight: selectedMonthMode === 'current' ? '800' : '600',
-                                padding: '6px 12px',
+                                background: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '#0078d4' : 'transparent',
+                                color: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '#ffffff' : '#475569',
+                                fontWeight: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '800' : '700',
+                                padding: '6px 14px',
                                 borderRadius: '9px',
-                                fontSize: '0.8rem',
+                                fontSize: '0.82rem',
                                 cursor: 'pointer',
-                                boxShadow: selectedMonthMode === 'current' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                                display: 'flex',
+                                boxShadow: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '0 2px 6px rgba(0, 120, 212, 0.35)' : 'none',
+                                display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px',
+                                gap: '6px',
                                 transition: 'all 0.15s ease'
                             }}
                         >
-                            📅 This Month
+                            <Calendar 
+                                size={14} 
+                                strokeWidth={2.5} 
+                                style={{ color: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '#ffffff' : '#64748b' }} 
+                            />
+                            <span>This Month</span>
                         </button>
+
+                        {/* 3. Whole Year */}
                         <button
+                            type="button"
                             onClick={() => setSelectedMonthMode('all_year')}
                             style={{
                                 border: 'none',
-                                background: selectedMonthMode === 'all_year' ? '#ffffff' : 'transparent',
-                                color: selectedMonthMode === 'all_year' ? '#0078d4' : '#64748b',
-                                fontWeight: selectedMonthMode === 'all_year' ? '800' : '600',
-                                padding: '6px 12px',
+                                background: selectedMonthMode === 'all_year' ? '#0078d4' : 'transparent',
+                                color: selectedMonthMode === 'all_year' ? '#ffffff' : '#475569',
+                                fontWeight: selectedMonthMode === 'all_year' ? '800' : '700',
+                                padding: '6px 14px',
                                 borderRadius: '9px',
-                                fontSize: '0.8rem',
+                                fontSize: '0.82rem',
                                 cursor: 'pointer',
-                                boxShadow: selectedMonthMode === 'all_year' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                                display: 'flex',
+                                boxShadow: selectedMonthMode === 'all_year' ? '0 2px 6px rgba(0, 120, 212, 0.35)' : 'none',
+                                display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px',
+                                gap: '6px',
                                 transition: 'all 0.15s ease'
                             }}
                         >
-                            🗓️ Whole Year
+                            <CalendarDays 
+                                size={14} 
+                                strokeWidth={2.5} 
+                                style={{ color: selectedMonthMode === 'all_year' ? '#ffffff' : '#64748b' }} 
+                            />
+                            <span>Whole Year</span>
                         </button>
                     </div>
 
                     {/* Year Selector Dropdown */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#f8fafc', padding: '0.4rem 0.8rem', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#f8fafc', padding: '0.4rem 0.8rem', borderRadius: '10px', border: '1px solid #cbd5e1', flexShrink: 0 }}>
                         <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#64748b' }}>Year:</span>
                         <select
                             value={selectedYear}
@@ -1590,37 +2452,49 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                         </select>
                     </div>
 
-                    {/* Month Selector Dropdown */}
-                    {selectedMonthMode !== 'today' && selectedMonthMode !== 'all_year' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: '#f8fafc', padding: '0.4rem 0.8rem', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
-                            <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#64748b' }}>Month:</span>
-                            <select
-                                value={selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum}
-                                onChange={(e) => {
+                    {/* Month Selector Dropdown (Persistent to prevent layout shift) */}
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        background: '#f8fafc',
+                        padding: '0.4rem 0.8rem',
+                        borderRadius: '10px',
+                        border: '1px solid #cbd5e1',
+                        flexShrink: 0
+                    }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#64748b' }}>Month:</span>
+                        <select
+                            value={selectedMonthMode === 'all_year' ? 'all' : (selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum)}
+                            onChange={(e) => {
+                                if (e.target.value === 'all') {
+                                    setSelectedMonthMode('all_year');
+                                } else {
                                     setSelectedMonthMode('custom_month');
                                     setCustomSelectedMonthNum(Number(e.target.value));
-                                }}
-                                style={{
-                                    border: 'none',
-                                    background: 'transparent',
-                                    fontSize: '0.88rem',
-                                    fontWeight: '800',
-                                    color: '#0f172a',
-                                    outline: 'none',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                {MONTH_NAMES.map((name, idx) => (
-                                    <option key={name} value={idx + 1}>
-                                        {name} {(idx + 1) === currentMonthNum && selectedYear === currentYearNum ? '(Current)' : ''}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
+                                }
+                            }}
+                            style={{
+                                border: 'none',
+                                background: 'transparent',
+                                fontSize: '0.88rem',
+                                fontWeight: '800',
+                                color: '#0f172a',
+                                outline: 'none',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <option value="all">All Year (Jan-Dec)</option>
+                            {MONTH_NAMES.map((name, idx) => (
+                                <option key={name} value={idx + 1}>
+                                    {name} {(idx + 1) === currentMonthNum && selectedYear === currentYearNum ? '(Current)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
 
-                    {/* Clean Demo Data Button (Shown when demo records are detected) */}
-                    {hasDemoData && (
+                    {/* Clean Demo Data Button (Shown strictly for Demo School 6257 when demo records are detected) */}
+                    {isDemoAccount && hasDemoData && (
                         <button
                             onClick={handlePurgeFinancialDemoData}
                             disabled={isPurgingDemo}
@@ -1729,14 +2603,14 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             </div>
 
             {/* ========================================================= */}
-            {/* 5 EXECUTIVE KPI METRIC CARDS (3D Layered Look) */}
+            {/* 5 EXECUTIVE KPI METRIC CARDS (P&L Financial Flow: Revenue, Incomes, Expenses, Salaries, Net) */}
             {/* ========================================================= */}
             <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
                 gap: '1rem'
             }}>
-                {/* 1. Total Revenue Inflow */}
+                {/* 1. Fee Revenue / Collections */}
                 <div className="card" style={{
                     background: '#ffffff',
                     backgroundImage: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
@@ -1748,121 +2622,126 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#0078d4', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            Gross Revenue
+                            🎓 Fee Collections
                         </span>
                         <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0078d4', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
-                            <TrendingUp size={17} />
+                            <FileText size={17} />
                         </div>
                     </div>
-                    <div style={{ fontSize: '1.65rem', fontWeight: '800', color: '#0f172a', marginTop: '0.35rem' }}>
-                        Rs {calculatedMetrics.grossRevenue.toLocaleString()}
+                    <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#0f172a', marginTop: '0.35rem' }}>
+                        Rs {(calculatedMetrics.totalFeePaid || 0).toLocaleString()}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.78rem', color: '#64748b' }}>
                         <CheckCircle2 size={13} color="#16a34a" />
-                        <span><strong>{calculatedMetrics.scopedTxs.length}</strong> Receipts + Direct Incomes</span>
+                        <span><strong>{calculatedMetrics.scopedTxs.length}</strong> Paid Slips (Offline + Online)</span>
                     </div>
                 </div>
 
-                {/* 2. Counter Cash Drawer */}
+                {/* 2. Direct & Other Incomes */}
                 <div className="card" style={{
                     background: '#ffffff',
                     backgroundImage: 'linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%)',
                     border: '1px solid #dcfce7',
-                    borderLeft: '4px solid #10b981',
+                    borderLeft: '4px solid #16a34a',
                     borderRadius: '16px',
                     padding: '1.25rem',
-                    boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255,255,255,0.9)'
+                    boxShadow: '0 10px 15px -3px rgba(22, 163, 74, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255,255,255,0.9)'
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            Counter Cash
+                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            💰 Other Incomes
                         </span>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
-                            <Wallet size={17} />
+                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
+                            <TrendingUp size={17} />
                         </div>
                     </div>
-                    <div style={{ fontSize: '1.65rem', fontWeight: '800', color: '#0f172a', marginTop: '0.35rem' }}>
-                        Rs {calculatedMetrics.counterCashFees.toLocaleString()}
+                    <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#166534', marginTop: '0.35rem' }}>
+                        +Rs {(calculatedMetrics.totalDirectIncomes || 0).toLocaleString()}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.78rem', color: '#166534', fontWeight: '700' }}>
-                        <span>💵 Physical Cash Drawer</span>
+                        <span><strong>{calculatedMetrics.scopedIncomes.length}</strong> Inflow Vouchers Logged</span>
                     </div>
                 </div>
 
-                {/* 3. Online & Digital Submissions */}
-                <div className="card" style={{
-                    background: '#ffffff',
-                    backgroundImage: 'linear-gradient(180deg, #ffffff 0%, #eff6ff 100%)',
-                    border: '1px solid #e0e7ff',
-                    borderLeft: '4px solid #3b82f6',
-                    borderRadius: '16px',
-                    padding: '1.25rem',
-                    boxShadow: '0 10px 15px -3px rgba(59, 130, 246, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255,255,255,0.9)'
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            Online Portals
-                        </span>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
-                            <Smartphone size={17} />
-                        </div>
-                    </div>
-                    <div style={{ fontSize: '1.65rem', fontWeight: '800', color: '#0f172a', marginTop: '0.35rem' }}>
-                        Rs {calculatedMetrics.onlineFees.toLocaleString()}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.78rem', color: '#1e40af', fontWeight: '700' }}>
-                        <span>📱 EasyPaisa • JazzCash • Bank</span>
-                    </div>
-                </div>
-
-                {/* 4. Total Outflow (Expenses + Teacher Salaries) */}
+                {/* 3. Operational Expenses */}
                 <div className="card" style={{
                     background: '#ffffff',
                     backgroundImage: 'linear-gradient(180deg, #ffffff 0%, #fef2f2 100%)',
                     border: '1px solid #fee2e2',
-                    borderLeft: '4px solid #ef4444',
+                    borderLeft: '4px solid #dc2626',
                     borderRadius: '16px',
                     padding: '1.25rem',
-                    boxShadow: '0 10px 15px -3px rgba(239, 68, 68, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255,255,255,0.9)'
+                    boxShadow: '0 10px 15px -3px rgba(220, 38, 38, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255,255,255,0.9)'
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            Total Outflow
+                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#991b1b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            🏷️ Operational Expenses
                         </span>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
-                            <ArrowDownRight size={17} />
+                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#dc2626', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
+                            <Receipt size={17} />
                         </div>
                     </div>
-                    <div style={{ fontSize: '1.65rem', fontWeight: '800', color: '#dc2626', marginTop: '0.35rem' }}>
-                        Rs {calculatedMetrics.totalOutflow.toLocaleString()}
+                    <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#991b1b', marginTop: '0.35rem' }}>
+                        -Rs {(calculatedMetrics.totalOperationalExpenses || 0).toLocaleString()}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.75rem', color: '#991b1b', fontWeight: '700' }}>
-                        <span>Expenses + Staff Salaries</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.78rem', color: '#991b1b', fontWeight: '700' }}>
+                        <span><strong>{calculatedMetrics.scopedExpenses.length}</strong> Bills & Running Costs</span>
+                    </div>
+                </div>
+
+                {/* 4. Staff Salaries & Payroll */}
+                <div className="card" style={{
+                    background: '#ffffff',
+                    backgroundImage: 'linear-gradient(180deg, #ffffff 0%, #fffbeb 100%)',
+                    border: '1px solid #fef3c7',
+                    borderLeft: '4px solid #f59e0b',
+                    borderRadius: '16px',
+                    padding: '1.25rem',
+                    boxShadow: '0 10px 15px -3px rgba(245, 158, 11, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255,255,255,0.9)'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            👥 Staff Salaries
+                        </span>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#fffbeb', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#d97706', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
+                            <Users size={17} />
+                        </div>
+                    </div>
+                    <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#b45309', marginTop: '0.35rem' }}>
+                        -Rs {(calculatedMetrics.totalTeacherSalariesPaid || 0).toLocaleString()}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.75rem', color: '#92400e', fontWeight: '700', flexWrap: 'wrap' }}>
+                        <span><strong>{calculatedMetrics.staffPaidCount} / {calculatedMetrics.totalStaffCount}</strong> Staff Disbursed</span>
+                        {calculatedMetrics.totalStaffBudget > 0 && (
+                            <span style={{ color: '#b45309', fontSize: '0.72rem', background: '#fef3c7', padding: '1px 6px', borderRadius: '4px' }}>
+                                Budget: Rs {calculatedMetrics.totalStaffBudget.toLocaleString()}
+                            </span>
+                        )}
                     </div>
                 </div>
 
                 {/* 5. Net School Balance / Profit */}
                 <div className="card" style={{
-                    background: calculatedMetrics.netProfit >= 0 ? 'linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%)' : 'linear-gradient(180deg, #ffffff 0%, #fef2f2 100%)',
-                    border: `1px solid ${calculatedMetrics.netProfit >= 0 ? '#bbf7d0' : '#fecaca'}`,
-                    borderLeft: `4px solid ${calculatedMetrics.netProfit >= 0 ? '#10b981' : '#dc2626'}`,
+                    background: (calculatedMetrics.netProfit || 0) >= 0 ? 'linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%)' : 'linear-gradient(180deg, #ffffff 0%, #fef2f2 100%)',
+                    border: `1px solid ${(calculatedMetrics.netProfit || 0) >= 0 ? '#bbf7d0' : '#fecaca'}`,
+                    borderLeft: `4px solid ${(calculatedMetrics.netProfit || 0) >= 0 ? '#10b981' : '#dc2626'}`,
                     borderRadius: '16px',
                     padding: '1.25rem',
                     boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255,255,255,0.9)'
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: calculatedMetrics.netProfit >= 0 ? '#166534' : '#991b1b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            Net School Profit
+                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: (calculatedMetrics.netProfit || 0) >= 0 ? '#166534' : '#991b1b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            💎 Net School Profit
                         </span>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: calculatedMetrics.netProfit >= 0 ? '#16a34a' : '#dc2626', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: (calculatedMetrics.netProfit || 0) >= 0 ? '#16a34a' : '#dc2626', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' }}>
                             <Zap size={17} />
                         </div>
                     </div>
-                    <div style={{ fontSize: '1.65rem', fontWeight: '800', color: calculatedMetrics.netProfit >= 0 ? '#16a34a' : '#dc2626', marginTop: '0.35rem' }}>
-                        Rs {calculatedMetrics.netProfit.toLocaleString()}
+                    <div style={{ fontSize: '1.6rem', fontWeight: '900', color: (calculatedMetrics.netProfit || 0) >= 0 ? '#16a34a' : '#dc2626', marginTop: '0.35rem' }}>
+                        Rs {(calculatedMetrics.netProfit || 0).toLocaleString()}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.78rem', color: calculatedMetrics.netProfit >= 0 ? '#166534' : '#991b1b', fontWeight: '700' }}>
-                        <span>{calculatedMetrics.netProfit >= 0 ? `Surplus (${calculatedMetrics.profitMarginPercent}% Margin)` : 'Deficit / Overdraft'}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.78rem', color: (calculatedMetrics.netProfit || 0) >= 0 ? '#166534' : '#991b1b', fontWeight: '700' }}>
+                        <span>{(calculatedMetrics.netProfit || 0) >= 0 ? `Surplus (${calculatedMetrics.profitMarginPercent}% Margin)` : 'Deficit / Overdraft'}</span>
                     </div>
                 </div>
             </div>
@@ -3286,156 +4165,583 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             )}
 
             {/* ========================================================= */}
-            {/* SUB TAB 3: OFFLINE VS ONLINE FEE RECEIPTS LEDGER */}
+            {/* SUB TAB 3: MONTHLY CONSOLIDATED LEDGER (FEE SLIPS, INCOMES, EXPENSES) */}
             {/* ========================================================= */}
             {activeSubTab === 'fee_ledger' && (
-                <div className="card" style={{ background: '#ffffff', borderRadius: '16px', padding: '1.5rem', border: '1px solid #e2e8f0' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                    
+                    {/* 1. Header & Month Scope Selector Bar */}
+                    <div className="card" style={{
+                        background: '#ffffff',
+                        borderRadius: '16px',
+                        padding: '1.25rem 1.5rem',
+                        border: '1px solid #e2e8f0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '1rem',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                    }}>
                         <div>
-                            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: '#0f172a' }}>
-                                Daily Counter & Online Receipts Ledger
-                            </h3>
-                            <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: '#64748b' }}>
-                                Complete itemized list of all fee collections across all modes
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.01em' }}>
+                                    Monthly Consolidated Ledger
+                                </h3>
+                                <span style={{
+                                    background: '#eff6ff',
+                                    color: '#0078d4',
+                                    fontSize: '0.78rem',
+                                    padding: '3px 10px',
+                                    borderRadius: '999px',
+                                    fontWeight: '800',
+                                    border: '1px solid #bfdbfe'
+                                }}>
+                                    📅 {MONTH_NAMES[calculatedMetrics.activeMonthNum - 1]} {selectedYear}
+                                </span>
+                            </div>
+                            <p style={{ margin: '0.25rem 0 0', fontSize: '0.82rem', color: '#64748b' }}>
+                                Complete monthly cashflow from Daily Workflow & Online Submissions across Fee Slips, Incomes, and Expenses.
                             </p>
                         </div>
 
-                        {/* Search & Mode Filters */}
+                        {/* Action Buttons (Export Month PDF) */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                            <button
+                                onClick={handleDownloadFinancialReport}
+                                disabled={isGeneratingPDF}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '10px',
+                                    border: 'none',
+                                    background: 'linear-gradient(135deg, #0078d4 0%, #1e40af 100%)',
+                                    color: '#ffffff',
+                                    fontSize: '0.82rem',
+                                    fontWeight: '800',
+                                    cursor: isGeneratingPDF ? 'not-allowed' : 'pointer',
+                                    boxShadow: '0 2px 6px rgba(0, 120, 212, 0.3)'
+                                }}
+                            >
+                                {isGeneratingPDF ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                                <span>Export Month PDF</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 2. Search Bar, Channel Filter & 3 Clean Tabs Switcher */}
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '0.75rem',
+                        background: '#f8fafc',
+                        padding: '0.65rem 0.85rem',
+                        borderRadius: '14px',
+                        border: '1.5px solid #e2e8f0'
+                    }}>
+                        {/* 3 Main Clean Tabs */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMonthlyLedgerTab('fee_slips');
+                                    setLedgerPage(1);
+                                }}
+                                style={{
+                                    padding: '0.55rem 1.1rem',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: monthlyLedgerTab === 'fee_slips' ? '#0078d4' : 'transparent',
+                                    color: monthlyLedgerTab === 'fee_slips' ? '#ffffff' : '#334155',
+                                    fontWeight: '800',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    boxShadow: monthlyLedgerTab === 'fee_slips' ? '0 2px 6px rgba(0, 120, 212, 0.25)' : 'none',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <Wallet size={15} /> 🎓 Fee Slips Paid ({calculatedMetrics.scopedTxs.length})
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMonthlyLedgerTab('incomes');
+                                    setLedgerPage(1);
+                                }}
+                                style={{
+                                    padding: '0.55rem 1.1rem',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: monthlyLedgerTab === 'incomes' ? '#16a34a' : 'transparent',
+                                    color: monthlyLedgerTab === 'incomes' ? '#ffffff' : '#334155',
+                                    fontWeight: '800',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    boxShadow: monthlyLedgerTab === 'incomes' ? '0 2px 6px rgba(22, 163, 74, 0.25)' : 'none',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <TrendingUp size={15} /> 💰 Direct Incomes ({calculatedMetrics.scopedIncomes.length})
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMonthlyLedgerTab('expenses');
+                                    setLedgerPage(1);
+                                }}
+                                style={{
+                                    padding: '0.55rem 1.1rem',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: monthlyLedgerTab === 'expenses' ? '#dc2626' : 'transparent',
+                                    color: monthlyLedgerTab === 'expenses' ? '#ffffff' : '#334155',
+                                    fontWeight: '800',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    boxShadow: monthlyLedgerTab === 'expenses' ? '0 2px 6px rgba(220, 38, 38, 0.25)' : 'none',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <TrendingDown size={15} /> 🏷️ Operational Expenses ({calculatedMetrics.scopedExpenses.length})
+                            </button>
+                        </div>
+
+                        {/* Search and Channel Filter */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                             <div style={{ position: 'relative' }}>
-                                <Search size={16} color="#64748b" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
+                                <Search size={15} color="#64748b" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
                                 <input
                                     type="text"
-                                    placeholder="Search student, roll, receipt, trx..."
+                                    placeholder={
+                                        monthlyLedgerTab === 'fee_slips'
+                                            ? "Search receipt #, student, roll, trx ID..."
+                                            : (monthlyLedgerTab === 'incomes' ? "Search income name, category..." : "Search expense title, category...")
+                                    }
                                     value={searchLedger}
-                                    onChange={(e) => setSearchLedger(e.target.value)}
+                                    onChange={(e) => {
+                                        setSearchLedger(e.target.value);
+                                        setLedgerPage(1);
+                                    }}
                                     style={{
-                                        padding: '0.55rem 0.85rem 0.55rem 2.2rem',
-                                        borderRadius: '10px',
-                                        border: '1px solid #cbd5e1',
-                                        fontSize: '0.85rem',
+                                        padding: '0.48rem 0.75rem 0.48rem 2.1rem',
+                                        borderRadius: '8px',
+                                        border: '1.5px solid #cbd5e1',
+                                        fontSize: '0.82rem',
                                         outline: 'none',
-                                        width: '240px'
+                                        width: '240px',
+                                        background: '#ffffff',
+                                        color: '#0f172a'
                                     }}
                                 />
                             </div>
 
-                            <select
-                                value={modeLedgerFilter}
-                                onChange={(e) => setModeLedgerFilter(e.target.value)}
-                                style={{
-                                    padding: '0.55rem 0.85rem',
-                                    borderRadius: '10px',
-                                    border: '1px solid #cbd5e1',
-                                    fontSize: '0.85rem',
-                                    fontWeight: '700',
-                                    color: '#0f172a',
-                                    outline: 'none',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                <option value="all">All Modes ({calculatedMetrics.scopedTxs.length})</option>
-                                <option value="Cash">💵 Counter Cash</option>
-                                <option value="Online">📱 All Online Portals</option>
-                                <option value="EasyPaisa">🟢 EasyPaisa</option>
-                                <option value="JazzCash">🟠 JazzCash</option>
-                                <option value="Bank">🏦 Bank Transfer</option>
-                            </select>
+                            {monthlyLedgerTab === 'fee_slips' && (
+                                <select
+                                    value={modeLedgerFilter}
+                                    onChange={(e) => {
+                                        setModeLedgerFilter(e.target.value);
+                                        setLedgerPage(1);
+                                    }}
+                                    style={{
+                                        padding: '0.48rem 0.75rem',
+                                        borderRadius: '8px',
+                                        border: '1.5px solid #cbd5e1',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '700',
+                                        color: '#0f172a',
+                                        background: '#ffffff',
+                                        outline: 'none',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <option value="all">All Channels</option>
+                                    <option value="Cash">💵 Cash</option>
+                                    <option value="Online">📱 Online</option>
+                                    <option value="EasyPaisa">🟢 EasyPaisa</option>
+                                    <option value="JazzCash">🟠 JazzCash</option>
+                                    <option value="Bank">🏦 Bank</option>
+                                </select>
+                            )}
                         </div>
                     </div>
 
-                    {/* Receipts Table */}
-                    <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                            <thead>
-                                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                                    <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '700' }}>Receipt #</th>
-                                    <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '700' }}>Student & Class</th>
-                                    <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '700' }}>Date & Time</th>
-                                    <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#475569', fontWeight: '700' }}>Payment Channel</th>
-                                    <th style={{ padding: '0.65rem 0.85rem', textAlign: 'right', color: '#16a34a', fontWeight: '700' }}>Amount Paid</th>
-                                    <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#475569', fontWeight: '700' }}>Proof / Slip</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredLedgerTxs.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={6} style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#94a3b8' }}>
-                                            No fee receipts match your active filter.
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    filteredLedgerTxs.map(tx => {
-                                        const mode = (tx.paymentMode || 'Cash').toLowerCase();
-                                        const isOnline = mode.startsWith('online') || tx.collectedBy?.includes('Online') || mode.includes('transfer');
-                                        return (
-                                            <tr key={tx.id || tx.receiptNo} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                <td style={{ padding: '0.7rem 0.85rem', fontWeight: '800', color: '#0f172a' }}>
-                                                    {tx.receiptNo || tx.id}
-                                                </td>
-                                                <td style={{ padding: '0.7rem 0.85rem' }}>
-                                                    <strong style={{ color: '#0f172a', display: 'block' }}>{tx.studentName}</strong>
-                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                                        {tx.className} {tx.rollNo && tx.rollNo !== '-' ? `• Roll: ${tx.rollNo}` : ''}
-                                                    </span>
-                                                </td>
-                                                <td style={{ padding: '0.7rem 0.85rem', color: '#64748b', fontSize: '0.8rem' }}>
-                                                    {tx.dateString || tx.dateIso || 'N/A'} {tx.timeString ? `• ${tx.timeString}` : ''}
-                                                </td>
-                                                <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
-                                                    <span style={{
-                                                        display: 'inline-flex',
-                                                        alignItems: 'center',
-                                                        gap: '0.3rem',
-                                                        fontSize: '0.75rem',
-                                                        fontWeight: '700',
-                                                        padding: '3px 8px',
-                                                        borderRadius: '999px',
-                                                        background: !isOnline ? '#f0fdf4' : '#eff6ff',
-                                                        color: !isOnline ? '#166534' : '#1e40af',
-                                                        border: `1px solid ${!isOnline ? '#bbf7d0' : '#bfdbfe'}`
-                                                    }}>
-                                                        {!isOnline ? <Wallet size={12} /> : <Smartphone size={12} />}
-                                                        {tx.paymentMode || 'Cash'}
-                                                    </span>
-                                                </td>
-                                                <td style={{ padding: '0.7rem 0.85rem', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>
-                                                    Rs {Number(tx.totalPaid || 0).toLocaleString()}
-                                                </td>
-                                                <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
-                                                    {tx.proofUrl ? (
-                                                        <button
-                                                            onClick={() => setProofModalState({ isOpen: true, url: tx.proofUrl, title: `Payment Proof - ${tx.studentName}` })}
-                                                            style={{
-                                                                border: 'none',
-                                                                background: '#eff6ff',
-                                                                color: '#0078d4',
-                                                                borderRadius: '6px',
-                                                                padding: '4px 8px',
-                                                                fontSize: '0.75rem',
-                                                                fontWeight: '700',
-                                                                cursor: 'pointer',
-                                                                display: 'inline-flex',
-                                                                alignItems: 'center',
-                                                                gap: '3px'
-                                                            }}
-                                                        >
-                                                            <Eye size={12} /> View Slip
-                                                        </button>
-                                                    ) : (
-                                                        <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Counter Slip</span>
-                                                    )}
+                    {/* 4. MAIN DATA TABLE (Clean, Modular & Paginated 25 Rows per page) */}
+                    <div className="card" style={{ background: '#ffffff', borderRadius: '16px', padding: '1.25rem', border: '1.5px solid #cbd5e1', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                        <div style={{ overflowX: 'auto' }}>
+                            {/* ============================== */}
+                            {/* TAB 1: FEE SLIPS PAID TABLE */}
+                            {/* ============================== */}
+                            {monthlyLedgerTab === 'fee_slips' && (
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Receipt #</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Student & Class</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Date & Time</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#475569', fontWeight: '800' }}>Channel / Mode</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Trx / Reference ID</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'right', color: '#16a34a', fontWeight: '800' }}>Amount Paid</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#475569', fontWeight: '800' }}>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginatedMonthlyTxs.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={7} style={{ padding: '3rem 1rem', textAlign: 'center', color: '#94a3b8' }}>
+                                                    <FileText size={32} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                                                    <div style={{ fontWeight: '700', fontSize: '0.9rem' }}>No fee receipts found for {MONTH_NAMES[calculatedMetrics.activeMonthNum - 1]} {selectedYear}.</div>
+                                                    <div style={{ fontSize: '0.78rem' }}>Fee collections logged in Daily Workflow or Online Submissions will appear here.</div>
                                                 </td>
                                             </tr>
-                                        );
-                                    })
-                                )}
-                            </tbody>
-                        </table>
+                                        ) : (
+                                            paginatedMonthlyTxs.map(tx => {
+                                                const mode = (tx.paymentMode || 'Cash').toLowerCase();
+                                                const isOnline = mode.startsWith('online') || tx.collectedBy?.includes('Online') || mode.includes('transfer') || mode.includes('easy') || mode.includes('jazz') || mode.includes('bank');
+                                                const trxId = tx.trxId || tx.transactionId || tx.referenceId || tx.senderAccount || (isOnline ? 'Online Verified' : '-');
+                                                return (
+                                                    <tr key={tx.id || tx.receiptNo} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s ease' }} onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                                                        <td style={{ padding: '0.7rem 0.85rem', fontWeight: '800', color: '#0f172a' }}>
+                                                            {tx.receiptNo || tx.id}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem' }}>
+                                                            <strong style={{ color: '#0f172a', display: 'block' }}>{tx.studentName}</strong>
+                                                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                                {tx.className} {tx.rollNo && tx.rollNo !== '-' ? `• Roll: ${tx.rollNo}` : ''}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', color: '#64748b', fontSize: '0.8rem' }}>
+                                                            <span style={{ fontWeight: '700', color: '#334155' }}>{tx.dateString || tx.dateIso || 'N/A'}</span>
+                                                            {tx.timeString ? <span style={{ fontSize: '0.74rem', color: '#94a3b8', display: 'block' }}>{tx.timeString}</span> : null}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
+                                                            <span style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '0.3rem',
+                                                                fontSize: '0.75rem',
+                                                                fontWeight: '700',
+                                                                padding: '3px 8px',
+                                                                borderRadius: '999px',
+                                                                background: !isOnline ? '#f0fdf4' : '#eff6ff',
+                                                                color: !isOnline ? '#166534' : '#1e40af',
+                                                                border: `1px solid ${!isOnline ? '#bbf7d0' : '#bfdbfe'}`
+                                                            }}>
+                                                                {!isOnline ? <Wallet size={12} /> : <Smartphone size={12} />}
+                                                                {tx.paymentMode || 'Cash'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', fontSize: '0.78rem', color: '#475569', fontFamily: 'monospace' }}>
+                                                            {trxId}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'right', fontWeight: '900', color: '#16a34a' }}>
+                                                            Rs {Number(tx.totalPaid || 0).toLocaleString()}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
+                                                            <div style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>
+                                                                {tx.proofUrl && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setProofModalState({ isOpen: true, url: tx.proofUrl, title: `Payment Proof - ${tx.studentName}` })}
+                                                                        style={{
+                                                                            border: 'none',
+                                                                            background: '#eff6ff',
+                                                                            color: '#0078d4',
+                                                                            borderRadius: '6px',
+                                                                            padding: '4px 8px',
+                                                                            fontSize: '0.75rem',
+                                                                            fontWeight: '700',
+                                                                            cursor: 'pointer',
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '3px'
+                                                                        }}
+                                                                    >
+                                                                        <Eye size={12} /> Proof
+                                                                    </button>
+                                                                )}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setSelectedReceiptForModal(tx);
+                                                                        setReceiptModalOpen(true);
+                                                                    }}
+                                                                    style={{
+                                                                        border: '1.5px solid #cbd5e1',
+                                                                        background: '#ffffff',
+                                                                        color: '#0f172a',
+                                                                        borderRadius: '6px',
+                                                                        padding: '4px 8px',
+                                                                        fontSize: '0.75rem',
+                                                                        fontWeight: '700',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '3px'
+                                                                    }}
+                                                                >
+                                                                    <Printer size={12} /> Slip
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            )}
+
+                            {/* ============================== */}
+                            {/* TAB 2: DIRECT INCOMES TABLE */}
+                            {/* ============================== */}
+                            {monthlyLedgerTab === 'incomes' && (
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Voucher / Title</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Category</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Date Logged</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#475569', fontWeight: '800' }}>Type / Mode</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'right', color: '#16a34a', fontWeight: '800' }}>Amount</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Remarks / Proof</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginatedMonthlyIncomes.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={6} style={{ padding: '3rem 1rem', textAlign: 'center', color: '#94a3b8' }}>
+                                                    <TrendingUp size={32} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                                                    <div style={{ fontWeight: '700', fontSize: '0.9rem' }}>No direct income entries found for {MONTH_NAMES[calculatedMetrics.activeMonthNum - 1]} {selectedYear}.</div>
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            paginatedMonthlyIncomes.map(inc => {
+                                                const incDate = inc.date || inc.createdAt;
+                                                return (
+                                                    <tr key={inc.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s ease' }} onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                                                        <td style={{ padding: '0.7rem 0.85rem', fontWeight: '800', color: '#0f172a' }}>
+                                                            {inc.name || inc.title || 'Direct Income'}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem' }}>
+                                                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#166534', background: '#dcfce7', padding: '2px 8px', borderRadius: '6px' }}>
+                                                                {inc.category || 'General'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', color: '#64748b', fontSize: '0.8rem' }}>
+                                                            {incDate ? new Date(incDate).toLocaleDateString('en-GB') : 'N/A'}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
+                                                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#475569', background: '#f1f5f9', padding: '2px 8px', borderRadius: '6px' }}>
+                                                                {inc.type === 'permanent' ? '🔄 Permanent' : '⚡ 1-Time'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'right', fontWeight: '900', color: '#16a34a' }}>
+                                                            +Rs {Number(inc.amount || 0).toLocaleString()}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', fontSize: '0.78rem', color: '#64748b' }}>
+                                                            {inc.proofUrl && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setProofModalState({ isOpen: true, url: inc.proofUrl, title: `Income Proof - ${inc.name}` })}
+                                                                    style={{ border: 'none', background: '#dcfce7', color: '#166534', borderRadius: '5px', padding: '3px 6px', fontSize: '0.72rem', fontWeight: '800', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '3px', marginRight: '6px' }}
+                                                                >
+                                                                    <Eye size={11} /> Proof
+                                                                </button>
+                                                            )}
+                                                            {inc.remarks || '-'}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            )}
+
+                            {/* ============================== */}
+                            {/* TAB 3: OPERATIONAL EXPENSES TABLE */}
+                            {/* ============================== */}
+                            {monthlyLedgerTab === 'expenses' && (
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Expense Title</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Category</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Date Logged</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#475569', fontWeight: '800' }}>Frequency / Type</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'right', color: '#dc2626', fontWeight: '800' }}>Amount</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#475569', fontWeight: '800' }}>Remarks / Proof</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginatedMonthlyExpenses.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={6} style={{ padding: '3rem 1rem', textAlign: 'center', color: '#94a3b8' }}>
+                                                    <TrendingDown size={32} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                                                    <div style={{ fontWeight: '700', fontSize: '0.9rem' }}>No operational expenses found for {MONTH_NAMES[calculatedMetrics.activeMonthNum - 1]} {selectedYear}.</div>
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            paginatedMonthlyExpenses.map(exp => {
+                                                const expDate = exp.date || exp.createdAt;
+                                                return (
+                                                    <tr key={exp.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s ease' }} onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                                                        <td style={{ padding: '0.7rem 0.85rem', fontWeight: '800', color: '#0f172a' }}>
+                                                            {exp.name || exp.title || 'Operational Expense'}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem' }}>
+                                                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#991b1b', background: '#fee2e2', padding: '2px 8px', borderRadius: '6px' }}>
+                                                                {exp.category || 'Operational'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', color: '#64748b', fontSize: '0.8rem' }}>
+                                                            {expDate ? new Date(expDate).toLocaleDateString('en-GB') : 'N/A'}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
+                                                            <span style={{ fontSize: '0.75rem', fontWeight: '700', color: exp.type === 'permanent' ? '#7c2d12' : '#475569', background: exp.type === 'permanent' ? '#ffedd5' : '#f1f5f9', padding: '2px 8px', borderRadius: '6px' }}>
+                                                                {exp.type === 'permanent' ? '🔄 Permanent' : '⚡ 1-Time'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'right', fontWeight: '900', color: '#dc2626' }}>
+                                                            -Rs {Number(exp.amount || 0).toLocaleString()}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', fontSize: '0.78rem', color: '#64748b' }}>
+                                                            {exp.proofUrl && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setProofModalState({ isOpen: true, url: exp.proofUrl, title: `Expense Proof - ${exp.name}` })}
+                                                                    style={{ border: 'none', background: '#fee2e2', color: '#dc2626', borderRadius: '5px', padding: '3px 6px', fontSize: '0.72rem', fontWeight: '800', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '3px', marginRight: '6px' }}
+                                                                >
+                                                                    <Eye size={11} /> Proof
+                                                                </button>
+                                                            )}
+                                                            {exp.remarks || '-'}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+
+                        {/* ============================== */}
+                        {/* 5. CLEAN PAGINATION CONTROLS (25 Rows per page) */}
+                        {/* ============================== */}
+                        {totalMonthlyLedgerCount > 0 && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                marginTop: '1.25rem',
+                                paddingTop: '0.85rem',
+                                borderTop: '1.5px solid #f1f5f9',
+                                flexWrap: 'wrap',
+                                gap: '0.75rem'
+                            }}>
+                                {/* Rows Info */}
+                                <div style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '700' }}>
+                                    Showing <strong style={{ color: '#0f172a' }}>{ledgerStartIndex + 1}</strong> to <strong style={{ color: '#0f172a' }}>{ledgerEndIndex}</strong> of <strong style={{ color: '#0f172a' }}>{totalMonthlyLedgerCount}</strong> records
+                                </div>
+
+                                {/* Page Navigation Buttons */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setLedgerPage(p => Math.max(1, p - 1))}
+                                        disabled={ledgerPage <= 1}
+                                        style={{
+                                            padding: '0.4rem 0.75rem',
+                                            borderRadius: '8px',
+                                            border: '1.5px solid #cbd5e1',
+                                            background: ledgerPage > 1 ? '#ffffff' : '#f8fafc',
+                                            color: ledgerPage > 1 ? '#0f172a' : '#94a3b8',
+                                            fontSize: '0.8rem',
+                                            fontWeight: '800',
+                                            cursor: ledgerPage > 1 ? 'pointer' : 'not-allowed',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '3px'
+                                        }}
+                                    >
+                                        <ChevronLeft size={14} /> Previous
+                                    </button>
+
+                                    {/* Numbered Page Buttons */}
+                                    {Array.from({ length: totalMonthlyLedgerPages }, (_, i) => i + 1)
+                                        .filter(pNum => pNum === 1 || pNum === totalMonthlyLedgerPages || Math.abs(pNum - ledgerPage) <= 2)
+                                        .map((pNum, idx, arr) => {
+                                            const isSelected = pNum === ledgerPage;
+                                            const prevPNum = arr[idx - 1];
+                                            const showEllipsis = prevPNum && pNum - prevPNum > 1;
+
+                                            return (
+                                                <React.Fragment key={pNum}>
+                                                    {showEllipsis && <span style={{ color: '#94a3b8', padding: '0 4px', fontWeight: '800' }}>...</span>}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setLedgerPage(pNum)}
+                                                        style={{
+                                                            minWidth: '32px',
+                                                            height: '32px',
+                                                            borderRadius: '8px',
+                                                            border: isSelected ? '1.5px solid #0078d4' : '1.5px solid #cbd5e1',
+                                                            background: isSelected ? '#0078d4' : '#ffffff',
+                                                            color: isSelected ? '#ffffff' : '#0f172a',
+                                                            fontSize: '0.8rem',
+                                                            fontWeight: '800',
+                                                            cursor: 'pointer'
+                                                        }}
+                                                    >
+                                                        {pNum}
+                                                    </button>
+                                                </React.Fragment>
+                                            );
+                                        })}
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setLedgerPage(p => Math.min(totalMonthlyLedgerPages, p + 1))}
+                                        disabled={ledgerPage >= totalMonthlyLedgerPages}
+                                        style={{
+                                            padding: '0.4rem 0.75rem',
+                                            borderRadius: '8px',
+                                            border: '1.5px solid #cbd5e1',
+                                            background: ledgerPage < totalMonthlyLedgerPages ? '#ffffff' : '#f8fafc',
+                                            color: ledgerPage < totalMonthlyLedgerPages ? '#0f172a' : '#94a3b8',
+                                            fontSize: '0.8rem',
+                                            fontWeight: '800',
+                                            cursor: ledgerPage < totalMonthlyLedgerPages ? 'pointer' : 'not-allowed',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '3px'
+                                        }}
+                                    >
+                                        Next <ChevronRight size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
-
+            
             {/* ========================================================= */}
             {/* SUB TAB 4: EXPENSES & TEACHER PAYROLL */}
             {/* ========================================================= */}
@@ -3872,7 +5178,174 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                 </div>
             )}
 
-            {/* 3. Payment Proof Screenshot Lightbox */}
+            {/* 3. Student Fee Slip Preview Modal */}
+            {receiptModalOpen && selectedReceiptForModal && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(5px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 99999,
+                        padding: '1rem'
+                    }}
+                    onClick={() => {
+                        setReceiptModalOpen(false);
+                        setSelectedReceiptForModal(null);
+                    }}
+                >
+                    <div
+                        style={{
+                            background: '#ffffff',
+                            borderRadius: '16px',
+                            maxWidth: '480px',
+                            width: '100%',
+                            overflow: 'hidden',
+                            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)',
+                            border: '1.5px solid #cbd5e1'
+                        }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div style={{
+                            padding: '1rem 1.25rem',
+                            background: 'linear-gradient(135deg, #0078d4 0%, #1e40af 100%)',
+                            color: '#ffffff',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                        }}>
+                            <div>
+                                <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: '900', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <FileText size={16} /> Official Fee Receipt
+                                </h4>
+                                <span style={{ fontSize: '0.75rem', opacity: 0.9 }}>
+                                    Slip #{selectedReceiptForModal.receiptNo || selectedReceiptForModal.id}
+                                </span>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setReceiptModalOpen(false);
+                                    setSelectedReceiptForModal(null);
+                                }}
+                                style={{ border: 'none', background: 'rgba(255,255,255,0.2)', borderRadius: '8px', color: '#ffffff', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Slip Content */}
+                        <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem', fontSize: '0.85rem' }}>
+                            {/* School & Student Info */}
+                            <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.95rem' }}>
+                                    {selectedReceiptForModal.studentName}
+                                </div>
+                                {selectedReceiptForModal.fatherName && (
+                                    <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                                        Father: {selectedReceiptForModal.fatherName}
+                                    </div>
+                                )}
+                                <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '3px', fontWeight: '700' }}>
+                                    Class: {selectedReceiptForModal.className} {selectedReceiptForModal.rollNo && selectedReceiptForModal.rollNo !== '-' ? `• Roll: ${selectedReceiptForModal.rollNo}` : ''}
+                                </div>
+                            </div>
+
+                            {/* Payment Meta */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                                <div style={{ background: '#f1f5f9', padding: '0.6rem 0.75rem', borderRadius: '8px' }}>
+                                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Date & Time</span>
+                                    <strong style={{ display: 'block', color: '#0f172a', fontSize: '0.82rem', marginTop: '2px' }}>
+                                        {selectedReceiptForModal.dateString || selectedReceiptForModal.dateIso || 'N/A'} {selectedReceiptForModal.timeString ? `• ${selectedReceiptForModal.timeString}` : ''}
+                                    </strong>
+                                </div>
+                                <div style={{ background: '#f1f5f9', padding: '0.6rem 0.75rem', borderRadius: '8px' }}>
+                                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Payment Mode</span>
+                                    <strong style={{ display: 'block', color: '#0078d4', fontSize: '0.82rem', marginTop: '2px' }}>
+                                        {selectedReceiptForModal.paymentMode || 'Cash'}
+                                    </strong>
+                                </div>
+                            </div>
+
+                            {/* Fee Breakdown List */}
+                            <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                                <div style={{ background: '#f8fafc', padding: '0.45rem 0.75rem', fontSize: '0.75rem', fontWeight: '800', color: '#475569', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>Fee Particulars</span>
+                                    <span>Amount</span>
+                                </div>
+                                <div style={{ padding: '0.6rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                    {selectedReceiptForModal.items && Array.isArray(selectedReceiptForModal.items) && selectedReceiptForModal.items.length > 0 ? (
+                                        selectedReceiptForModal.items.map((it, idx) => (
+                                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#334155' }}>
+                                                <span>{it.name || it.title || 'Fee'}</span>
+                                                <span style={{ fontWeight: '700' }}>Rs {Number(it.amount || 0).toLocaleString()}</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#334155' }}>
+                                            <span>Tuition / Session Fee</span>
+                                            <span style={{ fontWeight: '700' }}>Rs {Number(selectedReceiptForModal.totalPaid || 0).toLocaleString()}</span>
+                                        </div>
+                                    )}
+                                    {Number(selectedReceiptForModal.discount || 0) > 0 && (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#dc2626' }}>
+                                            <span>Concession / Discount</span>
+                                            <span>-Rs {Number(selectedReceiptForModal.discount).toLocaleString()}</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div style={{ background: '#f0fdf4', padding: '0.6rem 0.75rem', borderTop: '1.5px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontWeight: '900', color: '#166534', fontSize: '0.88rem' }}>Total Amount Paid:</span>
+                                    <strong style={{ fontWeight: '900', color: '#166534', fontSize: '1.1rem' }}>
+                                        Rs {Number(selectedReceiptForModal.totalPaid || 0).toLocaleString()}
+                                    </strong>
+                                </div>
+                            </div>
+
+                            {selectedReceiptForModal.remarks && (
+                                <div style={{ fontSize: '0.76rem', color: '#64748b', background: '#f8fafc', padding: '0.5rem 0.75rem', borderRadius: '6px' }}>
+                                    <strong>Remarks:</strong> {selectedReceiptForModal.remarks}
+                                </div>
+                            )}
+
+                            {/* Buttons */}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.4rem' }}>
+                                {selectedReceiptForModal.proofUrl && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setProofModalState({ isOpen: true, url: selectedReceiptForModal.proofUrl, title: `Payment Proof - ${selectedReceiptForModal.studentName}` })}
+                                        style={{ padding: '0.5rem 0.9rem', borderRadius: '8px', border: '1.5px solid #bfdbfe', background: '#eff6ff', color: '#0078d4', fontWeight: '800', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                    >
+                                        <Eye size={13} /> View Proof Screenshot
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => window.print()}
+                                    style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: 'none', background: '#0f172a', color: '#ffffff', fontWeight: '800', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                    <Printer size={13} /> Print Slip
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setReceiptModalOpen(false);
+                                        setSelectedReceiptForModal(null);
+                                    }}
+                                    style={{ padding: '0.5rem 0.9rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', background: '#ffffff', color: '#64748b', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 4. Payment Proof Screenshot Lightbox */}
             {proofModalState.isOpen && (
                 <div
                     style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '1.5rem' }}

@@ -7,7 +7,7 @@ import {
     DollarSign, Wallet, CreditCard, Tag, Receipt, ExternalLink, Archive,
     Folder, FolderOpen, SearchCode, PlusCircle, Sliders, ZoomIn, ZoomOut,
     Maximize2, Shield, Stamp, FileSpreadsheet, Building2, User, Phone, MessageCircle, Activity,
-    Wifi, WifiOff, CloudUpload, BarChart3, UserCheck, UserX, Users2
+    Wifi, WifiOff, CloudUpload, BarChart3, UserCheck, UserX, Users2, Zap
 } from 'lucide-react';
 import { db, auth, storage, functions } from '../firebase';
 import {
@@ -229,6 +229,410 @@ const DECADE_CONFIG = [
     { id: '1990s', label: '🟠 1990s Shelf', startYear: 1990, endYear: 1999, badge: '35 Yrs Back' },
     { id: '1980s', label: '🟤 1980s Shelf', startYear: 1980, endYear: 1989, badge: '45 Yrs Back' },
     { id: '1970s', label: '🏛️ 1970s Shelf', startYear: 1976, endYear: 1979, badge: 'Founding Era' }
+];
+
+// 25 Realistic Mock Records for 2020s Cupboard Shelf (2020 — 2026)
+const MOCK_2020S_CUPBOARD_RECORDS = [
+    {
+        id: 'cupboard_demo_2026_1',
+        certificateNo: 'SLC-2026/101',
+        studentName: 'Muhammad Daniyal',
+        fatherName: 'Tariq Mehmood Khan',
+        grNo: 'GR-4890',
+        rollNo: '101',
+        classAtLeaving: 'Class 10-A',
+        leavingDate: '2026-03-31',
+        session: '2025-2026',
+        year: 2026,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2009-04-14'
+    },
+    {
+        id: 'cupboard_demo_2026_2',
+        certificateNo: 'SLC-2026/102',
+        studentName: 'Ayesha Bibi',
+        fatherName: 'Abdul Rehman Farooqi',
+        grNo: 'GR-4895',
+        rollNo: '102',
+        classAtLeaving: 'Class 10-B',
+        leavingDate: '2026-03-31',
+        session: '2025-2026',
+        year: 2026,
+        reason: 'Passed Board Exam / Higher Secondary Admission',
+        conduct: 'Good & Cooperative',
+        duesStatus: 'cleared',
+        dob: '2010-09-22'
+    },
+    {
+        id: 'cupboard_demo_2026_3',
+        certificateNo: 'SLC-2026/103',
+        studentName: 'Hamza Bilal',
+        fatherName: 'Bilal Ahmed Sheikh',
+        grNo: 'GR-4902',
+        rollNo: '103',
+        classAtLeaving: 'Class 10-A',
+        leavingDate: '2026-03-31',
+        session: '2025-2026',
+        year: 2026,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2009-12-05'
+    },
+    {
+        id: 'cupboard_demo_2026_4',
+        certificateNo: 'SLC-2026/104',
+        studentName: 'Zainab Fatima',
+        fatherName: 'Syed Imran Shah',
+        grNo: 'GR-4915',
+        rollNo: '104',
+        classAtLeaving: 'Class 9-A',
+        leavingDate: '2026-02-15',
+        session: '2025-2026',
+        year: 2026,
+        reason: 'Parents Relocation / Transfer to another City',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2010-05-18'
+    },
+    {
+        id: 'cupboard_demo_2025_1',
+        certificateNo: 'SLC-2025/088',
+        studentName: 'Usman Ghani',
+        fatherName: 'Muhammad Ghani',
+        grNo: 'GR-4620',
+        rollNo: '12',
+        classAtLeaving: 'Class 10-A',
+        leavingDate: '2025-03-31',
+        session: '2024-2025',
+        year: 2025,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2008-07-11'
+    },
+    {
+        id: 'cupboard_demo_2025_2',
+        certificateNo: 'SLC-2025/089',
+        studentName: 'Fatima Noor',
+        fatherName: 'Noor Muhammad Khan',
+        grNo: 'GR-4632',
+        rollNo: '15',
+        classAtLeaving: 'Class 10-B',
+        leavingDate: '2025-03-31',
+        session: '2024-2025',
+        year: 2025,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2008-11-03'
+    },
+    {
+        id: 'cupboard_demo_2025_3',
+        certificateNo: 'SLC-2025/090',
+        studentName: 'Bilal Hassan',
+        fatherName: 'Hassan Ali',
+        grNo: 'GR-4645',
+        rollNo: '23',
+        classAtLeaving: 'Class 8',
+        leavingDate: '2025-01-20',
+        session: '2024-2025',
+        year: 2025,
+        reason: 'Shifted to Cadet College / Boarding School',
+        conduct: 'Good & Cooperative',
+        duesStatus: 'cleared',
+        dob: '2011-03-15'
+    },
+    {
+        id: 'cupboard_demo_2025_4',
+        certificateNo: 'SLC-2025/091',
+        studentName: 'Maryam Nawaz',
+        fatherName: 'Muhammad Nawaz',
+        grNo: 'GR-4650',
+        rollNo: '07',
+        classAtLeaving: 'Class 10-A',
+        leavingDate: '2025-03-31',
+        session: '2024-2025',
+        year: 2025,
+        reason: 'Passed Board Exam / Higher Secondary Admission',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2008-09-29'
+    },
+    {
+        id: 'cupboard_demo_2024_1',
+        certificateNo: 'SLC-2024/008',
+        studentName: 'Zubair Farooq',
+        fatherName: 'Farooq Azam',
+        grNo: 'GR-4210',
+        rollNo: '08',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2024-03-31',
+        session: '2023-2024',
+        year: 2024,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2007-06-12'
+    },
+    {
+        id: 'cupboard_demo_2024_2',
+        certificateNo: 'SLC-2024/009',
+        studentName: 'Khadija Tul Kubra',
+        fatherName: 'Abdul Shakoor',
+        grNo: 'GR-4225',
+        rollNo: '14',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2024-03-31',
+        session: '2023-2024',
+        year: 2024,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2007-08-19'
+    },
+    {
+        id: 'cupboard_demo_2024_3',
+        certificateNo: 'SLC-2024/010',
+        studentName: 'Shahzaib Akram',
+        fatherName: 'Muhammad Akram',
+        grNo: 'GR-4230',
+        rollNo: '19',
+        classAtLeaving: 'Class 9',
+        leavingDate: '2024-02-10',
+        session: '2023-2024',
+        year: 2024,
+        reason: 'Parents Relocation / Transfer to another City',
+        conduct: 'Good & Cooperative',
+        duesStatus: 'cleared',
+        dob: '2008-12-04'
+    },
+    {
+        id: 'cupboard_demo_2024_4',
+        certificateNo: 'SLC-2024/011',
+        studentName: 'Laiba Arshad',
+        fatherName: 'Arshad Mehmood',
+        grNo: 'GR-4244',
+        rollNo: '22',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2024-03-31',
+        session: '2023-2024',
+        year: 2024,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2007-10-15'
+    },
+    {
+        id: 'cupboard_demo_2023_1',
+        certificateNo: 'SLC-2023/045',
+        studentName: 'Abdullah Tariq',
+        fatherName: 'Tariq Javed',
+        grNo: 'GR-3810',
+        rollNo: '05',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2023-03-31',
+        session: '2022-2023',
+        year: 2023,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2006-03-17'
+    },
+    {
+        id: 'cupboard_demo_2023_2',
+        certificateNo: 'SLC-2023/046',
+        studentName: 'Hafsa Bano',
+        fatherName: 'Bashir Ahmed',
+        grNo: 'GR-3822',
+        rollNo: '11',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2023-03-31',
+        session: '2022-2023',
+        year: 2023,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2006-05-24'
+    },
+    {
+        id: 'cupboard_demo_2023_3',
+        certificateNo: 'SLC-2023/047',
+        studentName: 'Ahsan Raza',
+        fatherName: 'Raza Ali Khan',
+        grNo: 'GR-3835',
+        rollNo: '18',
+        classAtLeaving: 'Class 7',
+        leavingDate: '2023-01-15',
+        session: '2022-2023',
+        year: 2023,
+        reason: 'Family Relocating / City Transfer',
+        conduct: 'Good & Cooperative',
+        duesStatus: 'cleared',
+        dob: '2009-08-30'
+    },
+    {
+        id: 'cupboard_demo_2023_4',
+        certificateNo: 'SLC-2023/048',
+        studentName: 'Amna Shahzadi',
+        fatherName: 'Shahzad Anwar',
+        grNo: 'GR-3849',
+        rollNo: '09',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2023-03-31',
+        session: '2022-2023',
+        year: 2023,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2006-09-14'
+    },
+    {
+        id: 'cupboard_demo_2022_1',
+        certificateNo: 'SLC-2022/031',
+        studentName: 'Talha Qureshi',
+        fatherName: 'Nadeem Qureshi',
+        grNo: 'GR-3410',
+        rollNo: '04',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2022-03-31',
+        session: '2021-2022',
+        year: 2022,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2005-04-10'
+    },
+    {
+        id: 'cupboard_demo_2022_2',
+        certificateNo: 'SLC-2022/032',
+        studentName: 'Sana Malik',
+        fatherName: 'Malik Asghar',
+        grNo: 'GR-3420',
+        rollNo: '16',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2022-03-31',
+        session: '2021-2022',
+        year: 2022,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2005-11-28'
+    },
+    {
+        id: 'cupboard_demo_2022_3',
+        certificateNo: 'SLC-2022/033',
+        studentName: 'Omer Farooq',
+        fatherName: 'Farooq Ahmed',
+        grNo: 'GR-3435',
+        rollNo: '27',
+        classAtLeaving: 'Class 8',
+        leavingDate: '2022-02-20',
+        session: '2021-2022',
+        year: 2022,
+        reason: 'Admitted to Military College Jhelum',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2008-01-19'
+    },
+    {
+        id: 'cupboard_demo_2021_1',
+        certificateNo: 'SLC-2021/019',
+        studentName: 'Waleed Butt',
+        fatherName: 'Mansoor Butt',
+        grNo: 'GR-3050',
+        rollNo: '02',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2021-03-31',
+        session: '2020-2021',
+        year: 2021,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2004-06-25'
+    },
+    {
+        id: 'cupboard_demo_2021_2',
+        certificateNo: 'SLC-2021/020',
+        studentName: 'Iqra Jameel',
+        fatherName: 'Jameel Akhtar',
+        grNo: 'GR-3062',
+        rollNo: '13',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2021-03-31',
+        session: '2020-2021',
+        year: 2021,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2004-10-12'
+    },
+    {
+        id: 'cupboard_demo_2021_3',
+        certificateNo: 'SLC-2021/021',
+        studentName: 'Faizan Sheikh',
+        fatherName: 'Sheikh Munir',
+        grNo: 'GR-3075',
+        rollNo: '21',
+        classAtLeaving: 'Class 6',
+        leavingDate: '2021-01-10',
+        session: '2020-2021',
+        year: 2021,
+        reason: 'Family Relocating / City Transfer',
+        conduct: 'Satisfactory',
+        duesStatus: 'cleared',
+        dob: '2009-02-14'
+    },
+    {
+        id: 'cupboard_demo_2020_1',
+        certificateNo: 'SLC-2020/001',
+        studentName: 'Ali Raza Zaidi',
+        fatherName: 'Syed Raza Zaidi',
+        grNo: 'GR-2710',
+        rollNo: '01',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2020-03-31',
+        session: '2019-2020',
+        year: 2020,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2003-08-08'
+    },
+    {
+        id: 'cupboard_demo_2020_2',
+        certificateNo: 'SLC-2020/002',
+        studentName: 'Mahnoor Tariq',
+        fatherName: 'Tariq Mehmood',
+        grNo: 'GR-2725',
+        rollNo: '06',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2020-03-31',
+        session: '2019-2020',
+        year: 2020,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2003-12-30'
+    },
+    {
+        id: 'cupboard_demo_2020_3',
+        certificateNo: 'SLC-2020/003',
+        studentName: 'Daniyal Qureshi',
+        fatherName: 'Qureshi Muhammad',
+        grNo: 'GR-2740',
+        rollNo: '17',
+        classAtLeaving: 'Class 10',
+        leavingDate: '2020-03-31',
+        session: '2019-2020',
+        year: 2020,
+        reason: 'Completed Matriculation Examination',
+        conduct: 'Exemplary / Very Good',
+        duesStatus: 'cleared',
+        dob: '2003-05-15'
+    }
 ];
 
 // Multi-Category Real Dues Audit Engine (Tuition, Transport, Store & Inventory, Event Actions, Fines)
@@ -542,6 +946,16 @@ export default function SchoolLeaving() {
     const [selectedShelfYear, setSelectedShelfYear] = useState(new Date().getFullYear());
     const [cupboardSearchQuery, setCupboardSearchQuery] = useState('');
     const [demoMode, setDemoMode] = useState(false);
+    const [cupboardDemoActive, setCupboardDemoActive] = useState(false);
+
+    // Strict Demo School ID 6257 Gate
+    const isDemoAccount = String(schoolId || '').trim() === '6257' || schoolId === '6257' || String(schoolId || '').includes('6257');
+
+    useEffect(() => {
+        if (!isDemoAccount) {
+            setCupboardDemoActive(false);
+        }
+    }, [isDemoAccount]);
 
     // Manual Legacy Record Digitizer Modal
     const [showDigitizeModal, setShowDigitizeModal] = useState(false);
@@ -2470,6 +2884,16 @@ export default function SchoolLeaving() {
         }
     };
 
+    // Effective Cupboard SLC History (Includes 25 Mock Records for 2020s Shelf when demo is active)
+    const effectiveSlcHistoryForCupboard = useMemo(() => {
+        if (cupboardDemoActive) {
+            const existingIds = new Set(slcHistory.map(h => h.id));
+            const newDemos = MOCK_2020S_CUPBOARD_RECORDS.filter(m => !existingIds.has(m.id));
+            return [...newDemos, ...slcHistory];
+        }
+        return slcHistory;
+    }, [cupboardDemoActive, slcHistory]);
+
     // Decade Shelves Filtered Records
     const currentDecadeObj = useMemo(() => {
         return DECADE_CONFIG.find(d => d.id === activeDecade) || DECADE_CONFIG[0];
@@ -2484,9 +2908,10 @@ export default function SchoolLeaving() {
     }, [currentDecadeObj]);
 
     const filteredCupboardRecords = useMemo(() => {
+        const listToFilter = effectiveSlcHistoryForCupboard;
         if (cupboardSearchQuery.trim()) {
             const q = cupboardSearchQuery.toLowerCase();
-            return slcHistory.filter(h =>
+            return listToFilter.filter(h =>
                 (h.studentName || '').toLowerCase().includes(q) ||
                 (h.fatherName || '').toLowerCase().includes(q) ||
                 (h.grNo || '').toLowerCase().includes(q) ||
@@ -2497,11 +2922,11 @@ export default function SchoolLeaving() {
             );
         }
 
-        return slcHistory.filter(h => {
+        return listToFilter.filter(h => {
             const y = h.year || (h.leavingDate ? parseInt(h.leavingDate.split('-')[0]) : null);
             return y === selectedShelfYear;
         });
-    }, [slcHistory, cupboardSearchQuery, selectedShelfYear]);
+    }, [effectiveSlcHistoryForCupboard, cupboardSearchQuery, selectedShelfYear]);
 
     const stats = useMemo(() => {
         const currentYear = new Date().getFullYear();
@@ -2582,7 +3007,7 @@ export default function SchoolLeaving() {
                         <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
                             pageTab === 'cupboard' ? 'bg-indigo-700/60 text-indigo-100' : 'bg-slate-200 text-slate-700'
                         }`}>
-                            {slcHistory.length}
+                            {effectiveSlcHistoryForCupboard.length}
                         </span>
                     </button>
                 </div>
@@ -4257,15 +4682,33 @@ export default function SchoolLeaving() {
                                 </p>
                             </div>
 
-                            {/* Digitize Manual Old Register Button */}
-                            <button
-                                type="button"
-                                onClick={() => setShowDigitizeModal(true)}
-                                className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-2xl text-xs font-black shadow-sm cursor-pointer transition-all"
-                            >
-                                <PlusCircle size={16} />
-                                <span>+ Digitize Old Manual Register</span>
-                            </button>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {/* Demo Inject Button (Visible ONLY on Demo School 6257) */}
+                                {isDemoAccount && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setCupboardDemoActive(prev => !prev)}
+                                        className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-black transition-all cursor-pointer shadow-sm ${
+                                            cupboardDemoActive
+                                                ? 'bg-amber-600 text-white hover:bg-amber-700 ring-2 ring-amber-400/50 animate-pulse'
+                                                : 'bg-gradient-to-r from-amber-500 to-amber-600 text-white hover:from-amber-600 hover:to-amber-700'
+                                        }`}
+                                    >
+                                        <Zap size={15} className={cupboardDemoActive ? 'text-amber-200 fill-amber-200' : 'text-amber-100'} />
+                                        <span>{cupboardDemoActive ? '✕ Exit Demo 2020s (25 Records)' : '⚡ Inject Demo 2020s Shelf (25 Records)'}</span>
+                                    </button>
+                                )}
+
+                                {/* Digitize Manual Old Register Button */}
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDigitizeModal(true)}
+                                    className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-2xl text-xs font-black shadow-sm cursor-pointer transition-all"
+                                >
+                                    <PlusCircle size={16} />
+                                    <span>+ Digitize Old Manual Register</span>
+                                </button>
+                            </div>
                         </div>
 
                         {/* Global Search Radar */}
@@ -4300,7 +4743,7 @@ export default function SchoolLeaving() {
 
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                                 {DECADE_CONFIG.map(decade => {
-                                    const countInDecade = slcHistory.filter(h => {
+                                    const countInDecade = effectiveSlcHistoryForCupboard.filter(h => {
                                         const y = h.year || (h.leavingDate ? parseInt(h.leavingDate.split('-')[0]) : null);
                                         return y >= decade.startYear && y <= decade.endYear;
                                     }).length;
@@ -4349,7 +4792,7 @@ export default function SchoolLeaving() {
 
                                 <div className="flex flex-wrap items-center gap-2">
                                     {shelfYears.map(year => {
-                                        const countInYear = slcHistory.filter(h => {
+                                        const countInYear = effectiveSlcHistoryForCupboard.filter(h => {
                                             const y = h.year || (h.leavingDate ? parseInt(h.leavingDate.split('-')[0]) : null);
                                             return y === year;
                                         }).length;

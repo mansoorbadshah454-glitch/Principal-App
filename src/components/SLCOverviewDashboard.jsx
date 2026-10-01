@@ -3,7 +3,7 @@ import {
     TrendingUp, TrendingDown, Users, UserPlus, LogOut, Archive, Award,
     AlertCircle, Sparkles, CheckCircle2, ChevronRight, ChevronDown, Calendar, Layers,
     Filter, ArrowUpRight, ArrowDownRight, BarChart3, PieChart, ShieldCheck,
-    Folder, BookOpen, Clock, Printer, RefreshCw, AlertTriangle, Database, X
+    Folder, BookOpen, Clock, Printer, RefreshCw, AlertTriangle, Database, X, Activity
 } from 'lucide-react';
 import {
     ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis,
@@ -22,29 +22,31 @@ export default function SLCOverviewDashboard({
     demoMode = false
 }) {
     // Strict Demo Guard: Only School ID 6257 is allowed demo mode
-    const isDemoSchool = String(schoolId || '').trim() === '6257';
+    const isDemoSchool = String(schoolId || '').trim() === '6257' || schoolId === '6257' || String(schoolId || '').includes('6257');
 
     // Current reference year
     const currentYear = useMemo(() => new Date().getFullYear(), []);
     const [selectedYearFilter, setSelectedYearFilter] = useState(currentYear); // number or 'all'
-    const [isDemoActive, setIsDemoActive] = useState(() => isDemoSchool && Boolean(demoMode));
+
+    // Unified 1-Click Master Demo State (strictly excluding "Net School Growth Rate" & "New Student Admissions")
+    const [isDemoActive, setIsDemoActive] = useState(false);
+
+    // Auto-clean demo state if switched to non-demo school
+    useEffect(() => {
+        if (!isDemoSchool) {
+            setIsDemoActive(false);
+        }
+    }, [isDemoSchool]);
+
     const [students, setStudents] = useState([]);
     const [loadingAdmissions, setLoadingAdmissions] = useState(false);
 
-    useEffect(() => {
-        setIsDemoActive(isDemoSchool && Boolean(demoMode));
-    }, [isDemoSchool, demoMode]);
-
-    // 1. Fetch Students/Admissions for Growth Comparison (Cached offline-first)
+    // 1. Fetch Students/Admissions for Growth Comparison (Cached offline-first, strictly real database data)
     useEffect(() => {
         let isMounted = true;
 
         const fetchAdmissionsData = async () => {
             if (!schoolId) {
-                // If demo mode for school 6257, provide mock admissions matching demo SLCs
-                if (isDemoSchool && isMounted) {
-                    setStudents(generateDemoAdmissions(currentYear));
-                }
                 return;
             }
 
@@ -89,10 +91,6 @@ export default function SLCOverviewDashboard({
                 }
 
                 if (isMounted) {
-                    // If DB has no active students, provide realistic base for showcase
-                    if (list.length === 0 && demoMode) {
-                        list = generateDemoAdmissions(currentYear);
-                    }
                     setStudents(list);
                     try {
                         localStorage.setItem(`slc_overview_admissions_cache_${schoolId}`, JSON.stringify(list));
@@ -110,10 +108,11 @@ export default function SLCOverviewDashboard({
         return () => {
             isMounted = false;
         };
-    }, [schoolId, classes, currentYear, demoMode]);
+    }, [schoolId, classes, currentYear]);
 
     // Helper: Parse Admission Year safely
     const getAdmissionYear = (stu) => {
+        if (!stu) return currentYear;
         if (stu.admissionDate) {
             const yr = parseInt(String(stu.admissionDate).split('-')[0]);
             if (!isNaN(yr) && yr > 1950 && yr < 2100) return yr;
@@ -133,6 +132,7 @@ export default function SLCOverviewDashboard({
 
     // Helper: Parse Leaving Year safely
     const getLeavingYear = (rec) => {
+        if (!rec) return currentYear;
         if (rec.year) {
             const yr = parseInt(rec.year);
             if (!isNaN(yr)) return yr;
@@ -159,106 +159,125 @@ export default function SLCOverviewDashboard({
         return currentYear;
     };
 
-    // Effective records based on Demo Data status
-    const effectiveSlcHistory = useMemo(() => {
-        if (isDemoActive) {
-            return generateMockSLCHistory(currentYear);
-        }
-        return slcHistory;
-    }, [isDemoActive, slcHistory, currentYear]);
-
-    const effectiveStudents = useMemo(() => {
-        if (isDemoActive) {
-            return generateDemoAdmissions(currentYear);
-        }
-        return students;
-    }, [isDemoActive, students, currentYear]);
+    // Realistic Demo Mock Dataset for Leavings, Almari, 4-KPIs, Leaderboard & Reasons
+    const mockHistory = useMemo(() => generateMockSLCHistory(currentYear), [currentYear]);
 
     // 2. Multi-Year Analytics Computations
     const analytics = useMemo(() => {
-        // Group leavings by year
-        const leavingsByYear = new Map();
-        effectiveSlcHistory.forEach(rec => {
+        // A. Real Leavings Map
+        const realLeavingsByYear = new Map();
+        slcHistory.forEach(rec => {
             const yr = getLeavingYear(rec);
-            leavingsByYear.set(yr, (leavingsByYear.get(yr) || 0) + 1);
+            realLeavingsByYear.set(yr, (realLeavingsByYear.get(yr) || 0) + 1);
         });
 
-        // Group admissions by year
+        // B. Mock Leavings Map
+        const mockLeavingsByYear = new Map();
+        mockHistory.forEach(rec => {
+            const yr = getLeavingYear(rec);
+            mockLeavingsByYear.set(yr, (mockLeavingsByYear.get(yr) || 0) + 1);
+        });
+
+        // C. Real Admissions Map (STRICTLY REAL STUDENTS - NEVER MOCKED)
         const admissionsByYear = new Map();
-        effectiveStudents.forEach(stu => {
+        students.forEach(stu => {
             const yr = getAdmissionYear(stu);
             admissionsByYear.set(yr, (admissionsByYear.get(yr) || 0) + 1);
         });
 
-        // Specific Year Totals
-        const thisYearLeavers = leavingsByYear.get(currentYear) || 0;
-        const lastYearLeavers = leavingsByYear.get(currentYear - 1) || 0;
-        const thisYearAdmissions = admissionsByYear.get(currentYear) || 0;
-        const lastYearAdmissions = admissionsByYear.get(currentYear - 1) || 0;
-
-        // Selected Year Specific Data
+        // Selected Year Filter
         const isAll = selectedYearFilter === 'all';
         const targetYear = typeof selectedYearFilter === 'number' ? selectedYearFilter : currentYear;
 
-        const filteredLeaversCount = isAll
-            ? effectiveSlcHistory.length
-            : (leavingsByYear.get(targetYear) || 0);
-
+        // -------------------------------------------------------------
+        // SECTION 1, CARD 1 & CARD 2: REAL ADMISSIONS & REAL NET GROWTH
+        // (Exempted from demo injection per user directive)
+        // -------------------------------------------------------------
+        const thisYearAdmissions = admissionsByYear.get(currentYear) || 0;
+        const lastYearAdmissions = admissionsByYear.get(currentYear - 1) || 0;
         const filteredAdmissionsCount = isAll
-            ? effectiveStudents.length
+            ? students.length
             : (admissionsByYear.get(targetYear) || 0);
 
-        // Net Growth: Admissions - Leavers
-        const netStudentGain = filteredAdmissionsCount - filteredLeaversCount;
+        const filteredRealLeaversCount = isAll
+            ? slcHistory.length
+            : (realLeavingsByYear.get(targetYear) || 0);
+
+        const netStudentGain = filteredAdmissionsCount - filteredRealLeaversCount;
         const isGrowing = netStudentGain >= 0;
         const netGrowthRate = filteredAdmissionsCount > 0
             ? Math.round((netStudentGain / filteredAdmissionsCount) * 100)
             : (netStudentGain > 0 ? 100 : (netStudentGain < 0 ? -100 : 0));
 
-        // YoY Leavers Variance (% difference vs previous year)
-        const previousYear = targetYear - 1;
-        const prevLeavers = leavingsByYear.get(previousYear) || 0;
+        // -------------------------------------------------------------
+        // ACTIVE SLC DATASET (Either Mock History or Real Firestore History)
+        // -------------------------------------------------------------
+        const activeSlcDataset = isDemoActive ? mockHistory : slcHistory;
+        const activeLeavingsByYear = isDemoActive ? mockLeavingsByYear : realLeavingsByYear;
+
+        // SECTION 1, CARD 3: School Leavings (SLCs)
+        const thisYearLeavers = activeLeavingsByYear.get(currentYear) || 0;
+        const lastYearLeavers = activeLeavingsByYear.get(currentYear - 1) || 0;
+        const filteredLeaversCount = isAll
+            ? activeSlcDataset.length
+            : (activeLeavingsByYear.get(targetYear) || 0);
+
+        const prevLeavers = activeLeavingsByYear.get(targetYear - 1) || 0;
         const leaversYoYDiff = prevLeavers > 0
             ? Math.round(((filteredLeaversCount - prevLeavers) / prevLeavers) * 100)
             : (filteredLeaversCount > 0 ? 100 : 0);
 
-        // Almari (Cupboard) Records Stats
-        const totalAlmariRecords = effectiveSlcHistory.length;
-        const legacyRegisterRecords = effectiveSlcHistory.filter(r => r.isLegacyManualEntry).length;
-        const liveStudioRecords = totalAlmariRecords - legacyRegisterRecords;
+        // SECTION 2: 4-KPI SHOWCASE STRIP
+        const kpiThisYearLeavers = activeLeavingsByYear.get(currentYear) || 0;
+        const kpiLastYearLeavers = activeLeavingsByYear.get(currentYear - 1) || 0;
+        const kpiTotalAlmariRecords = activeSlcDataset.length;
 
-        // Years Range in Almari
-        const allYears = Array.from(leavingsByYear.keys()).sort((a, b) => a - b);
-        const oldestAlmariYear = allYears.length > 0 ? allYears[0] : 1975;
-        const newestAlmariYear = allYears.length > 0 ? allYears[allYears.length - 1] : currentYear;
-
-        // Class-Wise Leavers Breakdown (for selected year or all-time)
-        const targetLeaversList = isAll
-            ? effectiveSlcHistory
-            : effectiveSlcHistory.filter(r => getLeavingYear(r) === targetYear);
-
-        const classMapCount = new Map();
-        const reasonMapCount = new Map();
-
-        targetLeaversList.forEach(rec => {
+        const kpiTargetList = isAll ? activeSlcDataset : activeSlcDataset.filter(r => getLeavingYear(r) === targetYear);
+        const kpiClassMap = new Map();
+        kpiTargetList.forEach(rec => {
             const rawCls = (rec.classAtLeaving || rec.className || 'Unknown Class').trim();
-            classMapCount.set(rawCls, (classMapCount.get(rawCls) || 0) + 1);
+            kpiClassMap.set(rawCls, (kpiClassMap.get(rawCls) || 0) + 1);
+        });
+        const kpiClassLeaderboard = Array.from(kpiClassMap.entries())
+            .map(([className, count]) => ({
+                className,
+                count,
+                percentage: kpiTargetList.length > 0 ? Math.round((count / kpiTargetList.length) * 100) : 0
+            }))
+            .sort((a, b) => b.count - a.count);
+        const kpiTopDepartureClass = kpiClassLeaderboard.length > 0 ? kpiClassLeaderboard[0] : null;
 
-            const rawReason = (rec.reason || 'Personal / Other').trim();
-            reasonMapCount.set(rawReason, (reasonMapCount.get(rawReason) || 0) + 1);
+        // SECTION 3 LEFT: 5-YEAR TREND COMPARISON CHART
+        const chartYears = [
+            currentYear - 4,
+            currentYear - 3,
+            currentYear - 2,
+            currentYear - 1,
+            currentYear
+        ];
+        const trendChartData = chartYears.map(yr => {
+            const adm = admissionsByYear.get(yr) || 0; // STRICT REAL ADMISSIONS
+            const lvg = activeLeavingsByYear.get(yr) || 0;
+            return {
+                year: String(yr),
+                admissions: adm,
+                leavings: lvg,
+                netGrowth: adm - lvg
+            };
         });
 
-        // Sorted Class-wise Leaderboard
-        const classLeaderboard = Array.from(classMapCount.entries())
+        // SECTION 3 RIGHT: CLASS-WISE EXIT LEADERBOARD
+        const lbTargetList = isAll ? activeSlcDataset : activeSlcDataset.filter(r => getLeavingYear(r) === targetYear);
+        const lbClassMap = new Map();
+        lbTargetList.forEach(rec => {
+            const rawCls = (rec.classAtLeaving || rec.className || 'Unknown Class').trim();
+            lbClassMap.set(rawCls, (lbClassMap.get(rawCls) || 0) + 1);
+        });
+        const classLeaderboard = Array.from(lbClassMap.entries())
             .map(([className, count]) => {
-                const percentage = targetLeaversList.length > 0
-                    ? Math.round((count / targetLeaversList.length) * 100)
-                    : 0;
-
-                // Detect if it's natural terminal exit (Class 10 / Matric / 12) or mid-tenure alert
+                const percentage = lbTargetList.length > 0 ? Math.round((count / lbTargetList.length) * 100) : 0;
                 const lower = className.toLowerCase();
                 const isTerminalGraduation = lower.includes('10') || lower.includes('matric') || lower.includes('12') || lower.includes('fsc') || lower.includes('fa');
-
                 return {
                     className,
                     count,
@@ -268,61 +287,69 @@ export default function SLCOverviewDashboard({
             })
             .sort((a, b) => b.count - a.count);
 
-        const topDepartureClass = classLeaderboard.length > 0 ? classLeaderboard[0] : null;
+        // SECTION 4 LEFT: 50-YEAR DIGITAL ALMARI VAULT
+        const totalAlmariRecords = activeSlcDataset.length;
+        const legacyRegisterRecords = activeSlcDataset.filter(r => r.isLegacyManualEntry).length;
+        const liveStudioRecords = totalAlmariRecords - legacyRegisterRecords;
+        const almariYears = Array.from(new Set(activeSlcDataset.map(r => getLeavingYear(r)))).sort((a, b) => a - b);
+        const oldestAlmariYear = almariYears.length > 0 ? almariYears[0] : 1976;
+        const newestAlmariYear = almariYears.length > 0 ? almariYears[almariYears.length - 1] : currentYear;
 
-        // Reasons Breakdown list
-        const reasonsList = Array.from(reasonMapCount.entries())
+        // SECTION 4 RIGHT: WHY STUDENTS LEAVE (REASONS)
+        const reasonsTargetList = isAll ? activeSlcDataset : activeSlcDataset.filter(r => getLeavingYear(r) === targetYear);
+        const reasonMap = new Map();
+        reasonsTargetList.forEach(rec => {
+            const rawReason = (rec.reason || 'Personal / Other').trim();
+            reasonMap.set(rawReason, (reasonMap.get(rawReason) || 0) + 1);
+        });
+        const reasonsList = Array.from(reasonMap.entries())
             .map(([reason, count]) => ({
                 reason,
                 count,
-                percentage: targetLeaversList.length > 0 ? Math.round((count / targetLeaversList.length) * 100) : 0
+                percentage: reasonsTargetList.length > 0 ? Math.round((count / reasonsTargetList.length) * 100) : 0
             }))
             .sort((a, b) => b.count - a.count);
 
-        // Multi-Year Comparison Chart Data (Last 5 Years)
-        const chartYears = [
-            currentYear - 4,
-            currentYear - 3,
-            currentYear - 2,
-            currentYear - 1,
-            currentYear
-        ];
-
-        const trendChartData = chartYears.map(yr => {
-            const adm = admissionsByYear.get(yr) || 0;
-            const lvg = leavingsByYear.get(yr) || 0;
-            const net = adm - lvg;
-            return {
-                year: String(yr),
-                admissions: adm,
-                leavings: lvg,
-                netGrowth: net
-            };
-        });
-
         return {
-            thisYearLeavers,
-            lastYearLeavers,
+            // Real Growth & Admissions
             thisYearAdmissions,
             lastYearAdmissions,
-            filteredLeaversCount,
             filteredAdmissionsCount,
+            filteredRealLeaversCount,
             netStudentGain,
             isGrowing,
             netGrowthRate,
+
+            // SLC Leavers Card
+            thisYearLeavers,
+            lastYearLeavers,
+            filteredLeaversCount,
             leaversYoYDiff,
+
+            // 4-KPI Strip
+            kpiThisYearLeavers,
+            kpiLastYearLeavers,
+            kpiTotalAlmariRecords,
+            kpiTopDepartureClass,
+
+            // Charts & Sections
+            trendChartData,
+            classLeaderboard,
             totalAlmariRecords,
             legacyRegisterRecords,
             liveStudioRecords,
             oldestAlmariYear,
             newestAlmariYear,
-            classLeaderboard,
-            topDepartureClass,
-            reasonsList,
-            trendChartData,
-            targetLeaversCount: targetLeaversList.length
+            reasonsList
         };
-    }, [effectiveSlcHistory, effectiveStudents, currentYear, selectedYearFilter]);
+    }, [
+        slcHistory,
+        students,
+        mockHistory,
+        currentYear,
+        selectedYearFilter,
+        isDemoActive
+    ]);
 
     // Handle Year Switch Options
     const quickYearFilters = useMemo(() => {
@@ -363,35 +390,35 @@ export default function SLCOverviewDashboard({
                         </p>
                     </div>
 
-                    {/* Quick Session Filter Pills & Demo Toggle */}
+                    {/* Quick Session Filter Pills & 1-Click Master Demo Toggle */}
                     <div className="flex flex-wrap items-center gap-3">
-                        {/* Demo Data Inject / Exit Master Button (Only for Demo School 6257) */}
+                        {/* 1-CLICK UNIFIED DEMO INJECT / CLEAR MASTER BUTTON (Only for Demo School 6257) */}
                         {isDemoSchool && (
                             <button
                                 type="button"
                                 onClick={() => setIsDemoActive(prev => !prev)}
-                                className={`px-3.5 py-2 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shadow-md border ${
+                                className={`px-4 py-2.5 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shadow-lg border ${
                                     isDemoActive
-                                        ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-400/80 ring-2 ring-rose-300/50'
-                                        : 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-400/80 ring-2 ring-emerald-300/50'
+                                        ? 'bg-rose-500 hover:bg-rose-600 text-white border-rose-300 ring-2 ring-rose-200'
+                                        : 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-300 ring-2 ring-emerald-200 animate-pulse'
                                 }`}
-                                title={isDemoActive ? "Click to Exit Demo Data and show real school database" : "Click to Inject Demo Data for presentation"}
+                                title={isDemoActive ? "Click to Exit Demo Data and restore real school database" : "Click to Inject Demo Data into All Overview Dashboard Cards & Charts at once"}
                             >
                                 {isDemoActive ? (
                                     <>
-                                        <X size={14} className="stroke-[3]" />
-                                        <span>Exit Demo Data</span>
+                                        <X size={15} className="stroke-[3]" />
+                                        <span>✕ Exit Demo Data</span>
                                     </>
                                 ) : (
                                     <>
-                                        <Sparkles size={14} className="animate-spin text-amber-200" />
-                                        <span>Inject Demo Data</span>
+                                        <Sparkles size={15} className="text-amber-200" />
+                                        <span>⚡ Inject Demo Data</span>
                                     </>
                                 )}
                             </button>
                         )}
 
-                        {/* Option A: Quick Session Filter Pills + Historical Year Dropdown */}
+                        {/* Session Filter Pills + Historical Year Dropdown */}
                         <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl border border-blue-100 shadow-md">
                             <span className="text-[11px] font-black text-slate-900 px-2.5 uppercase tracking-wider flex items-center gap-1.5">
                                 <Calendar size={13} className="text-blue-600" />
@@ -417,7 +444,7 @@ export default function SLCOverviewDashboard({
                                 );
                             })}
 
-                            {/* 2. Historical Multi-Year Dropdown (5 to 10 Years Back + All Time) */}
+                            {/* 2. Historical Multi-Year Dropdown */}
                             <div className="relative inline-flex items-center">
                                 <select
                                     value={
@@ -467,7 +494,7 @@ export default function SLCOverviewDashboard({
 
             {/* SECTION 1: HERO GROWTH VS DEGROWTH ENGINE (Glass Effect with Shining Specular Edges) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                {/* 1. Net School Growth Meter Card (Glassmorphic with Specular Shining Edges) */}
+                {/* 1. Net School Growth Meter Card (STRICT REAL DATA - NO DEMO INJECTION) */}
                 <div
                     className={`p-6 rounded-2xl transition-all duration-300 relative overflow-hidden flex flex-col justify-between backdrop-blur-xl group hover:shadow-2xl ${
                         analytics.isGrowing
@@ -524,16 +551,16 @@ export default function SLCOverviewDashboard({
                     <div className="mt-5 pt-4 border-t border-slate-200/80 relative z-10">
                         <div className="flex justify-between text-[11px] font-black text-slate-700 mb-1.5">
                             <span>Admissions ({analytics.filteredAdmissionsCount})</span>
-                            <span>Leavings ({analytics.filteredLeaversCount})</span>
+                            <span>Real Leavings ({analytics.filteredRealLeaversCount})</span>
                         </div>
                         <div className="h-2.5 w-full bg-slate-200/80 rounded-full overflow-hidden flex border border-white/60 shadow-inner">
                             <div
-                                style={{ width: `${(analytics.filteredAdmissionsCount / ((analytics.filteredAdmissionsCount + analytics.filteredLeaversCount) || 1)) * 100}%` }}
+                                style={{ width: `${(analytics.filteredAdmissionsCount / ((analytics.filteredAdmissionsCount + analytics.filteredRealLeaversCount) || 1)) * 100}%` }}
                                 className="bg-emerald-500 h-full rounded-l-full transition-all duration-500 shadow-sm"
                                 title="New Admissions"
                             />
                             <div
-                                style={{ width: `${(analytics.filteredLeaversCount / ((analytics.filteredAdmissionsCount + analytics.filteredLeaversCount) || 1)) * 100}%` }}
+                                style={{ width: `${(analytics.filteredRealLeaversCount / ((analytics.filteredAdmissionsCount + analytics.filteredRealLeaversCount) || 1)) * 100}%` }}
                                 className="bg-rose-500 h-full rounded-r-full transition-all duration-500 shadow-sm"
                                 title="SLC Departures"
                             />
@@ -541,7 +568,7 @@ export default function SLCOverviewDashboard({
                     </div>
                 </div>
 
-                {/* 2. New Admissions Metric (Glassmorphic with Specular Shining Edges) */}
+                {/* 2. New Admissions Metric (STRICT REAL DATA - NO DEMO INJECTION) */}
                 <div
                     className="p-6 rounded-2xl transition-all duration-300 relative overflow-hidden flex flex-col justify-between backdrop-blur-xl group hover:shadow-2xl bg-gradient-to-br from-indigo-500/15 via-white/85 to-blue-500/5 border border-indigo-300/60 shadow-[inset_0_1px_2px_0_rgba(255,255,255,0.9),0_12px_24px_-4px_rgba(99,102,241,0.15)]"
                 >
@@ -582,7 +609,7 @@ export default function SLCOverviewDashboard({
                     </div>
                 </div>
 
-                {/* 3. SLC Leavers Metric (Glassmorphic with Specular Shining Edges) */}
+                {/* 3. SLC Leavers Metric (Auto-filled via Master Demo Button) */}
                 <div
                     className="p-6 rounded-2xl transition-all duration-300 relative overflow-hidden flex flex-col justify-between backdrop-blur-xl group hover:shadow-2xl bg-gradient-to-br from-amber-500/15 via-white/85 to-orange-500/5 border border-amber-300/60 shadow-[inset_0_1px_2px_0_rgba(255,255,255,0.9),0_12px_24px_-4px_rgba(245,158,11,0.15)]"
                 >
@@ -635,7 +662,7 @@ export default function SLCOverviewDashboard({
                 </div>
             </div>
 
-            {/* SECTION 2: 4-KPI SHOWCASE STRIP (With Dashboard-style Theme Gradients, Glass Shines & Sharp Edges) */}
+            {/* SECTION 2: 4-KPI SHOWCASE STRIP (Auto-filled via Master Demo Button) */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* KPI 1: This Year Leavers (Vivid Blue Dashboard Theme) */}
                 <div
@@ -661,7 +688,7 @@ export default function SLCOverviewDashboard({
 
                         <div className="mt-3">
                             <div className="text-3xl sm:text-4xl font-black text-white tracking-tight drop-shadow-sm">
-                                {analytics.thisYearLeavers}
+                                {analytics.kpiThisYearLeavers}
                             </div>
                             <div className="text-blue-100 font-extrabold text-xs mt-1.5 flex items-center gap-1.5 drop-shadow-2xs">
                                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
@@ -695,7 +722,7 @@ export default function SLCOverviewDashboard({
 
                         <div className="mt-3">
                             <div className="text-3xl sm:text-4xl font-black text-white tracking-tight drop-shadow-sm">
-                                {analytics.lastYearLeavers}
+                                {analytics.kpiLastYearLeavers}
                             </div>
                             <div className="text-indigo-100 font-extrabold text-xs mt-1.5 flex items-center gap-1.5 drop-shadow-2xs">
                                 <span>Previous Session {currentYear - 1}</span>
@@ -731,7 +758,7 @@ export default function SLCOverviewDashboard({
 
                         <div className="mt-3">
                             <div className="text-3xl sm:text-4xl font-black text-white tracking-tight drop-shadow-sm">
-                                {analytics.totalAlmariRecords.toLocaleString()}
+                                {analytics.kpiTotalAlmariRecords.toLocaleString()}
                             </div>
                             <div className="text-amber-100 font-extrabold text-xs mt-1.5 flex items-center gap-1 drop-shadow-2xs">
                                 <span>50-Year Archive Vault ➔</span>
@@ -764,10 +791,10 @@ export default function SLCOverviewDashboard({
 
                         <div className="mt-3">
                             <div className="text-2xl sm:text-3xl font-black text-white tracking-tight drop-shadow-sm truncate">
-                                {analytics.topDepartureClass ? analytics.topDepartureClass.className : 'N/A'}
+                                {analytics.kpiTopDepartureClass ? analytics.kpiTopDepartureClass.className : 'N/A'}
                             </div>
                             <div className="text-rose-100 font-extrabold text-xs mt-1.5 truncate drop-shadow-2xs">
-                                {analytics.topDepartureClass ? `${analytics.topDepartureClass.count} Students (${analytics.topDepartureClass.percentage}%)` : 'No leavers recorded'}
+                                {analytics.kpiTopDepartureClass ? `${analytics.kpiTopDepartureClass.count} Students (${analytics.kpiTopDepartureClass.percentage}%)` : 'No leavers recorded'}
                             </div>
                         </div>
                     </div>
@@ -785,34 +812,9 @@ export default function SLCOverviewDashboard({
                                 <span>Admissions vs. Leavings Trend (5-Year Comparison)</span>
                             </h3>
                             <p className="text-xs text-slate-500 font-medium mt-0.5">
-                                Annual school intake vs. certified school leaving certificates.
+                                Annual school intake (Real) vs. certified school leaving certificates.
                             </p>
                         </div>
-                        {/* Demo Data Inject / Exit Button for Admissions vs Leavings Trend */}
-                        {isDemoSchool && (
-                            <button
-                                type="button"
-                                onClick={() => setIsDemoActive(prev => !prev)}
-                                className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center gap-1.5 border shrink-0 ${
-                                    isDemoActive
-                                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                                        : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                }`}
-                                title={isDemoActive ? "Click to Exit Demo Data and restore real database" : "Click to Inject Demo Data into Trend Chart"}
-                            >
-                                {isDemoActive ? (
-                                    <>
-                                        <X size={12} className="stroke-[3]" />
-                                        <span>Exit Demo</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Sparkles size={12} className="text-indigo-600" />
-                                        <span>Inject Demo Data</span>
-                                    </>
-                                )}
-                            </button>
-                        )}
                     </div>
 
                     <div className="h-72 w-full pt-2">
@@ -832,7 +834,7 @@ export default function SLCOverviewDashboard({
                                     }}
                                     formatter={(value, name) => [
                                         value,
-                                        name === 'admissions' ? 'New Admissions' : 'SLC Departures'
+                                        name === 'admissions' ? 'New Admissions (Real)' : 'SLC Departures'
                                     ]}
                                 />
                                 <Legend
@@ -840,7 +842,7 @@ export default function SLCOverviewDashboard({
                                     height={36}
                                     formatter={(value) => (
                                         <span className="text-xs font-bold text-slate-600">
-                                            {value === 'admissions' ? 'New Admissions 📥' : 'SLC Leavers 📤'}
+                                            {value === 'admissions' ? 'New Admissions 📥 (Real)' : 'SLC Leavers 📤'}
                                         </span>
                                     )}
                                 />
@@ -868,36 +870,9 @@ export default function SLCOverviewDashboard({
                                     Sab se zyada kis class se students chhor rahe hain?
                                 </p>
                             </div>
-                            <div className="flex items-center gap-2">
-                                {/* Demo Data Inject / Exit Button for Class-Wise Exit Leaderboard */}
-                                {isDemoSchool && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsDemoActive(prev => !prev)}
-                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shrink-0 ${
-                                            isDemoActive
-                                                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                                                : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                                        }`}
-                                        title={isDemoActive ? "Click to Exit Demo Data" : "Click to Inject Demo Data into Leaderboard"}
-                                    >
-                                        {isDemoActive ? (
-                                            <>
-                                                <X size={11} className="stroke-[3]" />
-                                                <span>Exit Demo</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Sparkles size={11} className="text-amber-600" />
-                                                <span>Inject Demo</span>
-                                            </>
-                                        )}
-                                    </button>
-                                )}
-                                <span className="text-[10px] font-black px-2 py-0.5 bg-slate-100 text-slate-700 rounded-lg">
-                                    {analytics.classLeaderboard.length} Classes
-                                </span>
-                            </div>
+                            <span className="text-[10px] font-black px-2 py-0.5 bg-slate-100 text-slate-700 rounded-lg">
+                                {analytics.classLeaderboard.length} Classes
+                            </span>
                         </div>
 
                         {/* Leaderboard List */}
@@ -963,7 +938,7 @@ export default function SLCOverviewDashboard({
 
             {/* SECTION 4: 50-YEAR DIGITAL ALMARI SHOWCASE & REASONS BREAKDOWN */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Left: 50-Year Almari Vault Showcase Box (6 Cols) - Matches Almari Records Card */}
+                {/* Left: 50-Year Almari Vault Showcase Box (6 Cols) */}
                 <div
                     className="lg:col-span-6 p-6 sm:p-7 rounded-2xl shadow-xl border border-white/25 relative overflow-hidden flex flex-col justify-between text-white group"
                     style={{
@@ -984,36 +959,9 @@ export default function SLCOverviewDashboard({
                                 </div>
                                 <span>50-Year Interactive Digital Cupboard (Almari)</span>
                             </span>
-                            <div className="flex items-center gap-2">
-                                {/* Demo Data Inject / Exit Button for Almari Vault */}
-                                {isDemoSchool && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsDemoActive(prev => !prev)}
-                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shadow-xs ${
-                                            isDemoActive
-                                                ? 'bg-rose-500/90 text-white border-rose-300 hover:bg-rose-600'
-                                                : 'bg-white/20 text-white border-white/30 hover:bg-white/30 backdrop-blur-md'
-                                        }`}
-                                        title={isDemoActive ? "Click to Exit Demo Data and restore real Almari count" : "Click to Inject Demo Data (50-Year records) into Almari"}
-                                    >
-                                        {isDemoActive ? (
-                                            <>
-                                                <X size={11} className="stroke-[3]" />
-                                                <span>Exit Demo</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Sparkles size={11} className="text-amber-200" />
-                                                <span>Inject Demo</span>
-                                            </>
-                                        )}
-                                    </button>
-                                )}
-                                <span className="text-[10px] font-black px-3 py-1 bg-white/20 text-white rounded-full border border-white/30 shadow-xs backdrop-blur-md">
-                                    Permanent Vault
-                                </span>
-                            </div>
+                            <span className="text-[10px] font-black px-3 py-1 bg-white/20 text-white rounded-full border border-white/30 shadow-xs backdrop-blur-md">
+                                Permanent Vault
+                            </span>
                         </div>
 
                         <div className="mt-5 flex items-baseline gap-3">
@@ -1071,36 +1019,9 @@ export default function SLCOverviewDashboard({
                                     Exit rationale recorded on certificates.
                                 </p>
                             </div>
-                            <div className="flex items-center gap-2">
-                                {/* Demo Data Inject / Exit Button for Why Students Leave */}
-                                {isDemoSchool && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsDemoActive(prev => !prev)}
-                                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 border shrink-0 ${
-                                            isDemoActive
-                                                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                                                : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                        }`}
-                                        title={isDemoActive ? "Click to Exit Demo Data" : "Click to Inject Demo Data into Reasons"}
-                                    >
-                                        {isDemoActive ? (
-                                            <>
-                                                <X size={11} className="stroke-[3]" />
-                                                <span>Exit Demo</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Sparkles size={11} className="text-indigo-600" />
-                                                <span>Inject Demo</span>
-                                            </>
-                                        )}
-                                    </button>
-                                )}
-                                <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg">
-                                    {analytics.reasonsList.length} Categories
-                                </span>
-                            </div>
+                            <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg">
+                                {analytics.reasonsList.length} Categories
+                            </span>
                         </div>
 
                         <div className="mt-4 space-y-3 max-h-64 overflow-y-auto pr-1">
@@ -1152,30 +1073,6 @@ export default function SLCOverviewDashboard({
             </div>
         </div>
     );
-}
-
-// Helper: Generates realistic mock admission records when in demo mode or no live students found
-function generateDemoAdmissions(currentYear) {
-    const list = [];
-    const counts = [
-        { year: currentYear, count: 52 },
-        { year: currentYear - 1, count: 48 },
-        { year: currentYear - 2, count: 42 },
-        { year: currentYear - 3, count: 39 },
-        { year: currentYear - 4, count: 35 }
-    ];
-
-    counts.forEach(({ year, count }) => {
-        for (let i = 0; i < count; i++) {
-            list.push({
-                id: `demo_adm_${year}_${i}`,
-                admissionDate: `${year}-04-15`,
-                createdAt: `${year}-04-15T10:00:00Z`
-            });
-        }
-    });
-
-    return list;
 }
 
 // Helper: Generates rich, realistic mock SLC records for the 50-Year Almari, 5-Year Trends, Class Leaderboard, and Reasons
