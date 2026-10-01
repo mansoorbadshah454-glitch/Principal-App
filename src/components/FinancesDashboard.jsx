@@ -902,7 +902,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
 
         const scopedTxs = (feeTransactions || []).filter(isTxInScope);
 
-        // Calculate Fee Totals & Split (Counter Cash vs Online Digital)
+        // Calculate Fee Totals & Split (Counter Cash vs Online Digital & Regular vs Admission)
         let totalFeePaid = 0;
         let counterCashFees = 0;
         let onlineFees = 0;
@@ -913,11 +913,33 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         let totalDiscounts = 0;
         const paidStudentIds = new Set();
 
+        let totalAdmissionFees = 0;
+        let totalAdmissionCount = 0;
+        let totalAdmissionActionsFee = 0;
+        let totalAdmissionRecurringFee = 0;
+        const scopedAdmissionTxs = [];
+        const scopedRegularFeeTxs = [];
+
         scopedTxs.forEach(tx => {
             const amount = Number(tx.totalPaid) || 0;
             totalFeePaid += amount;
             totalDiscounts += Number(tx.discount) || 0;
             if (tx.studentId) paidStudentIds.add(tx.studentId);
+
+            const isAdmission = tx.source === 'admission' || 
+                                tx.transactionType === 'admission_collection' || 
+                                (tx.receiptNo && String(tx.receiptNo).startsWith('ADM-')) ||
+                                (tx.collectedBy && String(tx.collectedBy).toLowerCase().includes('admission'));
+
+            if (isAdmission) {
+                scopedAdmissionTxs.push(tx);
+                totalAdmissionCount++;
+                totalAdmissionFees += amount;
+                totalAdmissionActionsFee += Number(tx.actionsFee || tx.admissionFee || 0);
+                totalAdmissionRecurringFee += Number(tx.baseFee || 0) + Number(tx.transportFee || 0);
+            } else {
+                scopedRegularFeeTxs.push(tx);
+            }
 
             const mode = (tx.paymentMode || 'Cash').toLowerCase();
             const collectedBy = (tx.collectedBy || '').toLowerCase();
@@ -1389,6 +1411,12 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             activeMonthNum,
             activeMonthIso,
             scopedTxs,
+            scopedAdmissionTxs,
+            scopedRegularFeeTxs,
+            totalAdmissionFees,
+            totalAdmissionCount,
+            totalAdmissionActionsFee,
+            totalAdmissionRecurringFee,
             scopedIncomes,
             scopedExpenses,
             totalFeePaid,
@@ -1716,10 +1744,8 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     }, [selectedMonthMode, customSelectedMonthNum, currentMonthNum, selectedYear, currentYearNum, dailyLedgerData]);
 
     // =========================================================================
-    // MONTHLY CONSOLIDATED LEDGER FILTERING & PAGINATION (25 Rows per page)
-    // =========================================================================
     const filteredMonthlyTxs = useMemo(() => {
-        const txs = calculatedMetrics?.scopedTxs || [];
+        const txs = calculatedMetrics?.scopedRegularFeeTxs || calculatedMetrics?.scopedTxs || [];
         return txs.filter(tx => {
             if (modeLedgerFilter !== 'all') {
                 const mode = (tx.paymentMode || 'Cash').toLowerCase();
@@ -1741,7 +1767,32 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             }
             return true;
         });
-    }, [calculatedMetrics?.scopedTxs, searchLedger, modeLedgerFilter]);
+    }, [calculatedMetrics?.scopedRegularFeeTxs, calculatedMetrics?.scopedTxs, searchLedger, modeLedgerFilter]);
+
+    const filteredMonthlyAdmissionTxs = useMemo(() => {
+        const txs = calculatedMetrics?.scopedAdmissionTxs || [];
+        return txs.filter(tx => {
+            if (modeLedgerFilter !== 'all') {
+                const mode = (tx.paymentMode || 'Cash').toLowerCase();
+                if (modeLedgerFilter === 'Cash' && mode !== 'cash') return false;
+                if (modeLedgerFilter === 'Online' && mode === 'cash') return false;
+                if (modeLedgerFilter === 'EasyPaisa' && !mode.includes('easy')) return false;
+                if (modeLedgerFilter === 'JazzCash' && !mode.includes('jazz')) return false;
+                if (modeLedgerFilter === 'Bank' && !mode.includes('bank')) return false;
+            }
+            if (searchLedger.trim()) {
+                const q = searchLedger.toLowerCase();
+                const matchName = (tx.studentName || '').toLowerCase().includes(q);
+                const matchRoll = (tx.rollNo || '').toLowerCase().includes(q);
+                const matchAdm = (tx.admissionNo || '').toLowerCase().includes(q);
+                const matchClass = (tx.className || '').toLowerCase().includes(q);
+                const matchRec = (tx.receiptNo || tx.id || '').toLowerCase().includes(q);
+                const matchFather = (tx.fatherName || '').toLowerCase().includes(q);
+                if (!matchName && !matchRoll && !matchAdm && !matchClass && !matchRec && !matchFather) return false;
+            }
+            return true;
+        });
+    }, [calculatedMetrics?.scopedAdmissionTxs, searchLedger, modeLedgerFilter]);
 
     const filteredMonthlyIncomes = useMemo(() => {
         const incomes = calculatedMetrics?.scopedIncomes || [];
@@ -1773,6 +1824,11 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         return filteredMonthlyTxs.slice(start, start + rowsPerPage);
     }, [filteredMonthlyTxs, ledgerPage]);
 
+    const paginatedMonthlyAdmissionTxs = useMemo(() => {
+        const start = (ledgerPage - 1) * rowsPerPage;
+        return filteredMonthlyAdmissionTxs.slice(start, start + rowsPerPage);
+    }, [filteredMonthlyAdmissionTxs, ledgerPage]);
+
     const paginatedMonthlyIncomes = useMemo(() => {
         const start = (ledgerPage - 1) * rowsPerPage;
         return filteredMonthlyIncomes.slice(start, start + rowsPerPage);
@@ -1785,10 +1841,11 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
 
     const totalMonthlyLedgerCount = useMemo(() => {
         if (monthlyLedgerTab === 'fee_slips') return filteredMonthlyTxs.length;
+        if (monthlyLedgerTab === 'admission_slips') return filteredMonthlyAdmissionTxs.length;
         if (monthlyLedgerTab === 'incomes') return filteredMonthlyIncomes.length;
         if (monthlyLedgerTab === 'expenses') return filteredMonthlyExpenses.length;
         return 0;
-    }, [monthlyLedgerTab, filteredMonthlyTxs.length, filteredMonthlyIncomes.length, filteredMonthlyExpenses.length]);
+    }, [monthlyLedgerTab, filteredMonthlyTxs.length, filteredMonthlyAdmissionTxs.length, filteredMonthlyIncomes.length, filteredMonthlyExpenses.length]);
 
     const totalMonthlyLedgerPages = Math.max(1, Math.ceil(totalMonthlyLedgerCount / rowsPerPage));
     const ledgerStartIndex = (ledgerPage - 1) * rowsPerPage;
@@ -1799,15 +1856,19 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
         if (!activeDayData) return [];
         const entries = [];
 
-        // 1. Fee Receipts
+        // 1. Fee Receipts & Admission Receipts
         (activeDayData.txs || []).forEach(tx => {
+            const isAdmission = tx.source === 'admission' || 
+                                tx.transactionType === 'admission_collection' || 
+                                (tx.receiptNo && String(tx.receiptNo).startsWith('ADM-')) ||
+                                (tx.collectedBy && String(tx.collectedBy).toLowerCase().includes('admission'));
             entries.push({
                 id: tx.id || tx.receiptNo,
-                type: 'fee_slip',
-                typeName: 'Fee Receipt',
+                type: isAdmission ? 'admission_slip' : 'fee_slip',
+                typeName: isAdmission ? '🎓 Admission Payment' : 'Fee Receipt',
                 title: tx.studentName || 'Student Fee',
-                subtitle: `${tx.className || 'Class'} ${tx.rollNo && tx.rollNo !== '-' ? `• Roll: ${tx.rollNo}` : ''}`,
-                subDetail: tx.receiptNo ? `Slip #${tx.receiptNo}` : 'Receipt',
+                subtitle: `${tx.className || 'Class'} ${tx.rollNo && tx.rollNo !== '-' ? `• Roll: ${tx.rollNo}` : (tx.admissionNo ? `• Adm: ${tx.admissionNo}` : '')}`,
+                subDetail: isAdmission ? `Admission #${tx.receiptNo || tx.id}` : (tx.receiptNo ? `Slip #${tx.receiptNo}` : 'Receipt'),
                 extraInfo: tx.fatherName ? `S/D of ${tx.fatherName}` : '',
                 amount: Number(tx.totalPaid || 0),
                 flowType: 'inflow',
@@ -4243,7 +4304,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                         borderRadius: '14px',
                         border: '1.5px solid #e2e8f0'
                     }}>
-                        {/* 3 Main Clean Tabs */}
+                        {/* 4 Main Clean Tabs */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
                             <button
                                 type="button"
@@ -4267,7 +4328,32 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                     transition: 'all 0.15s ease'
                                 }}
                             >
-                                <Wallet size={15} /> 🎓 Fee Slips Paid ({calculatedMetrics.scopedTxs.length})
+                                <Wallet size={15} /> 🎓 Regular Fees ({calculatedMetrics.scopedRegularFeeTxs?.length || 0})
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMonthlyLedgerTab('admission_slips');
+                                    setLedgerPage(1);
+                                }}
+                                style={{
+                                    padding: '0.55rem 1.1rem',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: monthlyLedgerTab === 'admission_slips' ? '#7c3aed' : 'transparent',
+                                    color: monthlyLedgerTab === 'admission_slips' ? '#ffffff' : '#334155',
+                                    fontWeight: '800',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    boxShadow: monthlyLedgerTab === 'admission_slips' ? '0 2px 6px rgba(124, 58, 237, 0.25)' : 'none',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <Sparkles size={15} /> 🌟 Admission Fees ({calculatedMetrics.scopedAdmissionTxs?.length || 0})
                             </button>
 
                             <button
@@ -4330,7 +4416,9 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                     placeholder={
                                         monthlyLedgerTab === 'fee_slips'
                                             ? "Search receipt #, student, roll, trx ID..."
-                                            : (monthlyLedgerTab === 'incomes' ? "Search income name, category..." : "Search expense title, category...")
+                                            : (monthlyLedgerTab === 'admission_slips'
+                                                ? "Search admission receipt, student, roll, class..."
+                                                : (monthlyLedgerTab === 'incomes' ? "Search income name, category..." : "Search expense title, category..."))
                                     }
                                     value={searchLedger}
                                     onChange={(e) => {
@@ -4350,7 +4438,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                 />
                             </div>
 
-                            {monthlyLedgerTab === 'fee_slips' && (
+                            {(monthlyLedgerTab === 'fee_slips' || monthlyLedgerTab === 'admission_slips') && (
                                 <select
                                     value={modeLedgerFilter}
                                     onChange={(e) => {
@@ -4497,6 +4585,133 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                                                     <Printer size={12} /> Slip
                                                                 </button>
                                                             </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            )}
+
+                            {/* ============================== */}
+                            {/* TAB 1.5: ADMISSION FEES TABLE */}
+                            {/* ============================== */}
+                            {monthlyLedgerTab === 'admission_slips' && (
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                    <thead>
+                                        <tr style={{ background: '#faf5ff', borderBottom: '2px solid #e9d5ff' }}>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#6b21a8', fontWeight: '800' }}>Receipt #</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#6b21a8', fontWeight: '800' }}>Student & Father</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#6b21a8', fontWeight: '800' }}>Enrolled Class</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'left', color: '#6b21a8', fontWeight: '800' }}>Fee Heads Breakdown</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#6b21a8', fontWeight: '800' }}>Date & Mode</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'right', color: '#7c3aed', fontWeight: '800' }}>Amount Collected</th>
+                                            <th style={{ padding: '0.65rem 0.85rem', textAlign: 'center', color: '#6b21a8', fontWeight: '800' }}>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginatedMonthlyAdmissionTxs.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={7} style={{ padding: '3rem 1rem', textAlign: 'center', color: '#94a3b8' }}>
+                                                    <Sparkles size={32} style={{ opacity: 0.35, marginBottom: '0.5rem', color: '#a855f7' }} />
+                                                    <div style={{ fontWeight: '700', fontSize: '0.9rem' }}>No admission fee receipts found for {MONTH_NAMES[calculatedMetrics.activeMonthNum - 1]} {selectedYear}.</div>
+                                                    <div style={{ fontSize: '0.78rem' }}>When students are enrolled with counter fee payment, receipts will appear here.</div>
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            paginatedMonthlyAdmissionTxs.map(tx => {
+                                                const mode = (tx.paymentMode || 'Cash').toLowerCase();
+                                                const isOnline = mode.startsWith('online') || tx.collectedBy?.includes('Online') || mode.includes('transfer') || mode.includes('easy') || mode.includes('jazz') || mode.includes('bank');
+                                                const itemsList = Array.isArray(tx.items) ? tx.items : [];
+                                                return (
+                                                    <tr key={tx.id || tx.receiptNo} style={{ borderBottom: '1px solid #f3e8ff', transition: 'background 0.15s ease' }} onMouseEnter={(e) => { e.currentTarget.style.background = '#faf5ff'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                                                        <td style={{ padding: '0.7rem 0.85rem', fontWeight: '800', color: '#6b21a8' }}>
+                                                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                                                <span style={{ fontSize: '0.72rem', background: '#f3e8ff', color: '#7c3aed', padding: '2px 6px', borderRadius: '4px', border: '1px solid #d8b4fe', fontWeight: '800' }}>ADM</span>
+                                                                {tx.receiptNo || tx.id}
+                                                            </div>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem' }}>
+                                                            <strong style={{ color: '#0f172a', display: 'block' }}>{tx.studentName}</strong>
+                                                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                                                {tx.fatherName ? `S/D of ${tx.fatherName}` : (tx.fatherPhone || 'New Admission')}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem' }}>
+                                                            <span style={{ fontWeight: '700', color: '#1e293b', display: 'block' }}>{tx.className || 'Class'}</span>
+                                                            <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                                                {tx.admissionNo ? `Adm #: ${tx.admissionNo}` : (tx.rollNo ? `Roll: ${tx.rollNo}` : 'Enrolled')}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem' }}>
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', maxWidth: '280px' }}>
+                                                                {itemsList.length > 0 ? (
+                                                                    itemsList.map((it, idx) => (
+                                                                        <span key={idx} style={{
+                                                                            fontSize: '0.7rem',
+                                                                            padding: '1px 6px',
+                                                                            borderRadius: '4px',
+                                                                            background: it.type === 'action' ? '#e0e7ff' : '#f1f5f9',
+                                                                            color: it.type === 'action' ? '#4338ca' : '#334155',
+                                                                            border: `1px solid ${it.type === 'action' ? '#c7d2fe' : '#e2e8f0'}`,
+                                                                            fontWeight: '700'
+                                                                        }}>
+                                                                            {it.name}: Rs {Number(it.amount || 0).toLocaleString()}
+                                                                        </span>
+                                                                    ))
+                                                                ) : (
+                                                                    <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                                                                        {tx.paidCategories?.join(', ') || 'Initial Admission Package'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
+                                                            <span style={{ fontWeight: '700', color: '#334155', fontSize: '0.78rem', display: 'block' }}>{tx.dateString || tx.dateIso || 'N/A'}</span>
+                                                            <span style={{
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '0.2rem',
+                                                                fontSize: '0.7rem',
+                                                                fontWeight: '700',
+                                                                padding: '1px 6px',
+                                                                borderRadius: '999px',
+                                                                background: !isOnline ? '#f0fdf4' : '#eff6ff',
+                                                                color: !isOnline ? '#166534' : '#1e40af',
+                                                                border: `1px solid ${!isOnline ? '#bbf7d0' : '#bfdbfe'}`,
+                                                                marginTop: '2px'
+                                                            }}>
+                                                                {!isOnline ? <Wallet size={10} /> : <Smartphone size={10} />}
+                                                                {tx.paymentMode || 'Cash'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'right', fontWeight: '900', color: '#7c3aed', fontSize: '0.92rem' }}>
+                                                            Rs {Number(tx.totalPaid || 0).toLocaleString()}
+                                                        </td>
+                                                        <td style={{ padding: '0.7rem 0.85rem', textAlign: 'center' }}>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setSelectedReceiptForModal(tx);
+                                                                    setReceiptModalOpen(true);
+                                                                }}
+                                                                style={{
+                                                                    border: '1.5px solid #d8b4fe',
+                                                                    background: '#faf5ff',
+                                                                    color: '#7c3aed',
+                                                                    borderRadius: '6px',
+                                                                    padding: '4px 8px',
+                                                                    fontSize: '0.75rem',
+                                                                    fontWeight: '700',
+                                                                    cursor: 'pointer',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '3px'
+                                                                }}
+                                                            >
+                                                                <Printer size={12} /> Slip
+                                                            </button>
                                                         </td>
                                                     </tr>
                                                 );

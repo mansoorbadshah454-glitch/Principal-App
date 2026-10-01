@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import "./Admission.css"; // Import the custom CSS
 import {
@@ -38,6 +39,7 @@ import AdmissionHistory from "./AdmissionHistory";
 import {
   collection,
   getDocs,
+  getDoc,
   addDoc,
   setDoc,
   doc,
@@ -72,6 +74,7 @@ const ACTION_CATEGORIES = [
 const RECURRING_CATEGORIES = [
   "Tuition fee",
   "Transport fee",
+  "Online services fee",
   "Library",
   "Hostel fee",
   "Stationary charges",
@@ -97,6 +100,17 @@ const Admission = () => {
   const [showReceipt, setShowReceipt] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
+
+  useEffect(() => {
+    if (showReceipt) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "unset";
+    }
+    return () => {
+      document.body.style.overflow = "unset";
+    };
+  }, [showReceipt]);
 
   const handleDownloadPDF = async () => {
     setIsDownloading(true);
@@ -191,6 +205,15 @@ const Admission = () => {
   const [availableClasses, setAvailableClasses] = useState([]);
   const [schoolId, setSchoolId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [schoolProfile, setSchoolProfile] = useState({
+    name: localStorage.getItem("schoolName") || "",
+    phone: localStorage.getItem("schoolPhone") || "",
+    emergencyContact: localStorage.getItem("schoolEmergencyPhone") || "",
+    landline: "",
+    address: localStorage.getItem("schoolAddress") || "",
+    profileImage: localStorage.getItem("schoolLogo") || "",
+    email: "",
+  });
 
   // Offline Resilience & Auto-Sync Engine States
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -349,6 +372,63 @@ const Admission = () => {
         setSchoolId(userData.schoolId);
 
         try {
+          // 1. Fetch School Settings & Profile (Direct from Settings Page Firestore document)
+          let fetchedSchool = {
+            name: "",
+            phone: "",
+            emergencyContact: "",
+            landline: "",
+            address: "",
+            profileImage: "",
+            email: "",
+          };
+
+          try {
+            const profileRef = doc(db, `schools/${userData.schoolId}/settings`, "profile");
+            const profileSnap = await getDoc(profileRef);
+            if (profileSnap.exists()) {
+              const pData = profileSnap.data();
+              fetchedSchool = {
+                name: pData.name || "",
+                phone: pData.phone || "",
+                emergencyContact: pData.emergencyContact || "",
+                landline: pData.landline || "",
+                address: pData.address || "",
+                profileImage: pData.profileImage || pData.logo || "",
+                email: pData.email || "",
+              };
+            }
+
+            // Fallback to root schools/{schoolId}
+            const rootRef = doc(db, "schools", userData.schoolId);
+            const rootSnap = await getDoc(rootRef);
+            if (rootSnap.exists()) {
+              const rData = rootSnap.data();
+              if (!fetchedSchool.name) fetchedSchool.name = rData.name || rData.schoolName || "";
+              if (!fetchedSchool.phone) fetchedSchool.phone = rData.phone || rData.schoolPhone || "";
+              if (!fetchedSchool.emergencyContact) fetchedSchool.emergencyContact = rData.emergencyContact || rData.emergencyPhone || "";
+              if (!fetchedSchool.address) fetchedSchool.address = rData.address || rData.schoolAddress || "";
+              if (!fetchedSchool.profileImage) fetchedSchool.profileImage = rData.profileImage || rData.logo || rData.schoolLogo || "";
+              if (!fetchedSchool.email) fetchedSchool.email = rData.email || "";
+            }
+          } catch (err) {
+            console.warn("Could not fetch school profile doc in Admission:", err);
+          }
+
+          if (!fetchedSchool.name) fetchedSchool.name = localStorage.getItem("schoolName") || "School";
+          if (!fetchedSchool.phone) fetchedSchool.phone = localStorage.getItem("schoolPhone") || "";
+          if (!fetchedSchool.emergencyContact) fetchedSchool.emergencyContact = localStorage.getItem("schoolEmergencyPhone") || "";
+          if (!fetchedSchool.address) fetchedSchool.address = localStorage.getItem("schoolAddress") || "";
+          if (!fetchedSchool.profileImage) fetchedSchool.profileImage = localStorage.getItem("schoolLogo") || "";
+
+          setSchoolProfile(fetchedSchool);
+          if (fetchedSchool.name) localStorage.setItem("schoolName", fetchedSchool.name);
+          if (fetchedSchool.phone) localStorage.setItem("schoolPhone", fetchedSchool.phone);
+          if (fetchedSchool.emergencyContact) localStorage.setItem("schoolEmergencyPhone", fetchedSchool.emergencyContact);
+          if (fetchedSchool.address) localStorage.setItem("schoolAddress", fetchedSchool.address);
+          if (fetchedSchool.profileImage) localStorage.setItem("schoolLogo", fetchedSchool.profileImage);
+
+          // 2. Fetch Classes
           const q = query(
             collection(db, `schools/${userData.schoolId}/classes`),
           );
@@ -372,7 +452,7 @@ const Admission = () => {
 
           setAvailableClasses(classesList);
         } catch (error) {
-          console.error("Error fetching classes:", error);
+          console.error("Error fetching school and classes:", error);
         }
       }
     };
@@ -762,6 +842,8 @@ const Admission = () => {
           ...(isPaidNow ? { paidAt: now.toISOString(), paidMonthKey: currentMonthKey } : {}),
         }));
 
+        const receiptNo = `ADM-${Date.now().toString().slice(-6)}${Math.floor(10 + Math.random() * 90)}`;
+
         const monthlyFeeHist = isPaidNow
           ? {
               [currentMonthKey]: {
@@ -770,7 +852,7 @@ const Admission = () => {
                 expectedAmount: recurringTotal + actionsTotal,
                 paidAt: now.toISOString(),
                 paymentMode: student.feePaymentMode || "Cash",
-                receiptNo: `ADM-${Date.now().toString().slice(-6)}`,
+                receiptNo: receiptNo,
                 settledVia: "admission_counter",
               },
             }
@@ -832,6 +914,63 @@ const Admission = () => {
           await updateDoc(classRef, {
             students: increment(1),
           });
+
+          // 4. Record Fee Transaction for SSOT Ledger & Financial Integrity
+          if (isPaidNow && (recurringTotal + actionsTotal) > 0) {
+            const items = [
+              ...(student.feeStructure || []).map((f) => ({
+                name: f.name || "Tuition Fee",
+                amount: Number(f.amount || 0),
+                type: "recurring",
+              })),
+              ...(student.individualActions || []).map((a) => ({
+                name: a.name || "Admission Fee",
+                amount: Number(a.amount || 0),
+                type: "action",
+              })),
+            ];
+            const paidCategories = items.map((i) => i.name);
+            const totalPaid = recurringTotal + actionsTotal;
+
+            const txDocRef = doc(db, `schools/${activeSchoolId}/feeTransactions`, receiptNo);
+            const txPayload = {
+              id: receiptNo,
+              receiptNo: receiptNo,
+              studentId: studentId,
+              studentName: `${student.firstName} ${student.lastName}`.trim(),
+              rollNo: student.rollNo || "",
+              admissionNo: student.admissionNo || "",
+              classId: student.admissionClass,
+              className: className,
+              fatherName: parentDetails.fatherName || "",
+              fatherPhone: parentDetails.phone || "",
+              items: items,
+              paidCategories: paidCategories,
+              baseFee: derivedTuition,
+              transportFee: derivedTransport,
+              actionsFee: actionsTotal,
+              fineAmount: 0,
+              discount: 0,
+              totalPaid: totalPaid,
+              remainingBalance: 0,
+              paymentMode: student.feePaymentMode || "Cash",
+              remarks: "Initial Payment at Admission",
+              dueDate: null,
+              targetMonthKey: currentMonthKey,
+              targetMonthIdx: now.getMonth(),
+              targetMonthName: now.toLocaleDateString("en-US", { month: "long" }),
+              targetYear: now.getFullYear(),
+              dateString: now.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" }),
+              timeString: now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+              timestamp: serverTimestamp(),
+              dateIso: now.toISOString().split("T")[0],
+              collectedBy: "Admission Desk",
+              source: "admission",
+              transactionType: "admission_collection",
+            };
+
+            await setDoc(txDocRef, txPayload, { merge: true });
+          }
         } catch (stErr) {
           console.warn("Buffered offline student write:", stErr);
         }
@@ -894,20 +1033,25 @@ const Admission = () => {
 
       // Set Receipt Data before clearing form
       setReceiptData({
-        schoolName: localStorage.getItem("schoolName") || "Our School",
-        schoolPhone: localStorage.getItem("schoolPhone") || "+1 234 567 8900",
+        schoolName: schoolProfile.name || localStorage.getItem("schoolName") || "Our School",
+        schoolPhone: schoolProfile.phone || localStorage.getItem("schoolPhone") || "",
         schoolEmergencyPhone:
-          localStorage.getItem("schoolEmergencyPhone") || "+1 987 654 3210",
+          schoolProfile.emergencyContact ||
+          schoolProfile.landline ||
+          localStorage.getItem("schoolEmergencyPhone") ||
+          "",
         schoolAddress:
+          schoolProfile.address ||
           localStorage.getItem("schoolAddress") ||
-          "123 Education Street, City, Country",
-        schoolLogo: localStorage.getItem("schoolLogo") || "",
+          "",
+        schoolLogo: schoolProfile.profileImage || localStorage.getItem("schoolLogo") || "",
+        schoolEmail: schoolProfile.email || "",
         date: new Date().toLocaleDateString(),
         time: new Date().toLocaleTimeString(),
-        parentName: parentDetails.fatherName,
-        parentPhone: parentDetails.phone,
-        parentEmail: parentDetails.email,
-        parentPassword: parentDetails.password,
+        parentName: parentDetails.fatherName || "Parent / Guardian",
+        parentPhone: parentDetails.phone || "N/A",
+        parentEmail: parentDetails.email || "N/A",
+        parentPassword: parentDetails.password || "N/A",
         students: students.map((s) => {
           const cls = availableClasses.find((c) => c.id === s.admissionClass);
           const recTotal = (s.feeStructure || []).reduce(
@@ -919,10 +1063,10 @@ const Admission = () => {
             0
           );
           return {
-            name: `${s.firstName} ${s.lastName}`,
-            className: cls ? cls.name : "Unknown Class",
-            rollNo: s.rollNo,
-            admissionNo: s.admissionNo,
+            name: `${s.firstName || "Student"} ${s.lastName || ""}`.trim() || "New Student",
+            className: cls ? cls.name : "Class Not Assigned",
+            rollNo: s.rollNo || "Provisional",
+            admissionNo: s.admissionNo || "New Admission",
             feeStructure: s.feeStructure || [],
             individualActions: s.individualActions || [],
             isPaidAtAdmission: Boolean(s.markPaidAtAdmission),
@@ -975,6 +1119,98 @@ const Admission = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handlePreviewReceipt = async (targetIndex = null) => {
+    let currentSchool = { ...schoolProfile };
+
+    // Dynamic live fetch if school profile is not fully loaded
+    const activeSchoolId = schoolId || (localStorage.getItem("manual_session") ? JSON.parse(localStorage.getItem("manual_session"))?.schoolId : null);
+    if (activeSchoolId && (!currentSchool.name || !currentSchool.profileImage)) {
+      try {
+        const profileRef = doc(db, `schools/${activeSchoolId}/settings`, "profile");
+        const profileSnap = await getDoc(profileRef);
+        if (profileSnap.exists()) {
+          const pData = profileSnap.data();
+          currentSchool = {
+            name: pData.name || currentSchool.name,
+            phone: pData.phone || currentSchool.phone,
+            emergencyContact: pData.emergencyContact || currentSchool.emergencyContact,
+            landline: pData.landline || currentSchool.landline,
+            address: pData.address || currentSchool.address,
+            profileImage: pData.profileImage || pData.logo || currentSchool.profileImage,
+            email: pData.email || currentSchool.email,
+          };
+        }
+        const rootRef = doc(db, "schools", activeSchoolId);
+        const rootSnap = await getDoc(rootRef);
+        if (rootSnap.exists()) {
+          const rData = rootSnap.data();
+          if (!currentSchool.name) currentSchool.name = rData.name || rData.schoolName || "";
+          if (!currentSchool.phone) currentSchool.phone = rData.phone || rData.schoolPhone || "";
+          if (!currentSchool.emergencyContact) currentSchool.emergencyContact = rData.emergencyContact || rData.emergencyPhone || "";
+          if (!currentSchool.address) currentSchool.address = rData.address || rData.schoolAddress || "";
+          if (!currentSchool.profileImage) currentSchool.profileImage = rData.profileImage || rData.logo || rData.schoolLogo || "";
+          if (!currentSchool.email) currentSchool.email = rData.email || "";
+        }
+        setSchoolProfile(currentSchool);
+      } catch (err) {
+        console.warn("Live fetch error during receipt preview:", err);
+      }
+    }
+
+    const targetStudents =
+      targetIndex !== null && students[targetIndex]
+        ? [students[targetIndex]]
+        : students;
+
+    setReceiptData({
+      schoolName: currentSchool.name || localStorage.getItem("schoolName") || "Our School",
+      schoolPhone: currentSchool.phone || localStorage.getItem("schoolPhone") || "",
+      schoolEmergencyPhone:
+        currentSchool.emergencyContact ||
+        currentSchool.landline ||
+        localStorage.getItem("schoolEmergencyPhone") ||
+        "",
+      schoolAddress:
+        currentSchool.address ||
+        localStorage.getItem("schoolAddress") ||
+        "",
+      schoolLogo: currentSchool.profileImage || localStorage.getItem("schoolLogo") || "",
+      schoolEmail: currentSchool.email || "",
+      date: new Date().toLocaleDateString(),
+      time: new Date().toLocaleTimeString(),
+      parentName: parentDetails.fatherName || "Parent / Guardian",
+      parentPhone: parentDetails.phone || "N/A",
+      parentEmail: parentDetails.email || "N/A",
+      parentPassword: parentDetails.password || "N/A",
+      isProvisional: true,
+      students: targetStudents.map((s) => {
+        const cls = availableClasses.find((c) => c.id === s.admissionClass);
+        const recTotal = (s.feeStructure || []).reduce(
+          (sum, f) => sum + (Number(f.amount) || 0),
+          0
+        );
+        const actTotal = (s.individualActions || []).reduce(
+          (sum, a) => sum + (Number(a.amount) || 0),
+          0
+        );
+        return {
+          name: `${s.firstName || "Student"} ${s.lastName || ""}`.trim() || "New Student",
+          className: cls ? cls.name : "Class Not Assigned",
+          rollNo: s.rollNo || "Provisional",
+          admissionNo: s.admissionNo || "New Admission",
+          feeStructure: s.feeStructure || [],
+          individualActions: s.individualActions || [],
+          isPaidAtAdmission: Boolean(s.markPaidAtAdmission),
+          paymentMode: s.feePaymentMode || "Cash",
+          monthlyTotal: recTotal,
+          oneTimeTotal: actTotal,
+          grandTotal: recTotal + actTotal,
+        };
+      }),
+    });
+    setShowReceipt(true);
   };
 
   const testReceipt = () => {
@@ -2164,75 +2400,93 @@ const Admission = () => {
                         </div>
                       </motion.div>
                     ) : (
-                      /* ================= FINANCE SIDE: Payment & Finance Hub (Slide in from Right) ================= */
+                      /* ================= FINANCE SIDE: Windows 7 / Aero Clean Professional Desktop UI ================= */
                       <motion.div
                         key="finance-card"
-                        initial={{ x: 30, opacity: 0 }}
+                        initial={{ x: 25, opacity: 0 }}
                         animate={{ x: 0, opacity: 1 }}
-                        exit={{ x: 30, opacity: 0 }}
-                        transition={{ duration: 0.25, ease: "easeInOut" }}
+                        exit={{ x: 25, opacity: 0 }}
+                        transition={{ duration: 0.22, ease: "easeInOut" }}
                         className="finance-back-card"
                         style={{
-                          background: "#3b82f6",
-                          border: "2px solid #1e40af",
-                          boxShadow: "8px 8px 0px #1e40af",
-                          color: "white",
+                          background: "#ffffff",
+                          border: "1.5px solid #cbd5e1",
+                          borderRadius: "18px",
+                          boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05)",
+                          color: "#0f172a",
                           marginBottom: 0,
                           position: "relative",
                           overflow: "hidden",
+                          padding: 0,
                         }}
                       >
-                        {/* Background Decor Watermark */}
-                        <div className="card-bg-decor-watermark">
-                          <Wallet size={200} />
-                        </div>
-
-                        <div className="finance-header">
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.75rem",
-                            }}
-                          >
+                        {/* Windows 7 / Aero Header Title Bar */}
+                        <div
+                          style={{
+                            background: "linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%)",
+                            borderBottom: "1.5px solid #cbd5e1",
+                            padding: "1.1rem 1.5rem",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.9)",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                             <div
                               style={{
-                                width: 38,
-                                height: 38,
-                                borderRadius: "10px",
-                                background: "rgba(255, 255, 255, 0.2)",
+                                width: 36,
+                                height: 36,
+                                borderRadius: "9px",
+                                background: "linear-gradient(135deg, #0078d4 0%, #005a9e 100%)",
                                 color: "#ffffff",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                border: "1px solid rgba(255, 255, 255, 0.35)",
+                                boxShadow: "0 2px 6px rgba(0, 120, 212, 0.3)",
                               }}
                             >
-                              <Wallet size={20} />
+                              <Wallet size={18} />
                             </div>
                             <div>
                               <h3
                                 style={{
-                                  fontSize: "1.1rem",
+                                  fontSize: "1.05rem",
                                   fontWeight: "800",
                                   margin: 0,
-                                  color: "#ffffff",
-                                  letterSpacing: "-0.01em",
+                                  color: "#0f172a",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.5rem",
                                 }}
                               >
-                                Fee & Payment Setup
+                                <span>Fee & Payment Structure Setup</span>
+                                <span
+                                  style={{
+                                    fontSize: "0.72rem",
+                                    padding: "2px 7px",
+                                    borderRadius: "999px",
+                                    background: "#e0f2fe",
+                                    color: "#0369a1",
+                                    border: "1px solid #bae6fd",
+                                    fontWeight: "800",
+                                  }}
+                                >
+                                  Student #{index + 1}
+                                </span>
                               </h3>
                               <p
                                 style={{
-                                  margin: 0,
-                                  fontSize: "0.8rem",
-                                  color: "rgba(255, 255, 255, 0.85)",
+                                  margin: "0.15rem 0 0",
+                                  fontSize: "0.78rem",
+                                  color: "#64748b",
+                                  fontWeight: "600",
                                 }}
                               >
                                 {student.firstName || student.lastName
                                   ? `${student.firstName} ${student.lastName}`
-                                  : `Student #${index + 1}`}{" "}
-                                • Live Sync with Mobile App
+                                  : `New Enrolment`}{" "}
+                                • Live Real-time SSOT Sync with Parent App
                               </p>
                             </div>
                           </div>
@@ -2240,224 +2494,302 @@ const Admission = () => {
                           <button
                             type="button"
                             onClick={() => setStudentTab(index, "info")}
-                            className="back-to-info-btn"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "0.4rem",
+                              padding: "0.45rem 0.9rem",
+                              borderRadius: "8px",
+                              border: "1.5px solid #cbd5e1",
+                              background: "linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)",
+                              color: "#334155",
+                              fontSize: "0.8rem",
+                              fontWeight: "700",
+                              cursor: "pointer",
+                              boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                              transition: "all 0.15s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "#e2e8f0";
+                              e.currentTarget.style.color = "#0f172a";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)";
+                              e.currentTarget.style.color = "#334155";
+                            }}
                           >
-                            <ArrowLeft size={16} />
-                            <span>Back to Info</span>
+                            <ArrowLeft size={14} />
+                            <span>← Back to Student Info</span>
                           </button>
                         </div>
 
-                        {/* Segmented Mode Selector: Recurring vs One-Time */}
-                        <div className="finance-mode-tabs">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = [...students];
-                              updated[index].newFeeMode = "recurring";
-                              updated[index].newFeeCategory =
-                                RECURRING_CATEGORIES[0];
-                              setStudents(updated);
-                            }}
-                            className={`finance-mode-tab ${
-                              student.newFeeMode !== "action" ? "active" : ""
-                            }`}
-                          >
-                            <RotateCcw size={15} />
-                            <span>Permanent / Monthly Recurring</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = [...students];
-                              updated[index].newFeeMode = "action";
-                              updated[index].newFeeCategory =
-                                ACTION_CATEGORIES[0];
-                              setStudents(updated);
-                            }}
-                            className={`finance-mode-tab ${
-                              student.newFeeMode === "action"
-                                ? "active action-mode"
-                                : ""
-                            }`}
-                          >
-                            <Sparkles size={15} />
-                            <span>1-Time / Admission Action Charge</span>
-                          </button>
-                        </div>
-
-                        {/* Add Fee Inputs */}
-                        <div
-                          style={{
-                            background: "rgba(30, 64, 175, 0.35)",
-                            padding: "1rem",
-                            borderRadius: "14px",
-                            border: "1.5px solid rgba(255, 255, 255, 0.25)",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "0.75rem",
-                            position: "relative",
-                            zIndex: 1,
-                            backdropFilter: "blur(6px)",
-                          }}
-                        >
+                        {/* Card Body Container */}
+                        <div style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+                          
+                          {/* Segmented Mode Selector: Recurring vs One-Time */}
                           <div
                             style={{
                               display: "flex",
-                              gap: "0.75rem",
-                              alignItems: "center",
+                              background: "#f1f5f9",
+                              padding: "4px",
+                              borderRadius: "12px",
+                              border: "1.5px solid #cbd5e1",
+                              gap: "4px",
                             }}
                           >
-                            <div style={{ flex: 1.6 }}>
-                              <label
-                                style={{
-                                  fontSize: "0.75rem",
-                                  fontWeight: "700",
-                                  color: "rgba(255, 255, 255, 0.9)",
-                                  display: "block",
-                                  marginBottom: "0.3rem",
-                                  textTransform: "uppercase",
-                                }}
-                              >
-                                {student.newFeeMode === "action"
-                                  ? "1-Time Category"
-                                  : "Monthly Fee Category"}
-                              </label>
-                              <select
-                                value={student.newFeeCategory}
-                                onChange={(e) => {
-                                  const updated = [...students];
-                                  updated[index].newFeeCategory =
-                                    e.target.value;
-                                  setStudents(updated);
-                                }}
-                                style={{
-                                  width: "100%",
-                                  padding: "0.7rem 1rem",
-                                  borderRadius: "10px",
-                                  border: "2px solid #1e40af",
-                                  background: "#ffffff",
-                                  color: "#0f172a",
-                                  fontSize: "0.9rem",
-                                  fontWeight: "700",
-                                  outline: "none",
-                                }}
-                              >
-                                {student.newFeeMode === "action" ? (
-                                  <>
-                                    {ACTION_CATEGORIES.map((cat) => (
-                                      <option key={cat} value={cat}>
-                                        {cat}
-                                      </option>
-                                    ))}
-                                  </>
-                                ) : (
-                                  <>
-                                    {RECURRING_CATEGORIES.map((cat) => (
-                                      <option key={cat} value={cat}>
-                                        {cat}
-                                      </option>
-                                    ))}
-                                  </>
-                                )}
-                              </select>
-                            </div>
-
-                            <div style={{ flex: 1 }}>
-                              <label
-                                style={{
-                                  fontSize: "0.75rem",
-                                  fontWeight: "700",
-                                  color: "rgba(255, 255, 255, 0.9)",
-                                  display: "block",
-                                  marginBottom: "0.3rem",
-                                  textTransform: "uppercase",
-                                }}
-                              >
-                                Amount (PKR)
-                              </label>
-                              <input
-                                type="number"
-                                value={student.newFeeAmount}
-                                onChange={(e) => {
-                                  const updated = [...students];
-                                  updated[index].newFeeAmount = e.target.value;
-                                  setStudents(updated);
-                                }}
-                                placeholder="e.g. 3500"
-                                style={{
-                                  width: "100%",
-                                  padding: "0.7rem 1rem",
-                                  borderRadius: "10px",
-                                  border: "2px solid #1e40af",
-                                  background: "#ffffff",
-                                  color: "#0f172a",
-                                  fontSize: "0.9rem",
-                                  fontWeight: "700",
-                                  outline: "none",
-                                }}
-                              />
-                            </div>
-
-                            <div style={{ alignSelf: "flex-end" }}>
-                              <button
-                                type="button"
-                                onClick={() => handleAddFee(index)}
-                                disabled={!student.newFeeAmount}
-                                style={{
-                                  padding: "0.7rem 1.4rem",
-                                  borderRadius: "10px",
-                                  border: student.newFeeAmount ? "2px solid #065f46" : "2px solid #1e40af",
-                                  background: student.newFeeAmount
-                                    ? student.newFeeMode === "action"
-                                      ? "#f59e0b"
-                                      : "#10b981"
-                                    : "rgba(255, 255, 255, 0.2)",
-                                  color:
-                                    student.newFeeAmount
-                                      ? student.newFeeMode === "action"
-                                        ? "#0f172a"
-                                        : "#ffffff"
-                                      : "rgba(255, 255, 255, 0.5)",
-                                  fontWeight: "800",
-                                  fontSize: "0.9rem",
-                                  cursor: student.newFeeAmount
-                                    ? "pointer"
-                                    : "not-allowed",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "0.4rem",
-                                  boxShadow: student.newFeeAmount
-                                    ? "2px 2px 0px rgba(0,0,0,0.2)"
-                                    : "none",
-                                  transition: "all 0.2s ease",
-                                }}
-                              >
-                                <Plus size={16} /> Add Fee
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Quick Amount Suggestion Chips */}
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.5rem",
-                              flexWrap: "wrap",
-                              paddingTop: "0.25rem",
-                            }}
-                          >
-                            <span
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = [...students];
+                                updated[index].newFeeMode = "recurring";
+                                updated[index].newFeeCategory = RECURRING_CATEGORIES[0];
+                                setStudents(updated);
+                              }}
                               style={{
-                                fontSize: "0.75rem",
-                                color: "rgba(255, 255, 255, 0.8)",
-                                fontWeight: "700",
+                                flex: 1,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: "0.45rem",
+                                padding: "0.6rem 1rem",
+                                borderRadius: "8px",
+                                border: student.newFeeMode !== "action" ? "1.5px solid #93c5fd" : "1.5px solid transparent",
+                                background: student.newFeeMode !== "action" ? "#ffffff" : "transparent",
+                                color: student.newFeeMode !== "action" ? "#0078d4" : "#64748b",
+                                fontWeight: "800",
+                                fontSize: "0.85rem",
+                                cursor: "pointer",
+                                boxShadow: student.newFeeMode !== "action" ? "0 2px 5px rgba(0, 120, 212, 0.15)" : "none",
+                                transition: "all 0.15s ease",
                               }}
                             >
-                              Quick Amount:
-                            </span>
-                            {[500, 1000, 1500, 2000, 3000, 5000].map(
-                              (amt) => (
+                              <RotateCcw size={15} />
+                              <span>🔄 Permanent / Monthly Recurring</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = [...students];
+                                updated[index].newFeeMode = "action";
+                                updated[index].newFeeCategory = ACTION_CATEGORIES[0];
+                                setStudents(updated);
+                              }}
+                              style={{
+                                flex: 1,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: "0.45rem",
+                                padding: "0.6rem 1rem",
+                                borderRadius: "8px",
+                                border: student.newFeeMode === "action" ? "1.5px solid #fcd34d" : "1.5px solid transparent",
+                                background: student.newFeeMode === "action" ? "#ffffff" : "transparent",
+                                color: student.newFeeMode === "action" ? "#b45309" : "#64748b",
+                                fontWeight: "800",
+                                fontSize: "0.85rem",
+                                cursor: "pointer",
+                                boxShadow: student.newFeeMode === "action" ? "0 2px 5px rgba(245, 158, 11, 0.15)" : "none",
+                                transition: "all 0.15s ease",
+                              }}
+                            >
+                              <Sparkles size={15} />
+                              <span>⚡ 1-Time / Admission Action Charge</span>
+                            </button>
+                          </div>
+
+                          {/* Add Fee Inputs Card Deck */}
+                          <div
+                            style={{
+                              background: "#f8fafc",
+                              padding: "1.1rem",
+                              borderRadius: "14px",
+                              border: "1.5px solid #e2e8f0",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "0.85rem",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: "0.85rem",
+                                alignItems: "flex-end",
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              {/* Category Dropdown */}
+                              <div style={{ flex: 1.5, minWidth: "220px" }}>
+                                <label
+                                  style={{
+                                    fontSize: "0.75rem",
+                                    fontWeight: "800",
+                                    color: "#475569",
+                                    display: "block",
+                                    marginBottom: "0.35rem",
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.03em",
+                                  }}
+                                >
+                                  {student.newFeeMode === "action"
+                                    ? "⚡ 1-Time Charge Category"
+                                    : "🔄 Monthly Fee Head"}
+                                </label>
+                                <select
+                                  value={student.newFeeCategory}
+                                  onChange={(e) => {
+                                    const updated = [...students];
+                                    updated[index].newFeeCategory = e.target.value;
+                                    setStudents(updated);
+                                  }}
+                                  style={{
+                                    width: "100%",
+                                    padding: "0.6rem 0.85rem",
+                                    borderRadius: "8px",
+                                    border: "1.5px solid #cbd5e1",
+                                    background: "#ffffff",
+                                    color: "#0f172a",
+                                    fontSize: "0.88rem",
+                                    fontWeight: "700",
+                                    outline: "none",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {student.newFeeMode === "action" ? (
+                                    <>
+                                      {ACTION_CATEGORIES.map((cat) => (
+                                        <option key={cat} value={cat}>
+                                          {cat}
+                                        </option>
+                                      ))}
+                                    </>
+                                  ) : (
+                                    <>
+                                      {RECURRING_CATEGORIES.map((cat) => (
+                                        <option key={cat} value={cat}>
+                                          {cat}
+                                        </option>
+                                      ))}
+                                    </>
+                                  )}
+                                </select>
+                              </div>
+
+                              {/* Amount Input */}
+                              <div style={{ flex: 1, minWidth: "160px" }}>
+                                <label
+                                  style={{
+                                    fontSize: "0.75rem",
+                                    fontWeight: "800",
+                                    color: "#475569",
+                                    display: "block",
+                                    marginBottom: "0.35rem",
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.03em",
+                                  }}
+                                >
+                                  Amount (PKR)
+                                </label>
+                                <div style={{ position: "relative" }}>
+                                  <span
+                                    style={{
+                                      position: "absolute",
+                                      left: "10px",
+                                      top: "50%",
+                                      transform: "translateY(-50%)",
+                                      fontSize: "0.82rem",
+                                      fontWeight: "800",
+                                      color: "#64748b",
+                                    }}
+                                  >
+                                    Rs
+                                  </span>
+                                  <input
+                                    type="number"
+                                    value={student.newFeeAmount}
+                                    onChange={(e) => {
+                                      const updated = [...students];
+                                      updated[index].newFeeAmount = e.target.value;
+                                      setStudents(updated);
+                                    }}
+                                    placeholder="e.g. 3500"
+                                    style={{
+                                      width: "100%",
+                                      padding: "0.6rem 0.85rem 0.6rem 2.2rem",
+                                      borderRadius: "8px",
+                                      border: "1.5px solid #cbd5e1",
+                                      background: "#ffffff",
+                                      color: "#0f172a",
+                                      fontSize: "0.9rem",
+                                      fontWeight: "800",
+                                      outline: "none",
+                                    }}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Add Fee Button */}
+                              <div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddFee(index)}
+                                  disabled={!student.newFeeAmount || Number(student.newFeeAmount) <= 0}
+                                  style={{
+                                    padding: "0.62rem 1.35rem",
+                                    borderRadius: "8px",
+                                    border: "none",
+                                    background:
+                                      student.newFeeAmount && Number(student.newFeeAmount) > 0
+                                        ? "linear-gradient(180deg, #0078d4 0%, #005a9e 100%)"
+                                        : "#e2e8f0",
+                                    color:
+                                      student.newFeeAmount && Number(student.newFeeAmount) > 0
+                                        ? "#ffffff"
+                                        : "#94a3b8",
+                                    fontWeight: "800",
+                                    fontSize: "0.85rem",
+                                    cursor:
+                                      student.newFeeAmount && Number(student.newFeeAmount) > 0
+                                        ? "pointer"
+                                        : "not-allowed",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "0.4rem",
+                                    boxShadow:
+                                      student.newFeeAmount && Number(student.newFeeAmount) > 0
+                                        ? "0 2px 6px rgba(0, 120, 212, 0.3)"
+                                        : "none",
+                                    transition: "all 0.15s ease",
+                                  }}
+                                >
+                                  <Plus size={15} />
+                                  <span>+ Add Fee Head</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Quick Amount Suggestion Chips */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.4rem",
+                                flexWrap: "wrap",
+                                paddingTop: "0.2rem",
+                                borderTop: "1px dashed #e2e8f0",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: "0.72rem",
+                                  color: "#64748b",
+                                  fontWeight: "800",
+                                  marginRight: "4px",
+                                }}
+                              >
+                                Quick Presets:
+                              </span>
+                              {[500, 1000, 1500, 2000, 2500, 3000, 4000, 5000].map((amt) => (
                                 <button
                                   key={amt}
                                   type="button"
@@ -2467,478 +2799,507 @@ const Admission = () => {
                                     setStudents(updated);
                                   }}
                                   style={{
-                                    padding: "0.2rem 0.65rem",
+                                    padding: "0.2rem 0.55rem",
                                     borderRadius: "6px",
-                                    border: "1px solid rgba(255, 255, 255, 0.35)",
-                                    background: "rgba(255, 255, 255, 0.18)",
-                                    color: "#ffffff",
-                                    fontSize: "0.75rem",
+                                    border: "1px solid #cbd5e1",
+                                    background: "#ffffff",
+                                    color: "#334155",
+                                    fontSize: "0.73rem",
                                     fontWeight: "800",
                                     cursor: "pointer",
-                                    transition: "all 0.15s ease",
+                                    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+                                    transition: "all 0.12s ease",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.borderColor = "#0078d4";
+                                    e.currentTarget.style.color = "#0078d4";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.borderColor = "#cbd5e1";
+                                    e.currentTarget.style.color = "#334155";
                                   }}
                                 >
-                                  +{amt.toLocaleString()}
+                                  +Rs {amt.toLocaleString()}
                                 </button>
-                              )
-                            )}
+                              ))}
+                            </div>
                           </div>
-                        </div>
 
-                        {/* Active Fee Structure List */}
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "0.6rem",
-                            position: "relative",
-                            zIndex: 1,
-                          }}
-                        >
-                          {/* Recurring List */}
-                          <div>
-                            <span
+                          {/* Active Fee Structure Ledger Display */}
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                            
+                            {/* Column 1: Monthly Recurring Fees */}
+                            <div
                               style={{
-                                fontSize: "0.75rem",
-                                fontWeight: "800",
-                                color: "#ffffff",
-                                textTransform: "uppercase",
-                                letterSpacing: "0.05em",
-                                display: "block",
-                                marginBottom: "0.4rem",
+                                background: "#f8fafc",
+                                borderRadius: "12px",
+                                border: "1.5px solid #e2e8f0",
+                                padding: "0.85rem",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "0.6rem",
                               }}
                             >
-                              🔄 Monthly Recurring Fees (
-                              {student.feeStructure.length})
-                            </span>
-                            {student.feeStructure.length === 0 ? (
-                              <p
-                                style={{
-                                  margin: 0,
-                                  padding: "0.6rem 1rem",
-                                  background: "rgba(30, 64, 175, 0.3)",
-                                  borderRadius: "10px",
-                                  fontSize: "0.825rem",
-                                  color: "rgba(255, 255, 255, 0.75)",
-                                  fontStyle: "italic",
-                                  border: "1px dashed rgba(255, 255, 255, 0.25)",
-                                }}
-                              >
-                                No monthly recurring fees added yet.
-                              </p>
-                            ) : (
                               <div
                                 style={{
                                   display: "flex",
-                                  flexDirection: "column",
-                                  gap: "0.4rem",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  paddingBottom: "0.4rem",
+                                  borderBottom: "1px solid #e2e8f0",
                                 }}
                               >
-                                {student.feeStructure.map((fee) => (
-                                  <div
-                                    key={fee.id}
-                                    style={{
-                                      display: "flex",
-                                      justifyContent: "space-between",
-                                      alignItems: "center",
-                                      padding: "0.55rem 0.9rem",
-                                      background: "rgba(255, 255, 255, 0.15)",
-                                      border:
-                                        "1.5px solid rgba(255, 255, 255, 0.3)",
-                                      borderRadius: "10px",
-                                      backdropFilter: "blur(4px)",
-                                    }}
-                                  >
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "0.5rem",
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          fontWeight: "700",
-                                          color: "#ffffff",
-                                          fontSize: "0.9rem",
-                                        }}
-                                      >
-                                        {fee.name}
-                                      </span>
-                                      <span
-                                        style={{
-                                          fontSize: "0.7rem",
-                                          padding: "0.15rem 0.45rem",
-                                          borderRadius: "4px",
-                                          background:
-                                            "rgba(255, 255, 255, 0.25)",
-                                          color: "#ffffff",
-                                          fontWeight: "800",
-                                        }}
-                                      >
-                                        Monthly
-                                      </span>
-                                    </div>
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "0.8rem",
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          fontWeight: "800",
-                                          color: "#ffffff",
-                                          fontSize: "0.95rem",
-                                        }}
-                                      >
-                                        ₨ {Number(fee.amount).toLocaleString()}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleRemoveFee(index, fee.id, false)
-                                        }
-                                        style={{
-                                          background: "rgba(239, 68, 68, 0.2)",
-                                          border: "1px solid rgba(239, 68, 68, 0.4)",
-                                          borderRadius: "6px",
-                                          color: "#fecaca",
-                                          cursor: "pointer",
-                                          padding: "0.25rem 0.35rem",
-                                          display: "flex",
-                                          alignItems: "center",
-                                        }}
-                                        title="Delete Fee"
-                                      >
-                                        <Trash2 size={15} />
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
+                                <span
+                                  style={{
+                                    fontSize: "0.78rem",
+                                    fontWeight: "800",
+                                    color: "#0369a1",
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.03em",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "0.3rem",
+                                  }}
+                                >
+                                  <RotateCcw size={13} /> Monthly Recurring ({student.feeStructure?.length || 0})
+                                </span>
+                                <span style={{ fontSize: "0.82rem", fontWeight: "800", color: "#0369a1" }}>
+                                  Rs {monthlyTotal.toLocaleString()}/mo
+                                </span>
                               </div>
-                            )}
-                          </div>
 
-                          {/* 1-Time Actions List */}
-                          <div style={{ marginTop: "0.5rem" }}>
-                            <span
+                              {(!student.feeStructure || student.feeStructure.length === 0) ? (
+                                <div
+                                  style={{
+                                    padding: "1.5rem 1rem",
+                                    textAlign: "center",
+                                    color: "#94a3b8",
+                                    fontSize: "0.8rem",
+                                    background: "#ffffff",
+                                    borderRadius: "8px",
+                                    border: "1px dashed #cbd5e1",
+                                  }}
+                                >
+                                  No monthly recurring fees added yet.
+                                </div>
+                              ) : (
+                                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                                  {student.feeStructure.map((fee) => (
+                                    <div
+                                      key={fee.id}
+                                      style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        padding: "0.5rem 0.75rem",
+                                        background: "#ffffff",
+                                        border: "1px solid #cbd5e1",
+                                        borderRadius: "8px",
+                                        boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+                                      }}
+                                    >
+                                      <div>
+                                        <strong style={{ color: "#0f172a", fontSize: "0.84rem", display: "block" }}>
+                                          {fee.name}
+                                        </strong>
+                                        <span style={{ fontSize: "0.7rem", color: "#64748b" }}>Monthly Fixed</span>
+                                      </div>
+                                      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                                        <span style={{ fontWeight: "800", color: "#0369a1", fontSize: "0.88rem" }}>
+                                          Rs {Number(fee.amount).toLocaleString()}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveFee(index, fee.id, false)}
+                                          style={{
+                                            background: "#fee2e2",
+                                            border: "1px solid #fecaca",
+                                            borderRadius: "5px",
+                                            color: "#dc2626",
+                                            cursor: "pointer",
+                                            padding: "3px 6px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                          }}
+                                          title="Remove Fee Head"
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Column 2: 1-Time Admission Action Charges */}
+                            <div
                               style={{
-                                fontSize: "0.75rem",
-                                fontWeight: "800",
-                                color: "#fef08a",
-                                textTransform: "uppercase",
-                                letterSpacing: "0.05em",
-                                display: "block",
-                                marginBottom: "0.4rem",
+                                background: "#fdf8f6",
+                                borderRadius: "12px",
+                                border: "1.5px solid #fed7aa",
+                                padding: "0.85rem",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "0.6rem",
                               }}
                             >
-                              ⚡ 1-Time Admission & Action Charges (
-                              {student.individualActions.length})
-                            </span>
-                            {student.individualActions.length === 0 ? (
-                              <p
-                                style={{
-                                  margin: 0,
-                                  padding: "0.6rem 1rem",
-                                  background: "rgba(30, 64, 175, 0.3)",
-                                  borderRadius: "10px",
-                                  fontSize: "0.825rem",
-                                  color: "rgba(255, 255, 255, 0.75)",
-                                  fontStyle: "italic",
-                                  border: "1px dashed rgba(255, 255, 255, 0.25)",
-                                }}
-                              >
-                                No 1-time charges added (e.g. Admission fee,
-                                Uniform, Books).
-                              </p>
-                            ) : (
                               <div
                                 style={{
                                   display: "flex",
-                                  flexDirection: "column",
-                                  gap: "0.4rem",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  paddingBottom: "0.4rem",
+                                  borderBottom: "1px solid #fed7aa",
                                 }}
                               >
-                                {student.individualActions.map((act) => (
-                                  <div
-                                    key={act.id}
-                                    style={{
-                                      display: "flex",
-                                      justifyContent: "space-between",
-                                      alignItems: "center",
-                                      padding: "0.55rem 0.9rem",
-                                      background: "rgba(255, 255, 255, 0.15)",
-                                      border:
-                                        "1.5px solid rgba(254, 240, 138, 0.4)",
-                                      borderRadius: "10px",
-                                      backdropFilter: "blur(4px)",
-                                    }}
-                                  >
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "0.5rem",
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          fontWeight: "700",
-                                          color: "#ffffff",
-                                          fontSize: "0.9rem",
-                                        }}
-                                      >
-                                        {act.name}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleToggleActionStatus(
-                                            index,
-                                            act.id
-                                          )
-                                        }
-                                        className={`action-status-toggle ${
-                                          act.status === "paid"
-                                            ? "paid"
-                                            : "unpaid"
-                                        }`}
-                                        title="Click to toggle Paid/Unpaid status"
-                                      >
-                                        {act.status === "paid"
-                                          ? "✓ Paid"
-                                          : "● Unpaid"}
-                                      </button>
-                                    </div>
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "0.8rem",
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          fontWeight: "800",
-                                          color: "#fef08a",
-                                          fontSize: "0.95rem",
-                                        }}
-                                      >
-                                        ₨ {Number(act.amount).toLocaleString()}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleRemoveFee(index, act.id, true)
-                                        }
-                                        style={{
-                                          background: "rgba(239, 68, 68, 0.2)",
-                                          border: "1px solid rgba(239, 68, 68, 0.4)",
-                                          borderRadius: "6px",
-                                          color: "#fecaca",
-                                          cursor: "pointer",
-                                          padding: "0.25rem 0.35rem",
-                                          display: "flex",
-                                          alignItems: "center",
-                                        }}
-                                        title="Delete Action"
-                                      >
-                                        <Trash2 size={15} />
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
+                                <span
+                                  style={{
+                                    fontSize: "0.78rem",
+                                    fontWeight: "800",
+                                    color: "#9a3412",
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.03em",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "0.3rem",
+                                  }}
+                                >
+                                  <Sparkles size={13} /> 1-Time Admission Charges ({student.individualActions?.length || 0})
+                                </span>
+                                <span style={{ fontSize: "0.82rem", fontWeight: "800", color: "#9a3412" }}>
+                                  Rs {actionsTotal.toLocaleString()}
+                                </span>
                               </div>
-                            )}
-                          </div>
-                        </div>
 
-                        {/* On-The-Spot Admission Payment Handler */}
-                        <div
-                          style={{
-                            background: student.markPaidAtAdmission
-                              ? "rgba(6, 95, 70, 0.5)"
-                              : "rgba(30, 64, 175, 0.35)",
-                            border: student.markPaidAtAdmission
-                              ? "2px solid #34d399"
-                              : "1.5px solid rgba(255, 255, 255, 0.25)",
-                            borderRadius: "14px",
-                            padding: "0.85rem 1.15rem",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "0.5rem",
-                            transition: "all 0.25s ease",
-                            position: "relative",
-                            zIndex: 1,
-                          }}
-                        >
+                              {(!student.individualActions || student.individualActions.length === 0) ? (
+                                <div
+                                  style={{
+                                    padding: "1.5rem 1rem",
+                                    textAlign: "center",
+                                    color: "#94a3b8",
+                                    fontSize: "0.8rem",
+                                    background: "#ffffff",
+                                    borderRadius: "8px",
+                                    border: "1px dashed #fed7aa",
+                                  }}
+                                >
+                                  No 1-time charges added (e.g. Admission fee, Security, Uniform).
+                                </div>
+                              ) : (
+                                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                                  {student.individualActions.map((act) => (
+                                    <div
+                                      key={act.id}
+                                      style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        padding: "0.5rem 0.75rem",
+                                        background: "#ffffff",
+                                        border: "1px solid #fed7aa",
+                                        borderRadius: "8px",
+                                        boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+                                      }}
+                                    >
+                                      <div>
+                                        <strong style={{ color: "#0f172a", fontSize: "0.84rem", display: "block" }}>
+                                          {act.name}
+                                        </strong>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleActionStatus(index, act.id)}
+                                          style={{
+                                            fontSize: "0.68rem",
+                                            fontWeight: "800",
+                                            padding: "1px 6px",
+                                            borderRadius: "4px",
+                                            border: act.status === "paid" ? "1px solid #86efac" : "1px solid #cbd5e1",
+                                            background: act.status === "paid" ? "#dcfce7" : "#f1f5f9",
+                                            color: act.status === "paid" ? "#15803d" : "#64748b",
+                                            cursor: "pointer",
+                                            marginTop: "2px",
+                                          }}
+                                          title="Toggle Paid/Unpaid"
+                                        >
+                                          {act.status === "paid" ? "✓ Paid" : "● Unpaid"}
+                                        </button>
+                                      </div>
+                                      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                                        <span style={{ fontWeight: "800", color: "#9a3412", fontSize: "0.88rem" }}>
+                                          Rs {Number(act.amount).toLocaleString()}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveFee(index, act.id, true)}
+                                          style={{
+                                            background: "#fee2e2",
+                                            border: "1px solid #fecaca",
+                                            borderRadius: "5px",
+                                            color: "#dc2626",
+                                            cursor: "pointer",
+                                            padding: "3px 6px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                          }}
+                                          title="Remove Charge"
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* On-The-Spot Admission Payment Handler (Cashier Drawer) */}
                           <div
                             style={{
+                              background: student.markPaidAtAdmission
+                                ? "linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%)"
+                                : "#f8fafc",
+                              border: student.markPaidAtAdmission
+                                ? "1.5px solid #86efac"
+                                : "1.5px solid #cbd5e1",
+                              borderRadius: "14px",
+                              padding: "0.9rem 1.15rem",
                               display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
+                              flexDirection: "column",
+                              gap: "0.6rem",
+                              transition: "all 0.2s ease",
+                              boxShadow: student.markPaidAtAdmission
+                                ? "0 4px 12px rgba(16, 185, 129, 0.12)"
+                                : "none",
                             }}
                           >
-                            <label
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "0.6rem",
-                                cursor: "pointer",
-                                fontWeight: "700",
-                                fontSize: "0.9rem",
-                                color: "#ffffff",
-                              }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={student.markPaidAtAdmission}
-                                onChange={(e) => {
-                                  const updated = [...students];
-                                  updated[index].markPaidAtAdmission =
-                                    e.target.checked;
-                                  setStudents(updated);
-                                }}
-                                style={{
-                                  width: "18px",
-                                  height: "18px",
-                                  accentColor: "#10b981",
-                                  cursor: "pointer",
-                                }}
-                              />
-                              <span>
-                                Mark Admission Dues as Paid at Counter
-                                (On-the-spot)
-                              </span>
-                            </label>
-
-                            {student.markPaidAtAdmission && (
-                              <span
-                                style={{
-                                  fontSize: "0.75rem",
-                                  fontWeight: "800",
-                                  background: "#065f46",
-                                  color: "#6ee7b7",
-                                  padding: "0.2rem 0.6rem",
-                                  borderRadius: "6px",
-                                  border: "1px solid #34d399",
-                                }}
-                              >
-                                PAID STAMP APPLIED
-                              </span>
-                            )}
-                          </div>
-
-                          {student.markPaidAtAdmission && (
                             <div
                               style={{
                                 display: "flex",
                                 alignItems: "center",
-                                gap: "0.75rem",
-                                marginTop: "0.25rem",
+                                justifyContent: "space-between",
                                 flexWrap: "wrap",
+                                gap: "0.6rem",
                               }}
                             >
-                              <span
+                              <label
                                 style={{
-                                  fontSize: "0.8rem",
-                                  color: "rgba(255, 255, 255, 0.85)",
-                                  fontWeight: "700",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.6rem",
+                                  cursor: "pointer",
+                                  fontWeight: "800",
+                                  fontSize: "0.88rem",
+                                  color: student.markPaidAtAdmission ? "#14532d" : "#334155",
                                 }}
                               >
-                                Payment Mode:
-                              </span>
-                              {[
-                                "Cash",
-                                "Bank Transfer",
-                                "EasyPaisa / JazzCash",
-                                "POS Card",
-                              ].map((mode) => (
-                                <button
-                                  key={mode}
-                                  type="button"
-                                  onClick={() => {
+                                <input
+                                  type="checkbox"
+                                  checked={student.markPaidAtAdmission}
+                                  onChange={(e) => {
                                     const updated = [...students];
-                                    updated[index].feePaymentMode = mode;
+                                    updated[index].markPaidAtAdmission = e.target.checked;
                                     setStudents(updated);
                                   }}
                                   style={{
-                                    padding: "0.25rem 0.65rem",
-                                    borderRadius: "6px",
-                                    border:
-                                      student.feePaymentMode === mode
-                                        ? "2px solid #ffffff"
-                                        : "1px solid rgba(255, 255, 255, 0.35)",
-                                    background:
-                                      student.feePaymentMode === mode
-                                        ? "#10b981"
-                                        : "rgba(255, 255, 255, 0.2)",
-                                    color: "#ffffff",
-                                    fontSize: "0.75rem",
-                                    fontWeight: "800",
+                                    width: "18px",
+                                    height: "18px",
+                                    accentColor: "#16a34a",
                                     cursor: "pointer",
                                   }}
+                                />
+                                <span>💵 Receive Payment at Admission Desk (Generate Official Slip & Log to Finances)</span>
+                              </label>
+
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                                {student.markPaidAtAdmission && (
+                                  <span
+                                    style={{
+                                      fontSize: "0.72rem",
+                                      fontWeight: "800",
+                                      background: "#15803d",
+                                      color: "#ffffff",
+                                      padding: "3px 8px",
+                                      borderRadius: "6px",
+                                      boxShadow: "0 1px 3px rgba(21, 128, 61, 0.3)",
+                                    }}
+                                  >
+                                    ✓ RECEIPT ACTIVE
+                                  </span>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handlePreviewReceipt(index)}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "0.4rem",
+                                    padding: "0.38rem 0.85rem",
+                                    borderRadius: "8px",
+                                    border: "1.5px solid #0284c7",
+                                    background: "linear-gradient(180deg, #38bdf8 0%, #0284c7 100%)",
+                                    color: "#ffffff",
+                                    fontSize: "0.78rem",
+                                    fontWeight: "800",
+                                    cursor: "pointer",
+                                    boxShadow: "0 2px 5px rgba(2, 132, 199, 0.25)",
+                                    transition: "all 0.15s ease",
+                                  }}
+                                  title="Print or Download Deposit Slip / Cashier Copy"
                                 >
-                                  {mode}
+                                  <Download size={14} />
+                                  <span>Print / PDF Slip</span>
                                 </button>
-                              ))}
+                              </div>
                             </div>
-                          )}
+
+                            {student.markPaidAtAdmission && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.5rem",
+                                  paddingTop: "0.4rem",
+                                  borderTop: "1px solid rgba(22, 163, 74, 0.2)",
+                                  flexWrap: "wrap",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: "0.78rem",
+                                    color: "#166534",
+                                    fontWeight: "800",
+                                  }}
+                                >
+                                  Collection Channel:
+                                </span>
+                                {[
+                                  { label: "💵 Cash", val: "Cash" },
+                                  { label: "📱 Online Portal", val: "Online" },
+                                  { label: "🟢 EasyPaisa / JazzCash", val: "EasyPaisa" },
+                                  { label: "🏦 Bank Transfer", val: "Bank" },
+                                  { label: "💳 POS Card", val: "Card" },
+                                ].map((mode) => (
+                                  <button
+                                    key={mode.val}
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = [...students];
+                                      updated[index].feePaymentMode = mode.val;
+                                      setStudents(updated);
+                                    }}
+                                    style={{
+                                      padding: "0.25rem 0.65rem",
+                                      borderRadius: "6px",
+                                      border:
+                                        (student.feePaymentMode || "Cash") === mode.val
+                                          ? "1.5px solid #15803d"
+                                          : "1px solid #cbd5e1",
+                                      background:
+                                        (student.feePaymentMode || "Cash") === mode.val
+                                          ? "#16a34a"
+                                          : "#ffffff",
+                                      color:
+                                        (student.feePaymentMode || "Cash") === mode.val
+                                          ? "#ffffff"
+                                          : "#334155",
+                                      fontSize: "0.75rem",
+                                      fontWeight: "800",
+                                      cursor: "pointer",
+                                      boxShadow:
+                                        (student.feePaymentMode || "Cash") === mode.val
+                                          ? "0 2px 5px rgba(22, 163, 74, 0.25)"
+                                          : "none",
+                                      transition: "all 0.12s ease",
+                                    }}
+                                  >
+                                    {mode.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Live Financial Summary Bar */}
-                        <div className="finance-summary-bar">
-                          <div className="finance-summary-item">
-                            <span className="finance-summary-label">
-                              Monthly Recurring
-                            </span>
-                            <span className="finance-summary-val highlight">
-                              ₨ {monthlyTotal.toLocaleString()}
-                            </span>
+                        {/* Windows 7 / Aero Bottom Financial Status Bar */}
+                        <div
+                          style={{
+                            background: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
+                            borderTop: "1.5px solid #cbd5e1",
+                            padding: "0.9rem 1.5rem",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: "1rem",
+                            boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.9)",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", flexWrap: "wrap" }}>
+                            <div>
+                              <span style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: "800", textTransform: "uppercase", display: "block" }}>
+                                Monthly Recurring
+                              </span>
+                              <strong style={{ fontSize: "1.05rem", color: "#0369a1", fontWeight: "900" }}>
+                                Rs {monthlyTotal.toLocaleString()}
+                              </strong>
+                            </div>
+
+                            <div style={{ width: "1px", height: "26px", background: "#cbd5e1" }} />
+
+                            <div>
+                              <span style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: "800", textTransform: "uppercase", display: "block" }}>
+                                1-Time Admission Dues
+                              </span>
+                              <strong style={{ fontSize: "1.05rem", color: "#9a3412", fontWeight: "900" }}>
+                                Rs {actionsTotal.toLocaleString()}
+                              </strong>
+                            </div>
+
+                            <div style={{ width: "1px", height: "26px", background: "#cbd5e1" }} />
+
+                            <div style={{ background: "#ffffff", padding: "4px 12px", borderRadius: "8px", border: "1.5px solid #86efac", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                              <span style={{ fontSize: "0.68rem", color: "#166534", fontWeight: "800", textTransform: "uppercase", display: "block" }}>
+                                Total at Admission
+                              </span>
+                              <strong style={{ fontSize: "1.2rem", color: "#15803d", fontWeight: "900" }}>
+                                Rs {(monthlyTotal + actionsTotal).toLocaleString()}
+                              </strong>
+                            </div>
                           </div>
-                          <div className="finance-summary-item">
-                            <span className="finance-summary-label">
-                              1-Time Dues
-                            </span>
-                            <span
-                              className="finance-summary-val"
-                              style={{ color: "#fef08a" }}
-                            >
-                              ₨ {actionsTotal.toLocaleString()}
-                            </span>
-                          </div>
-                          <div className="finance-summary-item">
-                            <span className="finance-summary-label">
-                              Total at Admission
-                            </span>
-                            <span className="finance-summary-val grand">
-                              ₨ {grandTotal.toLocaleString()}
-                            </span>
-                          </div>
-                          <div>
-                            <button
-                              type="button"
-                              onClick={() => setStudentTab(index, "info")}
-                              style={{
-                                padding: "0.6rem 1.25rem",
-                                borderRadius: "10px",
-                                border: "2px solid #1e40af",
-                                background: "#ffffff",
-                                color: "#1e40af",
-                                fontWeight: "800",
-                                fontSize: "0.875rem",
-                                cursor: "pointer",
-                                boxShadow: "4px 4px 0px #1e40af",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "0.4rem",
-                              }}
-                            >
-                              <Check size={16} /> Done & Return
-                            </button>
-                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setStudentTab(index, "info")}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "0.4rem",
+                              padding: "0.65rem 1.4rem",
+                              borderRadius: "10px",
+                              border: "1px solid #16a34a",
+                              background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
+                              color: "#ffffff",
+                              fontSize: "0.88rem",
+                              fontWeight: "800",
+                              cursor: "pointer",
+                              boxShadow: "0 2px 8px rgba(22, 163, 74, 0.3)",
+                              transition: "all 0.15s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.transform = "translateY(-1px)";
+                              e.currentTarget.style.boxShadow = "0 4px 12px rgba(22, 163, 74, 0.4)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = "none";
+                              e.currentTarget.style.boxShadow = "0 2px 8px rgba(22, 163, 74, 0.3)";
+                            }}
+                          >
+                            <Check size={16} />
+                            <span>✓ Done & Return to Student Info</span>
+                          </button>
                         </div>
                       </motion.div>
                     )}
@@ -2961,774 +3322,1019 @@ const Admission = () => {
       </div>
       )}
 
-      {/* Receipt Modal */}
-      {showReceipt && receiptData && (
+      {/* Receipt Modal - Clean Centered Dialog Overlay via createPortal */}
+      {showReceipt && receiptData && typeof document !== "undefined" && createPortal(
         <div
           className="receipt-modal-overlay"
           style={{
             position: "fixed",
             top: 0,
             left: 0,
+            right: 0,
+            bottom: 0,
             width: "100vw",
             height: "100vh",
-            zIndex: 9999,
+            zIndex: 999999,
             display: "flex",
-            alignItems: "flex-start",
+            alignItems: "center",
             justifyContent: "center",
             fontFamily: "'Inter', sans-serif",
-            background: "rgba(0,0,0,0.6)",
-            overflowY: "auto",
-            padding: "3rem 1rem",
+            background: "rgba(15, 23, 42, 0.75)",
+            backdropFilter: "blur(6px)",
+            padding: "1rem",
+            boxSizing: "border-box",
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowReceipt(false);
           }}
         >
           <div
-            className="no-print"
-            style={{
-              position: "fixed",
-              top: "20px",
-              right: "40px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "1rem",
-              zIndex: 100000,
-            }}
-          >
-            <button
-              onClick={() => setShowReceipt(false)}
-              style={{
-                width: "56px",
-                height: "56px",
-                borderRadius: "50%",
-                background: "#ef4444",
-                color: "white",
-                border: "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                boxShadow: "0 4px 6px rgba(0,0,0,0.3)",
-                transition: "transform 0.2s",
-              }}
-              onMouseOver={(e) =>
-                (e.currentTarget.style.transform = "scale(1.1)")
-              }
-              onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}
-            >
-              <X size={28} />
-            </button>
-            <button
-              onClick={isDownloading ? undefined : handleDownloadPDF}
-              disabled={isDownloading}
-              style={{
-                padding: "0 1.5rem",
-                height: "56px",
-                borderRadius: "28px",
-                background: "#3b82f6",
-                color: "white",
-                border: "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "0.75rem",
-                cursor: isDownloading ? "not-allowed" : "pointer",
-                opacity: isDownloading ? 0.7 : 1,
-                boxShadow: "0 4px 6px rgba(0,0,0,0.3)",
-                transition: "transform 0.2s, background 0.2s",
-                fontWeight: "600",
-                fontSize: "1.05rem",
-                letterSpacing: "0.5px",
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.transform = "scale(1.05)";
-                e.currentTarget.style.background = "#2563eb";
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.transform = "scale(1)";
-                e.currentTarget.style.background = "#3b82f6";
-              }}
-              title="Download as PDF"
-            >
-              {isDownloading ? (
-                <Loader2 size={22} className="animate-spin" />
-              ) : (
-                <Download size={22} />
-              )}
-              {isDownloading ? "Generating..." : "Save PDF"}
-            </button>
-          </div>
-
-          <div
-            id="admission-receipt-container"
             style={{
               width: "100%",
-              maxWidth: "850px",
+              maxWidth: "860px",
+              maxHeight: "92vh",
               display: "flex",
               flexDirection: "column",
-              gap: "1rem",
-              margin: "0 auto",
+              background: "#ffffff",
+              borderRadius: "16px",
+              boxShadow: "0 25px 60px -15px rgba(0, 0, 0, 0.5)",
+              overflow: "hidden",
+              border: "1px solid rgba(255, 255, 255, 0.2)",
               position: "relative",
             }}
           >
-            {receiptData.students.map((stu, index) => (
-              <div
-                key={index}
-                className="admission-receipt animate-fade-in-up"
-                style={{
-                  background: "white",
-                  color: "#1e293b",
-                  width: "100%",
-                  minHeight: "auto",
-                  position: "relative",
-                  filter: "drop-shadow(0 25px 35px rgba(0,0,0,0.4))",
-                  display: "flex",
-                  flexDirection: "column",
-                  boxShadow: "0 0 0 1px rgba(0,0,0,0.05)",
-                  pageBreakAfter: "always",
-                }}
-              >
+            {/* Integrated Top Action Toolbar */}
+            <div
+              className="no-print"
+              style={{
+                padding: "0.85rem 1.25rem",
+                background: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
+                borderBottom: "1.5px solid #cbd5e1",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexShrink: 0,
+                gap: "1rem",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
                 <div
                   style={{
-                    height: "16px",
-                    background:
-                      "linear-gradient(-45deg, transparent 11px, white 0), linear-gradient(45deg, transparent 11px, white 0)",
-                    backgroundPosition: "left-bottom",
-                    backgroundSize: "22px 22px",
-                    backgroundRepeat: "repeat-x",
-                    marginBottom: "-1px",
-                  }}
-                ></div>
-
-                <div
-                  style={{
-                    padding: "1.5rem 2rem",
-                    flex: 1,
-                    background: "white",
+                    width: "34px",
+                    height: "34px",
+                    borderRadius: "8px",
+                    background: "#0284c7",
+                    color: "white",
                     display: "flex",
-                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 2px 4px rgba(2, 132, 199, 0.3)",
                   }}
                 >
+                  <Printer size={18} />
+                </div>
+                <div>
+                  <span style={{ fontSize: "0.92rem", fontWeight: "900", color: "#0f172a", display: "block", lineHeight: "1.2" }}>
+                    Admission Deposit Slip & Voucher
+                  </span>
+                  <span style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: "600" }}>
+                    Official Cashier Counter Stamp & Student Record
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                    padding: "0.45rem 1.1rem",
+                    borderRadius: "8px",
+                    border: "1px solid #16a34a",
+                    background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
+                    color: "#ffffff",
+                    fontSize: "0.82rem",
+                    fontWeight: "800",
+                    cursor: "pointer",
+                    boxShadow: "0 2px 5px rgba(22, 163, 74, 0.25)",
+                    transition: "all 0.12s ease",
+                  }}
+                  title="Direct Print Slip"
+                >
+                  <Printer size={15} />
+                  <span>Print Slip</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={isDownloading ? undefined : handleDownloadPDF}
+                  disabled={isDownloading}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                    padding: "0.45rem 1.1rem",
+                    borderRadius: "8px",
+                    border: "1px solid #0284c7",
+                    background: "linear-gradient(180deg, #38bdf8 0%, #0284c7 100%)",
+                    color: "#ffffff",
+                    fontSize: "0.82rem",
+                    fontWeight: "800",
+                    cursor: isDownloading ? "not-allowed" : "pointer",
+                    opacity: isDownloading ? 0.7 : 1,
+                    boxShadow: "0 2px 5px rgba(2, 132, 199, 0.25)",
+                    transition: "all 0.12s ease",
+                  }}
+                  title="Download as PDF Document"
+                >
+                  {isDownloading ? (
+                    <Loader2 size={15} className="animate-spin" />
+                  ) : (
+                    <Download size={15} />
+                  )}
+                  <span>{isDownloading ? "Generating..." : "Save PDF"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowReceipt(false)}
+                  style={{
+                    width: "34px",
+                    height: "34px",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1",
+                    background: "#ffffff",
+                    color: "#475569",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    transition: "all 0.12s ease",
+                  }}
+                  title="Close Preview"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "#fee2e2";
+                    e.currentTarget.style.color = "#dc2626";
+                    e.currentTarget.style.borderColor = "#fca5a5";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "#ffffff";
+                    e.currentTarget.style.color = "#475569";
+                    e.currentTarget.style.borderColor = "#cbd5e1";
+                  }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable Receipt Body */}
+            <div
+              style={{
+                overflowY: "auto",
+                padding: "1.25rem",
+                background: "#f1f5f9",
+                flex: 1,
+              }}
+            >
+              <div
+                id="admission-receipt-container"
+                style={{
+                  width: "100%",
+                  maxWidth: "800px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "1.25rem",
+                  margin: "0 auto",
+                }}
+              >
+                {receiptData.students.map((stu, index) => (
                   <div
+                    key={index}
+                    className="admission-receipt animate-fade-in-up"
                     style={{
-                      textAlign: "center",
-                      marginBottom: "1rem",
-                      borderBottom: "3px solid #f1f5f9",
-                      paddingBottom: "1rem",
-                    }}
-                  >
-                    <h2
-                      style={{
-                        fontSize: "1.6rem",
-                        fontWeight: "800",
-                        margin: "0 0 0.25rem",
-                        color: "#0f172a",
-                        letterSpacing: "-0.5px",
-                      }}
-                    >
-                      {receiptData.schoolName.toUpperCase()}
-                    </h2>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "center",
-                        gap: "1.5rem",
-                        margin: "0.5rem 0",
-                        fontSize: "0.85rem",
-                        color: "#475569",
-                        fontWeight: "500",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.4rem",
-                        }}
-                      >
-                        <Phone size={14} color="#3b82f6" />
-                        <span>{receiptData.schoolPhone}</span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.4rem",
-                        }}
-                      >
-                        <Phone size={14} color="#ef4444" />
-                        <span>
-                          {receiptData.schoolEmergencyPhone} (Emergency)
-                        </span>
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "center",
-                        alignItems: "center",
-                        gap: "0.4rem",
-                        fontSize: "0.85rem",
-                        color: "#475569",
-                        fontWeight: "500",
-                        marginBottom: "1rem",
-                      }}
-                    >
-                      <MapPin size={14} color="#3b82f6" />
-                      <span>{receiptData.schoolAddress}</span>
-                    </div>
-
-                    <p
-                      style={{
-                        fontSize: "1.1rem",
-                        margin: 0,
-                        color: "#64748b",
-                        fontWeight: "600",
-                        letterSpacing: "2px",
-                      }}
-                    >
-                      OFFICIAL ADMISSION RECORD
-                    </p>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "1rem",
-                      marginBottom: "1rem",
-                    }}
-                  >
-                    <div
-                      style={{
-                        background: "#f8fafc",
-                        padding: "1rem",
-                        borderRadius: "12px",
-                        border: "1px solid #e2e8f0",
-                      }}
-                    >
-                      <h4
-                        style={{
-                          margin: "0 0 1rem",
-                          fontSize: "0.9rem",
-                          color: "#64748b",
-                          textTransform: "uppercase",
-                          letterSpacing: "1px",
-                        }}
-                      >
-                        Transaction Details
-                      </h4>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          marginBottom: "0.5rem",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <span style={{ color: "#475569" }}>Date:</span>{" "}
-                        <span style={{ fontWeight: "600" }}>
-                          {receiptData.date}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <span style={{ color: "#475569" }}>Time:</span>{" "}
-                        <span style={{ fontWeight: "600" }}>
-                          {receiptData.time}
-                        </span>
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        background: "#f8fafc",
-                        padding: "1rem",
-                        borderRadius: "12px",
-                        border: "1px solid #e2e8f0",
-                      }}
-                    >
-                      <h4
-                        style={{
-                          margin: "0 0 1rem",
-                          fontSize: "0.9rem",
-                          color: "#64748b",
-                          textTransform: "uppercase",
-                          letterSpacing: "1px",
-                        }}
-                      >
-                        Parent Account
-                      </h4>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          marginBottom: "0.5rem",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <span style={{ color: "#475569" }}>Name:</span>{" "}
-                        <span style={{ fontWeight: "700", color: "#0f172a" }}>
-                          {receiptData.parentName}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        <span style={{ color: "#475569" }}>Contact:</span>{" "}
-                        <span style={{ fontWeight: "600" }}>
-                          {receiptData.parentPhone}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      background: "#eff6ff",
-                      padding: "1rem",
+                      background: "#ffffff",
+                      color: "#1e293b",
+                      width: "100%",
                       borderRadius: "12px",
-                      border: "2px solid #bfdbfe",
-                      marginBottom: "1rem",
-                      textAlign: "center",
+                      border: "1px solid #cbd5e1",
+                      boxShadow: "0 4px 15px rgba(0,0,0,0.06)",
+                      display: "flex",
+                      flexDirection: "column",
+                      overflow: "hidden",
+                      pageBreakAfter: "always",
                     }}
                   >
-                    <h3
-                      style={{
-                        margin: "0 0 1rem",
-                        color: "#1e40af",
-                        fontSize: "1rem",
-                        fontWeight: "800",
-                      }}
-                    >
-                      Parent Portal Login Credentials
-                    </h3>
-                    <p
-                      style={{
-                        margin: "0 0 1.5rem",
-                        color: "#3b82f6",
-                        fontSize: "0.95rem",
-                      }}
-                    >
-                      Please keep these credentials safe. You will use them to
-                      log into the Parent App.
-                    </p>
+                    {/* Top Accent Strip */}
                     <div
                       style={{
-                        display: "flex",
-                        justifyContent: "center",
-                        gap: "1rem",
+                        height: "6px",
+                        background: "linear-gradient(90deg, #0284c7 0%, #3b82f6 50%, #10b981 100%)",
                       }}
-                    >
-                      <div style={{ textAlign: "left" }}>
-                        <span
-                          style={{
-                            fontSize: "0.85rem",
-                            color: "#60a5fa",
-                            textTransform: "uppercase",
-                            fontWeight: "700",
-                          }}
-                        >
-                          Login Email
-                        </span>
-                        <div
-                          style={{
-                            fontSize: "1rem",
-                            fontWeight: "700",
-                            color: "#1e3a8a",
-                            fontFamily: "monospace",
-                            marginTop: "0.25rem",
-                            background: "white",
-                            padding: "0.5rem 1rem",
-                            borderRadius: "6px",
-                            border: "1px solid #93c5fd",
-                          }}
-                        >
-                          {receiptData.parentEmail || "N/A"}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "left" }}>
-                        <span
-                          style={{
-                            fontSize: "0.85rem",
-                            color: "#60a5fa",
-                            textTransform: "uppercase",
-                            fontWeight: "700",
-                          }}
-                        >
-                          Password
-                        </span>
-                        <div
-                          style={{
-                            fontSize: "1rem",
-                            fontWeight: "700",
-                            color: "#1e3a8a",
-                            fontFamily: "monospace",
-                            marginTop: "0.25rem",
-                            background: "white",
-                            padding: "0.5rem 1rem",
-                            borderRadius: "6px",
-                            border: "1px solid #93c5fd",
-                          }}
-                        >
-                          {receiptData.parentPassword || "N/A"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                    />
 
-                  <div style={{ flex: 1 }}>
-                    <h3
-                      style={{
-                        fontSize: "1.3rem",
-                        color: "#0f172a",
-                        fontWeight: "800",
-                        borderBottom: "2px solid #e2e8f0",
-                        paddingBottom: "0.75rem",
-                        marginBottom: "0.5rem",
-                      }}
-                    >
-                      Enrolled Student & Fees
-                    </h3>
                     <div
                       style={{
-                        marginBottom: "1rem",
-                        padding: "1rem",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "12px",
+                        padding: "1.25rem 1.6rem",
+                        display: "flex",
+                        flexDirection: "column",
                       }}
                     >
+                      {/* School Header Banner */}
                       <div
                         style={{
                           display: "flex",
-                          justifyContent: "space-between",
                           alignItems: "center",
+                          gap: "1rem",
                           marginBottom: "0.75rem",
+                          borderBottom: "2px solid #e2e8f0",
+                          paddingBottom: "0.75rem",
                         }}
                       >
-                        <div>
-                          <h4
-                            style={{
-                              fontSize: "1.05rem",
-                              fontWeight: "800",
-                              margin: "0 0 0.2rem",
-                              color: "#0f172a",
-                            }}
-                          >
-                            {stu.name.toUpperCase()}
-                          </h4>
+                        {receiptData.schoolLogo ? (
                           <div
                             style={{
-                              fontSize: "0.9rem",
-                              color: "#64748b",
+                              width: "64px",
+                              height: "64px",
+                              borderRadius: "10px",
+                              border: "1.5px solid #e2e8f0",
+                              padding: "2px",
+                              background: "#ffffff",
+                              flexShrink: 0,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                            }}
+                          >
+                            <img
+                              src={receiptData.schoolLogo}
+                              alt="School Logo"
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "contain",
+                                borderRadius: "6px",
+                              }}
+                            />
+                          </div>
+                        ) : null}
+
+                        <div style={{ flex: 1, textAlign: receiptData.schoolLogo ? "left" : "center" }}>
+                          <h2
+                            style={{
+                              fontSize: "1.55rem",
+                              fontWeight: "900",
+                              margin: "0 0 0.3rem",
+                              color: "#0f172a",
+                              letterSpacing: "-0.5px",
+                              lineHeight: "1.2",
+                            }}
+                          >
+                            {(receiptData.schoolName || "Our School").toUpperCase()}
+                          </h2>
+
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              justifyContent: receiptData.schoolLogo ? "flex-start" : "center",
+                              gap: "1.2rem",
+                              margin: "0.25rem 0",
+                              fontSize: "0.82rem",
+                              color: "#475569",
                               fontWeight: "600",
                             }}
                           >
-                            Class: {stu.className} • Roll No: {stu.rollNo || "N/A"} • ADM No: {stu.admissionNo || "N/A"}
+                            {receiptData.schoolPhone && (
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                                <Phone size={13} color="#0284c7" />
+                                <span>{receiptData.schoolPhone}</span>
+                              </div>
+                            )}
+                            {receiptData.schoolEmergencyPhone && (
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                                <Phone size={13} color="#dc2626" />
+                                <span>{receiptData.schoolEmergencyPhone} (Emergency)</span>
+                              </div>
+                            )}
+                            {receiptData.schoolEmail && (
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                                <Mail size={13} color="#0284c7" />
+                                <span>{receiptData.schoolEmail}</span>
+                              </div>
+                            )}
                           </div>
-                        </div>
 
-                        {stu.isPaidAtAdmission ? (
-                          <div className="pdf-paid-stamp">
-                            <span className="pdf-paid-stamp-text">PAID ✓</span>
-                            <span className="pdf-paid-stamp-sub">
-                              {stu.paymentMode || "Cash / Counter"}
-                            </span>
-                          </div>
-                        ) : (
-                          <div
-                            style={{
-                              display: "inline-flex",
-                              flexDirection: "column",
-                              alignItems: "center",
-                              border: "2px dashed #f59e0b",
-                              borderRadius: "10px",
-                              padding: "0.3rem 0.8rem",
-                              background: "#fffbeb",
-                              color: "#b45309",
-                              fontWeight: "800",
-                              fontSize: "0.8rem",
-                            }}
-                          >
-                            <span>DUE / UNPAID</span>
-                            <span style={{ fontSize: "0.7rem", fontWeight: "600" }}>
-                              Payable at Counter
-                            </span>
-                          </div>
-                        )}
+                          {receiptData.schoolAddress && (
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: receiptData.schoolLogo ? "flex-start" : "center",
+                                gap: "0.35rem",
+                                fontSize: "0.82rem",
+                                color: "#64748b",
+                                fontWeight: "500",
+                                marginTop: "0.15rem",
+                              }}
+                            >
+                              <MapPin size={13} color="#0284c7" />
+                              <span>{receiptData.schoolAddress}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      {/* 1. Monthly Recurring Structure */}
-                      {stu.feeStructure && stu.feeStructure.length > 0 && (
-                        <div style={{ marginBottom: "0.75rem" }}>
-                          <span
-                            style={{
-                              fontSize: "0.8rem",
-                              fontWeight: "800",
-                              color: "#2563eb",
-                              textTransform: "uppercase",
-                              letterSpacing: "0.5px",
-                              display: "block",
-                              marginBottom: "0.3rem",
-                            }}
-                          >
-                            1. Monthly Recurring Structure
-                          </span>
-                          <table
-                            style={{
-                              width: "100%",
-                              fontSize: "0.875rem",
-                              borderCollapse: "collapse",
-                            }}
-                          >
-                            <tbody>
-                              {stu.feeStructure.map((fee) => (
-                                <tr
-                                  key={fee.id}
-                                  style={{ borderBottom: "1px solid #f1f5f9" }}
-                                >
-                                  <td
-                                    style={{
-                                      padding: "0.35rem 0",
-                                      color: "#334155",
-                                      fontWeight: "500",
-                                    }}
-                                  >
-                                    {fee.name} (Monthly)
-                                  </td>
-                                  <td
-                                    style={{
-                                      textAlign: "right",
-                                      padding: "0.35rem 0",
-                                      fontWeight: "700",
-                                      color: "#0f172a",
-                                    }}
-                                  >
-                                    ₨ {Number(fee.amount).toLocaleString()}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                      {/* Official Subtitle */}
+                      <div
+                        style={{
+                          textAlign: "center",
+                          marginBottom: "1.25rem",
+                          background: "#f8fafc",
+                          padding: "0.45rem",
+                          borderRadius: "8px",
+                          border: "1px solid #e2e8f0",
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontSize: "0.88rem",
+                            margin: 0,
+                            color: "#334155",
+                            fontWeight: "800",
+                            letterSpacing: "1.5px",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          OFFICIAL ADMISSION RECORD & CASHIER DEPOSIT CHALLAN
+                        </p>
+                      </div>
 
-                      {/* 2. One-Time Admission & Action Charges */}
-                      {stu.individualActions && stu.individualActions.length > 0 && (
-                        <div style={{ marginBottom: "0.75rem" }}>
-                          <span
+                      {/* Metadata Grid */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "1rem",
+                          marginBottom: "1rem",
+                        }}
+                      >
+                        <div
+                          style={{
+                            background: "#f8fafc",
+                            padding: "0.85rem 1rem",
+                            borderRadius: "10px",
+                            border: "1px solid #e2e8f0",
+                          }}
+                        >
+                          <h4
                             style={{
-                              fontSize: "0.8rem",
-                              fontWeight: "800",
-                              color: "#d97706",
+                              margin: "0 0 0.6rem",
+                              fontSize: "0.78rem",
+                              color: "#64748b",
                               textTransform: "uppercase",
-                              letterSpacing: "0.5px",
-                              display: "block",
-                              marginBottom: "0.3rem",
+                              letterSpacing: "0.8px",
+                              fontWeight: "800",
                             }}
                           >
-                            2. One-Time Admission & Action Charges
-                          </span>
-                          <table
+                            Transaction Details
+                          </h4>
+                          <div
                             style={{
-                              width: "100%",
-                              fontSize: "0.875rem",
-                              borderCollapse: "collapse",
-                            }}
-                          >
-                            <tbody>
-                              {stu.individualActions.map((act) => (
-                                <tr
-                                  key={act.id}
-                                  style={{ borderBottom: "1px solid #f1f5f9" }}
-                                >
-                                  <td
-                                    style={{
-                                      padding: "0.35rem 0",
-                                      color: "#334155",
-                                      fontWeight: "500",
-                                    }}
-                                  >
-                                    {act.name} (1-Time)
-                                  </td>
-                                  <td
-                                    style={{
-                                      textAlign: "right",
-                                      padding: "0.35rem 0",
-                                      fontWeight: "700",
-                                      color: "#0f172a",
-                                    }}
-                                  >
-                                    ₨ {Number(act.amount).toLocaleString()}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {(!stu.feeStructure || stu.feeStructure.length === 0) &&
-                        (!stu.individualActions || stu.individualActions.length === 0) && (
-                          <p
-                            style={{
-                              margin: "0.5rem 0",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              marginBottom: "0.35rem",
                               fontSize: "0.85rem",
-                              fontStyle: "italic",
-                              color: "#94a3b8",
+                            }}
+                          >
+                            <span style={{ color: "#64748b" }}>Date:</span>{" "}
+                            <span style={{ fontWeight: "700", color: "#0f172a" }}>
+                              {receiptData.date}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: "0.85rem",
+                            }}
+                          >
+                            <span style={{ color: "#64748b" }}>Time:</span>{" "}
+                            <span style={{ fontWeight: "700", color: "#0f172a" }}>
+                              {receiptData.time}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            background: "#f8fafc",
+                            padding: "0.85rem 1rem",
+                            borderRadius: "10px",
+                            border: "1px solid #e2e8f0",
+                          }}
+                        >
+                          <h4
+                            style={{
+                              margin: "0 0 0.6rem",
+                              fontSize: "0.78rem",
+                              color: "#64748b",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.8px",
+                              fontWeight: "800",
+                            }}
+                          >
+                            Parent / Guardian
+                          </h4>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              marginBottom: "0.35rem",
+                              fontSize: "0.85rem",
+                            }}
+                          >
+                            <span style={{ color: "#64748b" }}>Name:</span>{" "}
+                            <span style={{ fontWeight: "800", color: "#0f172a" }}>
+                              {receiptData.parentName}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: "0.85rem",
+                            }}
+                          >
+                            <span style={{ color: "#64748b" }}>Contact:</span>{" "}
+                            <span style={{ fontWeight: "700", color: "#0f172a" }}>
+                              {receiptData.parentPhone}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Parent Portal Credentials (Render only if available) */}
+                      {receiptData.parentEmail &&
+                        receiptData.parentEmail !== "N/A" &&
+                        receiptData.parentPassword &&
+                        receiptData.parentPassword !== "N/A" && (
+                          <div
+                            style={{
+                              background: "#eff6ff",
+                              padding: "0.75rem 1rem",
+                              borderRadius: "10px",
+                              border: "1.5px solid #bfdbfe",
+                              marginBottom: "1rem",
                               textAlign: "center",
                             }}
                           >
-                            No specific fee items assigned during admission.
-                          </p>
+                            <h3
+                              style={{
+                                margin: "0 0 0.35rem",
+                                color: "#1e40af",
+                                fontSize: "0.88rem",
+                                fontWeight: "800",
+                              }}
+                            >
+                              Parent Portal Login Credentials
+                            </h3>
+                            <p
+                              style={{
+                                margin: "0 0 0.6rem",
+                                color: "#3b82f6",
+                                fontSize: "0.8rem",
+                              }}
+                            >
+                              Use these credentials to log into the Parent Mobile App.
+                            </p>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                                gap: "1.5rem",
+                              }}
+                            >
+                              <div style={{ textAlign: "left" }}>
+                                <span
+                                  style={{
+                                    fontSize: "0.72rem",
+                                    color: "#60a5fa",
+                                    textTransform: "uppercase",
+                                    fontWeight: "700",
+                                  }}
+                                >
+                                  Login Email
+                                </span>
+                                <div
+                                  style={{
+                                    fontSize: "0.88rem",
+                                    fontWeight: "700",
+                                    color: "#1e3a8a",
+                                    fontFamily: "monospace",
+                                    background: "white",
+                                    padding: "0.3rem 0.75rem",
+                                    borderRadius: "6px",
+                                    border: "1px solid #93c5fd",
+                                    marginTop: "2px",
+                                  }}
+                                >
+                                  {receiptData.parentEmail}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "left" }}>
+                                <span
+                                  style={{
+                                    fontSize: "0.72rem",
+                                    color: "#60a5fa",
+                                    textTransform: "uppercase",
+                                    fontWeight: "700",
+                                  }}
+                                >
+                                  Password
+                                </span>
+                                <div
+                                  style={{
+                                    fontSize: "0.88rem",
+                                    fontWeight: "700",
+                                    color: "#1e3a8a",
+                                    fontFamily: "monospace",
+                                    background: "white",
+                                    padding: "0.3rem 0.75rem",
+                                    borderRadius: "6px",
+                                    border: "1px solid #93c5fd",
+                                    marginTop: "2px",
+                                  }}
+                                >
+                                  {receiptData.parentPassword}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         )}
 
-                      {/* Receipt Total Summary Row */}
+                      {/* Enrolled Student & Fee Breakdown */}
+                      <div style={{ flex: 1 }}>
+                        <h3
+                          style={{
+                            fontSize: "1.1rem",
+                            color: "#0f172a",
+                            fontWeight: "800",
+                            borderBottom: "2px solid #e2e8f0",
+                            paddingBottom: "0.5rem",
+                            marginBottom: "0.6rem",
+                          }}
+                        >
+                          Enrolled Student & Fee Breakdown
+                        </h3>
+                        <div
+                          style={{
+                            marginBottom: "1rem",
+                            padding: "0.85rem 1rem",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: "10px",
+                            background: "#ffffff",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              marginBottom: "0.75rem",
+                              flexWrap: "wrap",
+                              gap: "0.5rem",
+                            }}
+                          >
+                            <div>
+                              <h4
+                                style={{
+                                  fontSize: "1.05rem",
+                                  fontWeight: "900",
+                                  margin: "0 0 0.2rem",
+                                  color: "#0f172a",
+                                }}
+                              >
+                                {stu.name.toUpperCase()}
+                              </h4>
+                              <div
+                                style={{
+                                  fontSize: "0.85rem",
+                                  color: "#64748b",
+                                  fontWeight: "600",
+                                }}
+                              >
+                                Class: <strong style={{ color: "#334155" }}>{stu.className}</strong> • Roll No: {stu.rollNo || "Provisional"} • ADM No: {stu.admissionNo || "New Admission"}
+                              </div>
+                            </div>
+
+                            {stu.isPaidAtAdmission ? (
+                              <div className="pdf-paid-stamp">
+                                <span className="pdf-paid-stamp-text">PAID ✓</span>
+                                <span className="pdf-paid-stamp-sub">
+                                  {stu.paymentMode || "Cash / Counter"}
+                                </span>
+                              </div>
+                            ) : (
+                              <div
+                                style={{
+                                  display: "inline-flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  border: "2px dashed #f59e0b",
+                                  borderRadius: "8px",
+                                  padding: "0.25rem 0.75rem",
+                                  background: "#fffbeb",
+                                  color: "#b45309",
+                                  fontWeight: "800",
+                                  fontSize: "0.78rem",
+                                }}
+                              >
+                                <span>DUE / UNPAID</span>
+                                <span style={{ fontSize: "0.68rem", fontWeight: "600" }}>
+                                  Payable at Counter
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 1. Monthly Recurring Structure */}
+                          {stu.feeStructure && stu.feeStructure.length > 0 && (
+                            <div style={{ marginBottom: "0.75rem" }}>
+                              <span
+                                style={{
+                                  fontSize: "0.75rem",
+                                  fontWeight: "800",
+                                  color: "#2563eb",
+                                  textTransform: "uppercase",
+                                  letterSpacing: "0.5px",
+                                  display: "block",
+                                  marginBottom: "0.25rem",
+                                }}
+                              >
+                                1. Monthly Recurring Structure
+                              </span>
+                              <table
+                                style={{
+                                  width: "100%",
+                                  fontSize: "0.85rem",
+                                  borderCollapse: "collapse",
+                                }}
+                              >
+                                <tbody>
+                                  {stu.feeStructure.map((fee) => (
+                                    <tr
+                                      key={fee.id}
+                                      style={{ borderBottom: "1px solid #f1f5f9" }}
+                                    >
+                                      <td
+                                        style={{
+                                          padding: "0.3rem 0",
+                                          color: "#334155",
+                                          fontWeight: "500",
+                                        }}
+                                      >
+                                        {fee.name} (Monthly)
+                                      </td>
+                                      <td
+                                        style={{
+                                          textAlign: "right",
+                                          padding: "0.3rem 0",
+                                          fontWeight: "700",
+                                          color: "#0f172a",
+                                        }}
+                                      >
+                                        Rs {Number(fee.amount).toLocaleString()}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* 2. One-Time Admission & Action Charges */}
+                          {stu.individualActions && stu.individualActions.length > 0 && (
+                            <div style={{ marginBottom: "0.75rem" }}>
+                              <span
+                                style={{
+                                  fontSize: "0.75rem",
+                                  fontWeight: "800",
+                                  color: "#d97706",
+                                  textTransform: "uppercase",
+                                  letterSpacing: "0.5px",
+                                  display: "block",
+                                  marginBottom: "0.25rem",
+                                }}
+                              >
+                                2. One-Time Admission & Action Charges
+                              </span>
+                              <table
+                                style={{
+                                  width: "100%",
+                                  fontSize: "0.85rem",
+                                  borderCollapse: "collapse",
+                                }}
+                              >
+                                <tbody>
+                                  {stu.individualActions.map((act) => (
+                                    <tr
+                                      key={act.id}
+                                      style={{ borderBottom: "1px solid #f1f5f9" }}
+                                    >
+                                      <td
+                                        style={{
+                                          padding: "0.3rem 0",
+                                          color: "#334155",
+                                          fontWeight: "500",
+                                        }}
+                                      >
+                                        {act.name} (1-Time)
+                                      </td>
+                                      <td
+                                        style={{
+                                          textAlign: "right",
+                                          padding: "0.3rem 0",
+                                          fontWeight: "700",
+                                          color: "#0f172a",
+                                        }}
+                                      >
+                                        Rs {Number(act.amount).toLocaleString()}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {(!stu.feeStructure || stu.feeStructure.length === 0) &&
+                            (!stu.individualActions || stu.individualActions.length === 0) && (
+                              <p
+                                style={{
+                                  margin: "0.5rem 0",
+                                  fontSize: "0.82rem",
+                                  fontStyle: "italic",
+                                  color: "#94a3b8",
+                                  textAlign: "center",
+                                }}
+                              >
+                                No specific fee items assigned during admission.
+                              </p>
+                            )}
+
+                          {/* Receipt Total Summary Row */}
+                          <div
+                            style={{
+                              marginTop: "0.6rem",
+                              paddingTop: "0.6rem",
+                              borderTop: "2px solid #e2e8f0",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                            }}
+                          >
+                            <div style={{ fontSize: "0.82rem", color: "#64748b" }}>
+                              Monthly Fee:{" "}
+                              <strong style={{ color: "#0f172a" }}>
+                                Rs {(stu.monthlyTotal || 0).toLocaleString()}
+                              </strong>{" "}
+                              | 1-Time Dues:{" "}
+                              <strong style={{ color: "#0f172a" }}>
+                                Rs {(stu.oneTimeTotal || 0).toLocaleString()}
+                              </strong>
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "1.05rem",
+                                fontWeight: "900",
+                                color: stu.isPaidAtAdmission ? "#047857" : "#0f172a",
+                              }}
+                            >
+                              Total: Rs {(stu.grandTotal || 0).toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Cashier / Counter Verification & Stamp Row */}
                       <div
                         style={{
                           marginTop: "0.75rem",
-                          paddingTop: "0.75rem",
-                          borderTop: "2px solid #e2e8f0",
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
+                          marginBottom: "0.75rem",
+                          padding: "0.85rem 1rem 0.4rem",
+                          border: "1.5px dashed #cbd5e1",
+                          borderRadius: "10px",
+                          background: "#f8fafc",
                         }}
                       >
-                        <div style={{ fontSize: "0.85rem", color: "#64748b" }}>
-                          Monthly Fee:{" "}
-                          <strong style={{ color: "#0f172a" }}>
-                            ₨ {(stu.monthlyTotal || 0).toLocaleString()}
-                          </strong>{" "}
-                          | 1-Time Dues:{" "}
-                          <strong style={{ color: "#0f172a" }}>
-                            ₨ {(stu.oneTimeTotal || 0).toLocaleString()}
-                          </strong>
-                        </div>
                         <div
                           style={{
-                            fontSize: "1.05rem",
-                            fontWeight: "900",
-                            color: stu.isPaidAtAdmission ? "#047857" : "#0f172a",
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr 1fr",
+                            gap: "1.5rem",
+                            textAlign: "center",
                           }}
                         >
-                          Total: ₨ {(stu.grandTotal || 0).toLocaleString()}
+                          <div>
+                            <div style={{ height: "35px" }} />
+                            <div
+                              style={{
+                                borderTop: "1.5px solid #94a3b8",
+                                paddingTop: "4px",
+                                fontSize: "0.78rem",
+                                fontWeight: "700",
+                                color: "#334155",
+                              }}
+                            >
+                              Cashier / Accounts Desk
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              justifyContent: "flex-end",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: "44px",
+                                height: "44px",
+                                borderRadius: "50%",
+                                border: "1.5px dashed #94a3b8",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "0.6rem",
+                                fontWeight: "800",
+                                color: "#94a3b8",
+                                marginBottom: "4px",
+                              }}
+                            >
+                              STAMP
+                            </div>
+                            <div
+                              style={{
+                                borderTop: "1.5px solid #94a3b8",
+                                width: "100%",
+                                paddingTop: "4px",
+                                fontSize: "0.78rem",
+                                fontWeight: "700",
+                                color: "#334155",
+                              }}
+                            >
+                              Official Stamp & Date
+                            </div>
+                          </div>
+
+                          <div>
+                            <div style={{ height: "35px" }} />
+                            <div
+                              style={{
+                                borderTop: "1.5px solid #94a3b8",
+                                paddingTop: "4px",
+                                fontSize: "0.78rem",
+                                fontWeight: "700",
+                                color: "#334155",
+                              }}
+                            >
+                              Principal / Admission Head
+                            </div>
+                          </div>
                         </div>
+                      </div>
+
+                      {/* Welcome Footer */}
+                      <div
+                        style={{
+                          marginTop: "auto",
+                          paddingTop: "0.5rem",
+                          textAlign: "center",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "50px",
+                            height: "3px",
+                            background: "#0284c7",
+                            margin: "0 auto 0.4rem",
+                            borderRadius: "2px",
+                          }}
+                        />
+                        <h3
+                          style={{
+                            fontSize: "1rem",
+                            fontWeight: "800",
+                            color: "#0f172a",
+                            margin: "0 0 0.3rem",
+                          }}
+                        >
+                          Welcome to Our School Family!
+                        </h3>
+                        <p
+                          style={{
+                            fontSize: "0.82rem",
+                            color: "#64748b",
+                            margin: 0,
+                            lineHeight: "1.5",
+                          }}
+                        >
+                          Thank you for choosing us for your child's education.
+                        </p>
                       </div>
                     </div>
                   </div>
-
-                  <div
-                    style={{
-                      marginTop: "auto",
-                      paddingTop: "1rem",
-                      textAlign: "center",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: "60px",
-                        height: "4px",
-                        background: "#3b82f6",
-                        margin: "0 auto 0.5rem",
-                        borderRadius: "2px",
-                      }}
-                    ></div>
-                    <h3
-                      style={{
-                        fontSize: "1.1rem",
-                        fontWeight: "800",
-                        color: "#0f172a",
-                        margin: "0 0 0.5rem",
-                      }}
-                    >
-                      Welcome to Our School Family!
-                    </h3>
-                    <p
-                      style={{
-                        fontSize: "0.9rem",
-                        color: "#64748b",
-                        margin: "0 0 0.5rem",
-                        lineHeight: "1.6",
-                      }}
-                    >
-                      Thank you for choosing us for your child's education.
-                      <br />
-                      We are committed to providing the best learning
-                      environment.
-                    </p>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    height: "16px",
-                    background:
-                      "linear-gradient(135deg, transparent 11px, white 0), linear-gradient(-135deg, transparent 11px, white 0)",
-                    backgroundPosition: "left-top",
-                    backgroundSize: "22px 22px",
-                    backgroundRepeat: "repeat-x",
-                    marginTop: "-1px",
-                  }}
-                ></div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
 
-          <style>{`
-            @media print {
-              body * {
-                visibility: hidden;
+            <style>{`
+              @media print {
+                @page {
+                  size: A4 portrait;
+                  margin: 8mm 10mm 8mm 10mm;
+                }
+                *, *::before, *::after {
+                  -webkit-print-color-adjust: exact !important;
+                  print-color-adjust: exact !important;
+                }
+                html, body {
+                  background: #ffffff !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  height: auto !important;
+                  min-height: auto !important;
+                  overflow: visible !important;
+                }
+                /* Hide everything in root to prevent blank trailing pages */
+                #root {
+                  display: none !important;
+                  height: 0 !important;
+                  overflow: hidden !important;
+                }
+                .no-print {
+                  display: none !important;
+                }
+                .receipt-modal-overlay {
+                  position: static !important;
+                  display: block !important;
+                  width: 100% !important;
+                  height: auto !important;
+                  background: transparent !important;
+                  backdrop-filter: none !important;
+                  padding: 0 !important;
+                  margin: 0 !important;
+                  overflow: visible !important;
+                }
+                .receipt-modal-overlay > div {
+                  max-width: 100% !important;
+                  max-height: none !important;
+                  box-shadow: none !important;
+                  border: none !important;
+                  border-radius: 0 !important;
+                  overflow: visible !important;
+                  background: transparent !important;
+                  padding: 0 !important;
+                }
+                #admission-receipt-container {
+                  display: block !important;
+                  width: 100% !important;
+                  max-width: 100% !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  overflow: visible !important;
+                }
+                .admission-receipt {
+                  width: 100% !important;
+                  max-width: 100% !important;
+                  box-sizing: border-box !important;
+                  display: block !important;
+                  filter: none !important;
+                  box-shadow: none !important;
+                  border: 1.5px solid #0f172a !important;
+                  border-radius: 8px !important;
+                  background: #ffffff !important;
+                  margin: 0 auto !important;
+                  padding: 0 !important;
+                  page-break-inside: avoid !important;
+                  break-inside: avoid !important;
+                }
+                .admission-receipt:not(:last-child) {
+                  page-break-after: always !important;
+                  break-after: page !important;
+                }
               }
-              .receipt-modal-overlay {
-                position: relative !important;
-                display: block !important;
-                height: auto !important;
-                width: 100% !important;
-                max-width: 100% !important;
-                overflow: visible !important;
-                padding: 0 !important;
-                background: white !important;
-              }
-              #admission-receipt-container, #admission-receipt-container * {
-                visibility: visible;
-              }
-              #admission-receipt-container {
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100% !important;
-                max-width: 100% !important;
-                margin: 0;
-                padding: 0;
-                display: block !important;
-              }
-              .admission-receipt {
-                width: 100% !important;
-                max-width: 100% !important;
-                box-sizing: border-box !important;
-                zoom: 0.95;
-                display: block !important;
-                page-break-inside: avoid !important;
-                filter: none !important;
-                box-shadow: none !important;
-                margin-bottom: 0 !important;
-                page-break-after: always !important;
-                break-after: page !important;
-              }
-              .no-print {
-                display: none !important;
-              }
-            }
-          `}</style>
-        </div>
+            `}</style>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
