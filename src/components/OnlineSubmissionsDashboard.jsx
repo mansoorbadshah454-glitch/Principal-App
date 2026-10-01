@@ -58,6 +58,7 @@ const OnlineSubmissionsDashboard = ({
     const [reuploadNote, setReuploadNote] = useState('');
     const [processingId, setProcessingId] = useState(null);
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
+    const [copiedTrx, setCopiedTrx] = useState('');
 
     // 🔒 Strict Gatekeeper: Demo Injection & Mock Slips are EXCLUSIVELY active for Demo Presentation Account (School ID: 6257)
     // On ANY other school account, these buttons are 100% hidden and restricted.
