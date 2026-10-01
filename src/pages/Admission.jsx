@@ -112,6 +112,54 @@ const Admission = () => {
     };
   }, [showReceipt]);
 
+  // Safe helper to convert any remote image URL to Base64 for guaranteed PDF rendering
+  const fetchBase64ImageSafe = async (imageUrl) => {
+    if (!imageUrl) return "";
+    if (typeof imageUrl === "string" && imageUrl.startsWith("data:")) return imageUrl;
+    
+    // Method 1: fetch blob with CORS
+    try {
+      const response = await fetch(imageUrl, { mode: "cors" });
+      if (response.ok) {
+        const blob = await response.blob();
+        return await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = () => resolve(imageUrl);
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch (e) {
+      console.warn("fetchBase64 blob failed, trying canvas fallback:", e);
+    }
+
+    // Method 2: Image element + offscreen canvas
+    try {
+      return await new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "Anonymous";
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0);
+            resolve(canvas.toDataURL("image/png"));
+          } catch (err) {
+            console.warn("Canvas export fallback failed:", err);
+            resolve(imageUrl);
+          }
+        };
+        img.onerror = () => resolve(imageUrl);
+        img.src = imageUrl;
+      });
+    } catch (err) {
+      console.warn("Image fallback error:", err);
+      return imageUrl;
+    }
+  };
+
   const handleDownloadPDF = async () => {
     setIsDownloading(true);
     try {
@@ -124,6 +172,18 @@ const Admission = () => {
       for (let i = 0; i < elements.length; i++) {
         const el = elements[i];
 
+        // Ensure all images inside el have fully loaded into DOM
+        const imgElements = Array.from(el.querySelectorAll("img"));
+        await Promise.all(
+          imgElements.map((img) => {
+            if (img.complete && img.naturalWidth !== 0) return Promise.resolve();
+            return new Promise((res) => {
+              img.onload = res;
+              img.onerror = res;
+            });
+          })
+        );
+
         // Temporarily override styles for clean canvas capture
         const originalFilter = el.style.filter;
         const originalBoxShadow = el.style.boxShadow;
@@ -133,7 +193,9 @@ const Admission = () => {
         const canvas = await html2canvas(el, {
           scale: 2,
           useCORS: true,
+          allowTaint: true,
           logging: false,
+          backgroundColor: "#ffffff",
         });
         const imgData = canvas.toDataURL("image/jpeg", 1.0);
 
@@ -1032,6 +1094,7 @@ const Admission = () => {
       }
 
       // Set Receipt Data before clearing form
+      const logoBase64 = await fetchBase64ImageSafe(schoolProfile.profileImage || localStorage.getItem("schoolLogo") || "");
       setReceiptData({
         schoolName: schoolProfile.name || localStorage.getItem("schoolName") || "Our School",
         schoolPhone: schoolProfile.phone || localStorage.getItem("schoolPhone") || "",
@@ -1044,7 +1107,7 @@ const Admission = () => {
           schoolProfile.address ||
           localStorage.getItem("schoolAddress") ||
           "",
-        schoolLogo: schoolProfile.profileImage || localStorage.getItem("schoolLogo") || "",
+        schoolLogo: logoBase64,
         schoolEmail: schoolProfile.email || "",
         date: new Date().toLocaleDateString(),
         time: new Date().toLocaleTimeString(),
@@ -1164,6 +1227,8 @@ const Admission = () => {
         ? [students[targetIndex]]
         : students;
 
+    const logoBase64 = await fetchBase64ImageSafe(currentSchool.profileImage || localStorage.getItem("schoolLogo") || "");
+
     setReceiptData({
       schoolName: currentSchool.name || localStorage.getItem("schoolName") || "Our School",
       schoolPhone: currentSchool.phone || localStorage.getItem("schoolPhone") || "",
@@ -1176,7 +1241,7 @@ const Admission = () => {
         currentSchool.address ||
         localStorage.getItem("schoolAddress") ||
         "",
-      schoolLogo: currentSchool.profileImage || localStorage.getItem("schoolLogo") || "",
+      schoolLogo: logoBase64,
       schoolEmail: currentSchool.email || "",
       date: new Date().toLocaleDateString(),
       time: new Date().toLocaleTimeString(),
@@ -1213,7 +1278,10 @@ const Admission = () => {
     setShowReceipt(true);
   };
 
-  const testReceipt = () => {
+  const testReceipt = async () => {
+    const testLogoRaw = localStorage.getItem("schoolLogo") || "https://placehold.co/400x400/3b82f6/ffffff?text=School+Logo&font=montserrat";
+    const testLogoBase64 = await fetchBase64ImageSafe(testLogoRaw);
+
     setReceiptData({
       schoolName:
         localStorage.getItem("schoolName") || "Excel International Academy",
@@ -1223,9 +1291,7 @@ const Admission = () => {
       schoolAddress:
         localStorage.getItem("schoolAddress") ||
         "123 Education Street, City, Country",
-      schoolLogo:
-        localStorage.getItem("schoolLogo") ||
-        "https://placehold.co/400x400/3b82f6/ffffff?text=School+Logo&font=montserrat",
+      schoolLogo: testLogoBase64,
       date: new Date().toLocaleDateString(),
       time: new Date().toLocaleTimeString(),
       parentName: "John Doe",
@@ -3573,6 +3639,7 @@ const Admission = () => {
                             <img
                               src={receiptData.schoolLogo}
                               alt="School Logo"
+                              crossOrigin="anonymous"
                               style={{
                                 width: "100%",
                                 height: "100%",
