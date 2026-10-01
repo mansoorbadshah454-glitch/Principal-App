@@ -140,7 +140,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const isDemoAccount = useMemo(() => {
         const sId = String(schoolId || '').trim();
         const pId = String(parentSchoolInfo?.schoolId || parentSchoolInfo?.id || '').trim();
-        return sId === '6257' || pId === '6257';
+        return sId === '6257' || pId === '6257' || sId.includes('6257') || pId.includes('6257');
     }, [schoolId, parentSchoolInfo]);
 
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
@@ -2124,29 +2124,59 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                 </div>
                             </div>
 
-                            <button
-                                onClick={handleInjectFinancialDemoData}
-                                disabled={isInjectingDemo}
-                                style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                    padding: '0.55rem 1.25rem',
-                                    borderRadius: '10px',
-                                    border: 'none',
-                                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                                    color: '#ffffff',
-                                    fontWeight: '800',
-                                    fontSize: '0.85rem',
-                                    cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
-                                    boxShadow: '0 4px 10px rgba(217, 119, 6, 0.4)',
-                                    opacity: isInjectingDemo ? 0.7 : 1,
-                                    transition: 'all 0.2s ease'
-                                }}
-                            >
-                                {isInjectingDemo ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
-                                {isInjectingDemo ? 'Injecting Presentation Data...' : '✨ Inject Demo Financial Data'}
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                {hasDemoData && (
+                                    <button
+                                        type="button"
+                                        onClick={handlePurgeFinancialDemoData}
+                                        disabled={isPurgingDemo}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.45rem',
+                                            padding: '0.55rem 1.15rem',
+                                            borderRadius: '10px',
+                                            border: '1px solid #fca5a5',
+                                            background: '#fef2f2',
+                                            color: '#b91c1c',
+                                            fontWeight: '800',
+                                            fontSize: '0.85rem',
+                                            cursor: isPurgingDemo ? 'not-allowed' : 'pointer',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                        title="Purge / Clean all demo financial transactions, store sales, payroll & direct entries"
+                                    >
+                                        {isPurgingDemo ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                        <span>{isPurgingDemo ? 'Cleaning...' : '🧹 Clear Demo Data'}</span>
+                                    </button>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={handleInjectFinancialDemoData}
+                                    disabled={isInjectingDemo}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        padding: '0.55rem 1.25rem',
+                                        borderRadius: '10px',
+                                        border: 'none',
+                                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                        color: '#ffffff',
+                                        fontWeight: '800',
+                                        fontSize: '0.85rem',
+                                        cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                        boxShadow: '0 4px 10px rgba(217, 119, 6, 0.4)',
+                                        opacity: isInjectingDemo ? 0.7 : 1,
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                    title="Inject 12-month demo transactions, store sales, payroll & 3D chart analytics for School ID 6257 presentation"
+                                >
+                                    {isInjectingDemo ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
+                                    <span>{isInjectingDemo ? 'Injecting Presentation Data...' : '⚡ Inject Demo Financial Data'}</span>
+                                </button>
+                            </div>
                         </div>
                     )}
 
@@ -2180,55 +2210,108 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                         </p>
                                     </div>
 
-                                    {/* View Mode Toggle Pill */}
-                                    <div style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        background: '#f1f5f9',
-                                        padding: '3px',
-                                        borderRadius: '10px',
-                                        border: '1px solid #cbd5e1'
-                                    }}>
-                                        <button
-                                            onClick={() => setWheelViewMode('distribution')}
-                                            style={{
-                                                border: 'none',
-                                                background: wheelViewMode === 'distribution' ? '#ffffff' : 'transparent',
-                                                color: wheelViewMode === 'distribution' ? '#10b981' : '#64748b',
-                                                fontWeight: wheelViewMode === 'distribution' ? '800' : '600',
-                                                padding: '5px 11px',
-                                                borderRadius: '7px',
-                                                fontSize: '0.76rem',
-                                                cursor: 'pointer',
-                                                boxShadow: wheelViewMode === 'distribution' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '4px',
-                                                transition: 'all 0.15s ease'
-                                            }}
-                                        >
-                                            <Zap size={13} /> Profit & Allocation
-                                        </button>
-                                        <button
-                                            onClick={() => setWheelViewMode('inflows')}
-                                            style={{
-                                                border: 'none',
-                                                background: wheelViewMode === 'inflows' ? '#ffffff' : 'transparent',
-                                                color: wheelViewMode === 'inflows' ? '#0078d4' : '#64748b',
-                                                fontWeight: wheelViewMode === 'inflows' ? '800' : '600',
-                                                padding: '5px 11px',
-                                                borderRadius: '7px',
-                                                fontSize: '0.76rem',
-                                                cursor: 'pointer',
-                                                boxShadow: wheelViewMode === 'inflows' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '4px',
-                                                transition: 'all 0.15s ease'
-                                            }}
-                                        >
-                                            <Wallet size={13} /> Inflow Sources
-                                        </button>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                        {/* View Mode Toggle Pill */}
+                                        <div style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            background: '#f1f5f9',
+                                            padding: '3px',
+                                            borderRadius: '10px',
+                                            border: '1px solid #cbd5e1'
+                                        }}>
+                                            <button
+                                                onClick={() => setWheelViewMode('distribution')}
+                                                style={{
+                                                    border: 'none',
+                                                    background: wheelViewMode === 'distribution' ? '#ffffff' : 'transparent',
+                                                    color: wheelViewMode === 'distribution' ? '#10b981' : '#64748b',
+                                                    fontWeight: wheelViewMode === 'distribution' ? '800' : '600',
+                                                    padding: '5px 11px',
+                                                    borderRadius: '7px',
+                                                    fontSize: '0.76rem',
+                                                    cursor: 'pointer',
+                                                    boxShadow: wheelViewMode === 'distribution' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                <Zap size={13} /> Profit & Allocation
+                                            </button>
+                                            <button
+                                                onClick={() => setWheelViewMode('inflows')}
+                                                style={{
+                                                    border: 'none',
+                                                    background: wheelViewMode === 'inflows' ? '#ffffff' : 'transparent',
+                                                    color: wheelViewMode === 'inflows' ? '#0078d4' : '#64748b',
+                                                    fontWeight: wheelViewMode === 'inflows' ? '800' : '600',
+                                                    padding: '5px 11px',
+                                                    borderRadius: '7px',
+                                                    fontSize: '0.76rem',
+                                                    cursor: 'pointer',
+                                                    boxShadow: wheelViewMode === 'inflows' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                <Wallet size={13} /> Inflow Sources
+                                            </button>
+                                        </div>
+
+                                        {/* Demo 6257 Action Buttons */}
+                                        {isDemoAccount && (
+                                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleInjectFinancialDemoData}
+                                                    disabled={isInjectingDemo}
+                                                    title="Inject Demo Data for Financial Wheel"
+                                                    style={{
+                                                        border: 'none',
+                                                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                                        color: '#ffffff',
+                                                        fontWeight: '800',
+                                                        fontSize: '0.72rem',
+                                                        padding: '5px 9px',
+                                                        borderRadius: '7px',
+                                                        cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '3px',
+                                                        boxShadow: '0 2px 5px rgba(245, 158, 11, 0.3)'
+                                                    }}
+                                                >
+                                                    <Sparkles size={12} /> Inject Demo
+                                                </button>
+                                                {hasDemoData && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={handlePurgeFinancialDemoData}
+                                                        disabled={isPurgingDemo}
+                                                        title="Clear Demo Financial Data"
+                                                        style={{
+                                                            border: '1px solid #fca5a5',
+                                                            background: '#fef2f2',
+                                                            color: '#b91c1c',
+                                                            fontWeight: '800',
+                                                            fontSize: '0.72rem',
+                                                            padding: '5px 8px',
+                                                            borderRadius: '7px',
+                                                            cursor: isPurgingDemo ? 'not-allowed' : 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}
+                                                    >
+                                                        <Trash2 size={12} /> Clear
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -2502,6 +2585,57 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                                                 <span>🗓️ Full Year</span>
                                             </button>
                                         </div>
+
+                                        {/* Demo 6257 Action Buttons */}
+                                        {isDemoAccount && (
+                                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleInjectFinancialDemoData}
+                                                    disabled={isInjectingDemo}
+                                                    title="Inject 12-Month Inflow/Outflow Demo Data"
+                                                    style={{
+                                                        border: 'none',
+                                                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                                        color: '#ffffff',
+                                                        fontWeight: '800',
+                                                        fontSize: '0.72rem',
+                                                        padding: '5px 9px',
+                                                        borderRadius: '7px',
+                                                        cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '3px',
+                                                        boxShadow: '0 2px 5px rgba(245, 158, 11, 0.3)'
+                                                    }}
+                                                >
+                                                    <Sparkles size={12} /> Inject 12M Demo
+                                                </button>
+                                                {hasDemoData && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={handlePurgeFinancialDemoData}
+                                                        disabled={isPurgingDemo}
+                                                        title="Clear Demo Financial Data"
+                                                        style={{
+                                                            border: '1px solid #fca5a5',
+                                                            background: '#fef2f2',
+                                                            color: '#b91c1c',
+                                                            fontWeight: '800',
+                                                            fontSize: '0.72rem',
+                                                            padding: '5px 8px',
+                                                            borderRadius: '7px',
+                                                            cursor: isPurgingDemo ? 'not-allowed' : 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}
+                                                    >
+                                                        <Trash2 size={12} /> Clear
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
@@ -2863,9 +2997,60 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             border: '1.5px solid #cbd5e1',
                             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95)'
                         }}>
-                            <h3 style={{ margin: '0 0 0.2rem 0', fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>
-                                💳 Payment Gateways & Channels
-                            </h3>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>
+                                    💳 Payment Gateways & Channels
+                                </h3>
+                                {isDemoAccount && (
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                        <button
+                                            type="button"
+                                            onClick={handleInjectFinancialDemoData}
+                                            disabled={isInjectingDemo}
+                                            title="Inject Gateway Demo Data (Cash, EasyPaisa, JazzCash, Bank)"
+                                            style={{
+                                                border: 'none',
+                                                background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                                color: '#ffffff',
+                                                fontWeight: '800',
+                                                fontSize: '0.7rem',
+                                                padding: '4px 8px',
+                                                borderRadius: '6px',
+                                                cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '3px',
+                                                boxShadow: '0 2px 5px rgba(245, 158, 11, 0.3)'
+                                            }}
+                                        >
+                                            <Sparkles size={11} /> Inject Demo
+                                        </button>
+                                        {hasDemoData && (
+                                            <button
+                                                type="button"
+                                                onClick={handlePurgeFinancialDemoData}
+                                                disabled={isPurgingDemo}
+                                                title="Clear Demo Financial Data"
+                                                style={{
+                                                    border: '1px solid #fca5a5',
+                                                    background: '#fef2f2',
+                                                    color: '#b91c1c',
+                                                    fontWeight: '800',
+                                                    fontSize: '0.7rem',
+                                                    padding: '4px 7px',
+                                                    borderRadius: '6px',
+                                                    cursor: isPurgingDemo ? 'not-allowed' : 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '3px'
+                                                }}
+                                            >
+                                                <Trash2 size={11} /> Clear
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                             <p style={{ margin: '0 0 1rem 0', fontSize: '0.78rem', color: '#64748b' }}>
                                 Breakdown of parents paying via Counter Cash vs EasyPaisa / JazzCash / Bank
                             </p>
@@ -2973,9 +3158,60 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             border: '1.5px solid #cbd5e1',
                             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95)'
                         }}>
-                            <h3 style={{ margin: '0 0 0.2rem 0', fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>
-                                🏷️ Outflow Slices & Expense Heads
-                            </h3>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>
+                                    🏷️ Outflow Slices & Expense Heads
+                                </h3>
+                                {isDemoAccount && (
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                        <button
+                                            type="button"
+                                            onClick={handleInjectFinancialDemoData}
+                                            disabled={isInjectingDemo}
+                                            title="Inject Expense Categories Demo Data"
+                                            style={{
+                                                border: 'none',
+                                                background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                                                color: '#ffffff',
+                                                fontWeight: '800',
+                                                fontSize: '0.7rem',
+                                                padding: '4px 8px',
+                                                borderRadius: '6px',
+                                                cursor: isInjectingDemo ? 'not-allowed' : 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '3px',
+                                                boxShadow: '0 2px 5px rgba(245, 158, 11, 0.3)'
+                                            }}
+                                        >
+                                            <Sparkles size={11} /> Inject Demo
+                                        </button>
+                                        {hasDemoData && (
+                                            <button
+                                                type="button"
+                                                onClick={handlePurgeFinancialDemoData}
+                                                disabled={isPurgingDemo}
+                                                title="Clear Demo Financial Data"
+                                                style={{
+                                                    border: '1px solid #fca5a5',
+                                                    background: '#fef2f2',
+                                                    color: '#b91c1c',
+                                                    fontWeight: '800',
+                                                    fontSize: '0.7rem',
+                                                    padding: '4px 7px',
+                                                    borderRadius: '6px',
+                                                    cursor: isPurgingDemo ? 'not-allowed' : 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '3px'
+                                                }}
+                                            >
+                                                <Trash2 size={11} /> Clear
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                             <p style={{ margin: '0 0 1rem 0', fontSize: '0.78rem', color: '#64748b' }}>
                                 Categorical distribution of school operational expenses and teacher salaries
                             </p>
