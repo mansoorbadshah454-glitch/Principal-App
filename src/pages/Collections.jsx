@@ -5300,7 +5300,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     const [expenseProofPreview, setExpenseProofPreview] = useState(null);
     const [isSavingIncome, setIsSavingIncome] = useState(false);
     const [isSavingExpense, setIsSavingExpense] = useState(false);
-    const [rightCardTab, setRightCardTab] = useState('all'); // 'all' | 'fee_slips' | 'incomes' | 'expenses'
+    const [rightCardTab, setRightCardTab] = useState('fee_slips'); // 'fee_slips' | 'incomes' | 'expenses'
 
     const handleIncomeProofChange = (e) => {
         const file = e.target.files?.[0];
@@ -13116,25 +13116,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                    {/* Multi-Tab Filter Switcher */}
+                                    {/* Multi-Tab Filter Switcher (Slips, Incomes, Expenses) */}
                                     <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px', border: '1.5px solid #cbd5e1' }}>
-                                        <button
-                                            type="button"
-                                            onClick={() => setRightCardTab('all')}
-                                            style={{
-                                                padding: '4px 10px',
-                                                borderRadius: '6px',
-                                                border: 'none',
-                                                background: rightCardTab === 'all' ? '#ffffff' : 'transparent',
-                                                color: rightCardTab === 'all' ? '#4338ca' : '#475569',
-                                                fontWeight: '800',
-                                                fontSize: '0.8rem',
-                                                cursor: 'pointer',
-                                                boxShadow: rightCardTab === 'all' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                                            }}
-                                        >
-                                            All ({todayTransactions.length + (todayFinances.incomes || []).length + (todayFinances.expenses || []).length})
-                                        </button>
                                         <button
                                             type="button"
                                             onClick={() => setRightCardTab('fee_slips')}
@@ -13257,7 +13240,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             })()}
 
                             {/* Main Scrollable Content Area */}
-                            <div style={{ maxHeight: '420px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }} className="custom-scrollbar">
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                 {loadingTransactions ? (
                                     <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.88rem', fontWeight: '700' }}>
                                         Loading today's ledger records...
@@ -13265,8 +13248,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 ) : (
                                     <>
                                         {/* SECTION 1: Fee Collections Log */}
-                                        {(rightCardTab === 'all' || rightCardTab === 'fee_slips') && (
-                                            <div style={{ border: '1.5px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden' }}>
+                                        {rightCardTab === 'fee_slips' && (
+                                            <div style={{ border: '1.5px solid #cbd5e1', borderRadius: '10px', overflow: 'hidden', background: '#ffffff' }}>
                                                 <div style={{ background: '#f8fafc', padding: '0.6rem 0.85rem', borderBottom: '1.5px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                     <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                                                         <Wallet size={16} color="#0078d4" /> Fee Collections Log ({todayTransactions.length})
@@ -13277,92 +13260,99 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 </div>
 
                                                 {todayTransactions.length === 0 ? (
-                                                    <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600' }}>
+                                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600' }}>
                                                         No student fee collections recorded today yet.
                                                     </div>
                                                 ) : (
-                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
-                                                        <thead>
-                                                            <tr style={{ background: '#f1f5f9', borderBottom: '1.5px solid #e2e8f0', textAlign: 'left' }}>
-                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Slip #</th>
-                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Student</th>
-                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Class</th>
-                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Amount</th>
-                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800' }}>Mode</th>
-                                                                <th style={{ padding: '0.5rem 0.75rem', color: '#334155', fontWeight: '800', textAlign: 'right' }}>Slip</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            {todayTransactions.map((tx) => (
-                                                                <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                                    <td style={{ padding: '0.55rem 0.75rem', fontWeight: '800', color: '#0078d4' }}>{tx.receiptNo}</td>
-                                                                    <td style={{ padding: '0.55rem 0.75rem', fontWeight: '700', color: '#0f172a' }}>{tx.studentName}</td>
-                                                                    <td style={{ padding: '0.55rem 0.75rem', color: '#475569', fontWeight: '600' }}>{tx.className}</td>
-                                                                    <td style={{ padding: '0.55rem 0.75rem', fontWeight: '800', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
-                                                                    <td style={{ padding: '0.55rem 0.75rem' }}>
-                                                                        <span style={{ color: '#0f172a', fontWeight: '700', fontSize: '0.78rem' }}>{tx.paymentMode || 'Cash'}</span>
-                                                                    </td>
-                                                                    <td style={{ padding: '0.55rem 0.75rem', textAlign: 'right' }}>
-                                                                        <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
-                                                                            {tx.proofUrl && (
+                                                    <div style={{ maxHeight: '445px', overflowY: 'auto' }} className="custom-scrollbar">
+                                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.83rem' }}>
+                                                            <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f8fafc', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+                                                                <tr style={{ borderBottom: '2px solid #94a3b8', textAlign: 'left' }}>
+                                                                    <th style={{ padding: '0.5rem 0.75rem', color: '#1e293b', fontWeight: '800' }}>Slip #</th>
+                                                                    <th style={{ padding: '0.5rem 0.75rem', color: '#1e293b', fontWeight: '800' }}>Student</th>
+                                                                    <th style={{ padding: '0.5rem 0.75rem', color: '#1e293b', fontWeight: '800' }}>Class</th>
+                                                                    <th style={{ padding: '0.5rem 0.75rem', color: '#1e293b', fontWeight: '800' }}>Amount</th>
+                                                                    <th style={{ padding: '0.5rem 0.75rem', color: '#1e293b', fontWeight: '800' }}>Mode</th>
+                                                                    <th style={{ padding: '0.5rem 0.75rem', color: '#1e293b', fontWeight: '800', textAlign: 'right' }}>Slip</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {todayTransactions.map((tx, idx) => (
+                                                                    <tr key={tx.id} style={{
+                                                                        borderBottom: '1.5px solid #cbd5e1',
+                                                                        height: '42px',
+                                                                        background: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                                                                        transition: 'background 0.15s ease'
+                                                                    }}>
+                                                                        <td style={{ padding: '0.42rem 0.75rem', fontWeight: '800', color: '#0078d4' }}>{tx.receiptNo}</td>
+                                                                        <td style={{ padding: '0.42rem 0.75rem', fontWeight: '700', color: '#0f172a' }}>{tx.studentName}</td>
+                                                                        <td style={{ padding: '0.42rem 0.75rem', color: '#475569', fontWeight: '600' }}>{tx.className}</td>
+                                                                        <td style={{ padding: '0.42rem 0.75rem', fontWeight: '800', color: '#16a34a' }}>Rs {Number(tx.totalPaid).toLocaleString()}</td>
+                                                                        <td style={{ padding: '0.42rem 0.75rem' }}>
+                                                                            <span style={{ color: '#0f172a', fontWeight: '700', fontSize: '0.78rem' }}>{tx.paymentMode || 'Cash'}</span>
+                                                                        </td>
+                                                                        <td style={{ padding: '0.42rem 0.75rem', textAlign: 'right' }}>
+                                                                            <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+                                                                                {tx.proofUrl && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => setProofModal({
+                                                                                            isOpen: true,
+                                                                                            url: tx.proofUrl,
+                                                                                            title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
+                                                                                        })}
+                                                                                        style={{
+                                                                                            padding: '0.2rem 0.45rem',
+                                                                                            borderRadius: '5px',
+                                                                                            border: '1.5px solid #86efac',
+                                                                                            background: '#f0fdf4',
+                                                                                            color: '#15803d',
+                                                                                            fontWeight: '800',
+                                                                                            fontSize: '0.74rem',
+                                                                                            cursor: 'pointer'
+                                                                                        }}
+                                                                                        title="View Proof"
+                                                                                    >
+                                                                                        <Eye size={12} />
+                                                                                    </button>
+                                                                                )}
                                                                                 <button
                                                                                     type="button"
-                                                                                    onClick={() => setProofModal({
-                                                                                        isOpen: true,
-                                                                                        url: tx.proofUrl,
-                                                                                        title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
-                                                                                    })}
-                                                                                    style={{
-                                                                                        padding: '0.25rem 0.5rem',
-                                                                                        borderRadius: '5px',
-                                                                                        border: '1.5px solid #86efac',
-                                                                                        background: '#f0fdf4',
-                                                                                        color: '#15803d',
-                                                                                        fontWeight: '800',
-                                                                                        fontSize: '0.76rem',
-                                                                                        cursor: 'pointer'
+                                                                                    onClick={() => {
+                                                                                        setReceiptData(tx);
+                                                                                        setReceiptModalOpen(true);
                                                                                     }}
-                                                                                    title="View Proof"
+                                                                                    style={{
+                                                                                        padding: '0.2rem 0.5rem',
+                                                                                        borderRadius: '5px',
+                                                                                        border: '1.5px solid #cbd5e1',
+                                                                                        background: '#ffffff',
+                                                                                        color: '#0f172a',
+                                                                                        fontWeight: '800',
+                                                                                        fontSize: '0.74rem',
+                                                                                        cursor: 'pointer',
+                                                                                        display: 'inline-flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '4px'
+                                                                                    }}
+                                                                                    title="Print Slip"
                                                                                 >
-                                                                                    <Eye size={12} />
+                                                                                    <Printer size={12} /> Slip
                                                                                 </button>
-                                                                            )}
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => {
-                                                                                    setReceiptData(tx);
-                                                                                    setReceiptModalOpen(true);
-                                                                                }}
-                                                                                style={{
-                                                                                    padding: '0.25rem 0.55rem',
-                                                                                    borderRadius: '5px',
-                                                                                    border: '1.5px solid #cbd5e1',
-                                                                                    background: '#ffffff',
-                                                                                    color: '#0f172a',
-                                                                                    fontWeight: '800',
-                                                                                    fontSize: '0.76rem',
-                                                                                    cursor: 'pointer',
-                                                                                    display: 'inline-flex',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '4px'
-                                                                                }}
-                                                                                title="Print Slip"
-                                                                            >
-                                                                                <Printer size={12} /> Slip
-                                                                            </button>
-                                                                        </div>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
+                                                                            </div>
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
                                                 )}
                                             </div>
                                         )}
 
                                         {/* SECTION 2: Other Incomes Log */}
-                                        {(rightCardTab === 'all' || rightCardTab === 'incomes') && (
-                                            <div style={{ border: '1.5px solid #bbf7d0', borderRadius: '10px', overflow: 'hidden' }}>
+                                        {rightCardTab === 'incomes' && (
+                                            <div style={{ border: '1.5px solid #bbf7d0', borderRadius: '10px', overflow: 'hidden', background: '#ffffff' }}>
                                                 <div style={{ background: '#f0fdf4', padding: '0.6rem 0.85rem', borderBottom: '1.5px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                     <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                                                         <TrendingUp size={16} color="#16a34a" /> Today's Incomes & Inflow ({(todayFinances.incomes || []).length})
@@ -13373,29 +13363,29 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 </div>
 
                                                 {(todayFinances.incomes || []).length === 0 ? (
-                                                    <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff' }}>
+                                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff' }}>
                                                         No additional income vouchers logged today.
                                                     </div>
                                                 ) : (
-                                                    <div style={{ padding: '0.6rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                    <div style={{ padding: '0.5rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '480px', overflowY: 'auto' }} className="custom-scrollbar">
                                                         {todayFinances.incomes.map((inc) => (
-                                                             <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.55rem 0.8rem', background: '#f0fdf4', borderRadius: '8px', border: '1.5px solid #bbf7d0', fontSize: '0.84rem' }}>
+                                                             <div key={inc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.75rem', background: '#f0fdf4', borderRadius: '8px', border: '1.5px solid #bbf7d0', fontSize: '0.82rem' }}>
                                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                                     <div style={{ fontWeight: '800', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                        <span>{inc.name || inc.title || inc.category || 'Income'}</span>
-                                                                        <span style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: '800' }}>
+                                                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{inc.name || inc.title || inc.category || 'Income'}</span>
+                                                                        <span style={{ fontSize: '0.72rem', padding: '1px 6px', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: '800' }}>
                                                                             {inc.type === 'permanent' ? 'Monthly' : 'One-time'}
                                                                         </span>
                                                                     </div>
-                                                                    <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>{inc.remarks || 'Direct Revenue'}</div>
+                                                                    <div style={{ fontSize: '0.76rem', color: '#475569', marginTop: '1px', fontWeight: '600' }}>{inc.remarks || 'Direct Revenue'}</div>
                                                                 </div>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                                                    <span style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.94rem' }}>+Rs {Number(inc.amount || 0).toLocaleString()}</span>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginLeft: '0.5rem' }}>
+                                                                    <span style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>+Rs {Number(inc.amount || 0).toLocaleString()}</span>
                                                                     {inc.proofUrl && (
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => setProofModal({ isOpen: true, url: inc.proofUrl, title: `${inc.name} - Proof` })}
-                                                                            style={{ padding: '3px 7px', borderRadius: '5px', border: '1.5px solid #86efac', background: '#ffffff', color: '#15803d', cursor: 'pointer', fontSize: '0.74rem', fontWeight: '800' }}
+                                                                            style={{ padding: '3px 6px', borderRadius: '5px', border: '1.5px solid #86efac', background: '#ffffff', color: '#15803d', cursor: 'pointer', fontSize: '0.72rem', fontWeight: '800' }}
                                                                             title="View Proof"
                                                                         >
                                                                             <Eye size={12} />
@@ -13410,8 +13400,8 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         )}
 
                                         {/* SECTION 3: School Expenses Log */}
-                                        {(rightCardTab === 'all' || rightCardTab === 'expenses') && (
-                                            <div style={{ border: '1.5px solid #fecaca', borderRadius: '10px', overflow: 'hidden' }}>
+                                        {rightCardTab === 'expenses' && (
+                                            <div style={{ border: '1.5px solid #fecaca', borderRadius: '10px', overflow: 'hidden', background: '#ffffff' }}>
                                                 <div style={{ background: '#fef2f2', padding: '0.6rem 0.85rem', borderBottom: '1.5px solid #fecaca', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                     <span style={{ fontSize: '0.88rem', fontWeight: '900', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                                                         <TrendingUp size={16} color="#dc2626" style={{ transform: 'rotate(180deg)' }} /> Today's Expenses & Outflow ({(todayFinances.expenses || []).length})
@@ -13422,29 +13412,29 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 </div>
 
                                                 {(todayFinances.expenses || []).length === 0 ? (
-                                                    <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff' }}>
+                                                    <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff' }}>
                                                         No school expense vouchers logged today.
                                                     </div>
                                                 ) : (
-                                                    <div style={{ padding: '0.6rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                    <div style={{ padding: '0.5rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '480px', overflowY: 'auto' }} className="custom-scrollbar">
                                                         {todayFinances.expenses.map((exp) => (
-                                                            <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.55rem 0.8rem', background: '#fef2f2', borderRadius: '8px', border: '1.5px solid #fecaca', fontSize: '0.84rem' }}>
+                                                            <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.75rem', background: '#fef2f2', borderRadius: '8px', border: '1.5px solid #fecaca', fontSize: '0.82rem' }}>
                                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                                     <div style={{ fontWeight: '800', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                        <span>{exp.name || exp.title || exp.category || 'Expense'}</span>
-                                                                        <span style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', fontWeight: '800' }}>
+                                                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{exp.name || exp.title || exp.category || 'Expense'}</span>
+                                                                        <span style={{ fontSize: '0.72rem', padding: '1px 6px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', fontWeight: '800' }}>
                                                                             {exp.type === 'permanent' ? 'Monthly' : 'One-time'}
                                                                         </span>
                                                                     </div>
-                                                                    <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '2px', fontWeight: '600' }}>{exp.remarks || 'School Outflow'}</div>
+                                                                    <div style={{ fontSize: '0.76rem', color: '#475569', marginTop: '1px', fontWeight: '600' }}>{exp.remarks || 'School Outflow'}</div>
                                                                 </div>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                                                    <span style={{ fontWeight: '900', color: '#dc2626', fontSize: '0.94rem' }}>-Rs {Number(exp.amount || 0).toLocaleString()}</span>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginLeft: '0.5rem' }}>
+                                                                    <span style={{ fontWeight: '900', color: '#dc2626', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>-Rs {Number(exp.amount || 0).toLocaleString()}</span>
                                                                     {exp.proofUrl && (
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => setProofModal({ isOpen: true, url: exp.proofUrl, title: `${exp.name} - Proof` })}
-                                                                            style={{ padding: '3px 7px', borderRadius: '5px', border: '1.5px solid #fca5a5', background: '#ffffff', color: '#b91c1c', cursor: 'pointer', fontSize: '0.74rem', fontWeight: '800' }}
+                                                                            style={{ padding: '3px 6px', borderRadius: '5px', border: '1.5px solid #fca5a5', background: '#ffffff', color: '#b91c1c', cursor: 'pointer', fontSize: '0.72rem', fontWeight: '800' }}
                                                                             title="View Proof"
                                                                         >
                                                                             <Eye size={12} />
