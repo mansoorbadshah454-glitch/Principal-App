@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Users, Search, ArrowRight, CheckCircle, XCircle, ChevronRight, ChevronDown, AlertCircle,
     Loader2, GraduationCap, X, UploadCloud, FileCheck, Eye, Upload, Sparkles,
     History, FileSpreadsheet, Download, Printer, Calendar, TrendingUp, BookOpen,
     Layers, CheckCircle2, Award, ArrowUpRight, ShieldCheck, RefreshCw, DoorOpen, UserMinus, LogOut,
-    FileText, CheckSquare, DollarSign, Wallet, CreditCard, Tag, Receipt, ExternalLink
+    FileText, CheckSquare, DollarSign, Wallet, CreditCard, Tag, Receipt, ExternalLink, Trash2
 } from 'lucide-react';
 import { db, auth, storage } from '../firebase';
 import {
@@ -101,7 +101,29 @@ const Promotions = () => {
     const [selectedClass, setSelectedClass] = useState(null);
     const [students, setStudents] = useState([]);
     const [loadingStudents, setLoadingStudents] = useState(false);
-    const [isDemoMode, setIsDemoMode] = useState(false);
+    const [schoolDetails, setSchoolDetails] = useState({ name: '', logo: '', address: '', phone: '', email: '' });
+    const isDemoAccount = useMemo(() => {
+        const sId = String(schoolId || '').trim();
+        const dId = String(schoolDetails?.schoolId || schoolDetails?.id || '').trim();
+        return sId === '6257' || dId === '6257' || sId.includes('6257') || dId.includes('6257');
+    }, [schoolId, schoolDetails]);
+
+    const [isDemoMode, setIsDemoMode] = useState(() => {
+        try {
+            const sid = String(localStorage.getItem('schoolId') || '').trim();
+            return (sid === '6257' || sid.includes('6257')) && localStorage.getItem('promotions_demo_mode_active') === 'true';
+        } catch (_) {
+            return false;
+        }
+    });
+
+    useEffect(() => {
+        if (!isDemoAccount && isDemoMode) {
+            setIsDemoMode(false);
+            try { localStorage.removeItem('promotions_demo_mode_active'); } catch (_) {}
+        }
+    }, [isDemoAccount, isDemoMode]);
+
     const [searchQuery, setSearchQuery] = useState('');
     const [studentSearchQuery, setStudentSearchQuery] = useState('');
     const [processing, setProcessing] = useState(false);
@@ -109,7 +131,6 @@ const Promotions = () => {
     const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'promote', 'retain', 'demote'
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [confirmLevel, setConfirmLevel] = useState(1); // 1 or 2 for dual confirmation
-    const [schoolDetails, setSchoolDetails] = useState({ name: '', logo: '', address: '', phone: '', email: '' });
     const [schoolLogoBase64, setSchoolLogoBase64] = useState(null);
     const [uploadingResultId, setUploadingResultId] = useState(null); // Tracks student ID for upload spinner
     const [showPrimaryDept, setShowPrimaryDept] = useState(true);
@@ -467,12 +488,58 @@ const Promotions = () => {
             const prevClassName = previousClass ? previousClass.name : 'Nursery';
 
             const baseDemoList = [
-                { id: 'demo_1', name: 'Muhammad Ali Raza', rollNo: '01', fatherName: 'Tariq Mehmood', t1Obtained: 455, t1Max: 500, t2Obtained: 460, t2Max: 500, t3Obtained: 470, t3Max: 500 },
-                { id: 'demo_2', name: 'Fatima Zahra', rollNo: '02', fatherName: 'Kamran Ali', t1Obtained: 415, t1Max: 500, t2Obtained: 420, t2Max: 500, t3Obtained: 430, t3Max: 500 },
-                { id: 'demo_3', name: 'Muhammad Usman', rollNo: '03', fatherName: 'Abdul Sattar', t1Obtained: 310, t1Max: 500, t2Obtained: 315, t2Max: 500, t3Obtained: 325, t3Max: 500 },
-                { id: 'demo_4', name: 'Bilal Ahmed', rollNo: '04', fatherName: 'Farooq Ahmed', t1Obtained: 125, t1Max: 500, t2Obtained: 130, t2Max: 500, t3Obtained: 140, t3Max: 500 },
-                { id: 'demo_5', name: 'Ayesha Khan', rollNo: '05', fatherName: 'Sardar Khan', t1Obtained: 148, t1Max: 500, t2Obtained: 150, t2Max: 500, t3Obtained: 155, t3Max: 500 },
-                { id: 'demo_6', name: 'Zainab Bibi', rollNo: '06', fatherName: 'Muhammad Rashid', t1Obtained: 135, t1Max: 500, t2Obtained: 140, t2Max: 500, t3Obtained: 145, t3Max: 500 }
+                // --- 31 PROMOTED STUDENTS (Grades A+, A, B, C, D • All Terms Passed) ---
+                { id: 'demo_1', name: 'Muhammad Ali Raza', rollNo: '01', fatherName: 'Tariq Mehmood', t1Obtained: 460, t1Max: 500, t2Obtained: 470, t2Max: 500, t3Obtained: 480, t3Max: 500 },
+                { id: 'demo_2', name: 'Fatima Zahra', rollNo: '02', fatherName: 'Kamran Ali', t1Obtained: 445, t1Max: 500, t2Obtained: 450, t2Max: 500, t3Obtained: 460, t3Max: 500 },
+                { id: 'demo_3', name: 'Muhammad Usman', rollNo: '03', fatherName: 'Abdul Sattar', t1Obtained: 430, t1Max: 500, t2Obtained: 435, t2Max: 500, t3Obtained: 445, t3Max: 500 },
+                { id: 'demo_4', name: 'Ayesha Khan', rollNo: '04', fatherName: 'Sardar Khan', t1Obtained: 415, t1Max: 500, t2Obtained: 420, t2Max: 500, t3Obtained: 430, t3Max: 500 },
+                { id: 'demo_5', name: 'Hamza Farooq', rollNo: '05', fatherName: 'Farooq Ahmed', t1Obtained: 400, t1Max: 500, t2Obtained: 410, t2Max: 500, t3Obtained: 415, t3Max: 500 },
+                { id: 'demo_6', name: 'Zainab Bibi', rollNo: '06', fatherName: 'Muhammad Rashid', t1Obtained: 385, t1Max: 500, t2Obtained: 395, t2Max: 500, t3Obtained: 405, t3Max: 500 },
+                { id: 'demo_7', name: 'Bilal Ahmed', rollNo: '07', fatherName: 'Naseer Ahmed', t1Obtained: 375, t1Max: 500, t2Obtained: 380, t2Max: 500, t3Obtained: 390, t3Max: 500 },
+                { id: 'demo_8', name: 'Khadija Noor', rollNo: '08', fatherName: 'Noor Muhammad', t1Obtained: 365, t1Max: 500, t2Obtained: 370, t2Max: 500, t3Obtained: 380, t3Max: 500 },
+                { id: 'demo_9', name: 'Abdullah Shah', rollNo: '09', fatherName: 'Syed Shah', t1Obtained: 355, t1Max: 500, t2Obtained: 360, t2Max: 500, t3Obtained: 370, t3Max: 500 },
+                { id: 'demo_10', name: 'Maryam Tariq', rollNo: '10', fatherName: 'Tariq Aziz', t1Obtained: 345, t1Max: 500, t2Obtained: 350, t2Max: 500, t3Obtained: 360, t3Max: 500 },
+                { id: 'demo_11', name: 'Zayan Ghani', rollNo: '11', fatherName: 'Faizan Ghani', t1Obtained: 335, t1Max: 500, t2Obtained: 340, t2Max: 500, t3Obtained: 350, t3Max: 500 },
+                { id: 'demo_12', name: 'Dua Fatima', rollNo: '12', fatherName: 'Muhammad Asif', t1Obtained: 325, t1Max: 500, t2Obtained: 335, t2Max: 500, t3Obtained: 340, t3Max: 500 },
+                { id: 'demo_13', name: 'Saad Rehan', rollNo: '13', fatherName: 'Rehan Malik', t1Obtained: 315, t1Max: 500, t2Obtained: 320, t2Max: 500, t3Obtained: 330, t3Max: 500 },
+                { id: 'demo_14', name: 'Hania Amir', rollNo: '14', fatherName: 'Amir Sohail', t1Obtained: 305, t1Max: 500, t2Obtained: 310, t2Max: 500, t3Obtained: 320, t3Max: 500 },
+                { id: 'demo_15', name: 'Umar Farooq', rollNo: '15', fatherName: 'Farooq Shah', t1Obtained: 295, t1Max: 500, t2Obtained: 300, t2Max: 500, t3Obtained: 310, t3Max: 500 },
+                { id: 'demo_16', name: 'Manahil Khan', rollNo: '16', fatherName: 'Imran Khan', t1Obtained: 285, t1Max: 500, t2Obtained: 290, t2Max: 500, t3Obtained: 300, t3Max: 500 },
+                { id: 'demo_17', name: 'Hassan Raza', rollNo: '17', fatherName: 'Raza Ali', t1Obtained: 275, t1Max: 500, t2Obtained: 280, t2Max: 500, t3Obtained: 290, t3Max: 500 },
+                { id: 'demo_18', name: 'Eshal Malik', rollNo: '18', fatherName: 'Malik Nadeem', t1Obtained: 265, t1Max: 500, t2Obtained: 270, t2Max: 500, t3Obtained: 280, t3Max: 500 },
+                { id: 'demo_19', name: 'Ahmad Javed', rollNo: '19', fatherName: 'Javed Iqbal', t1Obtained: 255, t1Max: 500, t2Obtained: 260, t2Max: 500, t3Obtained: 270, t3Max: 500 },
+                { id: 'demo_20', name: 'Anaya Noor', rollNo: '20', fatherName: 'Noor Hassan', t1Obtained: 250, t1Max: 500, t2Obtained: 255, t2Max: 500, t3Obtained: 265, t3Max: 500 },
+                { id: 'demo_21', name: 'Talha Zubair', rollNo: '21', fatherName: 'Zubair Akhtar', t1Obtained: 240, t1Max: 500, t2Obtained: 245, t2Max: 500, t3Obtained: 255, t3Max: 500 },
+                { id: 'demo_22', name: 'Alishba Bibi', rollNo: '22', fatherName: 'Muhammad Rafiq', t1Obtained: 235, t1Max: 500, t2Obtained: 240, t2Max: 500, t3Obtained: 250, t3Max: 500 },
+                { id: 'demo_23', name: 'Rayan Khalid', rollNo: '23', fatherName: 'Khalid Mehmood', t1Obtained: 230, t1Max: 500, t2Obtained: 235, t2Max: 500, t3Obtained: 245, t3Max: 500 },
+                { id: 'demo_24', name: 'Hoorain Zahra', rollNo: '24', fatherName: 'Zahid Hussain', t1Obtained: 225, t1Max: 500, t2Obtained: 230, t2Max: 500, t3Obtained: 240, t3Max: 500 },
+                { id: 'demo_25', name: 'Daniyal Shah', rollNo: '25', fatherName: 'Shah Jahan', t1Obtained: 220, t1Max: 500, t2Obtained: 225, t2Max: 500, t3Obtained: 235, t3Max: 500 },
+                { id: 'demo_26', name: 'Mahnoor Fatima', rollNo: '26', fatherName: 'Muhammad Waqas', t1Obtained: 215, t1Max: 500, t2Obtained: 220, t2Max: 500, t3Obtained: 230, t3Max: 500 },
+                { id: 'demo_27', name: 'Shahzaib Khan', rollNo: '27', fatherName: 'Jahangir Khan', t1Obtained: 210, t1Max: 500, t2Obtained: 215, t2Max: 500, t3Obtained: 225, t3Max: 500 },
+                { id: 'demo_28', name: 'Rida Zainab', rollNo: '28', fatherName: 'Zain Ul Abideen', t1Obtained: 205, t1Max: 500, t2Obtained: 210, t2Max: 500, t3Obtained: 220, t3Max: 500 },
+                { id: 'demo_29', name: 'Subhan Ali', rollNo: '29', fatherName: 'Ali Nawaz', t1Obtained: 200, t1Max: 500, t2Obtained: 205, t2Max: 500, t3Obtained: 215, t3Max: 500 },
+                { id: 'demo_30', name: 'Bareera Khan', rollNo: '30', fatherName: 'Arshad Khan', t1Obtained: 195, t1Max: 500, t2Obtained: 200, t2Max: 500, t3Obtained: 210, t3Max: 500 },
+                { id: 'demo_31', name: 'Zeeshan Haider', rollNo: '31', fatherName: 'Haider Ali', t1Obtained: 190, t1Max: 500, t2Obtained: 195, t2Max: 500, t3Obtained: 205, t3Max: 500 },
+
+                // --- 18 RETAINED STUDENTS (Grade F • Failing Scores • < 33%) ---
+                { id: 'demo_32', name: 'Shoaib Akhtar', rollNo: '32', fatherName: 'Akhtar Hussain', t1Obtained: 120, t1Max: 500, t2Obtained: 125, t2Max: 500, t3Obtained: 130, t3Max: 500 },
+                { id: 'demo_33', name: 'Laiba Noor', rollNo: '33', fatherName: 'Noor Alam', t1Obtained: 110, t1Max: 500, t2Obtained: 115, t2Max: 500, t3Obtained: 120, t3Max: 500 },
+                { id: 'demo_34', name: 'Kashif Mehmood', rollNo: '34', fatherName: 'Mehmood Khan', t1Obtained: 105, t1Max: 500, t2Obtained: 110, t2Max: 500, t3Obtained: 115, t3Max: 500 },
+                { id: 'demo_35', name: 'Sania Mirza', rollNo: '35', fatherName: 'Mirza Aslam', t1Obtained: 100, t1Max: 500, t2Obtained: 105, t2Max: 500, t3Obtained: 110, t3Max: 500 },
+                { id: 'demo_36', name: 'Farhan Qureshi', rollNo: '36', fatherName: 'Qureshi Tariq', t1Obtained: 95, t1Max: 500, t2Obtained: 100, t2Max: 500, t3Obtained: 105, t3Max: 500 },
+                { id: 'demo_37', name: 'Mehak Fatima', rollNo: '37', fatherName: 'Ghulam Mustafa', t1Obtained: 90, t1Max: 500, t2Obtained: 95, t2Max: 500, t3Obtained: 100, t3Max: 500 },
+                { id: 'demo_38', name: 'Nabeel Khan', rollNo: '38', fatherName: 'Khan Zaman', t1Obtained: 85, t1Max: 500, t2Obtained: 90, t2Max: 500, t3Obtained: 95, t3Max: 500 },
+                { id: 'demo_39', name: 'Bushra Bibi', rollNo: '39', fatherName: 'Sher Muhammad', t1Obtained: 80, t1Max: 500, t2Obtained: 85, t2Max: 500, t3Obtained: 90, t3Max: 500 },
+                { id: 'demo_40', name: 'Waqas Ahmed', rollNo: '40', fatherName: 'Bashir Ahmed', t1Obtained: 75, t1Max: 500, t2Obtained: 80, t2Max: 500, t3Obtained: 85, t3Max: 500 },
+                { id: 'demo_41', name: 'Sadia Parveen', rollNo: '41', fatherName: 'Parvez Akhtar', t1Obtained: 70, t1Max: 500, t2Obtained: 75, t2Max: 500, t3Obtained: 80, t3Max: 500 },
+                { id: 'demo_42', name: 'Fahad Ali', rollNo: '42', fatherName: 'Liaquat Ali', t1Obtained: 65, t1Max: 500, t2Obtained: 70, t2Max: 500, t3Obtained: 75, t3Max: 500 },
+                { id: 'demo_43', name: 'Iqra Jamil', rollNo: '43', fatherName: 'Jamil Ahmed', t1Obtained: 60, t1Max: 500, t2Obtained: 65, t2Max: 500, t3Obtained: 70, t3Max: 500 },
+                { id: 'demo_44', name: 'Salman Khan', rollNo: '44', fatherName: 'Saeed Khan', t1Obtained: 55, t1Max: 500, t2Obtained: 60, t2Max: 500, t3Obtained: 65, t3Max: 500 },
+                { id: 'demo_45', name: 'Nimra Tariq', rollNo: '45', fatherName: 'Tariq Mehmood', t1Obtained: 50, t1Max: 500, t2Obtained: 55, t2Max: 500, t3Obtained: 60, t3Max: 500 },
+                { id: 'demo_46', name: 'Arsalan Shah', rollNo: '46', fatherName: 'Pir Shah', t1Obtained: 45, t1Max: 500, t2Obtained: 50, t2Max: 500, t3Obtained: 55, t3Max: 500 },
+                { id: 'demo_47', name: 'Jaweria Bibi', rollNo: '47', fatherName: 'Abdul Ghaffar', t1Obtained: 40, t1Max: 500, t2Obtained: 45, t2Max: 500, t3Obtained: 50, t3Max: 500 },
+                { id: 'demo_48', name: 'Mohsin Raza', rollNo: '48', fatherName: 'Raza Abbas', t1Obtained: 35, t1Max: 500, t2Obtained: 40, t2Max: 500, t3Obtained: 45, t3Max: 500 },
+                { id: 'demo_49', name: 'Kinza Fatima', rollNo: '49', fatherName: 'Muhammad Bilal', t1Obtained: 30, t1Max: 500, t2Obtained: 35, t2Max: 500, t3Obtained: 40, t3Max: 500 }
             ];
 
             const computedDemo = baseDemoList.map(item => {
@@ -813,10 +880,17 @@ const Promotions = () => {
     }, [schoolId, selectedClass?.id, isDemoMode, classes]);
 
     const handleToggleDemoMode = () => {
-        if (String(schoolId).trim() !== '6257') return;
+        if (!isDemoAccount) return;
         const nextDemo = !isDemoMode;
         setIsDemoMode(nextDemo);
-        localStorage.setItem('exams_demo_mode_active', String(nextDemo));
+        if (nextDemo) {
+            localStorage.setItem('promotions_demo_mode_active', 'true');
+        } else {
+            localStorage.removeItem('promotions_demo_mode_active');
+        }
+        if (activeTab === 'promoted') {
+            fetchPromotionHistory();
+        }
     };
 
     const handleIndividualAction = (studentId, action) => {
@@ -1993,20 +2067,33 @@ const Promotions = () => {
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                             {/* Demo Data Feed Toggle (Visible ONLY for Demo School 6257) */}
-                            {String(schoolId) === '6257' && (
-                                <button
-                                    type="button"
-                                    onClick={handleToggleDemoMode}
-                                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs ${
-                                        isDemoMode
-                                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40'
-                                            : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
-                                    }`}
-                                    title="Toggle realistic sample students (Pass / Fail / Demote / Pending)"
-                                >
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                    <span>{isDemoMode ? 'Exit Demo Data' : '✨ Try Demo Data'}</span>
-                                </button>
+                            {isDemoAccount && (
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleToggleDemoMode}
+                                        className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer ${
+                                            isDemoMode
+                                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40'
+                                                : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-sm'
+                                        }`}
+                                        title="Inject 49 demo students (31 Promote • 18 Retain • 0 Demote • 0 Leave)"
+                                    >
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                        <span>{isDemoMode ? '⚡ Demo Active (49 Students)' : '⚡ Inject Demo Data (49 Students)'}</span>
+                                    </button>
+                                    {isDemoMode && (
+                                        <button
+                                            type="button"
+                                            onClick={handleToggleDemoMode}
+                                            className="inline-flex items-center gap-1 px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                                            title="Clear demo data"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                            <span>Clear Demo</span>
+                                        </button>
+                                    )}
+                                </div>
                             )}
 
                             {/* Auto-Set Decisions by Result */}
@@ -2455,20 +2542,33 @@ const Promotions = () => {
                         {/* Export & Print Action Buttons */}
                         <div className="flex items-center gap-2.5 flex-wrap">
                             {/* Demo Presentation Inject / Exit Toggle Button */}
-                            {String(schoolId) === '6257' && (
-                                <button
-                                    type="button"
-                                    onClick={handleToggleDemoMode}
-                                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer ${
-                                        isDemoMode
-                                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40'
-                                            : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
-                                    }`}
-                                    title="Toggle realistic sample historical records for presentation"
-                                >
-                                    <Sparkles size={14} />
-                                    <span>{isDemoMode ? 'Exit Demo Data' : '✨ Inject Demo Data'}</span>
-                                </button>
+                            {isDemoAccount && (
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleToggleDemoMode}
+                                        className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer ${
+                                            isDemoMode
+                                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40'
+                                                : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-sm'
+                                        }`}
+                                        title="Toggle realistic sample historical records for presentation"
+                                    >
+                                        <Sparkles size={14} />
+                                        <span>{isDemoMode ? '⚡ Demo History Active' : '⚡ Inject Demo Promoted History'}</span>
+                                    </button>
+                                    {isDemoMode && (
+                                        <button
+                                            type="button"
+                                            onClick={handleToggleDemoMode}
+                                            className="inline-flex items-center gap-1 px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                                            title="Clear demo history"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                            <span>Clear Demo</span>
+                                        </button>
+                                    )}
+                                </div>
                             )}
 
                             {/* Export to Excel / CSV */}
