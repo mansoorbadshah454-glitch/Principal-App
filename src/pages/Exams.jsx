@@ -194,19 +194,26 @@ export default function Exams() {
     const [showUploadToParentsModal, setShowUploadToParentsModal] = useState(false);
     const [isUploadingToParents, setIsUploadingToParents] = useState(false);
     const [uploadSuccessMessage, setUploadSuccessMessage] = useState(null);
+    const isDemoAccount = useMemo(() => {
+        const sId = String(schoolId || '').trim();
+        const pId = String(schoolProfile?.schoolId || schoolProfile?.id || '').trim();
+        return sId === '6257' || pId === '6257' || sId.includes('6257') || pId.includes('6257');
+    }, [schoolId, schoolProfile]);
+
     const [isDemoMode, setIsDemoMode] = useState(() => {
         try {
-            return String(schoolId || '').trim() === '6257' && localStorage.getItem('exams_demo_mode_active') === 'true';
+            return (String(schoolId || '').trim() === '6257' || String(schoolId || '').includes('6257')) && localStorage.getItem('exams_demo_mode_active') === 'true';
         } catch (_) {
             return false;
         }
     });
 
     useEffect(() => {
-        if (String(schoolId || '').trim() !== '6257' && isDemoMode) {
+        if (!isDemoAccount && isDemoMode) {
             setIsDemoMode(false);
+            try { localStorage.removeItem('exams_demo_mode_active'); } catch (_) {}
         }
-    }, [schoolId, isDemoMode]);
+    }, [isDemoAccount, isDemoMode]);
     const [selectedStudentForModerate, setSelectedStudentForModerate] = useState(null);
     const [moderateSubjectMarks, setModerateSubjectMarks] = useState({});
     const [moderateStatusOverride, setModerateStatusOverride] = useState('auto'); // 'auto' | 'pass' | 'conditional_pass' | 'fail'
@@ -428,15 +435,15 @@ export default function Exams() {
                     photoUrl: null,
                     attendance: '88 / 90 Days (97.8%)',
                     subjectMarks: {
-                        'English': { obtained: 88, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Outstanding' },
-                        'Mathematics': { obtained: 95, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Brilliant' },
-                        'General Science': { obtained: 92, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Excellent' },
-                        'Urdu': { obtained: 85, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
-                        'Islamiyat': { obtained: 95, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Outstanding' },
+                        'English': { obtained: 92, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Outstanding' },
+                        'Mathematics': { obtained: 98, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Brilliant' },
+                        'General Science': { obtained: 94, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Excellent' },
+                        'Urdu': { obtained: 90, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Outstanding' },
+                        'Islamiyat': { obtained: 96, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Outstanding' },
                     },
-                    totalObtained: 455,
+                    totalObtained: 470,
                     totalMax: 500,
-                    percentage: 91.0,
+                    percentage: 94.0,
                     grade: 'A+',
                     isComplete: true,
                     isPassed: true,
@@ -453,18 +460,18 @@ export default function Exams() {
                     rollNumber: '02',
                     fatherName: 'Kamran Ali',
                     photoUrl: null,
-                    attendance: '85 / 90 Days (94.4%)',
+                    attendance: '87 / 90 Days (96.7%)',
                     subjectMarks: {
-                        'English': { obtained: 82, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
-                        'Mathematics': { obtained: 88, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Excellent' },
-                        'General Science': { obtained: 85, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
-                        'Urdu': { obtained: 80, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
-                        'Islamiyat': { obtained: 80, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'English': { obtained: 89, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Outstanding' },
+                        'Mathematics': { obtained: 94, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Excellent' },
+                        'General Science': { obtained: 91, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Excellent' },
+                        'Urdu': { obtained: 88, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Very Good' },
+                        'Islamiyat': { obtained: 94, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Outstanding' },
                     },
-                    totalObtained: 415,
+                    totalObtained: 456,
                     totalMax: 500,
-                    percentage: 83.0,
-                    grade: 'A',
+                    percentage: 91.2,
+                    grade: 'A+',
                     isComplete: true,
                     isPassed: true,
                     statusLabel: 'PASSED',
@@ -476,22 +483,22 @@ export default function Exams() {
                 },
                 {
                     studentId: 'demo_3',
-                    name: 'Muhammad Usman',
+                    name: 'Hamza Tariq',
                     rollNumber: '03',
-                    fatherName: 'Abdul Sattar',
+                    fatherName: 'Tariq Javed',
                     photoUrl: null,
-                    attendance: '80 / 90 Days (88.9%)',
+                    attendance: '85 / 90 Days (94.4%)',
                     subjectMarks: {
-                        'English': { obtained: 60, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
-                        'Mathematics': { obtained: 65, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
-                        'General Science': { obtained: 58, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
-                        'Urdu': { obtained: 62, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
-                        'Islamiyat': { obtained: 65, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'English': { obtained: 85, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'Mathematics': { obtained: 92, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A+', remarks: 'Excellent' },
+                        'General Science': { obtained: 88, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'Urdu': { obtained: 84, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'Islamiyat': { obtained: 89, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
                     },
-                    totalObtained: 310,
+                    totalObtained: 438,
                     totalMax: 500,
-                    percentage: 62.0,
-                    grade: 'B',
+                    percentage: 87.6,
+                    grade: 'A',
                     isComplete: true,
                     isPassed: true,
                     statusLabel: 'PASSED',
@@ -503,26 +510,26 @@ export default function Exams() {
                 },
                 {
                     studentId: 'demo_4',
-                    name: 'Bilal Ahmed',
+                    name: 'Maryam Siddiqui',
                     rollNumber: '04',
-                    fatherName: 'Farooq Ahmed',
+                    fatherName: 'Siddiq Ahmed',
                     photoUrl: null,
-                    attendance: '55 / 90 Days (61.1%)',
+                    attendance: '84 / 90 Days (93.3%)',
                     subjectMarks: {
-                        'English': { obtained: 25, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Needs Improvement' },
-                        'Mathematics': { obtained: 20, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Needs Improvement' },
-                        'General Science': { obtained: 30, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Needs Improvement' },
-                        'Urdu': { obtained: 25, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Needs Improvement' },
-                        'Islamiyat': { obtained: 25, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Needs Improvement' },
+                        'English': { obtained: 82, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'Mathematics': { obtained: 88, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'General Science': { obtained: 85, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'Urdu': { obtained: 81, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'Islamiyat': { obtained: 86, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
                     },
-                    totalObtained: 125,
+                    totalObtained: 422,
                     totalMax: 500,
-                    percentage: 25.0,
-                    grade: 'F',
+                    percentage: 84.4,
+                    grade: 'A',
                     isComplete: true,
-                    isPassed: false,
-                    statusLabel: 'FAILED',
-                    failedSubjectsCount: 5,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
                     subjectsEvaluatedCount: 5,
                     totalSubjectsCount: 5,
                     hasAnyAbsent: false,
@@ -530,57 +537,300 @@ export default function Exams() {
                 },
                 {
                     studentId: 'demo_5',
-                    name: 'Ayesha Khan',
+                    name: 'Mustafa Hassan',
                     rollNumber: '05',
-                    fatherName: 'Sardar Khan',
+                    fatherName: 'Hassan Raza',
                     photoUrl: null,
-                    attendance: '60 / 90 Days (66.7%)',
+                    attendance: '82 / 90 Days (91.1%)',
                     subjectMarks: {
-                        'English': { obtained: 40, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
-                        'Mathematics': { obtained: 28, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Needs Improvement' },
-                        'General Science': { obtained: 45, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
-                        'Urdu': { obtained: 35, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
-                        'Islamiyat': { obtained: null, isAbsent: true, totalMarks: 100, passingMarks: 33, grade: 'ABS', remarks: 'Absent' },
+                        'English': { obtained: 78, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Mathematics': { obtained: 86, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'General Science': { obtained: 80, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'Urdu': { obtained: 77, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Islamiyat': { obtained: 84, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
                     },
-                    totalObtained: 148,
+                    totalObtained: 405,
                     totalMax: 500,
-                    percentage: 29.6,
-                    grade: 'F',
+                    percentage: 81.0,
+                    grade: 'A',
                     isComplete: true,
-                    isPassed: false,
-                    statusLabel: 'FAILED',
-                    failedSubjectsCount: 2,
-                    subjectsEvaluatedCount: 4,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
+                    subjectsEvaluatedCount: 5,
                     totalSubjectsCount: 5,
-                    hasAnyAbsent: true,
+                    hasAnyAbsent: false,
                     position: 5
                 },
                 {
                     studentId: 'demo_6',
-                    name: 'Zainab Bibi',
+                    name: 'Hafsa Noor',
                     rollNumber: '06',
-                    fatherName: 'Muhammad Rashid',
+                    fatherName: 'Noor Muhammad',
                     photoUrl: null,
-                    attendance: '82 / 90 Days (91.1%)',
+                    attendance: '80 / 90 Days (88.9%)',
                     subjectMarks: {
-                        'English': { obtained: 70, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
-                        'Mathematics': { obtained: null, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: '-', remarks: '' },
-                        'General Science': { obtained: null, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: '-', remarks: '' },
-                        'Urdu': { obtained: 65, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
-                        'Islamiyat': { obtained: null, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: '-', remarks: '' },
+                        'English': { obtained: 75, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Mathematics': { obtained: 82, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'A', remarks: 'Very Good' },
+                        'General Science': { obtained: 79, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Urdu': { obtained: 76, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Islamiyat': { obtained: 79, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
                     },
-                    totalObtained: 135,
+                    totalObtained: 391,
                     totalMax: 500,
-                    percentage: 27.0,
-                    grade: '-',
-                    isComplete: false,
-                    isPassed: false,
-                    statusLabel: 'INCOMPLETE (2/5)',
+                    percentage: 78.2,
+                    grade: 'B',
+                    isComplete: true,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
                     failedSubjectsCount: 0,
-                    subjectsEvaluatedCount: 2,
+                    subjectsEvaluatedCount: 5,
                     totalSubjectsCount: 5,
                     hasAnyAbsent: false,
-                    position: '-'
+                    position: 6
+                },
+                {
+                    studentId: 'demo_7',
+                    name: 'Omar Farooq',
+                    rollNumber: '07',
+                    fatherName: 'Farooq Azam',
+                    photoUrl: null,
+                    attendance: '79 / 90 Days (87.8%)',
+                    subjectMarks: {
+                        'English': { obtained: 72, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Mathematics': { obtained: 78, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'General Science': { obtained: 75, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Urdu': { obtained: 74, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Islamiyat': { obtained: 79, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                    },
+                    totalObtained: 378,
+                    totalMax: 500,
+                    percentage: 75.6,
+                    grade: 'B',
+                    isComplete: true,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 7
+                },
+                {
+                    studentId: 'demo_8',
+                    name: 'Usman Ghani',
+                    rollNumber: '08',
+                    fatherName: 'Ghani Ur Rehman',
+                    photoUrl: null,
+                    attendance: '77 / 90 Days (85.6%)',
+                    subjectMarks: {
+                        'English': { obtained: 68, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Mathematics': { obtained: 74, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'General Science': { obtained: 70, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Urdu': { obtained: 72, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Islamiyat': { obtained: 73, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                    },
+                    totalObtained: 357,
+                    totalMax: 500,
+                    percentage: 71.4,
+                    grade: 'B',
+                    isComplete: true,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 8
+                },
+                {
+                    studentId: 'demo_9',
+                    name: 'Amina Tariq',
+                    rollNumber: '09',
+                    fatherName: 'Tariq Mehmood',
+                    photoUrl: null,
+                    attendance: '75 / 90 Days (83.3%)',
+                    subjectMarks: {
+                        'English': { obtained: 65, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Mathematics': { obtained: 70, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'General Science': { obtained: 66, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Urdu': { obtained: 68, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Islamiyat': { obtained: 70, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                    },
+                    totalObtained: 339,
+                    totalMax: 500,
+                    percentage: 67.8,
+                    grade: 'B',
+                    isComplete: true,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 9
+                },
+                {
+                    studentId: 'demo_10',
+                    name: 'Zubair Ahmed',
+                    rollNumber: '10',
+                    fatherName: 'Ahmed Ali',
+                    photoUrl: null,
+                    attendance: '73 / 90 Days (81.1%)',
+                    subjectMarks: {
+                        'English': { obtained: 60, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Mathematics': { obtained: 65, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'General Science': { obtained: 62, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Urdu': { obtained: 64, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'Islamiyat': { obtained: 65, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                    },
+                    totalObtained: 316,
+                    totalMax: 500,
+                    percentage: 63.2,
+                    grade: 'C',
+                    isComplete: true,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 10
+                },
+                {
+                    studentId: 'demo_11',
+                    name: 'Khadija Bibi',
+                    rollNumber: '11',
+                    fatherName: 'Muhammad Rashid',
+                    photoUrl: null,
+                    attendance: '70 / 90 Days (77.8%)',
+                    subjectMarks: {
+                        'English': { obtained: 56, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                        'Mathematics': { obtained: 62, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                        'General Science': { obtained: 58, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                        'Urdu': { obtained: 57, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                        'Islamiyat': { obtained: 60, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'B', remarks: 'Good' },
+                    },
+                    totalObtained: 293,
+                    totalMax: 500,
+                    percentage: 58.6,
+                    grade: 'C',
+                    isComplete: true,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 11
+                },
+                {
+                    studentId: 'demo_12',
+                    name: 'Saad Abdullah',
+                    rollNumber: '12',
+                    fatherName: 'Abdullah Khan',
+                    photoUrl: null,
+                    attendance: '68 / 90 Days (75.6%)',
+                    subjectMarks: {
+                        'English': { obtained: 50, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                        'Mathematics': { obtained: 54, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                        'General Science': { obtained: 52, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                        'Urdu': { obtained: 51, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                        'Islamiyat': { obtained: 55, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'C', remarks: 'Satisfactory' },
+                    },
+                    totalObtained: 262,
+                    totalMax: 500,
+                    percentage: 52.4,
+                    grade: 'D',
+                    isComplete: true,
+                    isPassed: true,
+                    statusLabel: 'PASSED',
+                    failedSubjectsCount: 0,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 12
+                },
+                {
+                    studentId: 'demo_13',
+                    name: 'Bilal Ahmed',
+                    rollNumber: '13',
+                    fatherName: 'Farooq Ahmed',
+                    photoUrl: null,
+                    attendance: '55 / 90 Days (61.1%)',
+                    subjectMarks: {
+                        'English': { obtained: 42, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'D', remarks: 'Pass' },
+                        'Mathematics': { obtained: 20, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                        'General Science': { obtained: 28, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                        'Urdu': { obtained: 25, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                        'Islamiyat': { obtained: 25, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                    },
+                    totalObtained: 140,
+                    totalMax: 500,
+                    percentage: 28.0,
+                    grade: 'F',
+                    isComplete: true,
+                    isPassed: false,
+                    statusLabel: 'FAILED',
+                    failedSubjectsCount: 4,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 13
+                },
+                {
+                    studentId: 'demo_14',
+                    name: 'Ayesha Khan',
+                    rollNumber: '14',
+                    fatherName: 'Sardar Khan',
+                    photoUrl: null,
+                    attendance: '50 / 90 Days (55.6%)',
+                    subjectMarks: {
+                        'English': { obtained: 40, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'D', remarks: 'Pass' },
+                        'Mathematics': { obtained: 22, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                        'General Science': { obtained: 24, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                        'Urdu': { obtained: 35, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'E', remarks: 'Pass' },
+                        'Islamiyat': { obtained: null, isAbsent: true, totalMarks: 100, passingMarks: 33, grade: 'ABS', remarks: 'Absent' },
+                    },
+                    totalObtained: 121,
+                    totalMax: 500,
+                    percentage: 24.2,
+                    grade: 'F',
+                    isComplete: true,
+                    isPassed: false,
+                    statusLabel: 'FAILED',
+                    failedSubjectsCount: 3,
+                    subjectsEvaluatedCount: 4,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: true,
+                    position: 14
+                },
+                {
+                    studentId: 'demo_15',
+                    name: 'Zainab Bibi',
+                    rollNumber: '15',
+                    fatherName: 'Muhammad Rashid',
+                    photoUrl: null,
+                    attendance: '62 / 90 Days (68.9%)',
+                    subjectMarks: {
+                        'English': { obtained: 28, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                        'Mathematics': { obtained: 25, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                        'General Science': { obtained: 36, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'E', remarks: 'Pass' },
+                        'Urdu': { obtained: 34, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'E', remarks: 'Pass' },
+                        'Islamiyat': { obtained: 32, isAbsent: false, totalMarks: 100, passingMarks: 33, grade: 'F', remarks: 'Fail' },
+                    },
+                    totalObtained: 155,
+                    totalMax: 500,
+                    percentage: 31.0,
+                    grade: 'F',
+                    isComplete: true,
+                    isPassed: false,
+                    statusLabel: 'FAILED',
+                    failedSubjectsCount: 3,
+                    subjectsEvaluatedCount: 5,
+                    totalSubjectsCount: 5,
+                    hasAnyAbsent: false,
+                    position: 15
                 }
             ];
 
@@ -589,7 +839,7 @@ export default function Exams() {
                 const override = demoDataOverride[row.studentId];
                 if (!override) return row;
 
-                const updatedSubjectMarks = { ...row.subjectMarks };
+                const updatedSubjectMarks = { ...(row.subjectMarks || {}) };
                 let totalObtained = 0;
                 let totalMax = 0;
                 let subjectsEvaluatedCount = 0;
@@ -631,14 +881,14 @@ export default function Exams() {
                     } else {
                         const existing = updatedSubjectMarks[subj];
                         if (existing) {
-                            totalMax += existing.totalMarks;
+                            totalMax += existing.totalMarks || 100;
                             if (existing.isAbsent) {
                                 hasAnyAbsent = true;
                                 failedSubjectsCount++;
-                            } else if (existing.obtained !== null) {
+                            } else if (existing.obtained !== null && existing.obtained !== undefined) {
                                 totalObtained += existing.obtained;
                                 subjectsEvaluatedCount++;
-                                if (existing.obtained < existing.passingMarks) {
+                                if (existing.obtained < (existing.passingMarks || 33)) {
                                     failedSubjectsCount++;
                                 }
                             }
@@ -693,21 +943,27 @@ export default function Exams() {
             const passedCount = evaluated.filter(r => r.isPassed).length;
             const failedCount = evaluated.filter(r => !r.isPassed).length;
 
+            const demoSubjectConfigs = {};
+            demoSubjects.forEach(s => {
+                demoSubjectConfigs[s] = { totalMarks: 100, passingMarks: 33 };
+            });
+
             return {
                 subjects: demoSubjects,
+                subjectConfigs: demoSubjectConfigs,
                 rows: finalWithPositions,
                 stats: {
-                    total: 6,
+                    total: finalWithPositions.length,
                     passed: passedCount,
                     failed: failedCount,
-                    pending: 6 - evaluated.length,
+                    pending: finalWithPositions.length - evaluated.length,
                     highestPct: evaluated.length > 0 ? Math.max(...evaluated.map(r => r.percentage)) : 0,
                     avgPct: evaluated.length > 0 ? parseFloat((evaluated.reduce((acc, curr) => acc + curr.percentage, 0) / evaluated.length).toFixed(1)) : 0
                 }
             };
         }
 
-        if (!selectedExamId || students.length === 0) return { subjects: [], rows: [], stats: {} };
+        if (!selectedExamId || students.length === 0) return { subjects: [], subjectConfigs: {}, rows: [], stats: {} };
 
         const selectedExamObj = exams.find(e => e.id === selectedExamId);
         const selectedExamTitle = (selectedExamObj?.title || currentExam?.title || '').toLowerCase().trim();
@@ -1175,10 +1431,10 @@ export default function Exams() {
 
         tabulationData.rows.forEach(r => {
             const subjectScores = tabulationData.subjects.map(s => {
-                const m = r.subjectMarks[s];
+                const m = r?.subjectMarks?.[s];
                 if (!m) return '-';
                 if (m.isAbsent) return 'ABS';
-                return m.obtained !== null ? m.obtained : '-';
+                return m.obtained !== null && m.obtained !== undefined ? m.obtained : '-';
             });
 
             const rowData = [
@@ -1368,10 +1624,10 @@ export default function Exams() {
 
         // 4. Subject-wise Marks Table (autoTable)
         const tableBody = tabulationData.subjects.map((subj, idx) => {
-            const m = studentRow.subjectMarks[subj];
+            const m = studentRow?.subjectMarks?.[subj];
             const totalMarks = m?.totalMarks || 100;
             const passMarks = m?.passingMarks || 33;
-            const obtained = m ? (m.isAbsent ? 'ABS' : m.obtained !== null ? m.obtained : '-') : '-';
+            const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
             const grade = m ? m.grade : '-';
             const remarks = m?.remarks || (grade === 'A+' ? 'Excellent' : grade === 'A' ? 'Very Good' : grade === 'B' ? 'Good' : grade === 'F' ? 'Needs Improvement' : 'Satisfactory');
 
@@ -1629,9 +1885,9 @@ export default function Exams() {
         setSelectedStudentForModerate(studentRow);
         const initialMarks = {};
         tabulationData.subjects.forEach(subj => {
-            const m = studentRow.subjectMarks[subj];
+            const m = studentRow?.subjectMarks?.[subj];
             initialMarks[subj] = {
-                obtained: m && m.obtained !== null ? m.obtained : '',
+                obtained: m && m.obtained !== null && m.obtained !== undefined ? m.obtained : '',
                 graceMarks: m?.graceMarks || 0,
                 isAbsent: m?.isAbsent === true,
                 totalMarks: m?.totalMarks || 100,
@@ -1640,8 +1896,8 @@ export default function Exams() {
             };
         });
         setModerateSubjectMarks(initialMarks);
-        setModerateStatusOverride(studentRow.moderationOverride || 'auto');
-        setModerateRemarks(studentRow.examinerRemarks || '');
+        setModerateStatusOverride(studentRow?.moderationOverride || 'auto');
+        setModerateRemarks(studentRow?.examinerRemarks || '');
     };
 
     const handleSaveModeration = async () => {
@@ -1997,23 +2253,41 @@ export default function Exams() {
 
                             {/* Export & Print Action Buttons */}
                             <div className="flex items-center gap-2">
-                                {String(schoolId) === '6257' && (
-                                    <button
-                                        onClick={() => {
-                                            const next = !isDemoMode;
-                                            setIsDemoMode(next);
-                                            setSelectedStudentIdsForBatch(new Set());
-                                        }}
-                                        className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm ${
-                                            isDemoMode 
-                                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40' 
-                                                : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
-                                        }`}
-                                        title="Toggle live sample students (3 Pass, 2 Fail, 1 Pending)"
-                                    >
-                                        <Sparkles className="w-3.5 h-3.5" />
-                                        {isDemoMode ? 'Exit Demo Data' : '✨ Try Demo Data (Pass / Fail / Pending)'}
-                                    </button>
+                                {isDemoAccount && (
+                                    <div className="inline-flex items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setIsDemoMode(true);
+                                                try { localStorage.setItem('exams_demo_mode_active', 'true'); } catch (_) {}
+                                                setSelectedStudentIdsForBatch(new Set());
+                                            }}
+                                            className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm cursor-pointer ${
+                                                isDemoMode 
+                                                    ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40' 
+                                                    : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-md shadow-amber-200'
+                                            }`}
+                                            title="Inject 15 Comprehensive Demo Students (Top 10, Passed, Failed)"
+                                        >
+                                            <Sparkles className="w-3.5 h-3.5" />
+                                            <span>⚡ Inject Demo Gazette (15 Students)</span>
+                                        </button>
+                                        {isDemoMode && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setIsDemoMode(false);
+                                                    try { localStorage.removeItem('exams_demo_mode_active'); } catch (_) {}
+                                                    setSelectedStudentIdsForBatch(new Set());
+                                                }}
+                                                className="inline-flex items-center gap-1 px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                                title="Clear Demo Gazette Data"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                                <span>Clear Demo</span>
+                                            </button>
+                                        )}
+                                    </div>
                                 )}
                                 <button
                                     onClick={handleExportCSV}
@@ -2120,9 +2394,25 @@ export default function Exams() {
                             <div className="p-12 text-center text-slate-400">
                                 <FileSpreadsheet className="w-10 h-10 mx-auto mb-2 opacity-50" />
                                 <p className="text-sm font-bold text-slate-700">No student records found</p>
-                                <p className="text-xs text-slate-400 mt-0.5">
+                                <p className="text-xs text-slate-400 mt-0.5 mb-4">
                                     Ensure students are enrolled in this class and teachers have submitted marks via their mobile apps.
                                 </p>
+                                {isDemoAccount && (
+                                    <div className="flex justify-center items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setIsDemoMode(true);
+                                                try { localStorage.setItem('exams_demo_mode_active', 'true'); } catch (_) {}
+                                                setSelectedStudentIdsForBatch(new Set());
+                                            }}
+                                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-black rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer"
+                                        >
+                                            <Sparkles className="w-4 h-4" />
+                                            <span>⚡ Inject Demo Gazette Data (15 Students • Top 10 / Pass / Fail)</span>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
@@ -2151,7 +2441,7 @@ export default function Exams() {
                                                 <th key={subj} className="p-3.5 text-center min-w-[70px]">
                                                     <div>{subj}</div>
                                                     <div className="text-[9px] font-normal text-slate-400">
-                                                        Max: {tabulationData.subjectConfigs[subj]?.totalMarks || 100}
+                                                        Max: {tabulationData.subjectConfigs?.[subj]?.totalMarks || 100}
                                                     </div>
                                                 </th>
                                             ))}
@@ -2199,15 +2489,15 @@ export default function Exams() {
                                                 </td>
 
                                                 {tabulationData.subjects.map(subj => {
-                                                    const m = row.subjectMarks[subj];
-                                                    if (!m || m.obtained === null) {
+                                                    const m = row?.subjectMarks?.[subj];
+                                                    if (!m || m.obtained === null || m.obtained === undefined) {
                                                         return (
                                                             <td key={subj} className="p-3.5 text-center text-slate-300">
                                                                 {m?.isAbsent ? <span className="text-rose-500 font-bold">ABS</span> : '-'}
                                                             </td>
                                                         );
                                                     }
-                                                    const isFail = m.obtained < m.passingMarks;
+                                                    const isFail = m.obtained < (m.passingMarks || 33);
                                                     return (
                                                         <td key={subj} className="p-3.5 text-center font-bold">
                                                             <span className={isFail ? 'text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded' : 'text-slate-800'}>
@@ -2295,29 +2585,31 @@ export default function Exams() {
                         </div>
 
                         <div className="flex flex-wrap items-center gap-3">
-                            {String(schoolId) === '6257' && (
+                            {isDemoAccount && (
                                 <button
+                                    type="button"
                                     onClick={() => {
                                         const next = !isDemoMode;
                                         setIsDemoMode(next);
-                                        localStorage.setItem('exams_demo_mode_active', String(next));
-                                        // Keep deselected by default on toggle
+                                        try { localStorage.setItem('exams_demo_mode_active', String(next)); } catch (_) {}
                                         setSelectedStudentIdsForBatch(new Set());
                                     }}
-                                    className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm ${
+                                    className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm cursor-pointer ${
                                         isDemoMode 
                                             ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40' 
-                                            : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200'
+                                            : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-md shadow-amber-200'
                                     }`}
-                                    title="Toggle live sample students (3 Pass, 2 Fail, 1 Pending)"
+                                    title="Toggle 15 Demo Students for Result Card Printing"
                                 >
                                     <Sparkles className="w-3.5 h-3.5" />
-                                    {isDemoMode ? 'Exit Demo Data' : '✨ Try Demo Data (Pass / Fail / Pending)'}
+                                    <span>{isDemoMode ? 'Exit Demo Data' : '⚡ Try Demo Data (15 Students)'}</span>
                                 </button>
                             )}
                             <button
                                 onClick={() => {
-                                    const allIds = isDemoMode ? ['demo_1', 'demo_2', 'demo_3', 'demo_4', 'demo_5', 'demo_6'] : students.map(s => s.id);
+                                    const allIds = isDemoMode 
+                                        ? ['demo_1', 'demo_2', 'demo_3', 'demo_4', 'demo_5', 'demo_6', 'demo_7', 'demo_8', 'demo_9', 'demo_10', 'demo_11', 'demo_12', 'demo_13', 'demo_14', 'demo_15'] 
+                                        : students.map(s => s.id);
                                     if (selectedStudentIdsForBatch.size > 0) {
                                         setSelectedStudentIdsForBatch(new Set());
                                     } else {
@@ -2326,7 +2618,7 @@ export default function Exams() {
                                 }}
                                 className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-black rounded-xl transition-colors border border-slate-200"
                             >
-                                {selectedStudentIdsForBatch.size > 0 ? `Deselect All (${selectedStudentIdsForBatch.size})` : `Select All (${isDemoMode ? 6 : students.length})`}
+                                {selectedStudentIdsForBatch.size > 0 ? `Deselect All (${selectedStudentIdsForBatch.size})` : `Select All (${isDemoMode ? 15 : students.length})`}
                             </button>
                             <button
                                 onClick={() => setShowUploadToParentsModal(true)}
@@ -2738,10 +3030,10 @@ export default function Exams() {
                                                 </thead>
                                                 <tbody>
                                                     {tabulationData.subjects.map((subj, sIdx) => {
-                                                        const m = studentRow.subjectMarks[subj];
-                                                        const obtained = m ? (m.isAbsent ? 'ABS' : m.obtained !== null ? m.obtained : '-') : '-';
+                                                        const m = studentRow?.subjectMarks?.[subj];
+                                                        const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
                                                         const grade = m ? m.grade : '-';
-                                                        const isFail = m && m.obtained !== null && m.obtained < m.passingMarks;
+                                                        const isFail = m && m.obtained !== null && m.obtained !== undefined && m.obtained < (m.passingMarks || 33);
 
                                                         return (
                                                             <tr key={subj} className="text-center font-medium">
@@ -3039,8 +3331,8 @@ export default function Exams() {
                                     </thead>
                                     <tbody>
                                         {tabulationData.subjects.map(subj => {
-                                            const m = selectedStudentForDmc.subjectMarks[subj];
-                                            const obtained = m ? (m.isAbsent ? 'ABS' : m.obtained !== null ? m.obtained : '-') : '-';
+                                            const m = selectedStudentForDmc?.subjectMarks?.[subj];
+                                            const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
                                             return (
                                                 <tr key={subj}>
                                                     <td className="border border-slate-300 p-1.5 text-left font-bold">{subj}</td>
@@ -3211,7 +3503,7 @@ export default function Exams() {
                                 let totalGraceApplied = 0;
 
                                 tabulationData.subjects.forEach(subj => {
-                                    const data = moderateSubjectMarks[subj] || {};
+                                    const data = moderateSubjectMarks?.[subj] || {};
                                     const max = data.totalMarks || 100;
                                     const pass = data.passingMarks || 33;
                                     totalMax += max;
@@ -3220,7 +3512,7 @@ export default function Exams() {
                                         hasAbsent = true;
                                         failedCount++;
                                     } else {
-                                        const base = data.obtained === '' || data.obtained === null ? null : parseFloat(data.obtained);
+                                        const base = data.obtained === '' || data.obtained === null || data.obtained === undefined ? null : parseFloat(data.obtained);
                                         const grace = parseFloat(data.graceMarks) || 0;
                                         totalGraceApplied += grace;
 
@@ -3287,7 +3579,7 @@ export default function Exams() {
 
                                 <div className="divide-y divide-slate-100">
                                     {tabulationData.subjects.map(subj => {
-                                        const entry = moderateSubjectMarks[subj] || { obtained: '', graceMarks: 0, isAbsent: false, totalMarks: 100, passingMarks: 33 };
+                                        const entry = moderateSubjectMarks?.[subj] || { obtained: '', graceMarks: 0, isAbsent: false, totalMarks: 100, passingMarks: 33 };
                                         const baseVal = entry.obtained === '' || entry.obtained === null ? null : parseFloat(entry.obtained);
                                         const graceVal = parseFloat(entry.graceMarks) || 0;
                                         const effective = baseVal !== null && !isNaN(baseVal) ? baseVal + graceVal : null;
@@ -3309,7 +3601,7 @@ export default function Exams() {
                                                             onChange={(e) => {
                                                                 setModerateSubjectMarks(prev => ({
                                                                     ...prev,
-                                                                    [subj]: { ...prev[subj], isAbsent: e.target.checked }
+                                                                    [subj]: { ...(prev?.[subj] || {}), isAbsent: e.target.checked }
                                                                 }));
                                                             }}
                                                             className="w-3.5 h-3.5 rounded text-rose-600 focus:ring-rose-500"
@@ -3329,7 +3621,7 @@ export default function Exams() {
                                                                 const val = e.target.value;
                                                                 setModerateSubjectMarks(prev => ({
                                                                     ...prev,
-                                                                    [subj]: { ...prev[subj], obtained: val }
+                                                                    [subj]: { ...(prev?.[subj] || {}), obtained: val }
                                                                 }));
                                                             }}
                                                             className="w-20 p-2 text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-40"
@@ -3348,7 +3640,7 @@ export default function Exams() {
                                                                 const val = e.target.value;
                                                                 setModerateSubjectMarks(prev => ({
                                                                     ...prev,
-                                                                    [subj]: { ...prev[subj], graceMarks: val }
+                                                                    [subj]: { ...(prev?.[subj] || {}), graceMarks: val }
                                                                 }));
                                                             }}
                                                             className="w-16 p-2 text-xs font-bold text-amber-800 bg-amber-50/50 border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
