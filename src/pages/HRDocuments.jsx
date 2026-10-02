@@ -14,6 +14,59 @@ import { useAlert } from '../context/AlertContext';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
+// Helper to convert remote image to Base64 for offline/PDF safety
+async function fetchImageAsBase64(url) {
+    if (!url || typeof url !== 'string') return null;
+    const cleanUrl = url.trim();
+    if (!cleanUrl) return null;
+    if (cleanUrl.startsWith('data:image/')) return cleanUrl;
+
+    // Strategy 1: Direct fetch with abort controller
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(cleanUrl, { mode: 'cors', signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+            const blob = await res.blob();
+            const base64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(blob);
+            });
+            if (base64 && typeof base64 === 'string' && base64.startsWith('data:image/')) return base64;
+        }
+    } catch (e) { }
+
+    // Strategy 2: Fast Public CORS Image Proxy
+    const proxies = [
+        `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl)}&output=png`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`
+    ];
+
+    for (const proxyUrl of proxies) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2500);
+            const res = await fetch(proxyUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (res.ok) {
+                const blob = await res.blob();
+                const base64 = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = () => resolve(null);
+                    reader.readAsDataURL(blob);
+                });
+                if (base64 && typeof base64 === 'string' && base64.startsWith('data:image/')) return base64;
+            }
+        } catch (err) { }
+    }
+
+    return null;
+}
+
 // =========================================================================
 // DOCUMENT TEMPLATES DEFINITION
 // =========================================================================
@@ -97,13 +150,28 @@ const HRDocuments = () => {
     const [activeTab, setActiveTab] = useState('studio'); // 'studio', 'archive'
 
     // School Profile Info
-    const [schoolInfo, setSchoolInfo] = useState({
-        name: 'The Smart School & College',
-        address: 'Main Campus, Lahore, Pakistan',
-        phone: '042-35800000 / 0300-1234567',
-        email: 'info@school.edu.pk',
-        logoUrl: '',
-        principalName: 'Principal / Director'
+    const [schoolInfo, setSchoolInfo] = useState(() => {
+        let cachedLogo = '';
+        let cachedName = '';
+        let cachedAddress = '';
+        let cachedPhone = '';
+        try {
+            const sess = JSON.parse(localStorage.getItem('manual_session') || '{}');
+            cachedLogo = sess.profileImage || sess.logo || sess.schoolLogo || '';
+            cachedName = sess.schoolName || sess.name || '';
+        } catch (e) { }
+        if (!cachedLogo) cachedLogo = localStorage.getItem('schoolLogo') || '';
+        if (!cachedName) cachedName = localStorage.getItem('schoolName') || '';
+        if (!cachedAddress) cachedAddress = localStorage.getItem('schoolAddress') || '';
+        if (!cachedPhone) cachedPhone = localStorage.getItem('schoolPhone') || '';
+        return {
+            name: cachedName || 'The Smart School & College',
+            address: cachedAddress || 'Main Campus, Lahore, Pakistan',
+            phone: cachedPhone || '042-35800000 / 0300-1234567',
+            email: 'info@school.edu.pk',
+            logoUrl: cachedLogo,
+            principalName: 'Principal / Director'
+        };
     });
 
     // Teachers List Cache
@@ -154,23 +222,99 @@ const HRDocuments = () => {
     useEffect(() => {
         if (!schoolId) return;
 
-        // Fetch School Info
-        getDoc(doc(db, 'schools', schoolId)).then(snap => {
-            if (snap.exists()) {
-                const d = snap.data();
-                setSchoolInfo({
-                    name: d.name || 'School Name',
-                    address: d.address || 'Campus Address',
-                    phone: d.phone || d.emergencyContact || '',
-                    email: d.email || 'info@school.edu.pk',
-                    logoUrl: d.profileImage || d.logoUrl || '',
-                    principalName: d.principalName || 'Principal'
-                });
-                if (d.principalName) {
-                    setFormData(prev => ({ ...prev, signatoryName: d.principalName }));
+        // Fetch School Info with multi-source fallback
+        const fetchSchoolMeta = async () => {
+            try {
+                let sName = '';
+                let sAddress = '';
+                let sPhone = '';
+                let sEmail = '';
+                let sLogo = '';
+                let sPrincipal = '';
+
+                // 1. Check settings/profile (Where Settings tab saves all profile details)
+                try {
+                    const profileSnap = await getDoc(doc(db, `schools/${schoolId}/settings`, 'profile'));
+                    if (profileSnap.exists()) {
+                        const p = profileSnap.data();
+                        sName = p.name || p.schoolName || '';
+                        sAddress = p.address || p.schoolAddress || '';
+                        sPhone = p.phone || p.emergencyContact || p.landline || '';
+                        sEmail = p.email || '';
+                        sLogo = p.profileImage || p.logo || p.logoUrl || p.schoolLogo || '';
+                        sPrincipal = p.principalName || '';
+                    }
+                } catch (e) {
+                    console.warn('Error fetching settings/profile in HRDocuments:', e);
                 }
+
+                // 2. Fallback to root schools/{schoolId}
+                try {
+                    const rootSnap = await getDoc(doc(db, 'schools', schoolId));
+                    if (rootSnap.exists()) {
+                        const r = rootSnap.data();
+                        if (!sName) sName = r.name || r.schoolName || '';
+                        if (!sAddress) sAddress = r.address || r.campus || '';
+                        if (!sPhone) sPhone = r.phone || r.emergencyContact || r.emergencyPhone || '';
+                        if (!sEmail) sEmail = r.email || '';
+                        if (!sLogo) sLogo = r.profileImage || r.logo || r.logoUrl || r.schoolLogo || '';
+                        if (!sPrincipal) sPrincipal = r.principalName || '';
+                    }
+                } catch (e) {
+                    console.warn('Error fetching root school doc in HRDocuments:', e);
+                }
+
+                // 3. Fallback to LocalStorage cache
+                const cachedBase64 = localStorage.getItem(`school_logo_base64_${schoolId}`);
+                const cachedLogo = localStorage.getItem('schoolLogo');
+                let sessionLogo = '';
+                let sessionName = '';
+                try {
+                    const sess = JSON.parse(localStorage.getItem('manual_session') || '{}');
+                    sessionLogo = sess.profileImage || sess.logo || sess.schoolLogo || '';
+                    sessionName = sess.schoolName || sess.name || '';
+                } catch (e) { }
+
+                if (!sName) sName = sessionName || localStorage.getItem('schoolName') || 'The Smart School & College';
+                if (!sAddress) sAddress = localStorage.getItem('schoolAddress') || 'Campus Address';
+                if (!sPhone) sPhone = localStorage.getItem('schoolPhone') || '';
+                if (!sEmail) sEmail = 'info@school.edu.pk';
+                if (!sLogo) sLogo = cachedBase64 || cachedLogo || sessionLogo || '';
+                if (!sPrincipal) sPrincipal = 'Principal / Director';
+
+                // Prefer base64 cache if available for instant printing
+                const finalLogo = cachedBase64 || sLogo;
+
+                setSchoolInfo({
+                    name: sName,
+                    address: sAddress,
+                    phone: sPhone,
+                    email: sEmail,
+                    logoUrl: finalLogo,
+                    principalName: sPrincipal
+                });
+
+                if (sPrincipal) {
+                    setFormData(prev => ({ ...prev, signatoryName: sPrincipal }));
+                }
+
+                // Cache Base64 offline in background if remote HTTP URL
+                if (sLogo && sLogo.startsWith('http') && !cachedBase64) {
+                    fetchImageAsBase64(sLogo).then(b64 => {
+                        if (b64) {
+                            try {
+                                localStorage.setItem(`school_logo_base64_${schoolId}`, b64);
+                                setSchoolInfo(prev => ({ ...prev, logoUrl: b64 }));
+                            } catch (err) { }
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error('HRDocuments fetchSchoolMeta error:', err);
             }
-        }).catch(console.error);
+        };
+
+        fetchSchoolMeta();
 
         // Fetch Teachers List
         const unsubTeachers = onSnapshot(collection(db, `schools/${schoolId}/teachers`), snap => {
@@ -244,16 +388,158 @@ const HRDocuments = () => {
     // 4. Print & PDF Export
     // -------------------------------------------------------------
     const handlePrintLetter = () => {
-        window.print();
+        if (!letterheadRef.current) {
+            window.print();
+            return;
+        }
+
+        const clone = letterheadRef.current.cloneNode(true);
+        clone.querySelectorAll('.no-print, button, input').forEach(el => el.remove());
+
+        const docTitle = `${(schoolInfo?.name || 'School').replace(/[^a-zA-Z0-9]/g, '_')}_${(formData.candidateName || 'Staff').replace(/[^a-zA-Z0-9]/g, '_')}_${docType}_${(formData.refNo || '').replace(/\//g, '_')}`;
+
+        const printFrame = document.createElement('iframe');
+        printFrame.style.position = 'fixed';
+        printFrame.style.top = '-10000px';
+        printFrame.style.left = '-10000px';
+        printFrame.style.width = '210mm';
+        printFrame.style.height = '297mm';
+        printFrame.style.border = 'none';
+        document.body.appendChild(printFrame);
+
+        const frameDoc = printFrame.contentWindow.document;
+        frameDoc.open();
+        frameDoc.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>${docTitle}</title>
+                <link rel="preconnect" href="https://fonts.googleapis.com">
+                <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">
+                <style>
+                    @page {
+                        size: A4 portrait;
+                        margin: 10mm 15mm;
+                    }
+                    * {
+                        box-sizing: border-box;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        background: #ffffff !important;
+                        color: #0f172a !important;
+                        font-family: Georgia, Cambria, "Times New Roman", Times, serif;
+                        width: 100% !important;
+                        line-height: 1.6;
+                    }
+                    #official-letterhead-print {
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        min-height: auto !important;
+                        padding: 0 !important;
+                        margin: 0 auto !important;
+                        border: none !important;
+                        box-shadow: none !important;
+                        background: #ffffff !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justifyContent: space-between !important;
+                    }
+                    #official-letterhead-print img {
+                        object-fit: contain !important;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    .no-print, button, input {
+                        display: none !important;
+                    }
+                </style>
+            </head>
+            <body>
+                ${clone.outerHTML}
+            </body>
+            </html>
+        `);
+        frameDoc.close();
+
+        const triggerPrint = () => {
+            try {
+                printFrame.contentWindow.focus();
+                printFrame.contentWindow.print();
+            } catch (e) {
+                console.error("Frame print error:", e);
+                window.print();
+            } finally {
+                setTimeout(() => {
+                    try {
+                        document.body.removeChild(printFrame);
+                    } catch (e) {}
+                }, 5000);
+            }
+        };
+
+        const checkImagesAndPrint = () => {
+            const imgs = frameDoc.images;
+            if (!imgs || imgs.length === 0) {
+                setTimeout(triggerPrint, 150);
+                return;
+            }
+
+            let loaded = 0;
+            let finished = false;
+            const finish = () => {
+                if (finished) return;
+                finished = true;
+                setTimeout(triggerPrint, 150);
+            };
+
+            for (let i = 0; i < imgs.length; i++) {
+                if (imgs[i].complete) {
+                    loaded++;
+                } else {
+                    imgs[i].onload = () => {
+                        loaded++;
+                        if (loaded >= imgs.length) finish();
+                    };
+                    imgs[i].onerror = () => {
+                        loaded++;
+                        if (loaded >= imgs.length) finish();
+                    };
+                }
+            }
+
+            if (loaded >= imgs.length) {
+                finish();
+            } else {
+                setTimeout(finish, 1500);
+            }
+        };
+
+        setTimeout(checkImagesAndPrint, 100);
     };
 
     const handleDownloadPDF = async () => {
         if (!letterheadRef.current) return;
         try {
             showAlert('Generating high-resolution official PDF...', 'info');
+
+            // If logo is remote and not base64 yet, try to fetch base64 to ensure canvas includes it
+            if (schoolInfo.logoUrl && schoolInfo.logoUrl.startsWith('http')) {
+                const b64 = await fetchImageAsBase64(schoolInfo.logoUrl);
+                if (b64) {
+                    setSchoolInfo(prev => ({ ...prev, logoUrl: b64 }));
+                    await new Promise(r => setTimeout(r, 80));
+                }
+            }
+
             const canvas = await html2canvas(letterheadRef.current, {
                 scale: 2,
                 useCORS: true,
+                allowTaint: true,
                 logging: false,
                 backgroundColor: '#ffffff'
             });
@@ -357,6 +643,52 @@ const HRDocuments = () => {
 
     return (
         <div style={{ width: '100%', padding: '0.25rem 0.75rem' }}>
+            {/* Scoped Letterhead Print Styles */}
+            <style>{`
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 10mm 15mm;
+                    }
+                    * {
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                        box-sizing: border-box !important;
+                    }
+                    body {
+                        background: #ffffff !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                    }
+                    /* Hide entire interface during browser Ctrl+P */
+                    body * {
+                        visibility: hidden !important;
+                    }
+                    #official-letterhead-print,
+                    #official-letterhead-print * {
+                        visibility: visible !important;
+                    }
+                    #official-letterhead-print {
+                        position: absolute !important;
+                        left: 0 !important;
+                        top: 0 !important;
+                        width: 100% !important;
+                        min-height: auto !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        border: none !important;
+                        box-shadow: none !important;
+                        background: #ffffff !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justifyContent: space-between !important;
+                    }
+                    .no-print, button, input {
+                        display: none !important;
+                    }
+                }
+            `}</style>
+
             {/* Header Banner */}
             <div style={{
                 background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0369a1 100%)',
@@ -780,17 +1112,30 @@ const HRDocuments = () => {
                                                     src={schoolInfo.logoUrl}
                                                     alt="School Logo"
                                                     style={{ width: '80px', height: '80px', objectFit: 'contain' }}
+                                                    onError={(e) => {
+                                                        const cached = (schoolId && localStorage.getItem(`school_logo_base64_${schoolId}`)) || localStorage.getItem('schoolLogo');
+                                                        if (cached && e.target.src !== cached) {
+                                                            e.target.src = cached;
+                                                        } else {
+                                                            e.target.style.display = 'none';
+                                                            const fb = document.getElementById('letterhead-logo-fallback');
+                                                            if (fb) fb.style.display = 'flex';
+                                                        }
+                                                    }}
                                                 />
-                                            ) : (
-                                                <div style={{
+                                            ) : null}
+                                            <div
+                                                id="letterhead-logo-fallback"
+                                                style={{
+                                                    display: schoolInfo.logoUrl ? 'none' : 'flex',
                                                     width: '76px', height: '76px', borderRadius: '50%',
                                                     background: 'linear-gradient(135deg, #0f172a, #0369a1)',
-                                                    color: 'white', display: 'flex', alignItems: 'center',
+                                                    color: 'white', alignItems: 'center',
                                                     justifyContent: 'center', fontSize: '1.6rem', fontWeight: 'bold'
-                                                }}>
-                                                    🏛️
-                                                </div>
-                                            )}
+                                                }}
+                                            >
+                                                🏛️
+                                            </div>
 
                                             <div style={{ flex: 1 }}>
                                                 <h1 style={{
