@@ -7,11 +7,12 @@ import {
     RefreshCw, Filter, ShieldCheck, ChevronDown, ChevronUp, Copy,
     Check, Sparkles, TrendingUp, AlertTriangle, UserX, Clock,
     Lock, Plus, Trash2, ExternalLink, BookOpen, Bus, ShoppingBag, Award,
-    Eye, Printer, X, FileText, LayoutGrid, Table, ZoomIn, ZoomOut, RotateCw
+    Eye, Printer, X, FileText, LayoutGrid, Table, ZoomIn, ZoomOut, RotateCw,
+    Square, CheckSquare, Scissors
 } from 'lucide-react';
 import { db } from '../firebase';
 import { 
-    collection, onSnapshot, query, doc, updateDoc, setDoc, 
+    collection, onSnapshot, query, doc, updateDoc, setDoc, getDoc,
     serverTimestamp, arrayUnion, addDoc, writeBatch
 } from 'firebase/firestore';
 import jsPDF from 'jspdf';
@@ -24,7 +25,8 @@ import {
     getStudentMonthFinancialStatus,
     parseStudentPaidMonthsSet as parseStudentPaidMonthsSetPipeline,
     calculateItemizedFeeBreakdown as calculateItemizedFeeBreakdownPipeline,
-    checkIs100PercentFree
+    checkIs100PercentFree,
+    isMonthSettled
 } from '../utils/feePipeline';
 import {
     cacheStudentsOffline,
@@ -709,6 +711,69 @@ const getInitialStudentsMap = (schoolId) => {
     return {};
 };
 
+// --- Currency Number to Words (Rupees) ---
+export const numberToWords = (num) => {
+    const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
+    const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+    const n = ('000000000' + (num || 0)).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+    if (!n) return 'Zero Rupees Only';
+    let str = '';
+    str += (Number(n[1]) !== 0) ? (a[Number(n[1])] || b[n[1][0]] + ' ' + a[n[1][1]]) + 'Crore ' : '';
+    str += (Number(n[2]) !== 0) ? (a[Number(n[2])] || b[n[2][0]] + ' ' + a[n[2][1]]) + 'Lakh ' : '';
+    str += (Number(n[3]) !== 0) ? (a[Number(n[3])] || b[n[3][0]] + ' ' + a[n[3][1]]) + 'Thousand ' : '';
+    str += (Number(n[4]) !== 0) ? (a[Number(n[4])] || b[n[4][0]] + ' ' + a[n[4][1]]) + 'Hundred ' : '';
+    str += (Number(n[5]) !== 0) ? ((str !== '') ? 'and ' : '') + (a[Number(n[5])] || b[n[5][0]] + ' ' + a[n[5][1]]) : '';
+    return (str.trim() ? str.trim() + ' Rupees Only' : 'Zero Rupees Only');
+};
+
+// --- School Logo Resolver with Base64 Caching ---
+export const resolveSchoolLogoForPrint = async (sId, fallbackUrl = '') => {
+    if (!sId) return fallbackUrl;
+    try {
+        const cached = localStorage.getItem(`school_logo_base64_${sId}`);
+        if (cached && cached.startsWith('data:image/')) return cached;
+
+        let targetUrl = fallbackUrl;
+        if (!targetUrl) {
+            const pDoc = await getDoc(doc(db, `schools/${sId}/settings`, 'profile'));
+            if (pDoc.exists() && (pDoc.data()?.profileImage || pDoc.data()?.logo)) {
+                targetUrl = pDoc.data().profileImage || pDoc.data().logo;
+            } else {
+                const rDoc = await getDoc(doc(db, 'schools', sId));
+                if (rDoc.exists()) targetUrl = rDoc.data()?.logo || rDoc.data()?.profileImage || '';
+            }
+        }
+        if (!targetUrl) return '';
+
+        const b64 = await new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const dataURL = canvas.toDataURL('image/png');
+                    resolve(dataURL);
+                } catch {
+                    resolve(targetUrl);
+                }
+            };
+            img.onerror = () => resolve(targetUrl);
+            img.src = targetUrl;
+        });
+
+        if (b64 && b64.startsWith('data:image/')) {
+            try { localStorage.setItem(`school_logo_base64_${sId}`, b64); } catch {}
+        }
+        return b64;
+    } catch {
+        return fallbackUrl;
+    }
+};
+
 const FeeArrearsMatrix = ({ 
     schoolId, 
     classes = [], 
@@ -742,6 +807,32 @@ const FeeArrearsMatrix = ({
     const [defaulterFilter, setDefaulterFilter] = useState('all'); // 'all', 'defaulters_only', 'paid_only', 'concession_only'
     const [searchQuery, setSearchQuery] = useState('');
     const [classViewMode, setClassViewMode] = useState('grid'); // 'grid' | 'table'
+
+    // Challan Multi-Select and Print States
+    const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
+    const [isPrintingChallan, setIsPrintingChallan] = useState(false);
+    const [bankingDetails, setBankingDetails] = useState([]);
+
+    // Reset selected students whenever class changes
+    useEffect(() => {
+        setSelectedStudentIds(new Set());
+    }, [selectedClassId]);
+
+    // Fetch Banking Details once for School Settings
+    useEffect(() => {
+        if (!schoolId) return;
+        const fetchBanking = async () => {
+            try {
+                const bDoc = await getDoc(doc(db, `schools/${schoolId}/settings`, 'banking'));
+                if (bDoc.exists() && bDoc.data()?.accounts) {
+                    setBankingDetails(bDoc.data().accounts || []);
+                }
+            } catch (err) {
+                console.warn("Could not fetch banking details:", err);
+            }
+        };
+        fetchBanking();
+    }, [schoolId]);
 
     // Quick Collect Fee Modal State
     const [collectingStudent, setCollectingStudent] = useState(null);
@@ -1438,6 +1529,791 @@ const FeeArrearsMatrix = ({
         setTimeout(() => setCopiedPhone(null), 2000);
     }, [selectedMonthIdx, currentMonthIdx, selectedYear, schoolInfo]);
 
+    // --- Student Selection Handlers for Challan Printing ---
+    const toggleStudentSelection = useCallback((studentId) => {
+        setSelectedStudentIds(prev => {
+            const next = new Set(prev);
+            if (next.has(studentId)) {
+                next.delete(studentId);
+            } else {
+                next.add(studentId);
+            }
+            return next;
+        });
+    }, []);
+
+    const handleToggleSelectAll = useCallback(() => {
+        const allSelected = activeStudentList.length > 0 && activeStudentList.every(s => selectedStudentIds.has(s.id));
+        if (allSelected) {
+            setSelectedStudentIds(prev => {
+                const next = new Set(prev);
+                activeStudentList.forEach(s => next.delete(s.id));
+                return next;
+            });
+        } else {
+            setSelectedStudentIds(prev => {
+                const next = new Set(prev);
+                activeStudentList.forEach(s => next.add(s.id));
+                return next;
+            });
+        }
+    }, [activeStudentList, selectedStudentIds]);
+
+    // --- Build 12-Month Session Challan Data (Pakistan Standard: April to March) ---
+    const buildStudentSessionChallanData = useCallback((student) => {
+        const today = new Date();
+        const curMIdx = today.getMonth(); // 0-11
+        const curYear = today.getFullYear();
+        const dueDay = parseInt(feeSettings?.dueDate, 10) || 10;
+        const penaltyAmount = Number(feeSettings?.penaltyAmount) || 0;
+
+        // Pakistan Academic Session: April to March
+        const sessionStartYear = curMIdx < 3 ? curYear - 1 : curYear;
+
+        // Base Tuition
+        let baseTuition = Number(student.tuition || student.tuitionFee || 0);
+        if (baseTuition === 0 && Array.isArray(student.feeStructure) && student.feeStructure.length > 0) {
+            const t = student.feeStructure.find(f => (f.name || '').toLowerCase().includes('tuition'));
+            if (t) baseTuition = Number(t.amount || 0);
+            else baseTuition = Number(student.monthlyFee || student.fee || 0);
+        }
+        if (baseTuition === 0 && student.monthlyFee) baseTuition = Number(student.monthlyFee);
+        if (baseTuition === 0 && student.monthsData?.[selectedMonthIdx]?.expectedAmount) {
+            baseTuition = Number(student.monthsData[selectedMonthIdx].expectedAmount);
+        }
+        if (baseTuition === 0) baseTuition = 1800;
+
+        // Concession / Discount
+        let discount = 0;
+        if (student.feeDiscount) {
+            const disc = Number(student.feeDiscount);
+            if (disc > 0 && disc <= 100) discount = Math.round((baseTuition * disc) / 100);
+            else if (disc > 100) discount = disc;
+        }
+        const netTuition = (student.breakdown?.is100PercentFree || checkIs100PercentFree(student)) ? 0 : Math.max(0, baseTuition - discount);
+
+        // 12 Months cycle (April to March)
+        const sessionMonths = [];
+        for (let m = 3; m <= 11; m++) {
+            sessionMonths.push({ monthIdx: m, year: sessionStartYear, name: MONTH_NAMES[m], short: MONTH_SHORT[m] });
+        }
+        for (let m = 0; m <= 2; m++) {
+            sessionMonths.push({ monthIdx: m, year: sessionStartYear + 1, name: MONTH_NAMES[m], short: MONTH_SHORT[m] });
+        }
+
+        let calculatedArrears = 0;
+        let arrearsMonthsCount = 0;
+        const monthsBreakdown = [];
+
+        sessionMonths.forEach((item) => {
+            const isCurrent = (item.monthIdx === curMIdx && item.year === curYear);
+            const isPast = (item.year < curYear) || (item.year === curYear && item.monthIdx < curMIdx);
+            const isFuture = (item.year > curYear) || (item.year === curYear && item.monthIdx > curMIdx);
+
+            let isSettled = false;
+            if (item.year === selectedYear && student.monthsData?.[item.monthIdx]) {
+                const fin = student.monthsData[item.monthIdx];
+                isSettled = fin.status === 'paid' || fin.is100PercentFree;
+            } else {
+                isSettled = isMonthSettled(student, item.monthIdx, item.year);
+            }
+
+            let statusText = 'UNPAID';
+            let paidVal = 0;
+            let balanceVal = netTuition;
+
+            if (netTuition === 0 && (student.breakdown?.is100PercentFree || checkIs100PercentFree(student))) {
+                statusText = 'FREE';
+                paidVal = 0;
+                balanceVal = 0;
+            } else if (isSettled) {
+                statusText = 'PAID';
+                paidVal = netTuition;
+                balanceVal = 0;
+            } else if (isFuture) {
+                statusText = 'UPCOMING';
+                paidVal = 0;
+                balanceVal = netTuition;
+            } else if (isPast) {
+                statusText = 'UNPAID';
+                paidVal = 0;
+                balanceVal = netTuition;
+                calculatedArrears += netTuition;
+                arrearsMonthsCount += 1;
+            } else if (isCurrent) {
+                statusText = 'UNPAID';
+                paidVal = 0;
+                balanceVal = netTuition;
+            }
+
+            monthsBreakdown.push({
+                monthLabel: `${item.short.toUpperCase()} ${item.year}`,
+                amount: netTuition,
+                paid: paidVal,
+                balance: balanceVal,
+                status: statusText,
+                isCurrent,
+                isPast,
+                isFuture
+            });
+        });
+
+        // Action Fee
+        let actionFee = 0;
+        let actionName = '';
+        if (currentAction && (currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(selectedClassId)))) {
+            const actStatus = student.customPayments?.[currentAction.name]?.status || 'unpaid';
+            if (actStatus !== 'paid') {
+                actionFee = Number(currentAction.amount || 0);
+                actionName = currentAction.name || 'Special Action / Exam Fee';
+            }
+        }
+
+        // Store Dues
+        let storeDues = 0;
+        if (Array.isArray(student.storeCharges)) {
+            student.storeCharges.forEach(sc => {
+                if (sc.status !== 'paid') storeDues += (Number(sc.amount) || 0);
+            });
+        }
+
+        const isCurrentMonthSettled = student.monthsData?.[curMIdx]?.status === 'paid' || student.monthlyFeeStatus === 'paid' || student.breakdown?.is100PercentFree;
+        const currentMonthTuition = isCurrentMonthSettled ? 0 : netTuition;
+        const totalPayable = currentMonthTuition + calculatedArrears + actionFee + storeDues;
+        const lateFine = penaltyAmount > 0 ? penaltyAmount : 200;
+        const totalAfterDue = totalPayable + lateFine;
+
+        const primaryBank = (bankingDetails && bankingDetails.length > 0) ? bankingDetails[0] : null;
+
+        const issueDateStr = `${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
+        const dueDateStr = `${String(dueDay).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
+        const challanNo = `CHL-${curYear}-${String(curMIdx + 1).padStart(2, '0')}-${student.rollNo || (student.id || '').slice(-4).toUpperCase()}`;
+
+        return {
+            netTuition,
+            calculatedArrears,
+            arrearsMonthsCount,
+            actionFee,
+            actionName,
+            storeDues,
+            currentMonthTuition,
+            totalPayable,
+            totalAfterDue,
+            lateFine,
+            monthsBreakdown,
+            billingMonthLabel: `${MONTH_NAMES[curMIdx]} ${curYear}`.toUpperCase(),
+            issueDateStr,
+            dueDateStr,
+            dueDay,
+            challanNo,
+            primaryBank
+        };
+    }, [feeSettings, selectedMonthIdx, selectedYear, selectedClassId, currentAction, bankingDetails]);
+
+    // --- Print Dual-Copy 12-Month Challans Engine ---
+    const handlePrintChallansForStudents = async (studentsToPrint) => {
+        if (!studentsToPrint || studentsToPrint.length === 0) {
+            alert('Please select at least one student to print challans.');
+            return;
+        }
+
+        try {
+            setIsPrintingChallan(true);
+
+            const logoBase64 = await resolveSchoolLogoForPrint(schoolId, schoolInfo?.logo || schoolInfo?.profileImage || '');
+            const currClass = localClasses.find(c => c.id === selectedClassId);
+            const className = currClass?.name || currClass?.className || 'Class';
+
+            const escapeHtml = (str) => {
+                if (!str) return '';
+                return String(str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            };
+
+            const renderCopy = (student, data, isSchoolCopy) => {
+                const leftMonths = data.monthsBreakdown.slice(0, 6);
+                const rightMonths = data.monthsBreakdown.slice(6, 12);
+
+                const renderRows = (arr) => arr.map(m => `
+                    <tr>
+                        <td style="font-weight: 700; color: #1e293b;">${m.monthLabel}</td>
+                        <td style="text-align: right; color: #334155;">${m.amount.toLocaleString()}</td>
+                        <td style="text-align: right; color: ${m.paid > 0 ? '#166534' : '#64748b'}; font-weight: ${m.paid > 0 ? '700' : '400'};">${m.paid.toLocaleString()}</td>
+                        <td style="text-align: right; font-weight: 700; color: ${m.balance > 0 ? '#991b1b' : '#166534'};">${m.balance.toLocaleString()}</td>
+                        <td style="text-align: center;">
+                            <span class="badge-status ${m.status === 'PAID' ? 'badge-paid' : m.status === 'UNPAID' ? 'badge-unpaid' : 'badge-upcoming'}">
+                                ${m.status === 'PAID' ? '✓ PAID' : m.status === 'UNPAID' ? '● UNPAID' : 'UPCOMING'}
+                            </span>
+                        </td>
+                    </tr>
+                `).join('');
+
+                const sName = escapeHtml(schoolInfo?.name || schoolInfo?.schoolName || 'OFFICIAL SCHOOL');
+                const stName = escapeHtml(student.name || student.studentName || 'Student');
+                const fName = escapeHtml(student.parentDetails?.fatherName || student.fatherName || 'Parent / Guardian');
+                const cName = escapeHtml(className || student.className || 'Class');
+                const roll = escapeHtml(student.rollNo || '-');
+
+                return `
+                    <div class="challan-copy">
+                        <div class="copy-badge ${isSchoolCopy ? 'school-badge' : 'parent-badge'}">
+                            ${isSchoolCopy ? '🏛️ SCHOOL / OFFICE COPY' : '👨‍👩‍👧 STUDENT / PARENT COPY'}
+                        </div>
+
+                        <!-- School Header Table -->
+                        <table class="header-table">
+                            <tr>
+                                <td class="header-logo-cell">
+                                    ${logoBase64 ? `
+                                        <img src="${logoBase64}" alt="Logo" class="logo-img" />
+                                    ` : `
+                                        <div class="logo-initials-badge">
+                                            ${(sName || 'SC').slice(0, 2).toUpperCase()}
+                                        </div>
+                                    `}
+                                </td>
+                                <td class="header-school-cell">
+                                    <div class="school-name">${sName}</div>
+                                    <div class="school-sub">
+                                        ${schoolInfo?.address ? `📍 ${escapeHtml(schoolInfo.address)}` : ''}
+                                        ${schoolInfo?.phone || schoolInfo?.contact ? ` • 📞 ${escapeHtml(schoolInfo.phone || schoolInfo.contact)}` : ''}
+                                    </div>
+                                </td>
+                                <td class="header-bank-cell">
+                                    ${data.primaryBank ? `
+                                        <div class="bank-box">
+                                            <div class="bank-title">💳 ${escapeHtml(data.primaryBank.bankName || 'Bank Account')}</div>
+                                            <div><strong>Title:</strong> ${escapeHtml(data.primaryBank.accountTitle || sName)}</div>
+                                            <div><strong>A/C:</strong> ${escapeHtml(data.primaryBank.accountNumber || data.primaryBank.iban || '-')}</div>
+                                        </div>
+                                    ` : `
+                                        <div class="bank-box">
+                                            <div class="bank-title">🏛️ School Fee Counter</div>
+                                            <div><strong>Hours:</strong> 8:00 AM - 2:00 PM</div>
+                                            <div><strong>Desk:</strong> Accounts Office</div>
+                                        </div>
+                                    `}
+                                </td>
+                            </tr>
+                        </table>
+
+                        <!-- Student Meta Details Grid -->
+                        <div class="meta-grid">
+                            <div class="meta-item"><span>Student Name:</span> <strong>${stName}</strong></div>
+                            <div class="meta-item"><span>Roll No:</span> <strong>${roll}</strong></div>
+                            <div class="meta-item"><span>Class:</span> <strong>${cName}</strong></div>
+                            <div class="meta-item"><span>Challan #:</span> <strong style="font-family: monospace;">${data.challanNo}</strong></div>
+                            <div class="meta-item"><span>Father Name:</span> <strong>${fName}</strong></div>
+                            <div class="meta-item"><span>Issue Date:</span> <strong>${data.issueDateStr}</strong></div>
+                            <div class="meta-item"><span>Billing Month:</span> <strong>${data.billingMonthLabel}</strong></div>
+                            <div class="meta-item"><span>Due Date:</span> <strong class="due-highlight">${data.dueDateStr}</strong></div>
+                        </div>
+
+                        <!-- Current Bill Breakdown Table -->
+                        <table class="bill-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 25px; text-align: center;">#</th>
+                                    <th>Fee Particulars / Description</th>
+                                    <th style="text-align: right; width: 110px;">Amount (PKR)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td style="text-align: center;">1</td>
+                                    <td>Monthly Tuition Fee (${data.billingMonthLabel})</td>
+                                    <td style="text-align: right; font-weight: 700;">Rs ${data.currentMonthTuition.toLocaleString()}/-</td>
+                                </tr>
+                                ${data.calculatedArrears > 0 ? `
+                                <tr style="color: #b91c1c;">
+                                    <td style="text-align: center;">2</td>
+                                    <td>Previous Accumulated Arrears (${data.arrearsMonthsCount} Month${data.arrearsMonthsCount > 1 ? 's' : ''})</td>
+                                    <td style="text-align: right; font-weight: 700;">Rs ${data.calculatedArrears.toLocaleString()}/-</td>
+                                </tr>
+                                ` : ''}
+                                ${data.actionFee > 0 ? `
+                                <tr>
+                                    <td style="text-align: center;">3</td>
+                                    <td>${escapeHtml(data.actionName)}</td>
+                                    <td style="text-align: right; font-weight: 700;">Rs ${data.actionFee.toLocaleString()}/-</td>
+                                </tr>
+                                ` : ''}
+                                ${data.storeDues > 0 ? `
+                                <tr>
+                                    <td style="text-align: center;">4</td>
+                                    <td>Store / Bookshop Purchases</td>
+                                    <td style="text-align: right; font-weight: 700;">Rs ${data.storeDues.toLocaleString()}/-</td>
+                                </tr>
+                                ` : ''}
+                                <tr class="total-row">
+                                    <td colspan="2" style="font-weight: 900; color: #166534; text-transform: uppercase;">
+                                        Total Payable by Due Date (${data.dueDateStr})
+                                    </td>
+                                    <td style="text-align: right; font-weight: 900; font-size: 10px; color: #166534;">
+                                        Rs ${data.totalPayable.toLocaleString()}/-
+                                    </td>
+                                </tr>
+                                ${data.lateFine > 0 ? `
+                                <tr class="late-row">
+                                    <td colspan="2" style="font-size: 7.5px; color: #991b1b; font-weight: 700;">
+                                        Payable After Due Date (+Rs ${data.lateFine} Late Surcharge)
+                                    </td>
+                                    <td style="text-align: right; font-weight: 800; font-size: 8.5px; color: #991b1b;">
+                                        Rs ${data.totalAfterDue.toLocaleString()}/-
+                                    </td>
+                                </tr>
+                                ` : ''}
+                            </tbody>
+                        </table>
+
+                        <!-- 12-Month Academic Session Ledger -->
+                        <div class="ledger-section-title">
+                            <span>Academic Session 12-Months Ledger (April - March)</span>
+                            <span style="font-size: 7px; color: #64748b;">(Status Up-To-Date)</span>
+                        </div>
+                        <div class="ledger-container">
+                            <table class="ledger-table">
+                                <thead>
+                                    <tr>
+                                        <th>Month</th>
+                                        <th style="text-align: right;">Fee</th>
+                                        <th style="text-align: right;">Paid</th>
+                                        <th style="text-align: right;">Bal</th>
+                                        <th style="text-align: center;">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${renderRows(leftMonths)}
+                                </tbody>
+                            </table>
+                            <table class="ledger-table">
+                                <thead>
+                                    <tr>
+                                        <th>Month</th>
+                                        <th style="text-align: right;">Fee</th>
+                                        <th style="text-align: right;">Paid</th>
+                                        <th style="text-align: right;">Bal</th>
+                                        <th style="text-align: center;">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${renderRows(rightMonths)}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Amount in Words & Notes -->
+                        <div class="bottom-bar">
+                            <div><strong>In Words:</strong> ${numberToWords(data.totalPayable)}</div>
+                            <div><span style="color: #b91c1c; font-weight: 700;">Note:</span> Deposit on or before ${data.dueDateStr}.</div>
+                        </div>
+
+                        <!-- Signatures Grid -->
+                        <div class="signatures-grid">
+                            <div class="sig-col">
+                                <div class="sig-line">Parent / Depositor Signature</div>
+                            </div>
+                            <div style="font-size: 6.8px; color: #94a3b8; text-align: center;">
+                                Official Computer Generated Voucher • ${isSchoolCopy ? 'School Record' : 'Student Record'}
+                            </div>
+                            <div class="sig-col">
+                                <div class="sig-line">Authorized Cashier / Stamp</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            };
+
+            const studentPagesHtml = studentsToPrint.map((student) => {
+                const data = buildStudentSessionChallanData(student);
+                return `
+                    <div class="challan-page">
+                        ${renderCopy(student, data, true)}
+                        <div class="cut-divider">
+                            <div class="cut-divider-line"></div>
+                            <span>✂ CUT HERE • SEPARATE SCHOOL COPY & PARENT COPY ✂</span>
+                            <div class="cut-divider-line"></div>
+                        </div>
+                        ${renderCopy(student, data, false)}
+                    </div>
+                `;
+            }).join('');
+
+            const fullHtml = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8" />
+                    <title>Fee Challans - ${escapeHtml(className)}</title>
+                    <style>
+                        @page {
+                            size: A4 portrait;
+                            margin: 5mm 6mm;
+                        }
+                        * {
+                            box-sizing: border-box;
+                            margin: 0;
+                            padding: 0;
+                        }
+                        body {
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                            color: #0f172a;
+                            background: #ffffff;
+                            -webkit-print-color-adjust: exact !important;
+                            print-color-adjust: exact !important;
+                        }
+                        .challan-page {
+                            page-break-after: always;
+                            page-break-inside: avoid;
+                            height: 285mm;
+                            max-height: 285mm;
+                            display: flex;
+                            flex-direction: column;
+                            justify-content: space-between;
+                            box-sizing: border-box;
+                            padding: 1mm 0;
+                        }
+                        .challan-page:last-child {
+                            page-break-after: auto;
+                        }
+                        .challan-copy {
+                            border: 1.5px solid #0f172a;
+                            border-radius: 5px;
+                            padding: 5px 8px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 3px;
+                            height: 137mm;
+                            max-height: 137mm;
+                            overflow: hidden;
+                            position: relative;
+                            box-sizing: border-box;
+                        }
+                        .copy-badge {
+                            position: absolute;
+                            top: 5px;
+                            right: 6px;
+                            font-size: 8px;
+                            font-weight: 900;
+                            letter-spacing: 0.6px;
+                            padding: 2px 7px;
+                            border-radius: 3px;
+                            text-transform: uppercase;
+                        }
+                        .school-badge {
+                            background: #f1f5f9;
+                            color: #1e3a8a;
+                            border: 1px solid #93c5fd;
+                        }
+                        .parent-badge {
+                            background: #f0fdf4;
+                            color: #166534;
+                            border: 1px solid #86efac;
+                        }
+                        .header-table {
+                            width: 100%;
+                            border-collapse: collapse;
+                            margin-bottom: 2px;
+                        }
+                        .header-logo-cell {
+                            width: 44px;
+                            vertical-align: middle;
+                        }
+                        .logo-img {
+                            width: 42px;
+                            height: 42px;
+                            object-fit: contain;
+                            border-radius: 4px;
+                            display: block;
+                        }
+                        .logo-initials-badge {
+                            width: 40px;
+                            height: 40px;
+                            background: #0078d4;
+                            color: #ffffff;
+                            font-weight: 900;
+                            font-size: 15px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            border-radius: 4px;
+                        }
+                        .header-school-cell {
+                            padding-left: 6px;
+                            vertical-align: middle;
+                        }
+                        .school-name {
+                            font-size: 12px;
+                            font-weight: 900;
+                            color: #0f172a;
+                            text-transform: uppercase;
+                            letter-spacing: -0.2px;
+                            line-height: 1.15;
+                        }
+                        .school-sub {
+                            font-size: 7.5px;
+                            color: #475569;
+                            line-height: 1.2;
+                            margin-top: 1px;
+                        }
+                        .header-bank-cell {
+                            width: 175px;
+                            vertical-align: middle;
+                            text-align: right;
+                            padding-right: 130px;
+                        }
+                        .bank-box {
+                            background: #f8fafc;
+                            border: 1px solid #cbd5e1;
+                            border-radius: 4px;
+                            padding: 3px 6px;
+                            font-size: 7.5px;
+                            line-height: 1.2;
+                            text-align: left;
+                            display: inline-block;
+                            max-width: 175px;
+                        }
+                        .bank-title {
+                            font-weight: 800;
+                            color: #0f172a;
+                            font-size: 8px;
+                            border-bottom: 0.5px solid #e2e8f0;
+                            padding-bottom: 1px;
+                            margin-bottom: 1px;
+                        }
+                        .meta-grid {
+                            display: grid;
+                            grid-template-columns: repeat(4, 1fr);
+                            background: #f8fafc;
+                            border: 1px solid #e2e8f0;
+                            border-radius: 4px;
+                            padding: 3px 6px;
+                            gap: 2px 6px;
+                            font-size: 7.8px;
+                            line-height: 1.2;
+                        }
+                        .meta-item span {
+                            color: #64748b;
+                            font-weight: 600;
+                        }
+                        .meta-item strong {
+                            color: #0f172a;
+                            font-weight: 800;
+                        }
+                        .due-highlight {
+                            color: #b91c1c !important;
+                            font-weight: 900 !important;
+                        }
+                        .bill-table {
+                            width: 100%;
+                            border-collapse: collapse;
+                            font-size: 8px;
+                            border: 1px solid #cbd5e1;
+                            border-radius: 4px;
+                            overflow: hidden;
+                        }
+                        .bill-table th {
+                            background: #f1f5f9;
+                            padding: 2.5px 5px;
+                            text-align: left;
+                            font-weight: 800;
+                            color: #334155;
+                            border-bottom: 1px solid #cbd5e1;
+                        }
+                        .bill-table td {
+                            padding: 2px 5px;
+                            border-bottom: 0.5px solid #f1f5f9;
+                        }
+                        .total-row td {
+                            background: #f0fdf4;
+                            border-top: 1px solid #86efac;
+                            padding: 3px 5px;
+                        }
+                        .late-row td {
+                            background: #fef2f2;
+                            border-top: 0.5px solid #fca5a5;
+                            padding: 2px 5px;
+                        }
+                        .ledger-section-title {
+                            font-size: 8px;
+                            font-weight: 800;
+                            color: #1e293b;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            margin-top: 1px;
+                            padding: 0 1px;
+                        }
+                        .ledger-container {
+                            display: grid;
+                            grid-template-columns: 1fr 1fr;
+                            gap: 4px;
+                        }
+                        .ledger-table {
+                            width: 100%;
+                            border-collapse: collapse;
+                            font-size: 7.2px;
+                            border: 1px solid #cbd5e1;
+                            border-radius: 3px;
+                        }
+                        .ledger-table th {
+                            background: #f8fafc;
+                            padding: 2px 4px;
+                            font-weight: 800;
+                            color: #475569;
+                            border-bottom: 1px solid #cbd5e1;
+                        }
+                        .ledger-table td {
+                            padding: 1.5px 4px;
+                            border-bottom: 0.5px solid #f1f5f9;
+                        }
+                        .badge-status {
+                            display: inline-block;
+                            padding: 1px 4px;
+                            border-radius: 2px;
+                            font-size: 6.5px;
+                            font-weight: 800;
+                            text-transform: uppercase;
+                            letter-spacing: 0.3px;
+                        }
+                        .badge-paid {
+                            background: #dcfce7;
+                            color: #15803d;
+                            border: 0.5px solid #86efac;
+                        }
+                        .badge-unpaid {
+                            background: #fee2e2;
+                            color: #b91c1c;
+                            border: 0.5px solid #fca5a5;
+                        }
+                        .badge-upcoming {
+                            background: #f1f5f9;
+                            color: #64748b;
+                            border: 0.5px solid #cbd5e1;
+                        }
+                        .bottom-bar {
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            background: #f8fafc;
+                            border: 1px solid #e2e8f0;
+                            padding: 2px 6px;
+                            border-radius: 3px;
+                            font-size: 7.2px;
+                        }
+                        .signatures-grid {
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: flex-end;
+                            padding-top: 6px;
+                            margin-top: 1px;
+                        }
+                        .sig-col {
+                            text-align: center;
+                            width: 140px;
+                        }
+                        .sig-line {
+                            border-top: 1px dashed #64748b;
+                            padding-top: 1px;
+                            font-size: 7px;
+                            font-weight: 700;
+                            color: #334155;
+                        }
+                        .cut-divider {
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            gap: 8px;
+                            padding: 2.5mm 0;
+                            color: #64748b;
+                            font-size: 7.5px;
+                            font-weight: 700;
+                        }
+                        .cut-divider-line {
+                            flex: 1;
+                            border-top: 1px dashed #94a3b8;
+                        }
+                    </style>
+                </head>
+                <body>
+                    ${studentPagesHtml}
+                </body>
+                </html>
+            `;
+
+            const iframe = document.createElement('iframe');
+            iframe.style.position = 'fixed';
+            iframe.style.right = '0';
+            iframe.style.bottom = '0';
+            iframe.style.width = '0px';
+            iframe.style.height = '0px';
+            iframe.style.border = 'none';
+            iframe.setAttribute('title', 'Print Preview Frame');
+            document.body.appendChild(iframe);
+
+            const iframeDoc = iframe.contentWindow.document;
+            iframeDoc.open();
+            iframeDoc.write(fullHtml);
+            iframeDoc.close();
+
+            const triggerPrint = () => {
+                try {
+                    iframe.contentWindow.focus();
+                    iframe.contentWindow.print();
+                } catch (err) {
+                    console.error("Print error:", err);
+                } finally {
+                    setIsPrintingChallan(false);
+                    setTimeout(() => {
+                        if (document.body.contains(iframe)) document.body.removeChild(iframe);
+                    }, 2000);
+                }
+            };
+
+            const images = iframeDoc.getElementsByTagName('img');
+            let loadedImages = 0;
+            const totalImages = images.length;
+
+            if (totalImages === 0) {
+                setTimeout(triggerPrint, 150);
+            } else {
+                let printed = false;
+                const handleImageLoaded = () => {
+                    loadedImages++;
+                    if (loadedImages >= totalImages && !printed) {
+                        printed = true;
+                        setTimeout(triggerPrint, 150);
+                    }
+                };
+
+                for (let i = 0; i < totalImages; i++) {
+                    if (images[i].complete) {
+                        handleImageLoaded();
+                    } else {
+                        images[i].onload = handleImageLoaded;
+                        images[i].onerror = handleImageLoaded;
+                    }
+                }
+
+                setTimeout(() => {
+                    if (!printed) {
+                        printed = true;
+                        triggerPrint();
+                    }
+                }, 2500);
+            }
+        } catch (err) {
+            console.error("Failed to print challans:", err);
+            alert("Failed to prepare challans for print: " + err.message);
+            setIsPrintingChallan(false);
+        }
+    };
+
     // Action: Open Quick Collect Modal (Locked Read-Only Amount)
     const handleOpenCollectModal = (student) => {
         setCollectingStudent(student);
@@ -1826,7 +2702,7 @@ const FeeArrearsMatrix = ({
                             )}
                         </div>
                         <p style={{ margin: '0.25rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
-                            Click any month card to inspect class-wise recovery and open student defaulters.
+                            Annual fee recovery overview across all 12 academic session months.
                         </p>
                     </div>
 
@@ -1963,8 +2839,6 @@ const FeeArrearsMatrix = ({
                     gap: '1.25rem'
                 }}>
                     {yearlyMatrix.map((item) => {
-                        const isSelected = selectedMonthIdx === item.monthIndex;
-
                         let cardBg = '#475569';
                         let borderColor = '#334155';
                         let subTextColor = '#cbd5e1';
@@ -1979,30 +2853,30 @@ const FeeArrearsMatrix = ({
 
                         if (item.isFuture) {
                             cardBg = '#475569';
-                            borderColor = isSelected ? '#ffffff' : '#334155';
+                            borderColor = '#334155';
                             StatusIcon = Calendar;
                             statusText = 'Upcoming';
                         } else if (item.isCurrent) {
                             cardBg = '#ea580c';
-                            borderColor = isSelected ? '#ffffff' : '#c2410c';
+                            borderColor = '#c2410c';
                             subTextColor = '#ffedd5';
                             StatusIcon = Clock;
                             statusText = 'Current Month';
                         } else if (item.statusCategory === 'excellent' || item.collectionRate >= 85) {
                             cardBg = '#059669';
-                            borderColor = isSelected ? '#ffffff' : '#047857';
+                            borderColor = '#047857';
                             subTextColor = '#d1fae5';
                             StatusIcon = CheckCircle2;
                             statusText = 'Paid';
                         } else if (item.statusCategory === 'moderate') {
                             cardBg = '#d97706';
-                            borderColor = isSelected ? '#ffffff' : '#b45309';
+                            borderColor = '#b45309';
                             subTextColor = '#fef3c7';
                             StatusIcon = Clock;
                             statusText = 'In-Progress';
                         } else {
                             cardBg = '#dc2626';
-                            borderColor = isSelected ? '#ffffff' : '#991b1b';
+                            borderColor = '#991b1b';
                             subTextColor = '#fee2e2';
                             StatusIcon = XCircle;
                             statusText = 'Pending';
@@ -2011,26 +2885,20 @@ const FeeArrearsMatrix = ({
                         return (
                             <div
                                 key={item.monthIndex}
-                                onClick={() => {
-                                    setSelectedMonthIdx(item.monthIndex);
-                                    setSelectedClassId(null);
-                                }}
                                 style={{
                                     background: cardBg,
                                     color: '#ffffff',
                                     borderRadius: '18px',
                                     padding: '1.25rem',
-                                    border: isSelected ? '3px solid #ffffff' : `2.5px solid ${borderColor}`,
-                                    boxShadow: isSelected 
-                                        ? '0 8px 0px rgba(0,0,0,0.35), 0 10px 20px rgba(0,0,0,0.2)' 
-                                        : '0 4px 0px rgba(0,0,0,0.2)',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.15s ease',
-                                    transform: isSelected ? 'translateY(-4px)' : 'translateY(0)',
+                                    border: item.isCurrent ? '2.5px solid #ffffff' : `1.5px solid ${borderColor}`,
+                                    boxShadow: item.isCurrent 
+                                        ? '0 8px 16px rgba(234, 88, 12, 0.35)' 
+                                        : '0 4px 6px rgba(0,0,0,0.06)',
                                     position: 'relative',
                                     display: 'flex',
                                     flexDirection: 'column',
-                                    gap: '0.9rem'
+                                    gap: '0.9rem',
+                                    userSelect: 'none'
                                 }}
                             >
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -2122,27 +2990,6 @@ const FeeArrearsMatrix = ({
                                         </div>
                                     </div>
                                 </div>
-
-                                {isSelected && (
-                                    <div style={{
-                                        position: 'absolute',
-                                        bottom: '-12px',
-                                        left: '50%',
-                                        transform: 'translateX(-50%)',
-                                        background: '#ffffff',
-                                        color: cardBg,
-                                        fontSize: '0.7rem',
-                                        fontWeight: '900',
-                                        padding: '2px 10px',
-                                        borderRadius: '8px',
-                                        border: `1.5px solid ${cardBg}`,
-                                        boxShadow: '0 4px 8px rgba(0,0,0,0.25)',
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.04em'
-                                    }}>
-                                        Selected
-                                    </div>
-                                )}
                             </div>
                         );
                     })}
@@ -2254,6 +3101,61 @@ const FeeArrearsMatrix = ({
                                             <span>Download Class Ledger PDF</span>
                                         </>
                                     )}
+                                </button>
+
+                                {/* Print Selected Challans Button */}
+                                {selectedStudentIds.size > 0 && (
+                                    <button
+                                        onClick={() => {
+                                            const toPrint = activeStudentList.filter(s => selectedStudentIds.has(s.id));
+                                            handlePrintChallansForStudents(toPrint);
+                                        }}
+                                        disabled={isPrintingChallan}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.45rem',
+                                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '12px',
+                                            padding: '0.55rem 1.15rem',
+                                            fontSize: '0.82rem',
+                                            fontWeight: '800',
+                                            cursor: isPrintingChallan ? 'wait' : 'pointer',
+                                            boxShadow: '0 4px 10px rgba(16, 185, 129, 0.35)',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                        title={`Print Dual-Copy 12-Month Challans for ${selectedStudentIds.size} Selected Student(s)`}
+                                    >
+                                        <CheckSquare size={15} />
+                                        <span>🖨️ Print Selected ({selectedStudentIds.size}) Challans</span>
+                                    </button>
+                                )}
+
+                                {/* Print All Class Challans Button */}
+                                <button
+                                    onClick={() => handlePrintChallansForStudents(activeStudentList)}
+                                    disabled={isPrintingChallan || activeStudentList.length === 0}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.45rem',
+                                        background: isPrintingChallan ? '#94a3b8' : 'linear-gradient(135deg, #0078d4 0%, #0284c7 100%)',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '12px',
+                                        padding: '0.55rem 1.15rem',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '800',
+                                        cursor: (isPrintingChallan || activeStudentList.length === 0) ? 'not-allowed' : 'pointer',
+                                        boxShadow: '0 4px 10px rgba(0, 120, 212, 0.3)',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                    title="Print Dual-Copy 12-Month Challans for All Students in this View"
+                                >
+                                    <Printer size={15} />
+                                    <span>🖨️ Print Class Challans ({activeStudentList.length})</span>
                                 </button>
                             </div>
                         </div>
@@ -2398,17 +3300,39 @@ const FeeArrearsMatrix = ({
                                     <thead style={{ position: 'sticky', top: 0, zIndex: 20 }}>
                                         <tr style={{ background: '#0f172a', color: 'white', textAlign: 'center' }}>
                                             {/* Frozen Left Columns */}
+                                            {/* Master Select-All Checkbox */}
                                             <th style={{
                                                 position: 'sticky',
                                                 top: 0,
                                                 left: 0,
+                                                zIndex: 35,
+                                                background: '#0f172a',
+                                                padding: '0.85rem 0.4rem',
+                                                borderRight: '1px solid #334155',
+                                                borderBottom: '1px solid #334155',
+                                                width: '40px',
+                                                minWidth: '40px',
+                                                textAlign: 'center'
+                                            }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={activeStudentList.length > 0 && activeStudentList.every(s => selectedStudentIds.has(s.id))}
+                                                    onChange={handleToggleSelectAll}
+                                                    style={{ cursor: 'pointer', width: '15px', height: '15px', accentColor: '#0078d4' }}
+                                                    title={activeStudentList.length > 0 && activeStudentList.every(s => selectedStudentIds.has(s.id)) ? "Deselect All Visible Students" : "Select All Visible Students"}
+                                                />
+                                            </th>
+                                            <th style={{
+                                                position: 'sticky',
+                                                top: 0,
+                                                left: '40px',
                                                 zIndex: 30,
                                                 background: '#0f172a',
-                                                padding: '0.85rem 0.6rem',
+                                                padding: '0.85rem 0.5rem',
                                                 fontWeight: '800',
                                                 borderRight: '1px solid #334155',
                                                 borderBottom: '1px solid #334155',
-                                                minWidth: '55px',
+                                                minWidth: '50px',
                                                 fontSize: '0.75rem'
                                             }}>
                                                 Roll #
@@ -2416,10 +3340,10 @@ const FeeArrearsMatrix = ({
                                             <th style={{
                                                 position: 'sticky',
                                                 top: 0,
-                                                left: '55px',
+                                                left: '90px',
                                                 zIndex: 30,
                                                 background: '#0f172a',
-                                                padding: '0.85rem 0.6rem',
+                                                padding: '0.85rem 0.5rem',
                                                 fontWeight: '800',
                                                 borderRight: '1px solid #334155',
                                                 borderBottom: '1px solid #334155',
@@ -2431,7 +3355,7 @@ const FeeArrearsMatrix = ({
                                             <th style={{
                                                 position: 'sticky',
                                                 top: 0,
-                                                left: '120px',
+                                                left: '155px',
                                                 zIndex: 30,
                                                 background: '#0f172a',
                                                 padding: '0.85rem 0.85rem',
@@ -2510,10 +3434,32 @@ const FeeArrearsMatrix = ({
 
                                             return (
                                                 <tr key={st.id || sIdx} style={{ background: rowBg, transition: 'background 0.1s ease' }}>
-                                                    {/* Frozen Left Cell: Roll # */}
+                                                    {/* Frozen Left Cell: Checkbox */}
                                                     <td style={{
                                                         position: 'sticky',
                                                         left: 0,
+                                                        zIndex: 10,
+                                                        background: rowBg,
+                                                        padding: '0.75rem 0.4rem',
+                                                        textAlign: 'center',
+                                                        borderRight: '1px solid #e2e8f0',
+                                                        borderBottom: '1px solid #e2e8f0',
+                                                        width: '40px',
+                                                        minWidth: '40px'
+                                                    }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedStudentIds.has(st.id)}
+                                                            onChange={() => toggleStudentSelection(st.id)}
+                                                            style={{ cursor: 'pointer', width: '15px', height: '15px', accentColor: '#0078d4' }}
+                                                            title="Select Student for Challan Print"
+                                                        />
+                                                    </td>
+
+                                                    {/* Frozen Left Cell: Roll # */}
+                                                    <td style={{
+                                                        position: 'sticky',
+                                                        left: '40px',
                                                         zIndex: 10,
                                                         background: rowBg,
                                                         padding: '0.75rem 0.5rem',
@@ -2521,7 +3467,8 @@ const FeeArrearsMatrix = ({
                                                         fontWeight: '800',
                                                         color: '#0f172a',
                                                         borderRight: '1px solid #e2e8f0',
-                                                        borderBottom: '1px solid #e2e8f0'
+                                                        borderBottom: '1px solid #e2e8f0',
+                                                        minWidth: '50px'
                                                     }}>
                                                         {roll}
                                                     </td>
@@ -2529,7 +3476,7 @@ const FeeArrearsMatrix = ({
                                                     {/* Frozen Left Cell: Adm # */}
                                                     <td style={{
                                                         position: 'sticky',
-                                                        left: '55px',
+                                                        left: '90px',
                                                         zIndex: 10,
                                                         background: rowBg,
                                                         padding: '0.75rem 0.5rem',
@@ -2538,6 +3485,7 @@ const FeeArrearsMatrix = ({
                                                         color: '#64748b',
                                                         borderRight: '1px solid #e2e8f0',
                                                         borderBottom: '1px solid #e2e8f0',
+                                                        minWidth: '65px',
                                                         fontSize: '0.75rem'
                                                     }}>
                                                         {adm}
@@ -2546,12 +3494,13 @@ const FeeArrearsMatrix = ({
                                                     {/* Frozen Left Cell: Student & Father */}
                                                     <td style={{
                                                         position: 'sticky',
-                                                        left: '120px',
+                                                        left: '155px',
                                                         zIndex: 10,
                                                         background: rowBg,
                                                         padding: '0.75rem 0.85rem',
                                                         borderRight: '2px solid #cbd5e1',
-                                                        borderBottom: '1px solid #e2e8f0'
+                                                        borderBottom: '1px solid #e2e8f0',
+                                                        minWidth: '180px'
                                                     }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                                                             <div style={{ width: '30px', height: '30px', borderRadius: '8px', overflow: 'hidden', flexShrink: 0, background: '#e2e8f0' }}>
@@ -2663,6 +3612,29 @@ const FeeArrearsMatrix = ({
                                                         borderBottom: '1px solid #e2e8f0'
                                                     }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
+                                                            {/* Individual Challan Print Button */}
+                                                            <button
+                                                                onClick={() => handlePrintChallansForStudents([st])}
+                                                                title="Print Dual-Copy 12-Month Challan for this Student"
+                                                                style={{
+                                                                    background: 'linear-gradient(135deg, #0078d4 0%, #0284c7 100%)',
+                                                                    color: 'white',
+                                                                    border: 'none',
+                                                                    borderRadius: '8px',
+                                                                    padding: '0.35rem 0.55rem',
+                                                                    fontSize: '0.72rem',
+                                                                    fontWeight: '800',
+                                                                    cursor: 'pointer',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.25rem',
+                                                                    boxShadow: '0 2px 4px rgba(0, 120, 212, 0.2)'
+                                                                }}
+                                                            >
+                                                                <Printer size={12} />
+                                                                Challan
+                                                            </button>
+
                                                             {st.totalBalanceYear > 0 && (
                                                                 <>
                                                                     <button
@@ -2862,29 +3834,53 @@ const FeeArrearsMatrix = ({
                                         </div>
 
                                         {/* Dual Action Buttons */}
-                                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #e2e8f0', paddingTop: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.45rem', marginTop: '0.5rem', borderTop: '1px solid #e2e8f0', paddingTop: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
                                             <button
                                                 onClick={() => setSelectedClassId(c.classId)}
                                                 style={{
-                                                    width: '100%',
-                                                    padding: '0.6rem 0.85rem',
+                                                    padding: '0.55rem 0.65rem',
                                                     borderRadius: '10px',
                                                     border: 'none',
                                                     background: '#4f46e5',
                                                     color: 'white',
-                                                    fontSize: '0.78rem',
+                                                    fontSize: '0.76rem',
                                                     fontWeight: '800',
                                                     cursor: 'pointer',
                                                     display: 'flex',
                                                     alignItems: 'center',
                                                     justifyContent: 'center',
-                                                    gap: '0.4rem',
-                                                    boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)',
+                                                    gap: '0.35rem',
+                                                    boxShadow: '0 2px 5px rgba(79, 70, 229, 0.25)',
                                                     transition: 'all 0.15s ease'
                                                 }}
+                                                title="Open Class Matrix Ledger"
                                             >
-                                                <Users size={14} />
-                                                Open Class Ledger
+                                                <Users size={13} />
+                                                <span>Ledger</span>
+                                            </button>
+
+                                            <button
+                                                onClick={() => setSelectedClassId(c.classId)}
+                                                style={{
+                                                    padding: '0.55rem 0.65rem',
+                                                    borderRadius: '10px',
+                                                    border: 'none',
+                                                    background: 'linear-gradient(135deg, #0078d4 0%, #0284c7 100%)',
+                                                    color: 'white',
+                                                    fontSize: '0.76rem',
+                                                    fontWeight: '800',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    gap: '0.35rem',
+                                                    boxShadow: '0 2px 5px rgba(0, 120, 212, 0.25)',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                                title="Open Class to Print 12-Month Dual Challans"
+                                            >
+                                                <Printer size={13} />
+                                                <span>🖨️ Challans</span>
                                             </button>
                                         </div>
                                     </div>
@@ -3038,6 +4034,28 @@ const FeeArrearsMatrix = ({
                                                                 >
                                                                     <Users size={12} />
                                                                     Open Ledger
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => setSelectedClassId(c.classId)}
+                                                                    style={{
+                                                                        padding: '0.45rem 0.85rem',
+                                                                        borderRadius: '8px',
+                                                                        border: 'none',
+                                                                        background: 'linear-gradient(135deg, #0078d4 0%, #0284c7 100%)',
+                                                                        color: 'white',
+                                                                        fontSize: '0.75rem',
+                                                                        fontWeight: '800',
+                                                                        cursor: 'pointer',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.35rem',
+                                                                        boxShadow: '0 2px 4px rgba(0, 120, 212, 0.25)',
+                                                                        transition: 'all 0.15s ease'
+                                                                    }}
+                                                                    title="Open Class to Print 12-Month Dual Challans"
+                                                                >
+                                                                    <Printer size={12} />
+                                                                    Challans
                                                                 </button>
                                                             </div>
                                                         </td>
