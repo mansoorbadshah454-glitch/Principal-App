@@ -1462,13 +1462,394 @@ export default function Exams() {
         document.body.removeChild(link);
     };
 
-    // --- Actions: Print Triggers ---
-    const handlePrintTabulation = () => {
-        window.print();
+    // =========================================================================
+    // ISOLATED IFRAME PRINT ENGINE FOR EXAMS (GAZETTE & RESULT CARDS)
+    // =========================================================================
+    const printHtmlInIframe = (htmlContent, pageTitle, isLandscape = false) => {
+        const printFrame = document.createElement('iframe');
+        printFrame.style.position = 'fixed';
+        printFrame.style.top = '-10000px';
+        printFrame.style.left = '-10000px';
+        printFrame.style.width = isLandscape ? '297mm' : '210mm';
+        printFrame.style.height = isLandscape ? '210mm' : '297mm';
+        printFrame.style.border = 'none';
+        document.body.appendChild(printFrame);
+
+        const frameDoc = printFrame.contentWindow.document;
+        frameDoc.open();
+        frameDoc.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>${pageTitle}</title>
+                <style>
+                    @page {
+                        size: A4 ${isLandscape ? 'landscape' : 'portrait'};
+                        margin: ${isLandscape ? '8mm' : '10mm'};
+                    }
+                    * {
+                        box-sizing: border-box;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        background: #ffffff !important;
+                        color: #0f172a !important;
+                        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                        width: 100% !important;
+                        line-height: 1.4;
+                    }
+                    .dmc-sheet {
+                        width: 100%;
+                        min-height: 275mm;
+                        box-sizing: border-box;
+                        page-break-after: always;
+                        break-after: page;
+                        display: flex;
+                        flex-direction: column;
+                        justifyContent: space-between;
+                        padding: 2px;
+                    }
+                    .dmc-sheet:last-child {
+                        page-break-after: auto;
+                        break-after: auto;
+                    }
+                    img {
+                        max-width: 100%;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                </style>
+            </head>
+            <body>
+                ${htmlContent}
+            </body>
+            </html>
+        `);
+        frameDoc.close();
+
+        const triggerPrint = () => {
+            try {
+                printFrame.contentWindow.focus();
+                printFrame.contentWindow.print();
+            } catch (e) {
+                console.error("Frame print error:", e);
+                window.print();
+            } finally {
+                setTimeout(() => {
+                    try { document.body.removeChild(printFrame); } catch(err){}
+                }, 5000);
+            }
+        };
+
+        const checkImagesAndPrint = () => {
+            const imgs = frameDoc.images;
+            if (!imgs || imgs.length === 0) {
+                setTimeout(triggerPrint, 150);
+                return;
+            }
+
+            let loaded = 0;
+            let finished = false;
+            const finish = () => {
+                if (finished) return;
+                finished = true;
+                setTimeout(triggerPrint, 150);
+            };
+
+            for (let i = 0; i < imgs.length; i++) {
+                if (imgs[i].complete) {
+                    loaded++;
+                } else {
+                    imgs[i].onload = () => {
+                        loaded++;
+                        if (loaded >= imgs.length) finish();
+                    };
+                    imgs[i].onerror = () => {
+                        loaded++;
+                        if (loaded >= imgs.length) finish();
+                    };
+                }
+            }
+
+            if (loaded >= imgs.length) {
+                finish();
+            } else {
+                setTimeout(finish, 1500);
+            }
+        };
+
+        setTimeout(checkImagesAndPrint, 100);
+    };
+
+    const renderDmcHtml = (studentRow) => {
+        const schoolLogo = logoBase64 || schoolProfile.profileImage || '';
+        const isForcePass = studentRow.moderationOverride === 'pass' || studentRow.moderationOverride === 'conditional_pass';
+        const isForceFail = studentRow.moderationOverride === 'fail';
+        const isPassed = isForcePass || (studentRow.isComplete && studentRow.isPassed && !isForceFail);
+        const isPending = !studentRow.isComplete && !isForcePass && !isForceFail;
+        const studentPhoto = studentRow.photoUrl || studentRow.photo || studentRow.profileImage || studentRow.studentPhoto || studentRow.profilePic || studentRow.avatar || studentRow.image || '';
+
+        return `
+            <div class="dmc-sheet">
+                <div style="border: 2.5px double #0f172a; padding: 14px 16px; display: flex; flex-direction: column; justify-content: space-between; min-height: 270mm; box-sizing: border-box;">
+                    
+                    <!-- Top School Header -->
+                    <div style="border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                        <div style="width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                            ${schoolLogo ? `<img src="${schoolLogo}" alt="Logo" style="max-width: 68px; max-height: 68px; object-fit: contain;" />` : `<div style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #0f172a; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px; color: #0f172a;">${(schoolProfile.name || 'SC').substring(0, 2).toUpperCase()}</div>`}
+                        </div>
+                        <div style="flex: 1; text-align: center;">
+                            <h1 style="margin: 0; font-size: 19px; font-weight: 900; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px;">${schoolProfile.name || 'SMART PUBLIC SCHOOL'}</h1>
+                            <p style="margin: 2px 0 0 0; font-size: 10px; color: #475569; font-weight: 600;">${schoolProfile.address || 'Campus Address'} ${schoolProfile.phone ? '• Phone: ' + schoolProfile.phone : ''}</p>
+                            <div style="display: inline-block; margin-top: 6px; background: #0f172a; color: #ffffff; padding: 3px 14px; border-radius: 12px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
+                                ${currentExam.title || 'Term Examination'} — Detailed Marks Certificate (DMC)
+                            </div>
+                        </div>
+                        <div style="width: 70px; display: flex; justify-content: flex-end; flex-shrink: 0;">
+                            ${studentPhoto ? `<img src="${studentPhoto}" alt="Photo" style="width: 60px; height: 70px; object-fit: cover; border: 1px solid #cbd5e1; border-radius: 4px;" />` : `<div style="width: 60px; height: 70px; border: 1px dashed #cbd5e1; border-radius: 4px; background: #f8fafc; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #94a3b8; font-weight: 700; text-align: center;">PHOTO</div>`}
+                        </div>
+                    </div>
+
+                    <!-- Student Details Strip -->
+                    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px;">
+                        <div><span style="color: #64748b; font-weight: 700;">Student Name:</span> <strong style="color: #0f172a; text-transform: uppercase;">${studentRow.name || ''}</strong></div>
+                        <div><span style="color: #64748b; font-weight: 700;">Class / Section:</span> <strong style="color: #0f172a; text-transform: uppercase;">${currentClass.name || ''}</strong></div>
+                        <div><span style="color: #64748b; font-weight: 700;">Father's Name:</span> <strong style="color: #0f172a;">${studentRow.fatherName || 'N/A'}</strong></div>
+                        <div><span style="color: #64748b; font-weight: 700;">Roll Number:</span> <strong style="color: #4f46e5;">${studentRow.rollNumber || 'N/A'}</strong></div>
+                        <div><span style="color: #64748b; font-weight: 700;">Academic Session:</span> <strong style="color: #0f172a;">${currentExam.session || '2025-2026'}</strong></div>
+                        <div><span style="color: #64748b; font-weight: 700;">Date of Issue:</span> <strong style="color: #0f172a;">${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</strong></div>
+                    </div>
+
+                    <!-- Subject Marks Table -->
+                    <table style="width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 12px;">
+                        <thead>
+                            <tr style="background: #f1f5f9; color: #0f172a; font-weight: 800; border-bottom: 1.5px solid #0f172a;">
+                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 35px; text-align: center;">Sr.</th>
+                                <th style="border: 1px solid #cbd5e1; padding: 6px; text-align: left;">Subject Name</th>
+                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 65px; text-align: center;">Total</th>
+                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 65px; text-align: center;">Pass Marks</th>
+                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 75px; text-align: center;">Obtained</th>
+                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 55px; text-align: center;">Grade</th>
+                                <th style="border: 1px solid #cbd5e1; padding: 6px; text-align: left;">Remarks</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${tabulationData.subjects.map((subj, idx) => {
+                                const m = studentRow?.subjectMarks?.[subj];
+                                const total = m?.totalMarks || 100;
+                                const pass = m?.passingMarks || 33;
+                                const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
+                                const grade = m ? m.grade : '-';
+                                const remarks = m?.remarks || (grade === 'A+' ? 'Outstanding' : grade === 'A' ? 'Excellent' : grade === 'B' ? 'Good' : grade === 'F' ? 'Needs Improvement' : 'Satisfactory');
+                                return `
+                                    <tr>
+                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; color: #64748b;">${idx + 1}</td>
+                                        <td style="border: 1px solid #cbd5e1; padding: 5px; font-weight: 700; color: #0f172a;">${subj}</td>
+                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center;">${total}</td>
+                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center;">${pass}</td>
+                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 900; color: #0f172a;">${obtained}</td>
+                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 800;">${grade}</td>
+                                        <td style="border: 1px solid #cbd5e1; padding: 5px; font-style: italic; color: #475569; font-size: 10px;">${remarks}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                        <tfoot>
+                            <tr style="background: #f8fafc; font-weight: 900; border-top: 1.5px solid #0f172a;">
+                                <td colspan="2" style="border: 1px solid #cbd5e1; padding: 6px; text-align: left; text-transform: uppercase;">Grand Total</td>
+                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center;">${studentRow.totalMax}</td>
+                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center;">—</td>
+                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.totalObtained}</td>
+                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.grade}</td>
+                                <td style="border: 1px solid #cbd5e1; padding: 6px; font-size: 10px; font-weight: 800; color: ${isPending ? '#d97706' : isPassed ? '#059669' : '#e11d48'};">
+                                    ${isPending ? 'RESULT PENDING' : (isPassed ? 'PROMOTED / PASSED' : 'FAILED / DETAINED')}
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+
+                    <!-- Summary Metrics Box -->
+                    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; display: grid; grid-template-columns: repeat(5, 1fr); text-align: center;">
+                        <div style="border-right: 1px solid #e2e8f0; padding: 0 4px;">
+                            <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">Percentage</div>
+                            <div style="font-size: 14px; font-weight: 900; color: #0f172a; margin-top: 2px;">${studentRow.percentage}%</div>
+                        </div>
+                        <div style="border-right: 1px solid #e2e8f0; padding: 0 4px;">
+                            <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">Grade</div>
+                            <div style="font-size: 14px; font-weight: 900; color: #4f46e5; margin-top: 2px;">${studentRow.grade}</div>
+                        </div>
+                        <div style="border-right: 1px solid #e2e8f0; padding: 0 4px;">
+                            <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">Class Position</div>
+                            <div style="font-size: 14px; font-weight: 900; color: #059669; margin-top: 2px;">${getOrdinal(studentRow.position)}</div>
+                        </div>
+                        <div style="border-right: 1px solid #e2e8f0; padding: 0 4px;">
+                            <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">Attendance</div>
+                            <div style="font-size: 14px; font-weight: 900; color: #0284c7; margin-top: 2px;">${studentRow.attendance || '95%'}</div>
+                        </div>
+                        <div style="padding: 0 4px;">
+                            <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">Final Status</div>
+                            <div style="font-size: 13px; font-weight: 900; margin-top: 2px; color: ${isPending ? '#d97706' : isPassed ? '#059669' : '#e11d48'};">
+                                ${isPending ? 'PENDING' : (isPassed ? 'PASSED' : 'FAILED')}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Grading Scale Legend -->
+                    <div style="font-size: 8.5px; color: #64748b; border: 1px solid #e2e8f0; border-radius: 4px; padding: 4px 8px; margin-bottom: 25px; text-align: center; background: #ffffff;">
+                        <strong>Grading System:</strong> A+ (80% & Above) • A (70% - 79%) • B (60% - 69%) • C (50% - 59%) • D (40% - 49%) • F (Below 40% / Fail)
+                    </div>
+
+                    <!-- Official Signatures -->
+                    <div style="display: flex; justify-content: space-between; align-items: flex-end; padding: 0 20px; margin-top: auto; margin-bottom: 8px;">
+                        <div style="text-align: center; width: 140px;">
+                            <div style="border-top: 1.5px solid #0f172a; padding-top: 4px; font-size: 10px; font-weight: 800; color: #0f172a;">Class Teacher</div>
+                        </div>
+                        <div style="text-align: center; width: 160px;">
+                            <div style="border-top: 1.5px solid #0f172a; padding-top: 4px; font-size: 10px; font-weight: 800; color: #0f172a;">Controller of Exams</div>
+                        </div>
+                        <div style="text-align: center; width: 160px;">
+                            <div style="border-top: 1.5px solid #0f172a; padding-top: 4px; font-size: 10px; font-weight: 800; color: #0f172a;">Principal Stamp & Sign</div>
+                        </div>
+                    </div>
+
+                    <!-- Footer Note -->
+                    <div style="text-align: center; font-size: 7.5px; color: #94a3b8; margin-top: 8px;">
+                        Official Academic Record • Valid without alterations • Generated on ${new Date().toLocaleDateString()}
+                    </div>
+                </div>
+            </div>
+        `;
+    };
+
+    const handlePrintSingleDmc = (studentRow) => {
+        if (!studentRow) return;
+        const html = renderDmcHtml(studentRow);
+        const title = `${(studentRow.name || 'Student').replace(/[^a-zA-Z0-9]/g, '_')}_Roll_${studentRow.rollNumber}_DMC`;
+        printHtmlInIframe(html, title, false);
     };
 
     const handleBatchPrintDmc = () => {
-        window.print();
+        const selectedRows = selectedStudentIdsForBatch.size > 0 
+            ? tabulationData.rows.filter(r => selectedStudentIdsForBatch.has(r.studentId))
+            : tabulationData.rows;
+
+        if (selectedRows.length === 0) {
+            alert('No student records to print!');
+            return;
+        }
+
+        const html = selectedRows.map(r => renderDmcHtml(r)).join('');
+        const title = `${(currentClass.name || 'Class').replace(/[^a-zA-Z0-9]/g, '_')}_Result_Cards_Batch`;
+        printHtmlInIframe(html, title, false);
+    };
+
+    const handlePrintTabulation = () => {
+        if (!tabulationData.rows || tabulationData.rows.length === 0) {
+            alert('No student records to print in Gazette!');
+            return;
+        }
+
+        const schoolLogo = logoBase64 || schoolProfile.profileImage || '';
+        const gazetteTitle = `${(schoolProfile.name || 'School').replace(/[^a-zA-Z0-9]/g, '_')}_${(currentClass.name || 'Class').replace(/[^a-zA-Z0-9]/g, '_')}_Gazette`;
+
+        const html = `
+            <div style="padding: 10px; width: 100%;">
+                <!-- Header -->
+                <div style="border-bottom: 2.5px solid #0f172a; padding-bottom: 10px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="width: 70px; height: 70px; display: flex; align-items: center; justify-content: center;">
+                        ${schoolLogo ? `<img src="${schoolLogo}" alt="Logo" style="max-width: 65px; max-height: 65px; object-fit: contain;" />` : `<div style="width: 55px; height: 55px; border-radius: 50%; border: 2px solid #0f172a; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 16px;">${(schoolProfile.name || 'SC').substring(0, 2).toUpperCase()}</div>`}
+                    </div>
+                    <div style="text-align: center; flex: 1;">
+                        <h1 style="margin: 0; font-size: 20px; font-weight: 900; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px;">${schoolProfile.name || 'SMART PUBLIC SCHOOL'}</h1>
+                        <p style="margin: 2px 0; font-size: 10px; color: #475569; font-weight: 600;">${schoolProfile.address || 'Campus Address'} ${schoolProfile.phone ? '• Phone: ' + schoolProfile.phone : ''}</p>
+                        <h2 style="margin: 6px 0 0 0; font-size: 13px; font-weight: 800; color: #1e293b; text-transform: uppercase; letter-spacing: 0.5px;">
+                            ${currentExam.title || 'Examination'} — OFFICIAL CLASS GAZETTE & TABULATION SHEET
+                        </h2>
+                        <div style="margin-top: 4px; font-size: 10px; color: #64748b; font-weight: 700;">
+                            <span>Class: <strong style="color: #0f172a;">${currentClass.name || 'Class'}</strong></span> • 
+                            <span>Session: <strong style="color: #0f172a;">${currentExam.session || '2025-2026'}</strong></span> • 
+                            <span>Date of Result: <strong style="color: #0f172a;">${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</strong></span>
+                        </div>
+                    </div>
+                    <div style="width: 70px; text-align: right; font-size: 9px; color: #64748b; font-weight: 700;">
+                        CONFIDENTIAL
+                    </div>
+                </div>
+
+                <!-- Gazette Table -->
+                <table style="width: 100%; border-collapse: collapse; font-size: 9.5px; margin-bottom: 15px;">
+                    <thead>
+                        <tr style="background: #f1f5f9; color: #0f172a; font-weight: 800; border-top: 1.5px solid #0f172a; border-bottom: 1.5px solid #0f172a;">
+                            <th style="border: 1px solid #cbd5e1; padding: 4px; width: 30px; text-align: center;">Sr.</th>
+                            <th style="border: 1px solid #cbd5e1; padding: 4px; width: 45px; text-align: center;">Roll #</th>
+                            <th style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; min-width: 120px;">Student Name</th>
+                            <th style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; min-width: 110px;">Father's Name</th>
+                            ${tabulationData.subjects.map(s => `<th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; min-width: 50px;">${s}</th>`).join('')}
+                            <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 55px; background: #e2e8f0;">Total</th>
+                            <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 45px;">%</th>
+                            <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 40px;">Grade</th>
+                            <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 45px;">Position</th>
+                            <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 60px;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tabulationData.rows.map((row, idx) => {
+                            const isForcePass = row.moderationOverride === 'pass' || row.moderationOverride === 'conditional_pass';
+                            const isForceFail = row.moderationOverride === 'fail';
+                            const isPassed = isForcePass || (row.isComplete && row.isPassed && !isForceFail);
+                            const isPending = !row.isComplete && !isForcePass && !isForceFail;
+                            return `
+                                <tr style="background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; color: #64748b;">${idx + 1}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 800; color: #4f46e5;">${row.rollNumber}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px 6px; font-weight: 700; color: #0f172a; text-transform: uppercase;">${row.name}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px 6px; color: #334155;">${row.fatherName || '—'}</td>
+                                    ${tabulationData.subjects.map(s => {
+                                        const m = row?.subjectMarks?.[s];
+                                        const val = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '—') : '—';
+                                        return `<td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 700;">${val}</td>`;
+                                    }).join('')}
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 900; background: #f1f5f9; color: #0f172a;">${row.totalObtained}/${row.totalMax}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 800;">${row.percentage}%</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 900; color: #4f46e5;">${row.grade}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 800; color: #059669;">${getOrdinal(row.position)}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 900; font-size: 8.5px; color: ${isPending ? '#d97706' : isPassed ? '#059669' : '#e11d48'};">
+                                        ${isPending ? 'PENDING' : isPassed ? 'PASSED' : 'FAILED'}
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+
+                <!-- Summary Statistics Strip -->
+                <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 6px; padding: 6px 12px; margin-bottom: 25px; display: flex; justify-content: space-around; text-align: center; font-size: 10px;">
+                    <div><span style="color: #64748b; font-weight: 700;">Total Students:</span> <strong style="color: #0f172a; font-size: 12px;">${tabulationData.stats.totalStudents || 0}</strong></div>
+                    <div><span style="color: #64748b; font-weight: 700;">Total Passed:</span> <strong style="color: #059669; font-size: 12px;">${tabulationData.stats.passedCount || 0}</strong></div>
+                    <div><span style="color: #64748b; font-weight: 700;">Total Failed:</span> <strong style="color: #e11d48; font-size: 12px;">${tabulationData.stats.failedCount || 0}</strong></div>
+                    <div><span style="color: #64748b; font-weight: 700;">Overall Pass Rate:</span> <strong style="color: #4f46e5; font-size: 12px;">${tabulationData.stats.passingRate || 0}%</strong></div>
+                    <div><span style="color: #64748b; font-weight: 700;">Class Highest:</span> <strong style="color: #d97706; font-size: 12px;">${tabulationData.stats.highestPercentage || 0}%</strong></div>
+                </div>
+
+                <!-- Signatures -->
+                <div style="display: flex; justify-content: space-between; align-items: flex-end; padding: 0 40px; margin-top: 15px;">
+                    <div style="text-align: center; width: 180px;">
+                        <div style="border-top: 1px solid #334155; padding-top: 4px; font-size: 10px; font-weight: 800; color: #334155;">Tabulator / Exam Incharge</div>
+                    </div>
+                    <div style="text-align: center; width: 180px;">
+                        <div style="border-top: 1px solid #334155; padding-top: 4px; font-size: 10px; font-weight: 800; color: #334155;">Class Incharge</div>
+                    </div>
+                    <div style="text-align: center; width: 180px;">
+                        <div style="border-top: 1px solid #334155; padding-top: 4px; font-size: 10px; font-weight: 800; color: #334155;">Principal Stamp & Sign</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        printHtmlInIframe(html, gazetteTitle, true);
     };
 
     // --- Actions: Vector PDF Generation ---
@@ -2629,6 +3010,15 @@ export default function Exams() {
                                 Upload to Parents ({selectedStudentIdsForBatch.size})
                             </button>
                             <button
+                                onClick={handleBatchPrintDmc}
+                                disabled={tabulationData.rows.length === 0}
+                                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition-colors disabled:opacity-50"
+                                title="Print all selected student DMC cards on A4 portrait"
+                            >
+                                <Printer className="w-4 h-4" />
+                                {selectedStudentIdsForBatch.size > 0 ? `Print Cards (${selectedStudentIdsForBatch.size})` : `Print All Cards (${tabulationData.rows.length})`}
+                            </button>
+                            <button
                                 onClick={handleBatchDownloadPdf}
                                 disabled={selectedStudentIdsForBatch.size === 0 || isDownloadingPdf}
                                 className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200 transition-colors disabled:opacity-50"
@@ -3255,7 +3645,7 @@ export default function Exams() {
                                     Download PDF
                                 </button>
                                 <button
-                                    onClick={() => window.print()}
+                                    onClick={() => handlePrintSingleDmc(selectedStudentForDmc)}
                                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors"
                                 >
                                     <Printer className="w-3.5 h-3.5" />
