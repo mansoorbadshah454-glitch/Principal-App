@@ -535,6 +535,784 @@ export default function AdmissionHistory() {
     }
   };
 
+  const fetchSafeLogoBase64 = async (imageUrl) => {
+    if (!imageUrl || typeof imageUrl !== 'string') return '';
+    const cleanUrl = imageUrl.trim();
+    if (cleanUrl.startsWith('data:image/')) return cleanUrl;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const res = await fetch(cleanUrl, { mode: 'cors', signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const blob = await res.blob();
+        return await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch (e) {}
+
+    try {
+      const pUrl = `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl.replace(/^https?:\/\//, ''))}&output=png`;
+      const res = await fetch(pUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        return await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch (e) {}
+
+    return cleanUrl;
+  };
+
+  const resolveSchoolLogoForPrint = async (sId = schoolId) => {
+    const activeSchoolId = sId || (localStorage.getItem("manual_session") ? JSON.parse(localStorage.getItem("manual_session"))?.schoolId : null);
+
+    let rawLogo = "";
+    if (activeSchoolId) {
+      rawLogo = localStorage.getItem(`school_logo_base64_${activeSchoolId}`) || "";
+    }
+    if (!rawLogo) {
+      rawLogo = localStorage.getItem("schoolLogo") || "";
+    }
+    if (!rawLogo) {
+      try {
+        const sess = JSON.parse(localStorage.getItem("manual_session") || "{}");
+        rawLogo = sess.profileImage || sess.logo || sess.schoolLogo || "";
+      } catch (e) {}
+    }
+
+    if (!rawLogo && activeSchoolId) {
+      try {
+        const profileRef = doc(db, `schools/${activeSchoolId}/settings`, "profile");
+        const profileSnap = await getDoc(profileRef);
+        if (profileSnap.exists()) {
+          const pData = profileSnap.data();
+          rawLogo = pData.profileImage || pData.logo || pData.schoolLogo || pData.logoUrl || "";
+        }
+        if (!rawLogo) {
+          const rootRef = doc(db, "schools", activeSchoolId);
+          const rootSnap = await getDoc(rootRef);
+          if (rootSnap.exists()) {
+            const rData = rootSnap.data();
+            rawLogo = rData.profileImage || rData.logo || rData.schoolLogo || rData.logoUrl || "";
+          }
+        }
+      } catch (err) {}
+    }
+
+    let logoBase64 = rawLogo;
+    if (rawLogo && typeof rawLogo === "string" && !rawLogo.startsWith("data:image/")) {
+      const b64 = await fetchSafeLogoBase64(rawLogo);
+      if (b64 && b64.startsWith("data:image/")) {
+        logoBase64 = b64;
+        if (activeSchoolId) {
+          try {
+            localStorage.setItem(`school_logo_base64_${activeSchoolId}`, b64);
+          } catch (e) {}
+        }
+      }
+    }
+
+    return logoBase64;
+  };
+
+  const handlePrintAdmissionsReport = async () => {
+    if (displayedStudents.length === 0) {
+      alert("No student admission records to print.");
+      return;
+    }
+
+    const schoolName = (localStorage.getItem("schoolName") || "MAI SMS ACADEMY").toUpperCase();
+    const logoBase64 = await resolveSchoolLogoForPrint(schoolId);
+    const schoolAddress = localStorage.getItem("schoolAddress") || "";
+    const schoolPhone = localStorage.getItem("schoolPhone") || "";
+
+    const oldFrame = document.getElementById("admissions-report-print-frame");
+    if (oldFrame) oldFrame.remove();
+
+    const printFrame = document.createElement("iframe");
+    printFrame.id = "admissions-report-print-frame";
+    printFrame.style.position = "fixed";
+    printFrame.style.top = "-10000px";
+    printFrame.style.left = "-10000px";
+    printFrame.style.width = "297mm";
+    printFrame.style.height = "210mm";
+    printFrame.style.border = "none";
+    document.body.appendChild(printFrame);
+
+    const frameDoc = printFrame.contentWindow.document;
+    frameDoc.open();
+    frameDoc.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Admissions_Report_${new Date().toISOString().split('T')[0]}</title>
+        <style>
+          @page {
+            size: A4 landscape;
+            margin: 8mm 10mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            width: 100% !important;
+            font-size: 11px;
+          }
+          .report-container {
+            width: 100%;
+          }
+          .header-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2.5px solid #1e293b;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
+          }
+          .kpi-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 12px;
+          }
+          .kpi-card {
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            padding: 6px 10px;
+            text-align: center;
+          }
+          table.report-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+            margin-bottom: 16px;
+          }
+          table.report-table th, table.report-table td {
+            border: 1px solid #cbd5e1;
+            padding: 5px 6px;
+          }
+          table.report-table th {
+            background: #f1f5f9;
+            font-weight: 800;
+            color: #0f172a;
+            text-transform: uppercase;
+            font-size: 9px;
+          }
+          .signature-strip {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-top: 25px;
+            padding: 0 30px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="report-container">
+          <div class="header-banner">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              ${logoBase64 ? `
+                <div style="width: 50px; height: 50px; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #ffffff;">
+                  <img src="${logoBase64}" style="width: 100%; height: 100%; object-fit: contain;" alt="Logo" />
+                </div>
+              ` : ''}
+              <div>
+                <div style="font-size: 17px; font-weight: 900; color: #1e1b4b; text-transform: uppercase;">${schoolName}</div>
+                <div style="font-size: 10px; color: #475569; font-weight: 600;">
+                  ${schoolAddress ? `${schoolAddress} • ` : ''}${schoolPhone ? `Tel: ${schoolPhone}` : ''}
+                </div>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <div style="display: inline-block; background: #4f46e5; color: #ffffff; font-weight: 800; font-size: 11px; padding: 3px 12px; border-radius: 4px; text-transform: uppercase;">
+                Student Admissions Register & Report
+              </div>
+              <div style="font-size: 10px; color: #64748b; font-weight: 600; margin-top: 3px;">
+                Printed On: ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} • Filter: ${timeFilter.replace('_', ' ').toUpperCase()}
+              </div>
+            </div>
+          </div>
+
+          <div class="kpi-strip">
+            <div class="kpi-card">
+              <div style="font-size: 8.5px; font-weight: 800; color: #64748b; text-transform: uppercase;">Total Admissions</div>
+              <div style="font-size: 15px; font-weight: 900; color: #4338ca; margin-top: 2px;">${displayedStudents.length}</div>
+            </div>
+            <div class="kpi-card">
+              <div style="font-size: 8.5px; font-weight: 800; color: #64748b; text-transform: uppercase;">Fresh Intake</div>
+              <div style="font-size: 15px; font-weight: 900; color: #059669; margin-top: 2px;">${displayedStudents.filter(s => !s.isSibling).length}</div>
+            </div>
+            <div class="kpi-card">
+              <div style="font-size: 8.5px; font-weight: 800; color: #64748b; text-transform: uppercase;">Sibling Intake</div>
+              <div style="font-size: 15px; font-weight: 900; color: #d97706; margin-top: 2px;">${displayedStudents.filter(s => s.isSibling).length}</div>
+            </div>
+            <div class="kpi-card">
+              <div style="font-size: 8.5px; font-weight: 800; color: #64748b; text-transform: uppercase;">Total Adm. Fee Volume</div>
+              <div style="font-size: 15px; font-weight: 900; color: #0284c7; margin-top: 2px;">Rs ${displayedStudents.reduce((sum, s) => sum + (Number(s.admissionFee) || 0), 0).toLocaleString()}</div>
+            </div>
+          </div>
+
+          <table class="report-table">
+            <thead>
+              <tr>
+                <th style="width: 25px; text-align: center;">#</th>
+                <th style="width: 75px;">Date</th>
+                <th>Student Full Name</th>
+                <th style="width: 65px; text-align: center;">Roll No</th>
+                <th style="width: 85px; text-align: center;">Adm No</th>
+                <th style="width: 90px;">Class</th>
+                <th>Father / Guardian Name</th>
+                <th style="width: 95px;">Contact</th>
+                <th style="width: 80px; text-align: center;">Intake Type</th>
+                <th style="width: 90px; text-align: right;">Adm Fee</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${displayedStudents.map((stu, i) => {
+                const sName = stu.name || `${stu.firstName || ''} ${stu.lastName || ''}`.trim() || 'Student';
+                const pName = stu.parentDetails?.fatherName || stu.parentProfile?.name || 'Guardian';
+                const pPhone = stu.parentDetails?.phone || stu.parentProfile?.phone || 'N/A';
+                const dateStr = stu.admissionDate ? stu.admissionDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+                return `
+                  <tr>
+                    <td style="text-align: center; color: #64748b;">${i + 1}</td>
+                    <td>${dateStr}</td>
+                    <td style="font-weight: 700; color: #0f172a;">${sName}</td>
+                    <td style="text-align: center; font-family: monospace;">${stu.rollNo || '-'}</td>
+                    <td style="text-align: center; font-family: monospace;">${stu.admissionNo || '-'}</td>
+                    <td>${stu.className || '-'}</td>
+                    <td>${pName}</td>
+                    <td>${pPhone}</td>
+                    <td style="text-align: center; font-weight: 700; color: ${stu.isSibling ? '#4338ca' : '#059669'};">
+                      ${stu.isSibling ? 'Sibling' : 'Fresh'}
+                    </td>
+                    <td style="text-align: right; font-weight: 700;">
+                      ${stu.admissionFee > 0 ? `Rs ${Number(stu.admissionFee).toLocaleString()}` : '-'}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+
+          <div class="signature-strip">
+            <div style="text-align: center; width: 170px;">
+              <div style="border-top: 1.5px solid #0f172a; padding-top: 4px; font-weight: 700; font-size: 10px;">Admission Officer</div>
+            </div>
+            <div style="text-align: center; width: 170px;">
+              <div style="border-top: 1.5px solid #0f172a; padding-top: 4px; font-weight: 700; font-size: 10px;">Accounts Officer</div>
+            </div>
+            <div style="text-align: center; width: 190px;">
+              <div style="border-top: 1.5px solid #0f172a; padding-top: 4px; font-weight: 700; font-size: 10px;">Principal Signature & Seal</div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    frameDoc.close();
+
+    const checkImagesAndPrint = () => {
+      const imgs = frameDoc.images;
+      let loaded = 0;
+      const finish = () => {
+        try {
+          printFrame.contentWindow.focus();
+          printFrame.contentWindow.print();
+        } catch (err) {
+          console.error("Print report error:", err);
+        } finally {
+          setTimeout(() => printFrame.remove(), 2500);
+        }
+      };
+
+      if (!imgs || imgs.length === 0) {
+        finish();
+        return;
+      }
+
+      for (let i = 0; i < imgs.length; i++) {
+        if (imgs[i].complete && imgs[i].naturalWidth !== 0) {
+          loaded++;
+        } else {
+          imgs[i].onload = () => {
+            loaded++;
+            if (loaded >= imgs.length) finish();
+          };
+          imgs[i].onerror = () => {
+            loaded++;
+            if (loaded >= imgs.length) finish();
+          };
+        }
+      }
+
+      if (loaded >= imgs.length) {
+        setTimeout(finish, 100);
+      } else {
+        setTimeout(finish, 2200);
+      }
+    };
+
+    setTimeout(checkImagesAndPrint, 150);
+  };
+
+  const handlePrintStudentAdmissionForm = async (stu) => {
+    if (!stu) return;
+
+    const schoolName = (localStorage.getItem("schoolName") || "MAI SMS ACADEMY").toUpperCase();
+    const logoBase64 = await resolveSchoolLogoForPrint(schoolId);
+    const schoolAddress = localStorage.getItem("schoolAddress") || "";
+    const schoolPhone = localStorage.getItem("schoolPhone") || "";
+    const schoolEmergency = localStorage.getItem("schoolEmergencyPhone") || "";
+
+    const studentName = stu.name || `${stu.firstName || ''} ${stu.lastName || ''}`.trim() || 'Student';
+    const parentName = stu.parentDetails?.fatherName || stu.parentProfile?.name || 'Guardian';
+    const parentPhone = stu.parentDetails?.phone || stu.parentProfile?.phone || 'N/A';
+    const parentEmail = stu.parentDetails?.email || stu.parentProfile?.email || 'N/A';
+    const parentAddress = stu.parentDetails?.address || stu.parentProfile?.address || stu.address || 'N/A';
+    const parentCnic = stu.parentDetails?.cnic || stu.parentProfile?.cnic || 'N/A';
+    const parentOccupation = stu.parentDetails?.occupation || stu.parentProfile?.occupation || 'N/A';
+    const studentPhoto = stu.profilePic || stu.avatar || "";
+
+    const oldFrame = document.getElementById("student-admission-form-frame");
+    if (oldFrame) oldFrame.remove();
+
+    const printFrame = document.createElement("iframe");
+    printFrame.id = "student-admission-form-frame";
+    printFrame.style.position = "fixed";
+    printFrame.style.top = "-10000px";
+    printFrame.style.left = "-10000px";
+    printFrame.style.width = "210mm";
+    printFrame.style.height = "297mm";
+    printFrame.style.border = "none";
+    document.body.appendChild(printFrame);
+
+    const frameDoc = printFrame.contentWindow.document;
+    frameDoc.open();
+    frameDoc.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Admission_Form_${studentName.replace(/[^a-zA-Z0-9]/g, '_')}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 6mm 10mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            width: 100% !important;
+            font-size: 11px;
+            line-height: 1.35;
+          }
+          .form-container {
+            width: 100%;
+            height: 284mm;
+            border: 2px solid #1e293b;
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+          }
+          .header-table {
+            width: 100%;
+            border-bottom: 2px solid #1e293b;
+            padding-bottom: 8px;
+            margin-bottom: 6px;
+          }
+          .section-title {
+            background: #f1f5f9;
+            color: #0f172a;
+            font-weight: 800;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-left: 4px solid #4f46e5;
+            margin-top: 5px;
+            margin-bottom: 5px;
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+          }
+          .field-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+            font-size: 10.5px;
+          }
+          .field-label {
+            font-weight: 700;
+            color: #334155;
+            white-space: nowrap;
+          }
+          .field-val {
+            font-weight: 700;
+            color: #0f172a;
+            padding: 0 4px;
+            border-bottom: 1px solid #64748b;
+            margin: 0 8px 0 4px;
+          }
+          table.data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+            margin-top: 3px;
+            margin-bottom: 4px;
+          }
+          table.data-table th, table.data-table td {
+            border: 1px solid #cbd5e1;
+            padding: 4px 6px;
+            text-align: left;
+          }
+          table.data-table th {
+            background: #f8fafc;
+            font-weight: 700;
+            color: #334155;
+          }
+          .office-box {
+            border: 1.5px solid #1e293b;
+            background: #f8fafc;
+            padding: 6px 10px;
+            margin-top: 4px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="form-container">
+          <div>
+            <table class="header-table">
+              <tr>
+                <td style="width: 75px; vertical-align: middle; text-align: center;">
+                  ${logoBase64 ? `
+                    <div style="width: 65px; height: 65px; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin: 0 auto; background: #ffffff;">
+                      <img src="${logoBase64}" style="width: 100%; height: 100%; object-fit: contain;" alt="Logo" />
+                    </div>
+                  ` : `
+                    <div style="width: 65px; height: 65px; border: 1.5px solid #cbd5e1; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 11px; color: #4f46e5; background: #eef2ff; margin: 0 auto;">
+                      ${schoolName.substring(0, 4)}
+                    </div>
+                  `}
+                </td>
+                <td style="vertical-align: middle; padding-left: 12px; text-align: left;">
+                  <div style="font-size: 18px; font-weight: 900; color: #1e1b4b; text-transform: uppercase;">${schoolName}</div>
+                  <div style="font-size: 10px; font-weight: 600; color: #475569; margin-top: 2px;">
+                    ${schoolAddress ? `${schoolAddress} • ` : ''}${schoolPhone ? `Tel: ${schoolPhone}` : ''}${schoolEmergency ? ` • Mob: ${schoolEmergency}` : ''}
+                  </div>
+                  <div style="display: inline-block; background: #4f46e5; color: #ffffff; font-weight: 800; font-size: 11px; padding: 2px 10px; border-radius: 4px; margin-top: 4px; letter-spacing: 0.5px; text-transform: uppercase;">
+                    Official Student Admission & Enrollment Dossier
+                  </div>
+                </td>
+                <td style="width: 95px; vertical-align: top; text-align: right;">
+                  <div style="width: 90px; height: 105px; border: 1.5px solid #64748b; border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #ffffff;">
+                    ${studentPhoto ? `<img src="${studentPhoto}" style="width: 100%; height: 100%; object-fit: cover;" alt="Photo" />` : `<span style="font-size: 8px; color: #64748b; font-weight: 700; text-align: center; padding: 4px;">STUDENT PHOTOGRAPH</span>`}
+                  </div>
+                </td>
+              </tr>
+            </table>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 10.5px; font-weight: 700;">
+              <div>Admission / Reg. No: <strong style="color: #4338ca; font-size: 12px; border-bottom: 1.5px solid #4338ca; padding: 0 4px;">${stu.admissionNo || stu.id?.substring(0, 10) || 'ENROLLED'}</strong></div>
+              <div>Roll Number: <strong style="border-bottom: 1.5px solid #0f172a; padding: 0 6px;">${stu.rollNo || 'Assigned'}</strong></div>
+              <div>Admission Date: <strong style="border-bottom: 1.5px solid #0f172a; padding: 0 4px;">${stu.admissionDate ? stu.admissionDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString()}</strong></div>
+            </div>
+
+            <!-- SECTION 1: CANDIDATE PARTICULARS -->
+            <div class="section-title">
+              <span>1. Student Particulars</span>
+              <span style="font-size: 9px; font-weight: 700; color: #059669;">Verified Record</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Student Full Name:</span>
+              <span class="field-val" style="flex: 3; font-size: 12px; text-transform: uppercase;">${studentName}</span>
+              <span class="field-label">Gender:</span>
+              <span class="field-val" style="width: 90px;">${stu.gender ? (stu.gender.charAt(0).toUpperCase() + stu.gender.slice(1)) : 'Male'}</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Enrolled Class:</span>
+              <span class="field-val" style="flex: 1.5; color: #4338ca; font-weight: 900;">${stu.className || 'Class'}</span>
+              <span class="field-label">Date of Birth:</span>
+              <span class="field-val" style="flex: 1.2;">${stu.dob || 'On Record'}</span>
+              <span class="field-label">B-Form / CNIC:</span>
+              <span class="field-val" style="flex: 1.8;">${stu.cnic || stu.bForm || 'Verified'}</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Intake Category:</span>
+              <span class="field-val" style="flex: 1.5;">${stu.isSibling ? 'Sibling Enrolled' : 'Fresh Admission'}</span>
+              <span class="field-label">Previous School:</span>
+              <span class="field-val" style="flex: 2.5;">${stu.previousSchool || 'Direct / New Student'}</span>
+            </div>
+
+            <!-- SECTION 2: PARENT / GUARDIAN INFORMATION -->
+            <div class="section-title">
+              <span>2. Parent / Guardian Information</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Father / Guardian Name:</span>
+              <span class="field-val" style="flex: 2; text-transform: uppercase;">${parentName}</span>
+              <span class="field-label">Father CNIC:</span>
+              <span class="field-val" style="flex: 1.5;">${parentCnic}</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Occupation / Profession:</span>
+              <span class="field-val" style="flex: 1.5;">${parentOccupation}</span>
+              <span class="field-label">Primary Mobile:</span>
+              <span class="field-val" style="flex: 1.5;">${parentPhone}</span>
+              <span class="field-label">Email:</span>
+              <span class="field-val" style="flex: 1.5;">${parentEmail}</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Residential Address:</span>
+              <span class="field-val" style="flex: 3;">${parentAddress}</span>
+            </div>
+
+            <!-- SECTION 3: FEE STRUCTURE -->
+            <div class="section-title">
+              <span>3. Assigned Fee Package & Intake Charges</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th style="width: 120px; text-align: center;">Frequency</th>
+                  <th style="width: 120px; text-align: right;">Amount (PKR)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${stu.admissionFee > 0 ? `
+                  <tr>
+                    <td style="font-weight: 700;">Admission / Registration Fee</td>
+                    <td style="text-align: center; color: #64748b;">One Time</td>
+                    <td style="text-align: right; font-weight: 800; color: #4338ca;">Rs ${Number(stu.admissionFee).toLocaleString()}</td>
+                  </tr>
+                ` : ''}
+                ${stu.tuitionFee > 0 ? `
+                  <tr>
+                    <td style="font-weight: 700;">Tuition Fee</td>
+                    <td style="text-align: center; color: #64748b;">Monthly Recurring</td>
+                    <td style="text-align: right; font-weight: 800;">Rs ${Number(stu.tuitionFee).toLocaleString()}</td>
+                  </tr>
+                ` : ''}
+                ${(stu.feeStructure || []).filter(f => f.name !== 'Tuition fee' && f.name !== 'Admission fee').map(f => `
+                  <tr>
+                    <td>${f.name}</td>
+                    <td style="text-align: center; color: #64748b;">Assigned Structure</td>
+                    <td style="text-align: right; font-weight: 700;">Rs ${Number(f.amount).toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+
+            <!-- SECTION 4: UNDERTAKING / DECLARATION -->
+            <div class="section-title">
+              <span>4. Institutional Undertaking & Agreement</span>
+            </div>
+            <div style="font-size: 9px; color: #334155; line-height: 1.4; text-align: justify; margin: 3px 0 6px;">
+              The undersigned parent/guardian solemnly affirms that this student has been admitted in accordance with official institutional admission policies. We abide by all school regulations, academic integrity guidelines, attendance mandates, and timely fee deposits.
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 10px; padding: 0 10px;">
+              <div style="text-align: center; width: 170px;">
+                <div style="border-top: 1.5px solid #0f172a; padding-top: 3px; font-weight: 700; font-size: 9.5px;">Parent / Guardian Signature</div>
+              </div>
+              <div style="text-align: center; width: 140px;">
+                <div style="border-top: 1.5px solid #0f172a; padding-top: 3px; font-weight: 700; font-size: 9.5px;">Enrollment Date</div>
+              </div>
+              <div style="text-align: center; width: 170px;">
+                <div style="border-top: 1.5px solid #0f172a; padding-top: 3px; font-weight: 700; font-size: 9.5px;">Student Signature</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 5: FOR OFFICIAL USE ONLY -->
+          <div class="office-box">
+            <div style="font-weight: 900; font-size: 10px; text-transform: uppercase; color: #0f172a; border-bottom: 1px solid #cbd5e1; padding-bottom: 2px; margin-bottom: 4px; display: flex; justify-content: space-between;">
+              <span>Official Institutional Approval & Sanction</span>
+              <span style="color: #059669; font-weight: 900;">Status: ADMITTED & ENROLLED</span>
+            </div>
+            <div style="display: flex; gap: 15px; font-size: 10px; margin-bottom: 6px;">
+              <div style="flex: 1;">Allotted Class: <strong>${stu.className || 'Class'}</strong></div>
+              <div style="flex: 1;">Roll Number: <strong>${stu.rollNo || '-'}</strong></div>
+              <div style="flex: 1;">Admission ID: <strong>${stu.admissionNo || '-'}</strong></div>
+              <div style="flex: 1;">Intake Mode: <strong>${stu.isSibling ? 'Sibling' : 'Fresh'}</strong></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; padding: 12px 10px 2px;">
+              <div style="text-align: center; width: 150px;">
+                <div style="border-top: 1.2px solid #0f172a; padding-top: 2px; font-size: 9.5px; font-weight: 700;">Admission Incharge</div>
+              </div>
+              <div style="text-align: center; width: 150px;">
+                <div style="border-top: 1.2px solid #0f172a; padding-top: 2px; font-size: 9.5px; font-weight: 700;">Accounts Office</div>
+              </div>
+              <div style="text-align: center; width: 170px;">
+                <div style="border-top: 1.2px solid #0f172a; padding-top: 2px; font-size: 9.5px; font-weight: 700;">Principal Stamp & Signature</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    frameDoc.close();
+
+    const checkImagesAndPrint = () => {
+      const imgs = frameDoc.images;
+      let loaded = 0;
+      const finish = () => {
+        try {
+          printFrame.contentWindow.focus();
+          printFrame.contentWindow.print();
+        } catch (err) {
+          console.error("Print student form error:", err);
+        } finally {
+          setTimeout(() => printFrame.remove(), 2500);
+        }
+      };
+
+      if (!imgs || imgs.length === 0) {
+        finish();
+        return;
+      }
+
+      for (let i = 0; i < imgs.length; i++) {
+        if (imgs[i].complete && imgs[i].naturalWidth !== 0) {
+          loaded++;
+        } else {
+          imgs[i].onload = () => {
+            loaded++;
+            if (loaded >= imgs.length) finish();
+          };
+          imgs[i].onerror = () => {
+            loaded++;
+            if (loaded >= imgs.length) finish();
+          };
+        }
+      }
+
+      if (loaded >= imgs.length) {
+        setTimeout(finish, 100);
+      } else {
+        setTimeout(finish, 2200);
+      }
+    };
+
+    setTimeout(checkImagesAndPrint, 150);
+  };
+
+  const handlePrintSingleReceipt = (stu) => {
+    const el = document.querySelector(".admission-receipt-history");
+    if (!el) return;
+
+    const oldFrame = document.getElementById("admission-receipt-history-frame");
+    if (oldFrame) oldFrame.remove();
+
+    const printFrame = document.createElement("iframe");
+    printFrame.id = "admission-receipt-history-frame";
+    printFrame.style.position = "fixed";
+    printFrame.style.top = "-10000px";
+    printFrame.style.left = "-10000px";
+    printFrame.style.width = "210mm";
+    printFrame.style.height = "297mm";
+    printFrame.style.border = "none";
+    document.body.appendChild(printFrame);
+
+    const frameDoc = printFrame.contentWindow.document;
+    frameDoc.open();
+    frameDoc.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Admission_Receipt_${stu?.name || 'Student'}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 8mm 10mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            width: 100% !important;
+          }
+          .receipt-wrap {
+            max-width: 600px;
+            margin: 0 auto;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 12px;
+            padding: 20px;
+            background: #ffffff;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          th, td {
+            padding: 6px 8px;
+            border-bottom: 1px solid #e2e8f0;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="receipt-wrap">
+          ${el.innerHTML}
+        </div>
+      </body>
+      </html>
+    `);
+    frameDoc.close();
+
+    const triggerPrint = () => {
+      try {
+        printFrame.contentWindow.focus();
+        printFrame.contentWindow.print();
+      } catch (err) {
+        console.error("Print receipt error:", err);
+      } finally {
+        setTimeout(() => printFrame.remove(), 2500);
+      }
+    };
+
+    setTimeout(triggerPrint, 350);
+  };
+
   // State for Ledger PDF generation
   const [isGeneratingLedgerPDF, setIsGeneratingLedgerPDF] = useState(false);
 
@@ -804,7 +1582,7 @@ export default function AdmissionHistory() {
           </button>
 
           <button
-            onClick={() => window.print()}
+            onClick={handlePrintAdmissionsReport}
             className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs md:text-sm font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
           >
             <Printer size={15} />
@@ -1530,6 +2308,13 @@ export default function AdmissionHistory() {
                           >
                             <Eye size={15} />
                           </button>
+                          <button
+                            onClick={() => handlePrintStudentAdmissionForm(stu)}
+                            className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
+                            title="Print Official Admission Form"
+                          >
+                            <FileText size={15} />
+                          </button>
                           {stu.classId && stu.id && (
                             <button
                               onClick={() => navigate(`/student/edit/${stu.classId}/${stu.id}`)}
@@ -1673,6 +2458,14 @@ export default function AdmissionHistory() {
                 <span className="font-bold text-xs tracking-wide">Admission Record Receipt</span>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handlePrintSingleReceipt(selectedStudentRecord)}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-1.5 font-bold text-xs transition-all cursor-pointer shadow-sm"
+                  title="Direct Print Official Slip"
+                >
+                  <Printer size={13} />
+                  <span>Print Slip</span>
+                </button>
                 <button
                   onClick={handleDownloadPDF}
                   disabled={isDownloading}

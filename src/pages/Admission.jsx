@@ -33,6 +33,7 @@ import {
   ArrowLeft,
   Check,
   GraduationCap,
+  FileText,
 } from "lucide-react";
 import { db, storage } from "../firebase";
 import AdmissionHistory from "./AdmissionHistory";
@@ -119,14 +120,14 @@ const Admission = () => {
     if (!cleanUrl) return "";
     if (cleanUrl.startsWith("data:image/")) return cleanUrl;
 
-    // Strategy 1: Direct CORS fetch with 1.5s timeout
+    // Strategy 1: Direct fetch with abort controller
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      const response = await fetch(cleanUrl, { mode: "cors", signal: controller.signal });
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(cleanUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
-      if (response.ok) {
-        const blob = await response.blob();
+      if (res.ok) {
+        const blob = await res.blob();
         const base64 = await new Promise((resolve) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result);
@@ -139,16 +140,16 @@ const Admission = () => {
       }
     } catch (e) {}
 
-    // Strategy 2: Proxy fallback (weserv / allorigins)
+    // Strategy 2: Fast Public CORS Image Proxy
     const proxyUrls = [
-      `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl.replace(/^https?:\/\//, ""))}&output=png`,
+      `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl)}&output=png`,
       `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`
     ];
 
     for (const pUrl of proxyUrls) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const timeoutId = setTimeout(() => controller.abort(), 2500);
         const res = await fetch(pUrl, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (res.ok) {
@@ -165,34 +166,6 @@ const Admission = () => {
         }
       } catch (err) {}
     }
-
-    // Strategy 3: Offscreen Canvas (non-blocking)
-    try {
-      const canvasBase64 = await new Promise((resolve) => {
-        const img = new Image();
-        const timer = setTimeout(() => resolve(null), 1200);
-        img.crossOrigin = "Anonymous";
-        img.onload = () => {
-          clearTimeout(timer);
-          try {
-            const canvas = document.createElement("canvas");
-            canvas.width = img.naturalWidth || img.width || 200;
-            canvas.height = img.naturalHeight || img.height || 200;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0);
-            resolve(canvas.toDataURL("image/png"));
-          } catch (err) {
-            resolve(null);
-          }
-        };
-        img.onerror = () => {
-          clearTimeout(timer);
-          resolve(null);
-        };
-        img.src = cleanUrl;
-      });
-      if (canvasBase64 && canvasBase64.startsWith("data:image/")) return canvasBase64;
-    } catch (err) {}
 
     return cleanUrl;
   };
@@ -265,6 +238,539 @@ const Admission = () => {
     } finally {
       setIsDownloading(false);
     }
+  };
+
+  const printAdmissionSlipDirectly = () => {
+    const container = document.getElementById("admission-receipt-container");
+    if (!container) return;
+
+    const oldFrame = document.getElementById("admission-slip-print-frame");
+    if (oldFrame) oldFrame.remove();
+
+    const printFrame = document.createElement("iframe");
+    printFrame.id = "admission-slip-print-frame";
+    printFrame.style.position = "fixed";
+    printFrame.style.top = "-10000px";
+    printFrame.style.left = "-10000px";
+    printFrame.style.width = "210mm";
+    printFrame.style.height = "297mm";
+    printFrame.style.border = "none";
+    document.body.appendChild(printFrame);
+
+    const frameDoc = printFrame.contentWindow.document;
+    frameDoc.open();
+    frameDoc.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Admission_Deposit_Slip</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 6mm 8mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            width: 100% !important;
+          }
+          .admission-receipt {
+            margin-bottom: 15px;
+            page-break-after: always;
+            break-after: page;
+            border: 1.5px solid #cbd5e1 !important;
+            box-shadow: none !important;
+            background: #ffffff !important;
+          }
+          .admission-receipt:last-child {
+            page-break-after: auto;
+            break-after: auto;
+          }
+          img {
+            max-width: 100%;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+        </style>
+      </head>
+      <body>
+        ${container.innerHTML}
+      </body>
+      </html>
+    `);
+    frameDoc.close();
+
+    const triggerPrint = () => {
+      try {
+        printFrame.contentWindow.focus();
+        printFrame.contentWindow.print();
+      } catch (err) {
+        console.error("Admission slip print error:", err);
+      } finally {
+        setTimeout(() => printFrame.remove(), 2500);
+      }
+    };
+
+    setTimeout(triggerPrint, 350);
+  };
+
+  const handlePrintBlankAdmissionForm = async () => {
+    let currentSchool = { ...schoolProfile };
+    const activeSchoolId = schoolId || (localStorage.getItem("manual_session") ? JSON.parse(localStorage.getItem("manual_session"))?.schoolId : null);
+
+    let rawLogo = "";
+    if (activeSchoolId) {
+      rawLogo = localStorage.getItem(`school_logo_base64_${activeSchoolId}`) || "";
+    }
+    if (!rawLogo) {
+      rawLogo = localStorage.getItem("schoolLogo") || "";
+    }
+    if (!rawLogo) {
+      try {
+        const sess = JSON.parse(localStorage.getItem("manual_session") || "{}");
+        rawLogo = sess.profileImage || sess.logo || sess.schoolLogo || "";
+      } catch (e) {}
+    }
+    if (!rawLogo && currentSchool.profileImage) {
+      rawLogo = currentSchool.profileImage;
+    }
+
+    if (activeSchoolId && (!currentSchool.name || !rawLogo)) {
+      try {
+        const profileRef = doc(db, `schools/${activeSchoolId}/settings`, "profile");
+        const profileSnap = await getDoc(profileRef);
+        if (profileSnap.exists()) {
+          const pData = profileSnap.data();
+          if (!currentSchool.name) currentSchool.name = pData.name || pData.schoolName || "";
+          if (!currentSchool.phone) currentSchool.phone = pData.phone || "";
+          if (!currentSchool.emergencyContact) currentSchool.emergencyContact = pData.emergencyContact || "";
+          if (!currentSchool.landline) currentSchool.landline = pData.landline || "";
+          if (!currentSchool.address) currentSchool.address = pData.address || "";
+          if (!currentSchool.email) currentSchool.email = pData.email || "";
+          if (!rawLogo) rawLogo = pData.profileImage || pData.logo || pData.schoolLogo || pData.logoUrl || "";
+        }
+        if (!rawLogo || !currentSchool.name) {
+          const rootRef = doc(db, "schools", activeSchoolId);
+          const rootSnap = await getDoc(rootRef);
+          if (rootSnap.exists()) {
+            const rData = rootSnap.data();
+            if (!currentSchool.name) currentSchool.name = rData.name || rData.schoolName || "";
+            if (!currentSchool.phone) currentSchool.phone = rData.phone || rData.schoolPhone || "";
+            if (!currentSchool.address) currentSchool.address = rData.address || rData.campus || "";
+            if (!rawLogo) rawLogo = rData.profileImage || rData.logo || rData.schoolLogo || rData.logoUrl || "";
+          }
+        }
+      } catch (err) {}
+    }
+
+    const schoolName = (currentSchool.name || localStorage.getItem("schoolName") || "MAI SMS ACADEMY").toUpperCase();
+    const schoolPhone = currentSchool.phone || localStorage.getItem("schoolPhone") || "";
+    const schoolEmergency = currentSchool.emergencyContact || localStorage.getItem("schoolEmergencyPhone") || "";
+    const schoolAddress = currentSchool.address || localStorage.getItem("schoolAddress") || "";
+    const schoolEmail = currentSchool.email || "";
+
+    let logoBase64 = rawLogo;
+    if (rawLogo && typeof rawLogo === "string" && !rawLogo.startsWith("data:image/")) {
+      const b64 = await fetchBase64ImageSafe(rawLogo);
+      if (b64 && b64.startsWith("data:image/")) {
+        logoBase64 = b64;
+        if (activeSchoolId) {
+          try {
+            localStorage.setItem(`school_logo_base64_${activeSchoolId}`, b64);
+          } catch (e) {}
+        }
+      }
+    }
+
+    const oldFrame = document.getElementById("blank-admission-print-frame");
+    if (oldFrame) oldFrame.remove();
+
+    const printFrame = document.createElement("iframe");
+    printFrame.id = "blank-admission-print-frame";
+    printFrame.style.position = "fixed";
+    printFrame.style.top = "-10000px";
+    printFrame.style.left = "-10000px";
+    printFrame.style.width = "210mm";
+    printFrame.style.height = "297mm";
+    printFrame.style.border = "none";
+    document.body.appendChild(printFrame);
+
+    const frameDoc = printFrame.contentWindow.document;
+    frameDoc.open();
+    frameDoc.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Student_Admission_Form</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 6mm 10mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            width: 100% !important;
+            font-size: 11px;
+            line-height: 1.35;
+          }
+          .form-container {
+            width: 100%;
+            height: 284mm;
+            border: 2px solid #1e293b;
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+          }
+          .header-table {
+            width: 100%;
+            border-bottom: 2px solid #1e293b;
+            padding-bottom: 8px;
+            margin-bottom: 6px;
+          }
+          .section-title {
+            background: #f1f5f9;
+            color: #0f172a;
+            font-weight: 800;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-left: 4px solid #4f46e5;
+            margin-top: 5px;
+            margin-bottom: 5px;
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+          }
+          .field-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+            font-size: 10.5px;
+          }
+          .field-label {
+            font-weight: 700;
+            color: #334155;
+            white-space: nowrap;
+          }
+          .field-line {
+            flex: 1;
+            border-bottom: 1px dotted #94a3b8;
+            height: 14px;
+            margin-left: 6px;
+            margin-right: 10px;
+          }
+          .check-box {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 1px solid #475569;
+            margin-right: 4px;
+            vertical-align: middle;
+          }
+          table.data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+            margin-top: 3px;
+            margin-bottom: 4px;
+          }
+          table.data-table th, table.data-table td {
+            border: 1px solid #cbd5e1;
+            padding: 4px 6px;
+            text-align: left;
+          }
+          table.data-table th {
+            background: #f8fafc;
+            font-weight: 700;
+            color: #334155;
+          }
+          .office-box {
+            border: 1.5px solid #1e293b;
+            background: #f8fafc;
+            padding: 6px 10px;
+            margin-top: 4px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="form-container">
+          <div>
+            <table class="header-table">
+              <tr>
+                <td style="width: 75px; vertical-align: middle; text-align: center;">
+                  ${logoBase64 ? `
+                    <div style="width: 65px; height: 65px; border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin: 0 auto; background: #ffffff;">
+                      <img src="${logoBase64}" style="width: 100%; height: 100%; object-fit: contain;" alt="Logo" />
+                    </div>
+                  ` : `
+                    <div style="width: 65px; height: 65px; border: 1.5px solid #cbd5e1; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 11px; color: #4f46e5; background: #eef2ff; margin: 0 auto;">
+                      ${schoolName.substring(0, 4)}
+                    </div>
+                  `}
+                </td>
+                <td style="vertical-align: middle; padding-left: 12px; text-align: left;">
+                  <div style="font-size: 18px; font-weight: 900; color: #1e1b4b; text-transform: uppercase; letter-spacing: -0.3px;">${schoolName}</div>
+                  <div style="font-size: 10px; font-weight: 600; color: #475569; margin-top: 2px;">
+                    ${schoolAddress ? `${schoolAddress} • ` : ''}${schoolPhone ? `Tel: ${schoolPhone}` : ''}${schoolEmergency ? ` • Mob: ${schoolEmergency}` : ''}${schoolEmail ? ` • Email: ${schoolEmail}` : ''}
+                  </div>
+                  <div style="display: inline-block; background: #4f46e5; color: #ffffff; font-weight: 800; font-size: 11px; padding: 2px 10px; border-radius: 4px; margin-top: 4px; letter-spacing: 0.5px; text-transform: uppercase;">
+                    Student Admission & Registration Application
+                  </div>
+                </td>
+                <td style="width: 95px; vertical-align: top; text-align: right;">
+                  <div style="width: 90px; height: 105px; border: 1.5px dashed #64748b; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4px; background: #ffffff;">
+                    <span style="font-size: 8px; color: #64748b; font-weight: 700; text-transform: uppercase;">Affix Recent Passport Size Photograph (1.5" x 1.5")</span>
+                  </div>
+                </td>
+              </tr>
+            </table>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 10.5px; font-weight: 700;">
+              <div>Reg. / Form No: <span style="display: inline-block; width: 120px; border-bottom: 1.5px solid #0f172a;"></span></div>
+              <div>Academic Session: <span style="border-bottom: 1.5px solid #0f172a; padding: 0 8px;">2026 - 2027</span></div>
+              <div>Date of Application: <span style="display: inline-block; width: 110px; border-bottom: 1.5px solid #0f172a;"></span></div>
+            </div>
+
+            <!-- SECTION 1: CANDIDATE PARTICULARS -->
+            <div class="section-title">
+              <span>1. Candidate / Student Particulars</span>
+              <span style="font-size: 9px; font-weight: normal; color: #475569;">Fill in Capital / Block Letters</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Student Full Name:</span>
+              <span class="field-line" style="flex: 3;"></span>
+              <span class="field-label">Gender:</span>
+              <span style="margin: 0 8px;"><span class="check-box"></span> Male</span>
+              <span style="margin: 0 8px;"><span class="check-box"></span> Female</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Date of Birth:</span>
+              <span class="field-line" style="flex: 1.2;"></span>
+              <span class="field-label">Age:</span>
+              <span class="field-line" style="flex: 0.8;"></span>
+              <span class="field-label">B-Form / CNIC No:</span>
+              <span class="field-line" style="flex: 1.8;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Class Seeking Admission To:</span>
+              <span class="field-line" style="flex: 1.5;"></span>
+              <span class="field-label">Group / Medium:</span>
+              <span class="field-line" style="flex: 1;"></span>
+              <span class="field-label">Blood Group:</span>
+              <span class="field-line" style="flex: 0.8;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Religion:</span>
+              <span class="field-line" style="flex: 1;"></span>
+              <span class="field-label">Nationality:</span>
+              <span class="field-line" style="flex: 1;"></span>
+              <span class="field-label">Mother Tongue:</span>
+              <span class="field-line" style="flex: 1;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Previous School Attended:</span>
+              <span class="field-line" style="flex: 2.5;"></span>
+              <span class="field-label">Last Class Passed:</span>
+              <span class="field-line" style="flex: 1;"></span>
+            </div>
+
+            <!-- SECTION 2: PARENT / GUARDIAN INFORMATION -->
+            <div class="section-title">
+              <span>2. Parent / Guardian Information</span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Father / Guardian Full Name:</span>
+              <span class="field-line" style="flex: 2;"></span>
+              <span class="field-label">Father CNIC No:</span>
+              <span class="field-line" style="flex: 1.5;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Occupation / Profession:</span>
+              <span class="field-line" style="flex: 1.5;"></span>
+              <span class="field-label">Designation & Org:</span>
+              <span class="field-line" style="flex: 1.5;"></span>
+              <span class="field-label">Monthly Income:</span>
+              <span class="field-line" style="flex: 1;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Mobile Number:</span>
+              <span class="field-line" style="flex: 1.2;"></span>
+              <span class="field-label">WhatsApp No:</span>
+              <span class="field-line" style="flex: 1.2;"></span>
+              <span class="field-label">Email:</span>
+              <span class="field-line" style="flex: 1.6;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Mother Full Name:</span>
+              <span class="field-line" style="flex: 2;"></span>
+              <span class="field-label">Mother CNIC:</span>
+              <span class="field-line" style="flex: 1.5;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Residential Address:</span>
+              <span class="field-line" style="flex: 3;"></span>
+            </div>
+
+            <div class="field-row">
+              <span class="field-label">Emergency Contact Person:</span>
+              <span class="field-line" style="flex: 1.5;"></span>
+              <span class="field-label">Relationship:</span>
+              <span class="field-line" style="flex: 1;"></span>
+              <span class="field-label">Emergency Phone:</span>
+              <span class="field-line" style="flex: 1.5;"></span>
+            </div>
+
+            <!-- SECTION 3: SIBLINGS IN THIS SCHOOL -->
+            <div class="section-title">
+              <span>3. Real Brothers / Sisters Enrolled in This Institution (If Any)</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 30px; text-align: center;">Sr.</th>
+                  <th>Sibling Student Name</th>
+                  <th style="width: 120px;">Class & Section</th>
+                  <th style="width: 120px;">Roll / Adm No.</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="text-align: center; color: #64748b;">1</td>
+                  <td>&nbsp;</td>
+                  <td>&nbsp;</td>
+                  <td>&nbsp;</td>
+                </tr>
+                <tr>
+                  <td style="text-align: center; color: #64748b;">2</td>
+                  <td>&nbsp;</td>
+                  <td>&nbsp;</td>
+                  <td>&nbsp;</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- SECTION 4: UNDERTAKING / DECLARATION -->
+            <div class="section-title">
+              <span>4. Solemn Undertaking & Declaration by Parent / Guardian</span>
+            </div>
+            <div style="font-size: 9.5px; color: #334155; line-height: 1.4; text-align: justify; margin: 4px 0 8px;">
+              I solemnly affirm that the particulars stated above are complete and true to the best of my knowledge and that no relevant fact has been suppressed. In case of grant of admission, I pledge that my ward and I shall strictly abide by the rules, discipline, uniform code, fee schedule, and regulations of <strong>${schoolName}</strong>. I accept that the school authority reserves the absolute right to cancel admission or initiate disciplinary action in case of violation of code of conduct or forged documents.
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 10px; padding: 0 10px;">
+              <div style="text-align: center; width: 180px;">
+                <div style="border-top: 1.5px solid #0f172a; padding-top: 3px; font-weight: 700; font-size: 10px;">Father / Guardian Signature</div>
+              </div>
+              <div style="text-align: center; width: 140px;">
+                <div style="border-top: 1.5px solid #0f172a; padding-top: 3px; font-weight: 700; font-size: 10px;">Submission Date</div>
+              </div>
+              <div style="text-align: center; width: 180px;">
+                <div style="border-top: 1.5px solid #0f172a; padding-top: 3px; font-weight: 700; font-size: 10px;">Candidate Signature</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 5: FOR OFFICIAL USE ONLY -->
+          <div class="office-box">
+            <div style="font-weight: 900; font-size: 10px; text-transform: uppercase; color: #0f172a; border-bottom: 1px solid #cbd5e1; padding-bottom: 2px; margin-bottom: 4px; display: flex; justify-content: space-between;">
+              <span>For Official Use Only (Admission & Accounts Section)</span>
+              <span>Status: [ &nbsp; ] Admitted &nbsp;&nbsp; [ &nbsp; ] Provisional &nbsp;&nbsp; [ &nbsp; ] Rejected</span>
+            </div>
+            <div style="display: flex; gap: 15px; font-size: 10px; margin-bottom: 6px;">
+              <div style="flex: 1;">Allotted Class & Sec: <span style="display: inline-block; width: 90px; border-bottom: 1px dotted #475569;"></span></div>
+              <div style="flex: 1;">Assigned Roll No: <span style="display: inline-block; width: 80px; border-bottom: 1px dotted #475569;"></span></div>
+              <div style="flex: 1;">Admission Reg No: <span style="display: inline-block; width: 80px; border-bottom: 1px dotted #475569;"></span></div>
+              <div style="flex: 1;">Fee Slip / Receipt No: <span style="display: inline-block; width: 80px; border-bottom: 1px dotted #475569;"></span></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; padding: 12px 10px 2px;">
+              <div style="text-align: center; width: 150px;">
+                <div style="border-top: 1.2px solid #0f172a; padding-top: 2px; font-size: 9.5px; font-weight: 700;">Admission Incharge</div>
+              </div>
+              <div style="text-align: center; width: 150px;">
+                <div style="border-top: 1.2px solid #0f172a; padding-top: 2px; font-size: 9.5px; font-weight: 700;">Accountant / Cashier</div>
+              </div>
+              <div style="text-align: center; width: 170px;">
+                <div style="border-top: 1.2px solid #0f172a; padding-top: 2px; font-size: 9.5px; font-weight: 700;">Principal Stamp & Signature</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    frameDoc.close();
+
+    const checkImagesAndPrint = () => {
+      const imgs = frameDoc.images;
+      let loaded = 0;
+      const finish = () => {
+        try {
+          printFrame.contentWindow.focus();
+          printFrame.contentWindow.print();
+        } catch (err) {
+          console.error("Print blank form error:", err);
+        } finally {
+          setTimeout(() => printFrame.remove(), 2500);
+        }
+      };
+
+      if (!imgs || imgs.length === 0) {
+        finish();
+        return;
+      }
+
+      for (let i = 0; i < imgs.length; i++) {
+        if (imgs[i].complete && imgs[i].naturalWidth !== 0) {
+          loaded++;
+        } else {
+          imgs[i].onload = () => {
+            loaded++;
+            if (loaded >= imgs.length) finish();
+          };
+          imgs[i].onerror = () => {
+            loaded++;
+            if (loaded >= imgs.length) finish();
+          };
+        }
+      }
+
+      if (loaded >= imgs.length) {
+        setTimeout(finish, 100);
+      } else {
+        setTimeout(finish, 2200);
+      }
+    };
+
+    setTimeout(checkImagesAndPrint, 150);
   };
 
   // Parent Search & Link Logic
@@ -1487,6 +1993,30 @@ const Admission = () => {
                 <span>Cloud Connected</span>
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={handlePrintBlankAdmissionForm}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.6rem 1.15rem",
+                borderRadius: "10px",
+                border: "1.5px solid #e0e7ff",
+                background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+                color: "#4f46e5",
+                fontSize: "0.85rem",
+                fontWeight: "800",
+                cursor: "pointer",
+                boxShadow: "0 2px 5px rgba(79, 70, 229, 0.12)",
+                transition: "all 0.15s ease",
+              }}
+              title="Print Official Blank Admission / Registration Form for Walk-In Parents"
+            >
+              <Printer size={16} />
+              <span>Print Blank Form</span>
+            </button>
 
             {activeView === "new_admission" ? (
               <button
@@ -3517,7 +4047,7 @@ const Admission = () => {
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={printAdmissionSlipDirectly}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
