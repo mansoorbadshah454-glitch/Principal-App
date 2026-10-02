@@ -7,13 +7,14 @@ import {
     Printer, Search, CheckCircle2, User, FileText, Loader2, Sparkles, Building2, Phone, Calendar, Clock, DollarSign,
     Image as ImageIcon, ExternalLink, Eye, Upload, Landmark, Smartphone, TrendingUp, Activity,
     PieChart, BarChart3, Zap, ShieldCheck, ShieldAlert, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight,
-    Award, AlertTriangle, Check, RotateCcw, RotateCw, ZoomIn, ZoomOut, Maximize2, CalendarDays, History, Send
+    Award, AlertTriangle, Check, RotateCcw, RotateCw, ZoomIn, ZoomOut, Maximize2, CalendarDays, History, Send,
+    Scissors, Mail, MapPin
 } from 'lucide-react';
 import {
     ResponsiveContainer, BarChart, Bar, AreaChart, Area, PieChart as RechartsPie, Pie, Cell,
     XAxis, YAxis, Tooltip as RechartsTooltip, Legend as RechartsLegend, CartesianGrid
 } from 'recharts';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
 import PayrollDashboard from '../components/PayrollDashboard';
@@ -46,6 +47,32 @@ import {
     collection, onSnapshot, query, doc, updateDoc, deleteField, setDoc, getDoc, deleteDoc,
     getDocs, writeBatch, getDocsFromCache, addDoc, serverTimestamp, orderBy, limit, where, arrayUnion
 } from 'firebase/firestore';
+
+// Helper: Convert number to Words (PKR Currency)
+const numberToWords = (num) => {
+    const a = [
+        '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+        'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'
+    ];
+    const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+    const inWords = (n) => {
+        if ((n = n.toString()).length > 9) return 'overflow';
+        let nArray = ('000000000' + n).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+        if (!nArray) return '';
+        let str = '';
+        str += (Number(nArray[1]) !== 0) ? (a[Number(nArray[1])] || b[nArray[1][0]] + ' ' + a[nArray[1][1]]) + ' Crore ' : '';
+        str += (Number(nArray[2]) !== 0) ? (a[Number(nArray[2])] || b[nArray[2][0]] + ' ' + a[nArray[2][1]]) + ' Lakh ' : '';
+        str += (Number(nArray[3]) !== 0) ? (a[Number(nArray[3])] || b[nArray[3][0]] + ' ' + a[nArray[3][1]]) + ' Thousand ' : '';
+        str += (Number(nArray[4]) !== 0) ? (a[Number(nArray[4])] || b[nArray[4][0]] + ' ' + a[nArray[4][1]]) + ' Hundred ' : '';
+        str += (Number(nArray[5]) !== 0) ? ((str !== '') ? 'and ' : '') + (a[Number(nArray[5])] || b[nArray[5][0]] + ' ' + a[nArray[5][1]]) + ' ' : '';
+        return str.trim();
+    };
+
+    const rounded = Math.round(Number(num) || 0);
+    if (rounded === 0) return 'Zero Rupees Only';
+    return inWords(rounded) + ' Rupees Only';
+};
 
 // --- Components ---
 
@@ -1053,403 +1080,499 @@ const PaymentProofModal = ({ isOpen, onClose, proofUrl, title, meta }) => {
 // --- Helper to convert image URL to base64 for PDF rendering ---
 const fetchBase64ImageSafe = async (imageUrl) => {
     if (!imageUrl) return null;
+    if (typeof imageUrl === 'string' && imageUrl.startsWith('data:image/')) return imageUrl;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
     try {
-        const response = await fetch(imageUrl);
-        const blob = await response.blob();
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(blob);
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        try {
+            const response = await fetch(imageUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (!response.ok) return null;
+            const blob = await response.blob();
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(blob);
+            });
+        } catch (fetchErr) {
+            clearTimeout(timeoutId);
+            return null;
+        }
     } catch (e) {
-        console.warn("PDF image load note:", e);
         return null;
     }
 };
 
-// --- Reusable 100% Offline Professional Fee Receipt PDF Generator ---
+// --- Safe Universal Constructor Resolvers for jsPDF & AutoTable ---
+const createSafeJsPdf = (options = { orientation: 'portrait', unit: 'mm', format: 'a4' }) => {
+    let Constructor = (typeof jsPDF === 'function') ? jsPDF : null;
+    if (!Constructor && jsPDF && typeof jsPDF === 'object') {
+        Constructor = jsPDF.jsPDF || jsPDF.default?.jsPDF || jsPDF.default;
+    }
+    if (!Constructor && typeof window !== 'undefined') {
+        Constructor = window.jspdf?.jsPDF || window.jsPDF;
+    }
+    if (typeof Constructor !== 'function') {
+        throw new Error("jsPDF library constructor is unavailable.");
+    }
+    return new Constructor(options);
+};
+
+const runSafeAutoTable = (doc, options) => {
+    let fn = (typeof autoTable === 'function') ? autoTable : null;
+    if (!fn && autoTable && typeof autoTable === 'object') {
+        fn = autoTable.default || autoTable.autoTable;
+    }
+    if (!fn && doc && typeof doc.autoTable === 'function') {
+        return doc.autoTable(options);
+    }
+    if (typeof fn !== 'function') {
+        throw new Error("jspdf-autotable plugin function is unavailable.");
+    }
+    return fn(doc, options);
+};
+
+// --- Reusable 100% Offline Professional Fee Receipt PDF Generator (Matches Modal Dual-Copy Exactly) ---
 export const downloadOfficialReceiptPDF = async (receiptData, schoolInfo) => {
     try {
-        if (!receiptData) return false;
-        const doc = new jsPDF({
+        if (!receiptData) {
+            alert("No receipt data available to generate PDF.");
+            return false;
+        }
+        const doc = createSafeJsPdf({
             orientation: 'portrait',
             unit: 'mm',
             format: 'a4'
         });
 
-        const primaryColor = [0, 120, 212]; // #0078d4
-        const darkColor = [15, 23, 42];    // #0f172a
-        const grayColor = [100, 116, 139]; // #64748b
-        const isMultiFamily = receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1);
-
-        // Top Accent Bar
-        doc.setFillColor(0, 120, 212);
-        doc.rect(0, 0, 210, 5, 'F');
-
-        // 1. School Header & Logo
-        let hasLogo = false;
-        const logoUrl = schoolInfo?.logo || schoolInfo?.logoUrl || '';
-        if (logoUrl) {
-            const base64Img = await fetchBase64ImageSafe(logoUrl);
-            if (base64Img) {
-                try {
-                    doc.addImage(base64Img, 'PNG', 14, 9, 20, 20);
-                    hasLogo = true;
-                } catch (err) {
-                    console.warn("Receipt logo addImage fallback:", err);
-                }
-            }
-        }
-
-        const headerTextX = hasLogo ? 38 : 14;
-        const schoolTitle = (schoolInfo?.name && schoolInfo.name !== 'School Name' && schoolInfo.name !== 'School Report' 
-            ? schoolInfo.name 
-            : 'OFFICIAL SCHOOL RECEIPT').toUpperCase();
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(15);
-        doc.setTextColor(...darkColor);
-        doc.text(schoolTitle, headerTextX, 15);
-
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        const schoolAddress = schoolInfo?.address || 'Main Campus, Pakistan';
-        const schoolPhone = schoolInfo?.phone || schoolInfo?.contact || '+92 300 1234567';
-        doc.text(`${schoolAddress} • Contact: ${schoolPhone}`, headerTextX, 20);
-
-        // Receipt Type Tag
-        doc.setFillColor(...primaryColor);
-        doc.roundedRect(headerTextX, 23, isMultiFamily ? 64 : 52, 5.5, 1.2, 1.2, 'F');
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(255, 255, 255);
-        doc.text(isMultiFamily ? 'FAMILY FEE PAYMENT RECEIPT' : 'FEE PAYMENT RECEIPT', headerTextX + 2, 27);
-
-        // Receipt Meta (Right Aligned)
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(...grayColor);
-        doc.text('RECEIPT NO:', 196, 14, { align: 'right' });
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(11);
-        doc.setTextColor(...primaryColor);
-        doc.text(receiptData.receiptNo || 'N/A', 196, 19, { align: 'right' });
-
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        doc.text(`Date: ${receiptData.dateString || ''} ${receiptData.timeString || ''}`, 196, 24, { align: 'right' });
-        if (receiptData.dueDate) {
-            doc.text(`Due Date: ${receiptData.dueDate}`, 196, 28, { align: 'right' });
-        }
-
-        // Horizontal Separator Line
-        doc.setDrawColor(226, 232, 240);
-        doc.setLineWidth(0.5);
-        doc.line(14, 32, 196, 32);
-
-        // 2. Student / Household Information Card
-        let infoBoxHeight = 28;
-        let studentsListLines = [];
-
-        if (isMultiFamily) {
-            const namesSummary = (receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className || 'Class'})`).join(', ');
-            doc.setFontSize(7.5);
-            doc.setFont('helvetica', 'bold');
-            studentsListLines = doc.splitTextToSize(namesSummary, 142);
-            const extraLines = Math.max(0, studentsListLines.length - 1);
-            infoBoxHeight = 28 + (extraLines * 4);
-        }
-
-        doc.setFillColor(248, 250, 252);
-        doc.roundedRect(14, 34, 182, infoBoxHeight, 2, 2, 'F');
-        doc.setDrawColor(226, 232, 240);
-        doc.roundedRect(14, 34, 182, infoBoxHeight, 2, 2, 'S');
-
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-
+        const isMultiFamily = Boolean(receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1));
         const cashierName = receiptData.collectedBy || auth?.currentUser?.displayName || 'Principal Office';
 
-        if (isMultiFamily) {
-            doc.text('Father / Parent Name:', 18, 40);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.text(receiptData.fatherName || 'Parent / Guardian', 52, 40);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Household Children:', 120, 40);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...primaryColor);
-            doc.text(`${receiptData.familyStudents?.length || 0} Students in Household`, 150, 40);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Children List:', 18, 46.5);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.setFontSize(7.5);
-            doc.text(studentsListLines, 38, 46.5);
-
-            const bottomRowY = 46.5 + (Math.max(1, studentsListLines.length) * 4) + 2.5;
-            doc.setFontSize(8);
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Payment Mode:', 18, bottomRowY);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(22, 163, 74);
-            doc.text(receiptData.paymentMode || 'Cash', 44, bottomRowY);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Cashier / Incharge:', 120, bottomRowY);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.text(cashierName, 150, bottomRowY);
-        } else {
-            doc.text('Student Name:', 18, 40);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.text(receiptData.studentName || 'N/A', 46, 40);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Roll No:', 120, 40);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.text(String(receiptData.rollNo || 'N/A'), 142, 40);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Class & Section:', 18, 48);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.text(receiptData.className || 'N/A', 46, 48);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Father Name:', 120, 48);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.text(receiptData.fatherName || 'N/A', 142, 48);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Payment Mode:', 18, 56);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(22, 163, 74);
-            doc.text(receiptData.paymentMode || 'Cash', 46, 56);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text('Cashier / Incharge:', 120, 56);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(...darkColor);
-            doc.text(cashierName, 150, 56);
+        // 1. Fetch School Logo Base64 once for both copies
+        let logoBase64 = null;
+        let logoFormat = 'PNG';
+        try {
+            const schoolIdKey = schoolInfo?.schoolId || schoolInfo?.id || '';
+            const cachedLogo = schoolIdKey ? localStorage.getItem(`school_logo_base64_${schoolIdKey}`) : null;
+            if (cachedLogo) {
+                logoFormat = cachedLogo.includes('image/png') ? 'PNG' : 'JPEG';
+                logoBase64 = cachedLogo;
+            } else {
+                const logoUrl = schoolInfo?.logo || schoolInfo?.logoUrl || schoolInfo?.profileImage || '';
+                if (logoUrl) {
+                    const base64Img = await fetchBase64ImageSafe(logoUrl);
+                    if (base64Img) {
+                        logoFormat = (typeof base64Img === 'string' && base64Img.includes('image/png')) ? 'PNG' : 'JPEG';
+                        logoBase64 = base64Img;
+                    }
+                }
+            }
+        } catch (logoErr) {
+            console.warn("PDF receipt logo fallback:", logoErr);
         }
 
-        // 3. Fee Breakdown Table (Clean Multi-Child Sets Organization)
-        let tableHead = [];
-        let tableRows = [];
+        const renderCopy = (copyTitle, startY, isOfficeCopy) => {
+            const startX = 10;
+            const copyWidth = 190;
+            const copyHeight = 134;
+            const padLeft = 14;
+            const padRight = 196;
+            const contentWidth = 182;
 
-        if (isMultiFamily) {
-            tableHead = [['#', 'Student Name', 'Class & Roll', 'Particulars / Fee Breakdown', 'Subtotal', 'Payment Status']];
-            
-            let householdGrandTotal = 0;
-            let totalPaidInReceipt = Number(receiptData.totalPaid || 0);
+            // 1. Outer Container Border
+            if (isOfficeCopy) {
+                doc.setDrawColor(0, 120, 212); // #0078d4
+                doc.setLineWidth(0.4);
+                doc.setLineDashPattern([2, 1.5], 0);
+                doc.setFillColor(250, 252, 255);
+                doc.roundedRect(startX, startY, copyWidth, copyHeight, 2.5, 2.5, 'FD');
+                doc.setLineDashPattern([], 0);
+            } else {
+                doc.setDrawColor(15, 23, 42); // #0f172a
+                doc.setLineWidth(0.4);
+                doc.setFillColor(255, 255, 255);
+                doc.roundedRect(startX, startY, copyWidth, copyHeight, 2.5, 2.5, 'FD');
+            }
 
-            (receiptData.familyStudents || []).forEach((st, idx) => {
-                const itemsList = Array.isArray(st.items) && st.items.length > 0 ? st.items : [];
-                const calculatedItemsSum = itemsList.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
-                const childSubtotal = Number(st.subtotal || st.totalDue || calculatedItemsSum || 0);
-                householdGrandTotal += childSubtotal;
-
-                const isChildPaying = st.isPaying !== false; // Default true unless explicitly excluded
-                const isChildPaid = st.isPaid || isChildPaying;
-
-                let itemsStr = itemsList.map(it => `${it.name || it.title || 'Fee'} (Rs ${Number(it.amount || 0).toLocaleString()})`).join(', ');
-                if (!itemsStr) {
-                    itemsStr = `Monthly Tuition Fee (Rs ${childSubtotal.toLocaleString()})`;
+            // 2. Header
+            let headerTextX = padLeft;
+            if (logoBase64) {
+                try {
+                    doc.addImage(logoBase64, logoFormat, padLeft, startY + 3.5, 11, 11);
+                    headerTextX = padLeft + 14;
+                } catch (e) {
+                    headerTextX = padLeft;
                 }
+            } else {
+                doc.setFillColor(0, 120, 212);
+                doc.circle(padLeft + 5.5, startY + 9, 5.5, 'F');
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(8);
+                doc.setTextColor(255, 255, 255);
+                const initial = (schoolInfo?.name || 'S').trim().charAt(0).toUpperCase();
+                doc.text(initial, padLeft + 5.5, startY + 11.5, { align: 'center' });
+                headerTextX = padLeft + 14;
+            }
 
-                tableRows.push([
-                    idx + 1,
-                    st.studentName || 'Student',
-                    `${st.className || 'Class'}\n(R# ${st.rollNo || 'N/A'})`,
-                    itemsStr,
-                    `Rs ${childSubtotal.toLocaleString()}`,
-                    isChildPaying ? 'PAID ✓' : 'PENDING / DUE ⏳'
-                ]);
-            });
+            // School Name
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10.5);
+            doc.setTextColor(15, 23, 42);
+            const schoolName = (schoolInfo?.name && schoolInfo.name !== 'School Name' && schoolInfo.name !== 'School Report'
+                ? schoolInfo.name
+                : 'SMART PUBLIC SCHOOL').toUpperCase();
+            doc.text(schoolName, headerTextX, startY + 8);
+
+            // Subtitle / Address
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(6.5);
+            doc.setTextColor(100, 116, 139);
+            const addressText = schoolInfo?.address || 'Main Campus, Pakistan';
+            const phoneText = (schoolInfo?.phone || schoolInfo?.contact) ? ` | Contact: ${schoolInfo?.phone || schoolInfo?.contact}` : '';
+            doc.text(`${addressText}${phoneText}`, headerTextX, startY + 12.5);
+
+            // Right Header: Badge (Pill)
+            const badgeWidth = 44;
+            const badgeX = padRight - badgeWidth;
+            if (isOfficeCopy) {
+                doc.setFillColor(0, 120, 212);
+            } else {
+                doc.setFillColor(15, 23, 42);
+            }
+            doc.roundedRect(badgeX, startY + 3.5, badgeWidth, 5.5, 1, 1, 'F');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(6.5);
+            doc.setTextColor(255, 255, 255);
+            doc.text(copyTitle, badgeX + (badgeWidth / 2), startY + 7.3, { align: 'center' });
+
+            // Slip Number below badge
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7.5);
+            doc.setTextColor(0, 120, 212);
+            const slipNo = receiptData.receiptNo || receiptData.id || 'N/A';
+            doc.text(`Slip #${slipNo}`, padRight, startY + 13.5, { align: 'right' });
+
+            // Divider under Header
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.3);
+            doc.line(padLeft, startY + 16.5, padRight, startY + 16.5);
+
+            // 3. Meta Details Bar (Row 1)
+            doc.setFillColor(248, 250, 252);
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.25);
+            doc.roundedRect(padLeft, startY + 18.5, contentWidth, 10.5, 1.2, 1.2, 'FD');
+
+            const col1X = padLeft + 3;
+            const col2X = padLeft + 48;
+            const col3X = padLeft + 94;
+            const col4X = padLeft + 139;
+
+            // Date & Time
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(5.5);
+            doc.setTextColor(100, 116, 139);
+            doc.text('DATE & TIME', col1X, startY + 22.2);
+            doc.setFontSize(6.8);
+            doc.setTextColor(15, 23, 42);
+            const dtStr = `${receiptData.dateString || receiptData.dateIso || 'Today'} ${receiptData.timeString || ''}`.trim();
+            doc.text(dtStr, col1X, startY + 26);
+
+            // Payment Method
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(5.5);
+            doc.setTextColor(100, 116, 139);
+            doc.text('PAYMENT METHOD', col2X, startY + 22.2);
+            doc.setFontSize(6.8);
+            doc.setTextColor(22, 163, 74);
+            doc.text(receiptData.paymentMode || 'Cash', col2X, startY + 26);
+
+            // Received By
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(5.5);
+            doc.setTextColor(100, 116, 139);
+            doc.text('RECEIVED BY', col3X, startY + 22.2);
+            doc.setFontSize(6.8);
+            doc.setTextColor(15, 23, 42);
+            doc.text(cashierName, col3X, startY + 26);
+
+            // Trx / Ref No
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(5.5);
+            doc.setTextColor(100, 116, 139);
+            doc.text('TRX / REF NO', col4X, startY + 22.2);
+            doc.setFontSize(6.8);
+            doc.setTextColor(67, 56, 202);
+            const trxRef = receiptData.trxId || receiptData.transactionId || receiptData.referenceId || receiptData.senderAccount || 'Counter Cash';
+            doc.text(trxRef, col4X, startY + 26);
+
+            // 4. Student Information Grid (Row 2)
+            if (isMultiFamily) {
+                doc.setFillColor(240, 249, 255);
+                doc.setDrawColor(186, 230, 253);
+                doc.setLineWidth(0.25);
+                doc.roundedRect(padLeft, startY + 30.5, contentWidth, 10.5, 1.2, 1.2, 'FD');
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(6);
+                doc.setTextColor(3, 105, 161);
+                doc.text('Parent / Guardian:', col1X, startY + 34.5);
+                doc.setTextColor(15, 23, 42);
+                doc.text(receiptData.fatherName || 'Parent', col1X + 22, startY + 34.5);
+                doc.setTextColor(2, 132, 199);
+                doc.text(`${receiptData.familyStudents?.length || 0} Family Students Combined`, padRight - 3, startY + 34.5, { align: 'right' });
+
+                doc.setTextColor(3, 105, 161);
+                doc.text('Students:', col1X, startY + 38.5);
+                doc.setTextColor(15, 23, 42);
+                const famSummary = (receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className || 'Class'})`).join(' - ');
+                doc.text(famSummary, col1X + 13, startY + 38.5);
+            } else {
+                doc.setFillColor(248, 250, 252);
+                doc.setDrawColor(226, 232, 240);
+                doc.setLineWidth(0.25);
+                doc.roundedRect(padLeft, startY + 30.5, contentWidth, 10.5, 1.2, 1.2, 'FD');
+
+                // Student Name
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('STUDENT NAME', col1X, startY + 34.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(15, 23, 42);
+                doc.text(receiptData.studentName || 'Student', col1X, startY + 38);
+
+                // Father Name
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('FATHER NAME', col2X, startY + 34.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(15, 23, 42);
+                doc.text(receiptData.fatherName || 'N/A', col2X, startY + 38);
+
+                // Class & Section
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('CLASS & SECTION', col3X, startY + 34.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(15, 23, 42);
+                doc.text(receiptData.className || 'Class', col3X, startY + 38);
+
+                // Roll / Admission No
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('ROLL / ADMISSION NO', col4X, startY + 34.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(0, 120, 212);
+                doc.text(String(receiptData.rollNo || receiptData.admissionNo || 'N/A'), col4X, startY + 38);
+            }
+
+            // 5. Fee Particulars Table
+            const tableBody = [];
+            if (isMultiFamily) {
+                (receiptData.familyStudents || []).forEach(st => {
+                    const itemNames = (st.items || []).map(it => it.name).join(', ') || 'Monthly Fee';
+                    const stAmt = Number(st.subtotal || st.totalDue || st.amount || 0);
+                    tableBody.push([
+                        `${st.studentName} (${st.className || 'Class'}) - ${itemNames}`,
+                        `Rs ${stAmt.toLocaleString()}`
+                    ]);
+                });
+            } else {
+                const rawItems = (receiptData.items && Array.isArray(receiptData.items) && receiptData.items.length > 0)
+                    ? receiptData.items
+                    : [{ name: 'Monthly Tuition (September)', amount: receiptData.totalPaid || receiptData.amount || 0 }];
+                rawItems.forEach(it => {
+                    const name = typeof it === 'string' ? it : (it.name || it.title || 'Monthly Tuition Fee');
+                    const amt = typeof it === 'object' ? Number(it.amount || 0) : Number(it || 0);
+                    tableBody.push([name, `Rs ${amt.toLocaleString()}`]);
+                });
+            }
 
             if (Number(receiptData.fineAmount) > 0) {
-                tableRows.push([
-                    '-',
-                    'Late Fine Surcharge',
-                    '-',
-                    'Late Payment Penalty',
-                    `Rs ${Number(receiptData.fineAmount).toLocaleString()}`,
-                    'PAID ✓'
+                tableBody.push([
+                    '+ Late Fee Fine / Arrears',
+                    `Rs ${Number(receiptData.fineAmount).toLocaleString()}`
                 ]);
             }
 
             if (Number(receiptData.discount) > 0) {
-                tableRows.push([
-                    '-',
-                    'Family Concession',
-                    '-',
-                    'Special Sibling / Concession Discount',
-                    `- Rs ${Number(receiptData.discount).toLocaleString()}`,
-                    'DISCOUNT'
+                tableBody.push([
+                    '- Concession / Discount Applied',
+                    `- Rs ${Number(receiptData.discount).toLocaleString()}`
                 ]);
             }
-        } else {
-            tableHead = [['#', 'Fee Description / Particulars', 'Amount (PKR)', 'Status']];
-            (receiptData.items || []).forEach((item, idx) => {
-                tableRows.push([
-                    idx + 1,
-                    item.name,
-                    `Rs ${Number(item.amount).toLocaleString()}`,
-                    item.isWaived ? 'WAIVED' : 'PAID ✓'
-                ]);
-            });
 
-            if (receiptData.discount > 0) {
-                tableRows.push([
-                    '-',
-                    'Discount / Concession Granted',
-                    `- Rs ${Number(receiptData.discount).toLocaleString()}`,
-                    'DISCOUNT'
-                ]);
-            }
-        }
+            const totalPaidNumber = Number(receiptData.totalPaid || receiptData.amount || 0);
 
-        autoTable(doc, {
-            startY: 34 + infoBoxHeight + 4,
-            head: tableHead,
-            body: tableRows,
-            theme: 'grid',
-            headStyles: {
-                fillColor: [15, 23, 42],
-                textColor: [255, 255, 255],
-                fontStyle: 'bold',
-                fontSize: 8,
-                halign: 'left'
-            },
-            columnStyles: isMultiFamily ? {
-                0: { halign: 'center', cellWidth: 8 },
-                1: { halign: 'left', fontStyle: 'bold', cellWidth: 32 },
-                2: { halign: 'left', cellWidth: 26 },
-                3: { halign: 'left' },
-                4: { halign: 'right', fontStyle: 'bold', cellWidth: 26 },
-                5: { halign: 'center', fontStyle: 'bold', cellWidth: 26 }
-            } : {
-                0: { halign: 'center', cellWidth: 12 },
-                1: { halign: 'left' },
-                2: { halign: 'right', fontStyle: 'bold', cellWidth: 38 },
-                3: { halign: 'center', fontStyle: 'bold', cellWidth: 26 }
-            },
-            styles: {
-                font: 'helvetica',
-                fontSize: 8,
-                cellPadding: 3,
-                lineColor: [226, 232, 240]
-            },
-            didParseCell: function(data) {
-                if (data.section === 'body') {
-                    const statusVal = isMultiFamily ? data.row.raw[5] : data.row.raw[3];
-                    if (statusVal === 'PAID ✓') {
-                        if ((isMultiFamily && data.column.index === 5) || (!isMultiFamily && data.column.index === 3)) {
-                            data.cell.styles.textColor = [22, 163, 74];
-                            data.cell.styles.fillColor = [240, 253, 244];
-                        }
-                    } else if (statusVal === 'PENDING / DUE ⏳') {
-                        if (data.column.index === 5) {
-                            data.cell.styles.textColor = [220, 38, 38];
-                            data.cell.styles.fillColor = [254, 242, 242];
-                        }
+            // Highlighted Total Amount Paid Row
+            tableBody.push([
+                {
+                    content: 'TOTAL AMOUNT PAID',
+                    styles: {
+                        fontStyle: 'bold',
+                        textColor: [22, 101, 52],
+                        fillColor: [240, 253, 244],
+                        fontSize: 7.5
+                    }
+                },
+                {
+                    content: `Rs ${totalPaidNumber.toLocaleString()}/-`,
+                    styles: {
+                        halign: 'right',
+                        fontStyle: 'bold',
+                        textColor: [22, 101, 52],
+                        fillColor: [240, 253, 244],
+                        fontSize: 8
                     }
                 }
+            ]);
+
+            runSafeAutoTable(doc, {
+                startY: startY + 42.5,
+                margin: { left: padLeft, right: 210 - padRight },
+                tableWidth: contentWidth,
+                head: [['Fee Particulars / Description', 'Amount (PKR)']],
+                body: tableBody,
+                theme: 'plain',
+                headStyles: {
+                    fillColor: [15, 23, 42],
+                    textColor: [255, 255, 255],
+                    fontStyle: 'bold',
+                    fontSize: 7.2,
+                    cellPadding: { top: 2, bottom: 2, left: 3, right: 3 }
+                },
+                columnStyles: {
+                    0: { halign: 'left', cellPadding: { top: 2, bottom: 2, left: 3, right: 3 } },
+                    1: { halign: 'right', cellPadding: { top: 2, bottom: 2, left: 3, right: 3 }, cellWidth: 38 }
+                },
+                styles: {
+                    font: 'helvetica',
+                    fontSize: 7,
+                    textColor: [15, 23, 42],
+                    lineColor: [226, 232, 240],
+                    lineWidth: 0.2
+                },
+                didDrawCell: function(data) {
+                    if (data.section === 'body') {
+                        doc.setDrawColor(226, 232, 240);
+                        doc.setLineWidth(0.2);
+                        doc.line(data.cell.x, data.cell.y + data.cell.height, data.cell.x + data.cell.width, data.cell.y + data.cell.height);
+                    }
+                }
+            });
+
+            const tableEndY = doc.lastAutoTable?.finalY || (startY + 70);
+            const wordsY = tableEndY + 2;
+
+            // 6. In Words & Remarks Bar
+            doc.setFillColor(248, 250, 252);
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.2);
+            doc.roundedRect(padLeft, wordsY, contentWidth, 5.5, 1.2, 1.2, 'FD');
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(6.5);
+            doc.setTextColor(51, 65, 85);
+            doc.text('Amount In Words: ', padLeft + 3, wordsY + 3.8);
+
+            const labelWidth = doc.getTextWidth('Amount In Words: ');
+            doc.setFont('helvetica', 'bolditalic');
+            doc.setTextColor(15, 23, 42);
+            const wordsText = numberToWords(totalPaidNumber);
+            doc.text(wordsText, padLeft + 3 + labelWidth, wordsY + 3.8);
+
+            if (receiptData.remarks) {
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(6);
+                doc.setTextColor(100, 116, 139);
+                doc.text(`Note: ${receiptData.remarks}`, padRight - 3, wordsY + 3.8, { align: 'right' });
             }
-        });
 
-        const finalY = doc.lastAutoTable?.finalY || 120;
+            // 7. Signatures & Micro Footer
+            const sigY = startY + copyHeight - 6;
 
-        // 4. Financial Reconciliation Summary Box
-        const reconY = finalY + 4;
-        const totalPaidAmt = Number(receiptData.totalPaid || 0);
-        const remainingBal = Number(receiptData.remainingBalance || 0);
-        const totalBilled = totalPaidAmt + remainingBal;
+            // Depositor / Parent Signature
+            doc.setDrawColor(100, 116, 139);
+            doc.setLineDashPattern([1.5, 1.5], 0);
+            doc.line(padLeft + 4, sigY - 4, padLeft + 44, sigY - 4);
+            doc.setLineDashPattern([], 0);
 
-        doc.setFillColor(248, 250, 252);
-        doc.roundedRect(14, reconY, 182, 16, 2, 2, 'F');
-        doc.setDrawColor(203, 213, 225);
-        doc.roundedRect(14, reconY, 182, 16, 2, 2, 'S');
-
-        // Total Billed Block
-        doc.setFontSize(7);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(...grayColor);
-        doc.text('TOTAL BILLED:', 20, reconY + 6);
-        doc.setFontSize(9.5);
-        doc.setTextColor(...darkColor);
-        doc.text(`Rs ${totalBilled.toLocaleString()}`, 20, reconY + 12);
-
-        // Total Paid Block
-        doc.setFontSize(7);
-        doc.setTextColor(22, 163, 74);
-        doc.text('AMOUNT PAID NOW:', 85, reconY + 6);
-        doc.setFontSize(10.5);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(22, 163, 74);
-        doc.text(`Rs ${totalPaidAmt.toLocaleString()}`, 85, reconY + 12);
-
-        // Remaining Balance Block
-        doc.setFontSize(7);
-        doc.setTextColor(remainingBal > 0 ? [220, 38, 38] : [100, 116, 139]);
-        doc.text('REMAINING BALANCE DUE:', 145, reconY + 6);
-        doc.setFontSize(9.5);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(remainingBal > 0 ? [220, 38, 38] : [22, 163, 74]);
-        doc.text(remainingBal > 0 ? `Rs ${remainingBal.toLocaleString()}` : 'Rs 0 (Fully Cleared ✓)', 145, reconY + 12);
-
-        if (receiptData.remarks) {
-            doc.setFontSize(7.5);
             doc.setFont('helvetica', 'normal');
-            doc.setTextColor(...grayColor);
-            doc.text(`Remarks / Notes: ${receiptData.remarks}`, 14, reconY + 22);
-        }
+            doc.setFontSize(6);
+            doc.setTextColor(71, 85, 105);
+            doc.text('Depositor / Parent Signature', padLeft + 24, sigY, { align: 'center' });
 
-        // 5. Footer & Signature
-        const footerY = Math.max(reconY + (receiptData.remarks ? 28 : 22), 150);
-        doc.setDrawColor(203, 213, 225);
-        doc.setLineDashPattern([2, 2], 0);
-        doc.line(14, footerY, 196, footerY);
+            // Center ERP Verified Tag
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(5.5);
+            doc.setTextColor(148, 163, 184);
+            doc.text('Official Computer Generated Receipt - School ERP Verified', 105, sigY - 1, { align: 'center' });
+
+            // Cashier / Authorized Stamp
+            doc.setDrawColor(100, 116, 139);
+            doc.setLineDashPattern([1.5, 1.5], 0);
+            doc.line(padRight - 44, sigY - 4, padRight - 4, sigY - 4);
+            doc.setLineDashPattern([], 0);
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(6);
+            doc.setTextColor(15, 23, 42);
+            doc.text('Cashier / Authorized Stamp', padRight - 24, sigY, { align: 'center' });
+        };
+
+        // --- Render Copy 1: STUDENT / PARENT COPY (Top Half) ---
+        renderCopy('STUDENT / PARENT COPY', 8, false);
+
+        // --- Scissors Divider Line (Middle) ---
+        doc.setDrawColor(180, 190, 205);
+        doc.setLineWidth(0.3);
+        doc.setLineDashPattern([2, 1.5], 0);
+        doc.line(10, 146, 72, 146);
+        doc.line(138, 146, 200, 146);
         doc.setLineDashPattern([], 0);
 
-        doc.setFontSize(7);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(...grayColor);
-        doc.text(`* Official computer-generated fee receipt. Verified by Cashier: ${cashierName}`, 14, footerY + 6);
-        doc.text('Valid without physical stamp. Retain this computerized voucher for your records.', 14, footerY + 10);
-
-        doc.setDrawColor(148, 163, 184);
-        doc.setLineWidth(0.5);
-        doc.line(145, footerY + 14, 196, footerY + 14);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(...darkColor);
-        doc.text('Authorized Signature & Stamp', 170.5, footerY + 19, { align: 'center' });
+        doc.setFontSize(6.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text('- - - - CUT HERE / ACCOUNTS COUNTER SLIP - - - -', 105, 147.2, { align: 'center' });
 
-        const safeName = (isMultiFamily ? (receiptData.fatherName || 'Family') : (receiptData.studentName || 'Student')).replace(/[^a-zA-Z0-9_-]/g, '_');
-        doc.save(`Fee_Receipt_${receiptData.receiptNo}_${safeName}.pdf`);
+        // --- Render Copy 2: OFFICE / ACCOUNTS COPY (Bottom Half) ---
+        renderCopy('OFFICE / ACCOUNTS COPY', 150, true);
+
+        // --- Save / Download PDF ---
+        const safeRecNo = String(receiptData.receiptNo || receiptData.id || Date.now()).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeName = String(isMultiFamily ? (receiptData.fatherName || 'Family') : (receiptData.studentName || 'Student')).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const fileName = `Fee_Receipt_${safeRecNo}_${safeName}.pdf`;
+
+        try {
+            const pdfBlob = doc.output('blob');
+            const blobUrl = URL.createObjectURL(pdfBlob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = blobUrl;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                try {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
+                } catch (e) {}
+            }, 3000);
+        } catch (saveErr) {
+            console.warn("Direct blob download fallback to doc.save:", saveErr);
+            doc.save(fileName);
+        }
         return true;
     } catch (err) {
         console.error("PDF generation failed:", err);
+        alert("PDF Generation Error: " + (err?.message || err || "Unknown error occurred"));
         return false;
     }
 };
@@ -1465,7 +1588,7 @@ export const downloadFamilyFeeChallanPDF = async ({
     cashierName
 }) => {
     try {
-        const doc = new jsPDF({
+        const doc = createSafeJsPdf({
             orientation: 'portrait',
             unit: 'mm',
             format: 'a4'
@@ -1481,12 +1604,13 @@ export const downloadFamilyFeeChallanPDF = async ({
 
         // School Logo
         let hasLogo = false;
-        const logoUrl = schoolInfo?.logo || schoolInfo?.logoUrl || '';
+        const logoUrl = schoolInfo?.logo || schoolInfo?.logoUrl || schoolInfo?.profileImage || '';
         if (logoUrl) {
             const base64Img = await fetchBase64ImageSafe(logoUrl);
             if (base64Img) {
                 try {
-                    doc.addImage(base64Img, 'PNG', 14, 9, 20, 20);
+                    const format = (typeof base64Img === 'string' && base64Img.includes('image/png')) ? 'PNG' : 'JPEG';
+                    doc.addImage(base64Img, format, 14, 9, 20, 20);
                     hasLogo = true;
                 } catch (err) {
                     console.warn("Challan logo addImage fallback:", err);
@@ -1507,7 +1631,7 @@ export const downloadFamilyFeeChallanPDF = async ({
         doc.setTextColor(...grayColor);
         const schoolAddress = schoolInfo?.address || 'Main Campus, Pakistan';
         const schoolPhone = schoolInfo?.phone || schoolInfo?.contact || '+92 300 1234567';
-        doc.text(`${schoolAddress} • Contact: ${schoolPhone}`, textX, 20);
+        doc.text(`${schoolAddress} | Contact: ${schoolPhone}`, textX, 20);
 
         // Challan Title Badge
         doc.setFillColor(240, 249, 255);
@@ -1518,7 +1642,7 @@ export const downloadFamilyFeeChallanPDF = async ({
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(9.5);
         doc.setTextColor(3, 105, 161);
-        doc.text(`OFFICIAL FAMILY FEE CHALLAN & ASSESSMENT — ${targetMonthName.toUpperCase()} ${targetYear}`, 18, 32);
+        doc.text(`OFFICIAL FAMILY FEE CHALLAN & ASSESSMENT - ${targetMonthName.toUpperCase()} ${targetYear}`, 18, 32);
 
         const issueDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
         const dueDay = feeSettings?.dueDate || 10;
@@ -1571,7 +1695,7 @@ export const downloadFamilyFeeChallanPDF = async ({
                 totalRemainingPending += childTotal;
             }
 
-            const statusText = sib.isPaid ? 'PAID ✓' : isPaying ? 'PAYING NOW' : 'PENDING / DUE ⏳';
+            const statusText = sib.isPaid ? 'PAID' : isPaying ? 'PAYING NOW' : 'PENDING / DUE';
 
             return [
                 idx + 1,
@@ -1586,7 +1710,7 @@ export const downloadFamilyFeeChallanPDF = async ({
             ];
         });
 
-        autoTable(doc, {
+        runSafeAutoTable(doc, {
             startY: 58,
             head: [[
                 '#',
@@ -1625,15 +1749,21 @@ export const downloadFamilyFeeChallanPDF = async ({
                 8: { halign: 'center', fontStyle: 'bold', cellWidth: 22 }
             },
             didParseCell: function(data) {
-                if (data.section === 'body' && data.column.index === 8) {
-                    const val = data.row.raw[8];
-                    if (val === 'PAID ✓' || val === 'PAYING NOW') {
-                        data.cell.styles.textColor = [22, 163, 74];
-                        data.cell.styles.fillColor = [240, 253, 244];
-                    } else if (val === 'PENDING / DUE ⏳') {
-                        data.cell.styles.textColor = [220, 38, 38];
-                        data.cell.styles.fillColor = [254, 242, 242];
+                try {
+                    if (data && data.section === 'body' && data.column.index === 8) {
+                        const cellText = (data.cell && data.cell.text && Array.isArray(data.cell.text)) 
+                            ? data.cell.text.join(' ') 
+                            : String(data.cell?.text || '');
+                        if (cellText.includes('PAID') || cellText.includes('PAYING')) {
+                            data.cell.styles.textColor = [22, 163, 74];
+                            data.cell.styles.fillColor = [240, 253, 244];
+                        } else if (cellText.includes('PENDING') || cellText.includes('DUE')) {
+                            data.cell.styles.textColor = [220, 38, 38];
+                            data.cell.styles.fillColor = [254, 242, 242];
+                        }
                     }
+                } catch (cellErr) {
+                    console.warn("Challan cell parse note:", cellErr);
                 }
             },
             margin: { left: 14, right: 14 }
@@ -1666,12 +1796,20 @@ export const downloadFamilyFeeChallanPDF = async ({
 
         // Remaining Household Balance
         doc.setFontSize(7);
-        doc.setTextColor(totalRemainingPending > 0 ? [220, 38, 38] : [100, 116, 139]);
+        if (totalRemainingPending > 0) {
+            doc.setTextColor(220, 38, 38);
+        } else {
+            doc.setTextColor(100, 116, 139);
+        }
         doc.text('REMAINING HOUSEHOLD DUE:', 145, finalY + 6);
         doc.setFontSize(9.5);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(totalRemainingPending > 0 ? [220, 38, 38] : [22, 163, 74]);
-        doc.text(totalRemainingPending > 0 ? `Rs ${totalRemainingPending.toLocaleString()}` : 'Rs 0 (All Paying ✓)', 145, finalY + 12);
+        if (totalRemainingPending > 0) {
+            doc.setTextColor(220, 38, 38);
+        } else {
+            doc.setTextColor(22, 163, 74);
+        }
+        doc.text(totalRemainingPending > 0 ? `Rs ${totalRemainingPending.toLocaleString()}` : 'Rs 0 (All Paying)', 145, finalY + 12);
 
         // Instructions and Signatures
         const instrY = finalY + 20;
@@ -1687,9 +1825,9 @@ export const downloadFamilyFeeChallanPDF = async ({
         doc.text("OFFICIAL PAYMENT INSTRUCTIONS & VERIFICATION:", 18, instrY + 5.5);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(...grayColor);
-        doc.text("• Pay at School Cash Counter or via EasyPaisa / JazzCash / Bank.", 18, instrY + 10.5);
-        doc.text("• Unpaid sibling balances will carry forward into the next month statement.", 18, instrY + 15);
-        doc.text("• Keep this computerized slip as formal proof of fee assessment.", 18, instrY + 19.5);
+        doc.text("- Pay at School Cash Counter or via EasyPaisa / JazzCash / Bank.", 18, instrY + 10.5);
+        doc.text("- Unpaid sibling balances will carry forward into the next month statement.", 18, instrY + 15);
+        doc.text("- Keep this computerized slip as formal proof of fee assessment.", 18, instrY + 19.5);
 
         // Stamp / Signature
         doc.line(140, instrY + 15, 196, instrY + 15);
@@ -1704,7 +1842,26 @@ export const downloadFamilyFeeChallanPDF = async ({
 
         // Save PDF
         const cleanName = (fatherName || 'Family').replace(/[^a-zA-Z0-9]/g, '_');
-        doc.save(`Family_Fee_Challan_${cleanName}_${targetMonthName}_${targetYear}.pdf`);
+        const fileName = `Family_Fee_Challan_${cleanName}_${targetMonthName}_${targetYear}.pdf`;
+        try {
+            const pdfBlob = doc.output('blob');
+            const blobUrl = URL.createObjectURL(pdfBlob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = blobUrl;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                try {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
+                } catch (e) {}
+            }, 3000);
+        } catch (saveErr) {
+            console.warn("Direct blob download fallback to doc.save:", saveErr);
+            doc.save(fileName);
+        }
         return true;
     } catch (err) {
         console.error("Error generating family challan PDF:", err);
@@ -1715,59 +1872,27 @@ export const downloadFamilyFeeChallanPDF = async ({
 
 // --- Beautiful Payment Success / Failure Popup Modal ---
 const PaymentResultModal = ({ isOpen, onClose, isSuccess, receiptData, errorMessage, schoolInfo }) => {
+    const [showPrintSlipModal, setShowPrintSlipModal] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
     if (!isOpen) return null;
 
-    const handleDownloadPDF = () => {
+    const handleDownloadPDF = async () => {
         if (receiptData) {
-            downloadOfficialReceiptPDF(receiptData, schoolInfo);
+            setIsDownloading(true);
+            try {
+                await downloadOfficialReceiptPDF(receiptData, schoolInfo);
+            } catch (err) {
+                console.error("Error downloading PDF receipt:", err);
+                alert("Could not generate PDF receipt: " + (err?.message || err));
+            } finally {
+                setIsDownloading(false);
+            }
         }
     };
 
-    const handlePrint = () => {
+    const handleOpenPrintModal = () => {
         if (!receiptData) return;
-        const printWindow = window.open('', '', 'width=800,height=900');
-        if (!printWindow) return;
-        printWindow.document.write(`
-            <html>
-                <head>
-                    <title>Fee Receipt - ${receiptData.receiptNo}</title>
-                    <style>
-                        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; color: #1e293b; }
-                        .container { max-width: 600px; margin: 0 auto; border: 2px solid #0f172a; padding: 20px; border-radius: 8px; }
-                        .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 16px; }
-                        .school { font-size: 20px; font-weight: 800; text-transform: uppercase; }
-                        .table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
-                        .table th, .table td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
-                        .total { font-weight: 800; font-size: 15px; border-top: 2px solid #0f172a; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="header">
-                            <div class="school">${schoolInfo?.name || 'School Office'}</div>
-                            <div style="font-size:12px;color:#64748b;margin-top:4px;">Official Fee Receipt • ${receiptData.receiptNo}</div>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:12px;">
-                            <div><strong>Student/Family:</strong> ${receiptData.studentName}</div>
-                            <div><strong>Date:</strong> ${receiptData.dateString}</div>
-                        </div>
-                        <table class="table">
-                            <thead>
-                                <tr><th>Particular</th><th style="text-align:right;">Amount (PKR)</th></tr>
-                            </thead>
-                            <tbody>
-                                ${(receiptData.items || []).map(it => `<tr><td>${it.name}</td><td style="text-align:right;">Rs ${Number(it.amount || 0).toLocaleString()}</td></tr>`).join('')}
-                                <tr class="total"><td>Total Paid</td><td style="text-align:right;">Rs ${Number(receiptData.totalPaid || 0).toLocaleString()}</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <script>
-                        window.onload = () => { window.print(); window.close(); };
-                    </script>
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
+        setShowPrintSlipModal(true);
     };
 
     const handleSendWhatsApp = () => {
@@ -1798,652 +1923,1201 @@ const PaymentResultModal = ({ isOpen, onClose, isSuccess, receiptData, errorMess
     };
 
     return (
-        <div style={{
-            position: 'fixed', inset: 0, zIndex: 99999,
-            background: 'rgba(15, 23, 42, 0.7)',
-            backdropFilter: 'blur(5px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '1rem',
-            animation: 'fadeIn 0.2s ease-out'
-        }}>
+        <>
             <div style={{
-                background: '#ffffff',
-                borderRadius: '20px',
-                width: '100%',
-                maxWidth: '480px',
-                padding: '1.75rem',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                border: isSuccess ? '2px solid #86efac' : '2px solid #fca5a5',
-                textAlign: 'center',
-                position: 'relative'
+                position: 'fixed', inset: 0, zIndex: 99999,
+                background: 'rgba(15, 23, 42, 0.7)',
+                backdropFilter: 'blur(5px)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: '1rem',
+                animation: 'fadeIn 0.2s ease-out'
             }}>
-                {/* Close X */}
-                <button
-                    onClick={onClose}
-                    style={{
-                        position: 'absolute', top: '16px', right: '16px',
-                        background: '#f1f5f9', border: 'none', borderRadius: '50%',
-                        width: '32px', height: '32px', display: 'flex', alignItems: 'center',
-                        justifyContent: 'center', cursor: 'pointer', color: '#64748b'
-                    }}
-                >
-                    <X size={18} />
-                </button>
+                <div style={{
+                    background: '#ffffff',
+                    borderRadius: '20px',
+                    width: '100%',
+                    maxWidth: '480px',
+                    padding: '1.75rem',
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                    border: isSuccess ? '2px solid #86efac' : '2px solid #fca5a5',
+                    textAlign: 'center',
+                    position: 'relative'
+                }}>
+                    {/* Close X */}
+                    <button
+                        onClick={onClose}
+                        style={{
+                            position: 'absolute', top: '16px', right: '16px',
+                            background: '#f1f5f9', border: 'none', borderRadius: '50%',
+                            width: '32px', height: '32px', display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', cursor: 'pointer', color: '#64748b'
+                        }}
+                    >
+                        <X size={18} />
+                    </button>
 
-                {isSuccess ? (
-                    <>
-                        {/* Success Icon */}
-                        <div style={{
-                            width: '64px', height: '64px', borderRadius: '50%',
-                            background: 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)',
-                            border: '3px solid #22c55e',
-                            color: '#16a34a',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            margin: '0 auto 1rem auto',
-                            boxShadow: '0 10px 20px rgba(34, 197, 94, 0.2)'
-                        }}>
-                            <CheckCircle2 size={36} color="#16a34a" />
-                        </div>
+                    {isSuccess ? (
+                        <>
+                            {/* Success Icon */}
+                            <div style={{
+                                width: '64px', height: '64px', borderRadius: '50%',
+                                background: 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)',
+                                border: '3px solid #22c55e',
+                                color: '#16a34a',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                margin: '0 auto 1rem auto',
+                                boxShadow: '0 10px 20px rgba(34, 197, 94, 0.2)'
+                            }}>
+                                <CheckCircle2 size={36} color="#16a34a" />
+                            </div>
 
-                        <h2 style={{ fontSize: '1.4rem', fontWeight: '900', color: '#0f172a', margin: '0 0 0.35rem 0' }}>
-                            Payment Recorded! 🎉
-                        </h2>
-                        <p style={{ fontSize: '0.84rem', color: '#64748b', margin: '0 0 1.25rem 0' }}>
-                            Fee has been registered in the system and synchronized in real-time.
-                        </p>
+                            <h2 style={{ fontSize: '1.4rem', fontWeight: '900', color: '#0f172a', margin: '0 0 0.35rem 0' }}>
+                                Payment Recorded! 🎉
+                            </h2>
+                            <p style={{ fontSize: '0.84rem', color: '#64748b', margin: '0 0 1.25rem 0' }}>
+                                Fee has been registered in the system and synchronized in real-time.
+                            </p>
 
-                        {/* Summary Card */}
-                        <div style={{
-                            background: '#f8fafc',
-                            border: '1.5px solid #e2e8f0',
-                            borderRadius: '14px',
-                            padding: '1rem',
-                            marginBottom: '1.25rem',
-                            textAlign: 'left'
-                        }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Receipt #:</span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData?.receiptNo}</strong>
+                            {/* Summary Card */}
+                            <div style={{
+                                background: '#f8fafc',
+                                border: '1.5px solid #e2e8f0',
+                                borderRadius: '14px',
+                                padding: '1rem',
+                                marginBottom: '1.25rem',
+                                textAlign: 'left'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Receipt #:</span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData?.receiptNo}</strong>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Student / Family:</span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData?.studentName}</strong>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
+                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Payment Mode:</span>
+                                    <strong style={{ color: '#0f172a' }}>{receiptData?.paymentMode}</strong>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1.5px dashed #cbd5e1', paddingTop: '8px', marginTop: '6px', fontSize: '1rem' }}>
+                                    <span style={{ color: '#166534', fontWeight: '800' }}>Total Paid:</span>
+                                    <strong style={{ color: '#16a34a', fontWeight: '900' }}>
+                                        Rs {Number(receiptData?.totalPaid || 0).toLocaleString()}
+                                    </strong>
+                                </div>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Student / Family:</span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData?.studentName}</strong>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.82rem' }}>
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Payment Mode:</span>
-                                <strong style={{ color: '#0f172a' }}>{receiptData?.paymentMode}</strong>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1.5px dashed #cbd5e1', paddingTop: '8px', marginTop: '6px', fontSize: '1rem' }}>
-                                <span style={{ color: '#166534', fontWeight: '800' }}>Total Paid:</span>
-                                <strong style={{ color: '#16a34a', fontWeight: '900' }}>
-                                    Rs {Number(receiptData?.totalPaid || 0).toLocaleString()}
-                                </strong>
-                            </div>
-                        </div>
 
-                        {/* Action Buttons Grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                            {/* Action Buttons Grid */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={handleDownloadPDF}
+                                    disabled={isDownloading}
+                                    style={{
+                                        padding: '0.65rem',
+                                        borderRadius: '10px',
+                                        background: '#0f172a',
+                                        color: '#ffffff',
+                                        border: 'none',
+                                        fontWeight: '800',
+                                        fontSize: '0.82rem',
+                                        cursor: isDownloading ? 'wait' : 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                        boxShadow: '0 4px 10px rgba(15, 23, 42, 0.2)'
+                                    }}
+                                >
+                                    {isDownloading ? <Loader2 size={15} className="animate-spin text-white" /> : <Download size={15} />}
+                                    <span>{isDownloading ? 'Saving...' : 'Download PDF'}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleOpenPrintModal}
+                                    style={{
+                                        padding: '0.65rem',
+                                        borderRadius: '10px',
+                                        background: 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)',
+                                        color: '#ffffff',
+                                        border: '1px solid #16a34a',
+                                        fontWeight: '800',
+                                        fontSize: '0.82rem',
+                                        cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                        boxShadow: '0 2px 5px rgba(22, 163, 74, 0.25)'
+                                    }}
+                                >
+                                    <Printer size={15} /> Print Slip
+                                </button>
+                            </div>
+
+                            {receiptData?.fatherPhone && (
+                                <button
+                                    type="button"
+                                    onClick={handleSendWhatsApp}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.65rem',
+                                        borderRadius: '10px',
+                                        background: '#f0fdf4',
+                                        color: '#15803d',
+                                        border: '1.5px solid #86efac',
+                                        fontWeight: '800',
+                                        fontSize: '0.82rem',
+                                        cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                        marginBottom: '0.75rem'
+                                    }}
+                                >
+                                    <Send size={15} /> Send WhatsApp Receipt
+                                </button>
+                            )}
+
                             <button
                                 type="button"
-                                onClick={handleDownloadPDF}
-                                style={{
-                                    padding: '0.65rem',
-                                    borderRadius: '10px',
-                                    background: '#0f172a',
-                                    color: '#ffffff',
-                                    border: 'none',
-                                    fontWeight: '800',
-                                    fontSize: '0.82rem',
-                                    cursor: 'pointer',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                                    boxShadow: '0 4px 10px rgba(15, 23, 42, 0.2)'
-                                }}
-                            >
-                                <Download size={15} /> Download PDF
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handlePrint}
-                                style={{
-                                    padding: '0.65rem',
-                                    borderRadius: '10px',
-                                    background: '#ffffff',
-                                    color: '#0f172a',
-                                    border: '1.5px solid #0f172a',
-                                    fontWeight: '800',
-                                    fontSize: '0.82rem',
-                                    cursor: 'pointer',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
-                                }}
-                            >
-                                <Printer size={15} /> Print Slip
-                            </button>
-                        </div>
-
-                        {receiptData?.fatherPhone && (
-                            <button
-                                type="button"
-                                onClick={handleSendWhatsApp}
+                                onClick={onClose}
                                 style={{
                                     width: '100%',
                                     padding: '0.65rem',
                                     borderRadius: '10px',
-                                    background: '#f0fdf4',
-                                    color: '#15803d',
-                                    border: '1.5px solid #86efac',
+                                    background: '#f1f5f9',
+                                    color: '#475569',
+                                    border: 'none',
                                     fontWeight: '800',
-                                    fontSize: '0.82rem',
-                                    cursor: 'pointer',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                                    marginBottom: '0.75rem'
+                                    fontSize: '0.84rem',
+                                    cursor: 'pointer'
                                 }}
                             >
-                                <Send size={15} /> Send WhatsApp Receipt
+                                ✓ Done / Next Student
                             </button>
-                        )}
+                        </>
+                    ) : (
+                        <>
+                            <div style={{
+                                width: '64px', height: '64px', borderRadius: '50%',
+                                background: '#fee2e2', border: '3px solid #ef4444',
+                                color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                margin: '0 auto 1rem auto'
+                            }}>
+                                <AlertTriangle size={36} color="#dc2626" />
+                            </div>
 
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            style={{
-                                width: '100%',
-                                padding: '0.65rem',
-                                borderRadius: '10px',
-                                background: '#f1f5f9',
-                                color: '#475569',
-                                border: 'none',
-                                fontWeight: '800',
-                                fontSize: '0.84rem',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            ✓ Done / Next Student
-                        </button>
-                    </>
-                ) : (
-                    <>
-                        {/* Error Icon */}
-                        <div style={{
-                            width: '64px', height: '64px', borderRadius: '50%',
-                            background: '#fee2e2',
-                            border: '3px solid #ef4444',
-                            color: '#dc2626',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            margin: '0 auto 1rem auto'
-                        }}>
-                            <AlertTriangle size={36} color="#dc2626" />
-                        </div>
+                            <h2 style={{ fontSize: '1.35rem', fontWeight: '900', color: '#0f172a', margin: '0 0 0.35rem 0' }}>
+                                Submission Failed
+                            </h2>
+                            <p style={{ fontSize: '0.85rem', color: '#dc2626', margin: '0 0 1.25rem 0', fontWeight: '700' }}>
+                                {errorMessage || 'Could not complete transaction. Please check values.'}
+                            </p>
 
-                        <h2 style={{ fontSize: '1.3rem', fontWeight: '900', color: '#b91c1c', margin: '0 0 0.35rem 0' }}>
-                            Submission Failed
-                        </h2>
-                        <p style={{ fontSize: '0.84rem', color: '#64748b', margin: '0 0 1.25rem 0' }}>
-                            {errorMessage || 'Unable to record payment due to a network or verification error.'}
-                        </p>
-
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            style={{
-                                width: '100%',
-                                padding: '0.7rem',
-                                borderRadius: '10px',
-                                background: '#dc2626',
-                                color: '#ffffff',
-                                border: 'none',
-                                fontWeight: '800',
-                                fontSize: '0.85rem',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            Close & Try Again
-                        </button>
-                    </>
-                )}
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                style={{
+                                    width: '100%', padding: '0.65rem', borderRadius: '10px',
+                                    background: '#0f172a', color: '#ffffff', border: 'none',
+                                    fontWeight: '800', fontSize: '0.84rem', cursor: 'pointer'
+                                }}
+                            >
+                                Close & Try Again
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
-        </div>
-    );
-};
-const FeeReceiptModal = ({ isOpen, onClose, receiptData, schoolInfo }) => {
-    if (!isOpen || !receiptData) return null;
 
-    const printRef = useRef();
-    const [isDownloading, setIsDownloading] = useState(false);
-
-    const handleDownloadPDF = () => {
-        setIsDownloading(true);
-        downloadOfficialReceiptPDF(receiptData, schoolInfo);
-        setIsDownloading(false);
-    };
-
-    const handlePrint = () => {
-        const printContent = document.getElementById('printable-fee-receipt');
-        if (!printContent) return;
-
-        const printWindow = window.open('', '', 'width=800,height=900');
-        printWindow.document.write(`
-            <html>
-                <head>
-                    <title>Fee Receipt - ${receiptData.receiptNo}</title>
-                    <style>
-                        @page { size: auto; margin: 15mm; }
-                        body { 
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
-                            color: #1e293b; 
-                            margin: 0; 
-                            padding: 20px; 
-                            background: #fff;
-                        }
-                        .receipt-container { 
-                            max-width: 650px; 
-                            margin: 0 auto; 
-                            border: 2px solid #0f172a; 
-                            padding: 24px; 
-                            border-radius: 8px; 
-                        }
-                        .header { 
-                            display: flex; 
-                            align-items: center; 
-                            justify-content: space-between; 
-                            border-bottom: 2px solid #e2e8f0; 
-                            padding-bottom: 16px; 
-                            margin-bottom: 20px; 
-                        }
-                        .school-name { 
-                            font-size: 22px; 
-                            font-weight: 800; 
-                            color: #0f172a; 
-                            text-transform: uppercase; 
-                            margin: 0; 
-                        }
-                        .receipt-badge { 
-                            display: inline-block; 
-                            background: #0f172a; 
-                            color: #fff; 
-                            font-size: 11px; 
-                            font-weight: 700; 
-                            padding: 4px 10px; 
-                            border-radius: 4px; 
-                            margin-top: 4px; 
-                            text-transform: uppercase; 
-                        }
-                        .grid-info { 
-                            display: grid; 
-                            grid-template-columns: 1fr 1fr; 
-                            gap: 12px; 
-                            margin-bottom: 20px; 
-                            background: #f8fafc; 
-                            padding: 14px; 
-                            border-radius: 6px; 
-                            border: 1px solid #e2e8f0; 
-                            font-size: 13px; 
-                        }
-                        .grid-info div span { 
-                            font-weight: 700; 
-                            color: #475569; 
-                        }
-                        table { 
-                            width: 100%; 
-                            border-collapse: collapse; 
-                            margin-bottom: 20px; 
-                            font-size: 13px; 
-                        }
-                        th { 
-                            background: #f1f5f9; 
-                            padding: 10px 12px; 
-                            text-align: left; 
-                            border-bottom: 2px solid #cbd5e1; 
-                            font-weight: 700; 
-                            color: #1e293b; 
-                        }
-                        td { 
-                            padding: 9px 12px; 
-                            border-bottom: 1px solid #e2e8f0; 
-                            color: #334155; 
-                        }
-                        .total-row td { 
-                            font-size: 15px; 
-                            font-weight: 800; 
-                            border-top: 2px solid #0f172a; 
-                            border-bottom: 2px solid #0f172a; 
-                            color: #0f172a; 
-                            background: #f8fafc; 
-                        }
-                        .footer { 
-                            display: flex; 
-                            justify-content: space-between; 
-                            align-items: flex-end; 
-                            margin-top: 35px; 
-                            padding-top: 20px; 
-                            border-top: 1px dashed #cbd5e1; 
-                            font-size: 12px; 
-                            color: #64748b; 
-                        }
-                        .signature-box { 
-                            text-align: center; 
-                            border-top: 1px solid #94a3b8; 
-                            padding-top: 6px; 
-                            width: 150px; 
-                            color: #0f172a; 
-                            font-weight: 600; 
-                        }
-                    </style>
-                </head>
-                <body>
-                    ${printContent.innerHTML}
-                    <script>
-                        window.onload = function() {
-                            window.focus();
-                            window.print();
-                            window.close();
-                        };
-                    </script>
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
-    };
-
-    return (
-        <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(15, 23, 42, 0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '1rem'
-        }}>
-            <div className="card" style={{
-                background: '#ffffff',
-                borderRadius: '16px',
-                width: '100%',
-                maxWidth: '680px',
-                maxHeight: '92vh',
-                overflowY: 'auto',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                padding: '1.75rem',
-                position: 'relative'
-            }}>
-                {/* Close Button */}
-                <button
-                    onClick={onClose}
+            {/* Direct 1-Click Printable Fee Slip Modal from Success Popup */}
+            {showPrintSlipModal && receiptData && typeof document !== "undefined" && createPortal(
+                <div
+                    className="payment-success-slip-modal-overlay"
                     style={{
-                        position: 'absolute',
-                        top: '1.25rem',
-                        right: '1.25rem',
-                        background: '#f1f5f9',
-                        border: 'none',
-                        borderRadius: '50%',
-                        width: '32px',
-                        height: '32px',
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(5px)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        cursor: 'pointer',
-                        color: '#64748b'
+                        zIndex: 999999,
+                        padding: '1rem',
+                        overflowY: 'auto'
                     }}
+                    onClick={() => setShowPrintSlipModal(false)}
                 >
-                    <X size={18} />
-                </button>
-
-                {/* Printable Content Container */}
-                <div id="printable-fee-receipt">
-                    <div className="receipt-container" style={{
-                        border: '2px solid #e2e8f0',
-                        borderRadius: '12px',
-                        padding: '1.5rem',
-                        background: '#ffffff'
-                    }}>
-                        {/* Header */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #f1f5f9', paddingBottom: '1rem', marginBottom: '1.25rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                {schoolInfo?.logo ? (
-                                    <img src={schoolInfo.logo} alt="Logo" style={{ width: '48px', height: '48px', objectFit: 'contain', borderRadius: '6px' }} />
-                                ) : (
-                                    <div style={{ width: '48px', height: '48px', background: '#0078d4', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
-                                        <Building2 size={24} />
-                                    </div>
-                                )}
+                    <div
+                        style={{
+                            background: '#ffffff',
+                            borderRadius: '16px',
+                            maxWidth: '780px',
+                            width: '100%',
+                            maxHeight: '92vh',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            overflow: 'hidden',
+                            boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.5)',
+                            border: '1.5px solid #cbd5e1',
+                            position: 'relative'
+                        }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Action Toolbar */}
+                        <div
+                            className="no-print"
+                            style={{
+                                padding: '0.85rem 1.25rem',
+                                background: 'linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)',
+                                borderBottom: '1.5px solid #cbd5e1',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                flexShrink: 0,
+                                gap: '1rem'
+                            }}
+                        >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <div
+                                    style={{
+                                        width: '34px',
+                                        height: '34px',
+                                        borderRadius: '8px',
+                                        background: '#0078d4',
+                                        color: 'white',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        boxShadow: '0 2px 4px rgba(0, 120, 212, 0.3)'
+                                    }}
+                                >
+                                    <Printer size={18} />
+                                </div>
                                 <div>
-                                    <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
-                                        {schoolInfo?.name || 'OFFICIAL SCHOOL RECEIPT'}
-                                    </h2>
-                                    <span style={{ display: 'inline-block', background: '#0078d4', color: 'white', fontSize: '0.7rem', fontWeight: '700', padding: '2px 8px', borderRadius: '4px', marginTop: '4px', textTransform: 'uppercase' }}>
-                                        Fee Payment Voucher
+                                    <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', display: 'block', lineHeight: '1.2' }}>
+                                        Official Fee Payment Slip & Voucher
+                                    </span>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+                                        Receipt #{receiptData.receiptNo} • Student & Accounts Dual Copy
                                     </span>
                                 </div>
                             </div>
-                            <div style={{ textAlign: 'right' }}>
-                                <span style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>RECEIPT NO</span>
-                                <span style={{ fontSize: '1rem', fontWeight: '800', color: '#0078d4' }}>{receiptData.receiptNo}</span>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={handleDownloadPDF}
+                                    disabled={isDownloading}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem',
+                                        padding: '0.45rem 0.85rem',
+                                        borderRadius: '8px',
+                                        border: '1.5px solid #cbd5e1',
+                                        background: '#ffffff',
+                                        color: '#334155',
+                                        fontSize: '0.8rem',
+                                        fontWeight: '800',
+                                        cursor: isDownloading ? 'wait' : 'pointer'
+                                    }}
+                                >
+                                    {isDownloading ? <Loader2 size={14} className="animate-spin text-blue-600" /> : <Download size={14} />}
+                                    <span>{isDownloading ? 'Saving...' : 'Save PDF'}</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => window.print()}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.45rem 1.1rem',
+                                        borderRadius: '8px',
+                                        border: '1px solid #16a34a',
+                                        background: 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)',
+                                        color: '#ffffff',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 5px rgba(22, 163, 74, 0.25)'
+                                    }}
+                                >
+                                    <Printer size={15} />
+                                    <span>Print Slip</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPrintSlipModal(false)}
+                                    style={{
+                                        width: '34px',
+                                        height: '34px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #cbd5e1',
+                                        background: '#ffffff',
+                                        color: '#475569',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <X size={18} />
+                                </button>
                             </div>
                         </div>
 
-                        {/* Student Details Grid */}
-                        {receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1) ? (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: '#f0f9ff', padding: '1rem', borderRadius: '8px', border: '1px solid #bae6fd', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-                                <div>
-                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Father / Parent: </span>
-                                    <strong style={{ color: '#0f172a' }}>{receiptData.fatherName || 'Parent / Guardian'}</strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Family Children: </span>
-                                    <strong style={{ color: '#0284c7' }}>{receiptData.familyStudents?.length || 0} Students Combined</strong>
-                                </div>
-                                <div style={{ gridColumn: 'span 2' }}>
-                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Children: </span>
-                                    <strong style={{ color: '#0f172a' }}>
-                                        {(receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className})`).join(', ')}
-                                    </strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Date & Time: </span>
-                                    <strong style={{ color: '#0f172a' }}>{receiptData.dateString} {receiptData.timeString}</strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#0369a1', fontWeight: '600' }}>Payment Mode: </span>
-                                    <strong style={{ color: '#16a34a' }}>{receiptData.paymentMode}</strong>
-                                </div>
-                            </div>
-                        ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-                                <div>
-                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Student Name: </span>
-                                    <strong style={{ color: '#0f172a' }}>{receiptData.studentName}</strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Roll No: </span>
-                                    <strong style={{ color: '#0f172a' }}>{receiptData.rollNo || 'N/A'}</strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Class: </span>
-                                    <strong style={{ color: '#0f172a' }}>{receiptData.className}</strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Father Name: </span>
-                                    <strong style={{ color: '#0f172a' }}>{receiptData.fatherName || 'N/A'}</strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Date & Time: </span>
-                                    <strong style={{ color: '#0f172a' }}>{receiptData.dateString} {receiptData.timeString}</strong>
-                                </div>
-                                <div>
-                                    <span style={{ color: '#64748b', fontWeight: '600' }}>Payment Mode: </span>
-                                    <strong style={{ color: '#16a34a' }}>{receiptData.paymentMode}</strong>
-                                </div>
-                            </div>
-                        )}
+                        {/* Slip Body */}
+                        <div
+                            style={{
+                                overflowY: 'auto',
+                                padding: '1rem',
+                                background: '#f8fafc',
+                                flex: 1
+                            }}
+                        >
+                            <div
+                                id="printable-success-receipt-container"
+                                style={{
+                                    width: '100%',
+                                    maxWidth: '720px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '0.85rem',
+                                    margin: '0 auto'
+                                }}
+                            >
+                                {['STUDENT / PARENT COPY', 'OFFICE / ACCOUNTS COPY'].map((copyType, copyIdx) => {
+                                    const sInfo = schoolInfo || {};
+                                    return (
+                                        <React.Fragment key={copyIdx}>
+                                            <div
+                                                className="success-receipt-copy"
+                                                style={{
+                                                    background: '#ffffff',
+                                                    color: '#1e293b',
+                                                    borderRadius: '10px',
+                                                    border: '1.5px solid #0f172a',
+                                                    padding: '0.75rem 1rem',
+                                                    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '0.45rem',
+                                                    position: 'relative'
+                                                }}
+                                            >
+                                                {/* Watermark Copy Badge */}
+                                                <div
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: '8px',
+                                                        right: '12px',
+                                                        background: copyIdx === 0 ? '#eff6ff' : '#f0fdf4',
+                                                        border: `1px solid ${copyIdx === 0 ? '#93c5fd' : '#86efac'}`,
+                                                        color: copyIdx === 0 ? '#1d4ed8' : '#15803d',
+                                                        fontSize: '0.62rem',
+                                                        fontWeight: '900',
+                                                        padding: '2px 7px',
+                                                        borderRadius: '4px',
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.5px'
+                                                    }}
+                                                >
+                                                    {copyType}
+                                                </div>
 
-                        {/* Fee Breakdown Table */}
-                        {receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1) ? (
-                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-                                <thead>
-                                    <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
-                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Student</th>
-                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Class</th>
-                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Fee Particulars</th>
-                                        <th style={{ padding: '0.5rem 0.65rem', textAlign: 'right', color: '#1e293b', fontWeight: '700' }}>Amount (Rs)</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {(receiptData.familyStudents || []).map((st, idx) => (
-                                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                            <td style={{ padding: '0.5rem 0.65rem', fontWeight: '700', color: '#0f172a' }}>{st.studentName}</td>
-                                            <td style={{ padding: '0.5rem 0.65rem', color: '#475569' }}>{st.className || 'Class'}</td>
-                                            <td style={{ padding: '0.5rem 0.65rem', color: '#334155' }}>
-                                                {(st.items || []).map(it => `${it.name} (Rs ${Number(it.amount).toLocaleString()})`).join(', ') || 'Monthly Tuition'}
-                                            </td>
-                                            <td style={{ padding: '0.5rem 0.65rem', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>
-                                                Rs {Number(st.subtotal || st.totalDue || st.amount || 0).toLocaleString()}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {Number(receiptData.fineAmount) > 0 && (
-                                        <tr style={{ borderBottom: '1px solid #f1f5f9', background: '#fffbeb' }}>
-                                            <td colSpan={3} style={{ padding: '0.5rem 0.65rem', fontWeight: '700', color: '#b45309' }}>Late Fine / Penalty</td>
-                                            <td style={{ padding: '0.5rem 0.65rem', textAlign: 'right', fontWeight: '700', color: '#b45309' }}>
-                                                Rs {Number(receiptData.fineAmount).toLocaleString()}
-                                            </td>
-                                        </tr>
-                                    )}
-                                    {Number(receiptData.discount) > 0 && (
-                                        <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#16a34a' }}>
-                                            <td colSpan={3} style={{ padding: '0.5rem 0.65rem', fontWeight: '600' }}>Family Discount / Concession</td>
-                                            <td style={{ padding: '0.5rem 0.65rem', textAlign: 'right', fontWeight: '600' }}>
-                                                - Rs {Number(receiptData.discount).toLocaleString()}
-                                            </td>
-                                        </tr>
-                                    )}
-                                    <tr style={{ borderTop: '2px solid #0f172a', background: '#f8fafc' }}>
-                                        <td colSpan={3} style={{ padding: '0.75rem 0.65rem', fontWeight: '800', fontSize: '0.95rem', color: '#0f172a' }}>TOTAL FAMILY NET PAID</td>
-                                        <td style={{ padding: '0.75rem 0.65rem', textAlign: 'right', fontWeight: '800', fontSize: '1.1rem', color: '#16a34a' }}>
-                                            Rs {Number(receiptData.totalPaid).toLocaleString()}
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        ) : (
-                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.25rem', fontSize: '0.875rem' }}>
-                                <thead>
-                                    <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #cbd5e1' }}>
-                                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', color: '#1e293b', fontWeight: '700' }}>Description</th>
-                                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: '#1e293b', fontWeight: '700' }}>Amount (Rs)</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {receiptData.items?.map((item, idx) => (
-                                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                            <td style={{ padding: '0.5rem 0.75rem', color: '#334155' }}>{item.name}</td>
-                                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>
-                                                Rs {Number(item.amount).toLocaleString()}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {receiptData.discount > 0 && (
-                                        <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#16a34a' }}>
-                                            <td style={{ padding: '0.5rem 0.75rem', fontWeight: '600' }}>Discount / Concession</td>
-                                            <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                                                - Rs {Number(receiptData.discount).toLocaleString()}
-                                            </td>
-                                        </tr>
-                                    )}
-                                    <tr style={{ borderTop: '2px solid #0f172a', background: '#f8fafc' }}>
-                                        <td style={{ padding: '0.75rem', fontWeight: '800', fontSize: '1rem', color: '#0f172a' }}>TOTAL AMOUNT PAID</td>
-                                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '800', fontSize: '1.1rem', color: '#16a34a' }}>
-                                            Rs {Number(receiptData.totalPaid).toLocaleString()}
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        )}
+                                                {/* School Header */}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.4rem', paddingRight: '120px' }}>
+                                                    {sInfo.logo || sInfo.profileImage ? (
+                                                        <div style={{ width: '42px', height: '42px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#fff', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                            <img src={sInfo.logo || sInfo.profileImage} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                                        </div>
+                                                    ) : null}
+                                                    <div>
+                                                        <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '-0.2px', lineHeight: '1.2' }}>
+                                                            {sInfo.name || 'SCHOOL NAME'}
+                                                        </h3>
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', fontSize: '0.68rem', color: '#475569', fontWeight: '600', marginTop: '1px' }}>
+                                                            {sInfo.phone && <span>📞 {sInfo.phone}</span>}
+                                                            {sInfo.email && <span>✉️ {sInfo.email}</span>}
+                                                            {sInfo.address && <span>📍 {sInfo.address}</span>}
+                                                        </div>
+                                                    </div>
+                                                </div>
 
-                        {receiptData.remarks && (
-                            <div style={{ marginBottom: '1.25rem', fontSize: '0.8rem', color: '#64748b' }}>
-                                <strong>Remarks:</strong> {receiptData.remarks}
-                            </div>
-                        )}
+                                                {/* Receipt Meta & Student Info Grid */}
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.5rem', background: '#f8fafc', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.72rem' }}>
+                                                    {/* Student Details */}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Student: </span><strong style={{ color: '#0f172a', fontSize: '0.82rem' }}>{receiptData.studentName}</strong></div>
+                                                        {receiptData.fatherName && (
+                                                            <div><span style={{ color: '#64748b', fontWeight: '700' }}>Father: </span><strong style={{ color: '#334155' }}>{receiptData.fatherName}</strong></div>
+                                                        )}
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Class: </span><strong style={{ color: '#0078d4' }}>{receiptData.className || 'N/A'}</strong> {receiptData.rollNo && receiptData.rollNo !== '-' ? `• Roll: ${receiptData.rollNo}` : ''}</div>
+                                                    </div>
 
-                        {/* Footer Signatures */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '2rem', paddingTop: '1rem', borderTop: '1px dashed #cbd5e1', fontSize: '0.75rem', color: '#64748b' }}>
-                            <div>
-                                <span>* This is a computer-generated fee receipt.</span>
-                            </div>
-                            <div style={{ textAlign: 'center', borderTop: '1px solid #94a3b8', width: '140px', paddingTop: '4px', color: '#0f172a', fontWeight: '600' }}>
-                                Authorized Signature
+                                                    {/* Voucher Meta */}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', textAlign: 'right' }}>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Slip No: </span><strong style={{ color: '#0f172a', fontFamily: 'monospace', fontSize: '0.78rem' }}>#{receiptData.receiptNo}</strong></div>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Date: </span><strong style={{ color: '#334155' }}>{receiptData.dateString || 'N/A'} {receiptData.timeString ? `• ${receiptData.timeString}` : ''}</strong></div>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Mode: </span><span style={{ background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '4px', fontWeight: '800', fontSize: '0.66rem', textTransform: 'uppercase' }}>{receiptData.paymentMode || 'Cash'}</span></div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Particulars Table */}
+                                                <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                                                        <thead>
+                                                            <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
+                                                                <th style={{ padding: '3px 8px', textAlign: 'left', fontWeight: '800', color: '#475569' }}>Fee Particulars / Description</th>
+                                                                <th style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '800', color: '#475569', width: '110px' }}>Amount (PKR)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {receiptData.items && Array.isArray(receiptData.items) && receiptData.items.length > 0 ? (
+                                                                receiptData.items.map((it, idx) => (
+                                                                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                        <td style={{ padding: '3px 8px', color: '#1e293b' }}>{it.name || it.title || 'Fee Particular'}</td>
+                                                                        <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>Rs {Number(it.amount || 0).toLocaleString()}</td>
+                                                                    </tr>
+                                                                ))
+                                                            ) : (
+                                                                <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                    <td style={{ padding: '3px 8px', color: '#1e293b' }}>Tuition / Monthly Session Fee</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>Rs {Number(receiptData.totalPaid || 0).toLocaleString()}</td>
+                                                                </tr>
+                                                            )}
+
+                                                            {Number(receiptData.discount || 0) > 0 && (
+                                                                <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#dc2626' }}>
+                                                                    <td style={{ padding: '3px 8px' }}>Concession / Discount Applied</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700' }}>-Rs {Number(receiptData.discount).toLocaleString()}</td>
+                                                                </tr>
+                                                            )}
+
+                                                            {/* Total Row */}
+                                                            <tr style={{ background: '#f0fdf4', borderTop: '1.5px solid #16a34a' }}>
+                                                                <td style={{ padding: '4px 8px', fontWeight: '900', color: '#166534', textTransform: 'uppercase' }}>Total Amount Paid</td>
+                                                                <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: '900', color: '#166534', fontSize: '0.85rem' }}>
+                                                                    Rs {Number(receiptData.totalPaid || 0).toLocaleString()}/-
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+
+                                                {/* In Words & Remarks Bar */}
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#475569', background: '#f8fafc', padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                                    <div>
+                                                        <span style={{ fontWeight: '700', color: '#334155' }}>Amount In Words: </span>
+                                                        <span style={{ fontWeight: '800', color: '#0f172a', fontStyle: 'italic' }}>
+                                                            {numberToWords(receiptData.totalPaid || 0)}
+                                                        </span>
+                                                    </div>
+                                                    {receiptData.remarks && (
+                                                        <div>
+                                                            <span style={{ fontWeight: '700' }}>Note: </span>
+                                                            <span>{receiptData.remarks}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Signatures & Micro Footer */}
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: '0.75rem', marginTop: '0.15rem' }}>
+                                                    <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                        <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '700', color: '#475569' }}>
+                                                            Depositor / Parent Signature
+                                                        </div>
+                                                    </div>
+
+                                                    <div style={{ fontSize: '0.58rem', color: '#94a3b8', textAlign: 'center' }}>
+                                                        Official Computer Generated Receipt • School ERP Verified
+                                                    </div>
+
+                                                    <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                        <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '800', color: '#0f172a' }}>
+                                                            Cashier / Authorized Stamp
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Scissors Cut Line */}
+                                            {copyIdx === 0 && (
+                                                <div
+                                                    className="success-cut-line"
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.5rem',
+                                                        color: '#94a3b8',
+                                                        fontSize: '0.62rem',
+                                                        fontWeight: '700',
+                                                        margin: '0.2rem 0'
+                                                    }}
+                                                >
+                                                    <Scissors size={12} style={{ transform: 'rotate(-90deg)' }} />
+                                                    <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                                    <span>CUT HERE / ACCOUNTS COUNTER SLIP</span>
+                                                    <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                                </div>
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
+            )}
 
-                {/* Modal Action Buttons */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
-                    <button
-                        onClick={onClose}
+            {/* Scoped Print Styles for Payment Success Modal */}
+            <style>{`
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 6mm 8mm 6mm 8mm;
+                    }
+                    *, *::before, *::after {
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        background: #ffffff !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        height: auto !important;
+                        min-height: auto !important;
+                        overflow: visible !important;
+                    }
+                    /* Strict Hide of entire root application */
+                    #root {
+                        display: none !important;
+                        height: 0 !important;
+                        overflow: hidden !important;
+                    }
+                    .no-print {
+                        display: none !important;
+                    }
+                    .payment-success-slip-modal-overlay {
+                        position: static !important;
+                        display: block !important;
+                        width: 100% !important;
+                        height: auto !important;
+                        background: transparent !important;
+                        backdrop-filter: none !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .payment-success-slip-modal-overlay > div {
+                        max-width: 100% !important;
+                        max-height: none !important;
+                        box-shadow: none !important;
+                        border: none !important;
+                        border-radius: 0 !important;
+                        overflow: visible !important;
+                        background: transparent !important;
+                        padding: 0 !important;
+                    }
+                    #printable-success-receipt-container {
+                        display: flex !important;
+                        flex-direction: column !important;
+                        gap: 3mm !important;
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        margin: 0 auto !important;
+                        padding: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .success-receipt-copy {
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        box-sizing: border-box !important;
+                        border: 1.5px solid #0f172a !important;
+                        border-radius: 6px !important;
+                        background: #ffffff !important;
+                        margin: 0 auto !important;
+                        padding: 6px 10px !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    .success-cut-line {
+                        display: flex !important;
+                        margin: 2mm 0 !important;
+                    }
+                }
+            `}</style>
+        </>
+    );
+};
+const FeeReceiptModal = ({ isOpen, onClose, receiptData, schoolInfo }) => {
+    if (!isOpen || !receiptData || typeof document === 'undefined') return null;
+
+    const [isDownloading, setIsDownloading] = useState(false);
+    const copies = ['STUDENT / PARENT COPY', 'OFFICE / ACCOUNTS COPY'];
+    const isMultiFamily = receiptData.isFamilyCombined || (receiptData.familyStudents && receiptData.familyStudents.length > 1);
+
+    const handleDownloadPDF = async () => {
+        setIsDownloading(true);
+        try {
+            await downloadOfficialReceiptPDF(receiptData, schoolInfo);
+        } catch (e) {
+            console.error("PDF download failed:", e);
+            alert("Could not generate PDF receipt: " + (e?.message || e));
+        } finally {
+            setIsDownloading(false);
+        }
+    };
+
+    return createPortal(
+        <>
+            <div
+                className="fee-receipt-modal-overlay"
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(15, 23, 42, 0.75)',
+                    backdropFilter: 'blur(5px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 99999,
+                    padding: '1rem',
+                    overflowY: 'auto'
+                }}
+                onClick={onClose}
+            >
+                <div
+                    style={{
+                        background: '#ffffff',
+                        borderRadius: '16px',
+                        maxWidth: '780px',
+                        width: '100%',
+                        maxHeight: '92vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.5)',
+                        border: '1.5px solid #cbd5e1',
+                        position: 'relative'
+                    }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    {/* Header / Action Toolbar (Hidden on Print) */}
+                    <div
+                        className="no-print"
                         style={{
-                            padding: '0.65rem 1.25rem',
-                            borderRadius: '8px',
-                            border: '1px solid #cbd5e1',
-                            background: '#ffffff',
-                            color: '#475569',
-                            fontWeight: '600',
-                            fontSize: '0.9rem',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        Close
-                    </button>
-                    
-                    <button
-                        onClick={handleDownloadPDF}
-                        disabled={isDownloading}
-                        style={{
-                            padding: '0.65rem 1.4rem',
-                            borderRadius: '8px',
-                            border: '1px solid #16a34a',
-                            background: '#f0fdf4',
-                            color: '#15803d',
-                            fontWeight: '600',
-                            fontSize: '0.9rem',
+                            padding: '0.85rem 1.25rem',
+                            background: 'linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)',
+                            borderBottom: '1.5px solid #cbd5e1',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '0.5rem',
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease',
-                            opacity: isDownloading ? 0.7 : 1
+                            justifyContent: 'space-between',
+                            flexShrink: 0,
+                            gap: '1rem'
                         }}
                     >
-                        {isDownloading ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                        {isDownloading ? 'Generating PDF...' : 'Download PDF'}
-                    </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                            <div
+                                style={{
+                                    width: '34px',
+                                    height: '34px',
+                                    borderRadius: '8px',
+                                    background: '#0078d4',
+                                    color: 'white',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    boxShadow: '0 2px 4px rgba(0, 120, 212, 0.3)'
+                                }}
+                            >
+                                <Printer size={18} />
+                            </div>
+                            <div>
+                                <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', display: 'block', lineHeight: '1.2' }}>
+                                    Fee Payment Deposit Slip & Voucher
+                                </span>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+                                    Slip #{receiptData.receiptNo || receiptData.id} • Official Dual Copy (Student & Office)
+                                </span>
+                            </div>
+                        </div>
 
-                    <button
-                        onClick={handlePrint}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            {receiptData.proofUrl && (
+                                <button
+                                    type="button"
+                                    onClick={() => window.open(receiptData.proofUrl, '_blank')}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem',
+                                        padding: '0.45rem 0.85rem',
+                                        borderRadius: '8px',
+                                        border: '1.5px solid #bfdbfe',
+                                        background: '#eff6ff',
+                                        color: '#0078d4',
+                                        fontSize: '0.8rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer'
+                                    }}
+                                    title="View Digital Payment Screenshot"
+                                >
+                                    <Eye size={14} />
+                                    <span>Proof</span>
+                                </button>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={handleDownloadPDF}
+                                disabled={isDownloading}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    padding: '0.45rem 1.05rem',
+                                    borderRadius: '8px',
+                                    border: '1.5px solid #cbd5e1',
+                                    background: '#ffffff',
+                                    color: '#0f172a',
+                                    fontSize: '0.82rem',
+                                    fontWeight: '800',
+                                    cursor: isDownloading ? 'not-allowed' : 'pointer',
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                                    transition: 'all 0.12s ease',
+                                    opacity: isDownloading ? 0.7 : 1
+                                }}
+                                title="Download Official Fee Receipt PDF"
+                            >
+                                {isDownloading ? <Loader2 size={15} className="animate-spin text-blue-600" /> : <Download size={15} className="text-blue-600" />}
+                                <span>{isDownloading ? 'Saving...' : 'Save PDF'}</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => window.print()}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    padding: '0.45rem 1.1rem',
+                                    borderRadius: '8px',
+                                    border: '1px solid #16a34a',
+                                    background: 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)',
+                                    color: '#ffffff',
+                                    fontSize: '0.82rem',
+                                    fontWeight: '800',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 2px 5px rgba(22, 163, 74, 0.25)',
+                                    transition: 'all 0.12s ease'
+                                }}
+                                title="Direct Print Slip"
+                            >
+                                <Printer size={15} />
+                                <span>Print Slip</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                style={{
+                                    width: '34px',
+                                    height: '34px',
+                                    borderRadius: '8px',
+                                    border: '1.5px solid #cbd5e1',
+                                    background: '#ffffff',
+                                    color: '#64748b',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.12s ease'
+                                }}
+                                title="Close Modal"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Scrollable Printable Canvas Container */}
+                    <div
                         style={{
-                            padding: '0.65rem 1.5rem',
-                            borderRadius: '8px',
-                            border: 'none',
-                            background: '#0078d4',
-                            color: '#ffffff',
-                            fontWeight: '600',
-                            fontSize: '0.9rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            cursor: 'pointer',
-                            boxShadow: '0 2px 4px rgba(0, 120, 212, 0.25)'
+                            padding: '1.25rem',
+                            overflowY: 'auto',
+                            background: '#f1f5f9',
+                            flex: 1
                         }}
                     >
-                        <Printer size={18} /> Print Slip
-                    </button>
+                        <div
+                            id="printable-fee-receipt-container"
+                            style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '1rem',
+                                background: '#ffffff',
+                                padding: '1.25rem',
+                                borderRadius: '12px',
+                                border: '1.5px solid #cbd5e1',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                            }}
+                        >
+                            {copies.map((copyTitle, copyIdx) => {
+                                const isOfficeCopy = copyIdx === 1;
+                                return (
+                                    <React.Fragment key={copyTitle}>
+                                        <div
+                                            className="fee-receipt-copy"
+                                            style={{
+                                                border: isOfficeCopy ? '1.5px dashed #0078d4' : '1.5px solid #0f172a',
+                                                borderRadius: '8px',
+                                                padding: '0.85rem 1rem',
+                                                background: isOfficeCopy ? '#fafcff' : '#ffffff',
+                                                position: 'relative',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '0.5rem'
+                                            }}
+                                        >
+                                            {/* Top Copy Label Badge */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #e2e8f0', paddingBottom: '0.4rem' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    {schoolInfo?.logo ? (
+                                                        <img
+                                                            src={schoolInfo.logo}
+                                                            alt="Logo"
+                                                            style={{ width: '30px', height: '30px', objectFit: 'contain', borderRadius: '4px' }}
+                                                        />
+                                                    ) : (
+                                                        <div style={{ width: '30px', height: '30px', background: '#0078d4', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                                                            <Building2 size={16} />
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <h4 style={{ margin: 0, fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.01em', textTransform: 'uppercase' }}>
+                                                            {schoolInfo?.name || 'OFFICIAL SCHOOL RECEIPT'}
+                                                        </h4>
+                                                        <span style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>
+                                                            {schoolInfo?.address || 'Main Campus, Pakistan'} {schoolInfo?.phone ? `• ${schoolInfo.phone}` : ''}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <span
+                                                        style={{
+                                                            display: 'inline-block',
+                                                            background: isOfficeCopy ? '#0078d4' : '#0f172a',
+                                                            color: '#ffffff',
+                                                            fontSize: '0.65rem',
+                                                            fontWeight: '800',
+                                                            padding: '2px 8px',
+                                                            borderRadius: '4px',
+                                                            textTransform: 'uppercase',
+                                                            letterSpacing: '0.04em'
+                                                        }}
+                                                    >
+                                                        {copyTitle}
+                                                    </span>
+                                                    <div style={{ fontSize: '0.68rem', color: '#0078d4', fontWeight: '800', marginTop: '2px' }}>
+                                                        Slip #{receiptData.receiptNo || receiptData.id}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Meta Details Bar */}
+                                            <div
+                                                style={{
+                                                    display: 'grid',
+                                                    gridTemplateColumns: 'repeat(4, 1fr)',
+                                                    gap: '0.4rem',
+                                                    background: '#f8fafc',
+                                                    padding: '0.4rem 0.6rem',
+                                                    borderRadius: '6px',
+                                                    border: '1px solid #e2e8f0',
+                                                    fontSize: '0.72rem'
+                                                }}
+                                            >
+                                                <div>
+                                                    <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>DATE & TIME</span>
+                                                    <strong style={{ color: '#0f172a' }}>{receiptData.dateString || receiptData.dateIso || 'Today'} {receiptData.timeString || ''}</strong>
+                                                </div>
+                                                <div>
+                                                    <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>PAYMENT METHOD</span>
+                                                    <strong style={{ color: '#16a34a' }}>{receiptData.paymentMode || 'Cash'}</strong>
+                                                </div>
+                                                <div>
+                                                    <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>RECEIVED BY</span>
+                                                    <strong style={{ color: '#0f172a' }}>{receiptData.collectedBy || 'Principal Office'}</strong>
+                                                </div>
+                                                <div>
+                                                    <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>TRX / REF NO</span>
+                                                    <strong style={{ color: '#4338ca' }}>{receiptData.trxId || receiptData.transactionId || receiptData.referenceId || receiptData.senderAccount || 'Counter Cash'}</strong>
+                                                </div>
+                                            </div>
+
+                                            {/* Student Information Grid */}
+                                            {isMultiFamily ? (
+                                                <div
+                                                    style={{
+                                                        background: '#f0f9ff',
+                                                        padding: '0.45rem 0.65rem',
+                                                        borderRadius: '6px',
+                                                        border: '1px solid #bae6fd',
+                                                        fontSize: '0.72rem',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        gap: '2px'
+                                                    }}
+                                                >
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                        <span><strong style={{ color: '#0369a1' }}>Parent / Guardian:</strong> <span style={{ color: '#0f172a', fontWeight: '800' }}>{receiptData.fatherName || 'Parent'}</span></span>
+                                                        <span style={{ color: '#0284c7', fontWeight: '800' }}>{receiptData.familyStudents?.length || 0} Family Students Combined</span>
+                                                    </div>
+                                                    <div>
+                                                        <strong style={{ color: '#0369a1' }}>Students: </strong>
+                                                        <span style={{ color: '#0f172a', fontWeight: '700' }}>
+                                                            {(receiptData.familyStudents || []).map(s => `${s.studentName} (${s.className || 'Class'})`).join(' • ')}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div
+                                                    style={{
+                                                        display: 'grid',
+                                                        gridTemplateColumns: 'repeat(4, 1fr)',
+                                                        gap: '0.4rem',
+                                                        background: '#f8fafc',
+                                                        padding: '0.4rem 0.6rem',
+                                                        borderRadius: '6px',
+                                                        border: '1px solid #e2e8f0',
+                                                        fontSize: '0.72rem'
+                                                    }}
+                                                >
+                                                    <div>
+                                                        <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>STUDENT NAME</span>
+                                                        <strong style={{ color: '#0f172a' }}>{receiptData.studentName || 'Student'}</strong>
+                                                    </div>
+                                                    <div>
+                                                        <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>FATHER NAME</span>
+                                                        <strong style={{ color: '#0f172a' }}>{receiptData.fatherName || 'N/A'}</strong>
+                                                    </div>
+                                                    <div>
+                                                        <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>CLASS & SECTION</span>
+                                                        <strong style={{ color: '#0f172a' }}>{receiptData.className || 'Class'}</strong>
+                                                    </div>
+                                                    <div>
+                                                        <span style={{ color: '#64748b', fontWeight: '700', display: 'block', fontSize: '0.62rem' }}>ROLL / ADMISSION NO</span>
+                                                        <strong style={{ color: '#0078d4' }}>{receiptData.rollNo || receiptData.admissionNo || 'N/A'}</strong>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Particulars & Breakdown Table */}
+                                            <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                                                    <thead>
+                                                        <tr style={{ background: '#0f172a', color: '#ffffff', textAlign: 'left' }}>
+                                                            <th style={{ padding: '4px 8px', fontWeight: '800' }}>Fee Particulars / Description</th>
+                                                            <th style={{ padding: '4px 8px', textAlign: 'right', fontWeight: '800', width: '120px' }}>Amount (PKR)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {isMultiFamily ? (
+                                                            (receiptData.familyStudents || []).map((st, sIdx) => (
+                                                                <tr key={sIdx} style={{ borderBottom: '1px solid #e2e8f0', background: sIdx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+                                                                    <td style={{ padding: '4px 8px', color: '#1e293b' }}>
+                                                                        <strong style={{ color: '#0078d4' }}>{st.studentName}</strong> ({st.className || 'Class'}) - {(st.items || []).map(it => it.name).join(', ') || 'Monthly Fee'}
+                                                                    </td>
+                                                                    <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>
+                                                                        Rs {Number(st.subtotal || st.totalDue || st.amount || 0).toLocaleString()}
+                                                                    </td>
+                                                                </tr>
+                                                            ))
+                                                        ) : (
+                                                            (receiptData.items && receiptData.items.length > 0 ? receiptData.items : [{ name: 'Monthly School Tuition Fee', amount: receiptData.totalPaid }]).map((item, itIdx) => (
+                                                                <tr key={itIdx} style={{ borderBottom: '1px solid #e2e8f0', background: itIdx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+                                                                    <td style={{ padding: '4px 8px', color: '#1e293b' }}>
+                                                                        {item.name || 'Tuition Fee'}
+                                                                    </td>
+                                                                    <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>
+                                                                        Rs {Number(item.amount || 0).toLocaleString()}
+                                                                    </td>
+                                                                </tr>
+                                                            ))
+                                                        )}
+
+                                                        {Number(receiptData.fineAmount) > 0 && (
+                                                            <tr style={{ background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
+                                                                <td style={{ padding: '3px 8px', color: '#b45309', fontWeight: '700' }}>+ Late Fee Fine / Arrears</td>
+                                                                <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '800', color: '#b45309' }}>
+                                                                    Rs {Number(receiptData.fineAmount).toLocaleString()}
+                                                                </td>
+                                                            </tr>
+                                                        )}
+
+                                                        {Number(receiptData.discount) > 0 && (
+                                                            <tr style={{ background: '#f0fdf4', borderBottom: '1px solid #bbf7d0' }}>
+                                                                <td style={{ padding: '3px 8px', color: '#15803d', fontWeight: '700' }}>- Concession / Discount Applied</td>
+                                                                <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '800', color: '#15803d' }}>
+                                                                    -Rs {Number(receiptData.discount).toLocaleString()}
+                                                                </td>
+                                                            </tr>
+                                                        )}
+
+                                                        {/* Total Row */}
+                                                        <tr style={{ background: '#f0fdf4', borderTop: '1.5px solid #16a34a' }}>
+                                                            <td style={{ padding: '4px 8px', fontWeight: '900', color: '#166534', textTransform: 'uppercase' }}>Total Amount Paid</td>
+                                                            <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: '900', color: '#166534', fontSize: '0.85rem' }}>
+                                                                Rs {Number(receiptData.totalPaid || 0).toLocaleString()}/-
+                                                            </td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
+                                            {/* In Words & Remarks Bar */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#475569', background: '#f8fafc', padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                                <div>
+                                                    <span style={{ fontWeight: '700', color: '#334155' }}>Amount In Words: </span>
+                                                    <span style={{ fontWeight: '800', color: '#0f172a', fontStyle: 'italic' }}>
+                                                        {numberToWords(receiptData.totalPaid || 0)}
+                                                    </span>
+                                                </div>
+                                                {receiptData.remarks && (
+                                                    <div>
+                                                        <span style={{ fontWeight: '700' }}>Note: </span>
+                                                        <span>{receiptData.remarks}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Signatures & Micro Footer */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: '0.75rem', marginTop: '0.15rem' }}>
+                                                <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                    <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '700', color: '#475569' }}>
+                                                        Depositor / Parent Signature
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ fontSize: '0.58rem', color: '#94a3b8', textAlign: 'center' }}>
+                                                    Official Computer Generated Receipt • School ERP Verified
+                                                </div>
+
+                                                <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                    <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '800', color: '#0f172a' }}>
+                                                        Cashier / Authorized Stamp
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Scissors Cut Line */}
+                                        {copyIdx === 0 && (
+                                            <div
+                                                className="fee-receipt-cut-line"
+                                                style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.5rem',
+                                                    color: '#94a3b8',
+                                                    fontSize: '0.62rem',
+                                                    fontWeight: '700',
+                                                    margin: '0.2rem 0'
+                                                }}
+                                            >
+                                                <Scissors size={12} style={{ transform: 'rotate(-90deg)' }} />
+                                                <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                                <span>CUT HERE / ACCOUNTS COUNTER SLIP</span>
+                                                <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                            </div>
+                                        )}
+                                    </React.Fragment>
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
+
+            {/* Scoped Print Styles for Fee Receipt Modal */}
+            <style>{`
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 6mm 8mm 6mm 8mm;
+                    }
+                    *, *::before, *::after {
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        background: #ffffff !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        height: auto !important;
+                        min-height: auto !important;
+                        overflow: visible !important;
+                    }
+                    /* Strict Hide of entire root application */
+                    #root {
+                        display: none !important;
+                        height: 0 !important;
+                        overflow: hidden !important;
+                    }
+                    .no-print {
+                        display: none !important;
+                    }
+                    .fee-receipt-modal-overlay {
+                        position: static !important;
+                        display: block !important;
+                        width: 100% !important;
+                        height: auto !important;
+                        background: transparent !important;
+                        backdrop-filter: none !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .fee-receipt-modal-overlay > div {
+                        max-width: 100% !important;
+                        max-height: none !important;
+                        box-shadow: none !important;
+                        border: none !important;
+                        border-radius: 0 !important;
+                        overflow: visible !important;
+                        background: transparent !important;
+                        padding: 0 !important;
+                    }
+                    #printable-fee-receipt-container {
+                        display: flex !important;
+                        flex-direction: column !important;
+                        gap: 3mm !important;
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        margin: 0 auto !important;
+                        padding: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .fee-receipt-copy {
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        box-sizing: border-box !important;
+                        border: 1.5px solid #0f172a !important;
+                        border-radius: 6px !important;
+                        background: #ffffff !important;
+                        margin: 0 auto !important;
+                        padding: 6px 10px !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    .fee-receipt-cut-line {
+                        display: flex !important;
+                        margin: 2mm 0 !important;
+                    }
+                }
+            `}</style>
+        </>,
+        document.body
     );
 };
 
@@ -4732,6 +5406,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
 
     // 2. Selected Student Fee Calculation & Payment Form
     const [selectedStudent, setSelectedStudent] = useState(null);
+    const [printChallanModalData, setPrintChallanModalData] = useState(null);
     const [paymentMode, setPaymentMode] = useState('Cash');
     const [transactionRefId, setTransactionRefId] = useState('');
     const [proofFile, setProofFile] = useState(null);
@@ -7079,27 +7754,13 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         }
     };
 
-    // Download Fee Card / Challan PDF for any month
-    const handleDownloadChallanForMonth = (m) => {
+    // 1-Click Direct Print Challan / Slip Modal Handler
+    const handlePrintChallanForMonth = (m) => {
         const student = activeChild || selectedStudent;
         if (!student) return;
         const targetMonthIdx = m ? (m.monthNum - 1) : selectedTargetMonthIdx;
         const targetMonthName = MONTH_NAMES[targetMonthIdx];
         const targetYear = new Date().getFullYear();
-        
-        // Multi-Sibling Unified Family Challan
-        if (feeCalculation?.isMultiFamily && !m) {
-            downloadFamilyFeeChallanPDF({
-                schoolInfo: localSchoolInfo || schoolInfo,
-                feeCalculation,
-                targetMonthName,
-                targetYear,
-                fatherName: officialFamilyFatherName || student.parentDetails?.fatherName || student.fatherName || 'Parent / Guardian',
-                feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
-                cashierName: auth?.currentUser?.displayName || auth?.currentUser?.email?.split('@')[0] || 'Principal Office'
-            });
-            return;
-        }
 
         const feeCalculationData = calculateItemizedFeeBreakdown(
             student,
@@ -7108,7 +7769,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             targetMonthIdx,
             targetYear
         );
-        
+
         const unpaidPrevMonths = (studentReliabilityData?.monthlyHistory || []).filter(
             histMonth => (histMonth.monthNum - 1) < targetMonthIdx && histMonth.status !== 'paid'
         );
@@ -7119,14 +7780,73 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             feeCalculationData.totalPayable = (feeCalculationData.totalPayable || 0) + feeCalculationData.arrears;
         }
 
-        downloadStudentFeeCardPDF({
+        const challanPayload = {
             student,
             breakdown: feeCalculationData,
             isPaid: m ? (m.status === 'paid') : (selectedDetailMonthData?.isPaid || false),
             targetMonthName,
             targetYear,
-            feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 }
-        }, localSchoolInfo || schoolInfo);
+            targetMonthIdx,
+            feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+            challanNo: `CHL-${targetYear}-${String(targetMonthIdx + 1).padStart(2, '0')}-${student.rollNo || student.id?.slice(-4) || '101'}`
+        };
+
+        setPrintChallanModalData(challanPayload);
+    };
+
+    // Download Fee Card / Challan PDF for any month
+    const handleDownloadChallanForMonth = async (m) => {
+        const student = activeChild || selectedStudent;
+        if (!student) return;
+        const targetMonthIdx = m ? (m.monthNum - 1) : selectedTargetMonthIdx;
+        const targetMonthName = MONTH_NAMES[targetMonthIdx];
+        const targetYear = new Date().getFullYear();
+        
+        try {
+            // Multi-Sibling Unified Family Challan
+            if (feeCalculation?.isMultiFamily && !m) {
+                await downloadFamilyFeeChallanPDF({
+                    schoolInfo: localSchoolInfo || schoolInfo,
+                    feeCalculation,
+                    targetMonthName,
+                    targetYear,
+                    fatherName: officialFamilyFatherName || student.parentDetails?.fatherName || student.fatherName || 'Parent / Guardian',
+                    feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+                    cashierName: auth?.currentUser?.displayName || auth?.currentUser?.email?.split('@')[0] || 'Principal Office'
+                });
+                return;
+            }
+
+            const feeCalculationData = calculateItemizedFeeBreakdown(
+                student,
+                currentAction,
+                { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 },
+                targetMonthIdx,
+                targetYear
+            );
+            
+            const unpaidPrevMonths = (studentReliabilityData?.monthlyHistory || []).filter(
+                histMonth => (histMonth.monthNum - 1) < targetMonthIdx && histMonth.status !== 'paid'
+            );
+            if (unpaidPrevMonths.length > 0 && !feeCalculationData.is100PercentFree) {
+                const perMonthTuition = feeCalculationData.tuitionPayable || feeCalculationData.baseTuition || 0;
+                feeCalculationData.arrears = unpaidPrevMonths.length * perMonthTuition;
+                feeCalculationData.arrearsMonthsCount = unpaidPrevMonths.length;
+                feeCalculationData.totalPayable = (feeCalculationData.totalPayable || 0) + feeCalculationData.arrears;
+            }
+
+            downloadStudentFeeCardPDF({
+                student,
+                breakdown: feeCalculationData,
+                isPaid: m ? (m.status === 'paid') : (selectedDetailMonthData?.isPaid || false),
+                targetMonthName,
+                targetYear,
+                feeSettings: { dueDate: dueInfo.dueDay || 10, penaltyAmount: dueInfo.autoFine || 0 }
+            }, localSchoolInfo || schoolInfo);
+        } catch (err) {
+            console.error("Error downloading challan PDF:", err);
+            alert("Failed to download PDF: " + (err.message || 'Unknown error'));
+        }
     };
 
     // Send WhatsApp Reminder with Fee Card Details
@@ -7427,9 +8147,18 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         if (rec) printThermalReceipt(rec, localSchoolInfo);
     };
 
-    const handleDownloadPaidPDFReceipt = () => {
+    const handleDownloadPaidPDFReceipt = async () => {
         const rec = getSelectedMonthPaidTxRecord();
-        if (rec) downloadOfficialReceiptPDF(rec, localSchoolInfo);
+        if (rec) {
+            try {
+                await downloadOfficialReceiptPDF(rec, localSchoolInfo || schoolInfo);
+            } catch (e) {
+                console.error("PDF receipt error:", e);
+                alert("Failed to download PDF receipt: " + (e.message || "Unknown error"));
+            }
+        } else {
+            alert("No payment record found for this month.");
+        }
     };
 
     const handleResendPaidWhatsAppReceipt = () => {
@@ -10912,31 +11641,54 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                         );
                                                     })()}
 
-                                                    {/* Download Pre-payment Challan PDF */}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleDownloadChallanForMonth(null)}
-                                                        style={{
-                                                            width: '100%',
-                                                            marginTop: '0.5rem',
-                                                            padding: '0.55rem',
-                                                            borderRadius: '8px',
-                                                            background: '#ffffff',
-                                                            border: '1.5px solid #0f172a',
-                                                            color: '#0f172a',
-                                                            fontWeight: '800',
-                                                            fontSize: '0.78rem',
-                                                            cursor: 'pointer',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            gap: '0.4rem',
-                                                            transition: 'all 0.15s ease'
-                                                        }}
-                                                        title="Download fee voucher / challan for parents before payment"
-                                                    >
-                                                        <FileText size={14} /> Download Fee Challan / Bill ({MONTH_NAMES[selectedTargetMonthIdx]})
-                                                    </button>
+                                                    {/* Print & Download Pre-payment Challan Buttons */}
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handlePrintChallanForMonth(null)}
+                                                            style={{
+                                                                padding: '0.6rem 0.75rem',
+                                                                borderRadius: '8px',
+                                                                background: 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)',
+                                                                border: '1px solid #16a34a',
+                                                                color: '#ffffff',
+                                                                fontWeight: '800',
+                                                                fontSize: '0.78rem',
+                                                                cursor: 'pointer',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                gap: '0.4rem',
+                                                                boxShadow: '0 2px 4px rgba(22, 163, 74, 0.25)',
+                                                                transition: 'all 0.15s ease'
+                                                            }}
+                                                            title="1-Click Direct Print Challan / Slip for Parent & Office"
+                                                        >
+                                                            <Printer size={15} /> Print Slip ({MONTH_NAMES[selectedTargetMonthIdx]})
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDownloadChallanForMonth(null)}
+                                                            style={{
+                                                                padding: '0.6rem 0.75rem',
+                                                                borderRadius: '8px',
+                                                                background: '#ffffff',
+                                                                border: '1.5px solid #0f172a',
+                                                                color: '#0f172a',
+                                                                fontWeight: '800',
+                                                                fontSize: '0.78rem',
+                                                                cursor: 'pointer',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                gap: '0.4rem',
+                                                                transition: 'all 0.15s ease'
+                                                            }}
+                                                            title="Download fee voucher / challan for parents before payment"
+                                                        >
+                                                            <FileText size={14} /> Download PDF
+                                                        </button>
+                                                    </div>
                                                 </div>
 
                                                 {/* ============================================================== */}
@@ -13292,7 +14044,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             <span style={{ color: '#0f172a', fontWeight: '700', fontSize: '0.78rem' }}>{tx.paymentMode || 'Cash'}</span>
                                                                         </td>
                                                                         <td style={{ padding: '0.42rem 0.75rem', textAlign: 'right' }}>
-                                                                            <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+                                                                            <div style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center', justifyContent: 'flex-end' }}>
                                                                                 {tx.proofUrl && (
                                                                                     <button
                                                                                         type="button"
@@ -13302,20 +14054,49 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                             title: `${tx.studentName} (${tx.receiptNo}) - Proof Screenshot`
                                                                                         })}
                                                                                         style={{
-                                                                                            padding: '0.2rem 0.45rem',
-                                                                                            borderRadius: '5px',
+                                                                                            padding: '0.22rem 0.45rem',
+                                                                                            borderRadius: '6px',
                                                                                             border: '1.5px solid #86efac',
                                                                                             background: '#f0fdf4',
                                                                                             color: '#15803d',
                                                                                             fontWeight: '800',
                                                                                             fontSize: '0.74rem',
-                                                                                            cursor: 'pointer'
+                                                                                            cursor: 'pointer',
+                                                                                            display: 'inline-flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '2px'
                                                                                         }}
-                                                                                        title="View Proof"
+                                                                                        title="View Proof Screenshot"
                                                                                     >
                                                                                         <Eye size={12} />
                                                                                     </button>
                                                                                 )}
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={async () => {
+                                                                                        try {
+                                                                                            await downloadOfficialReceiptPDF(tx, localSchoolInfo || schoolInfo);
+                                                                                        } catch (e) {
+                                                                                            console.error("Direct PDF download error:", e);
+                                                                                        }
+                                                                                    }}
+                                                                                    style={{
+                                                                                        padding: '0.22rem 0.5rem',
+                                                                                        borderRadius: '6px',
+                                                                                        border: '1.5px solid #cbd5e1',
+                                                                                        background: '#ffffff',
+                                                                                        color: '#0078d4',
+                                                                                        fontWeight: '800',
+                                                                                        fontSize: '0.74rem',
+                                                                                        cursor: 'pointer',
+                                                                                        display: 'inline-flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '3px'
+                                                                                    }}
+                                                                                    title="Direct Download Official PDF Receipt"
+                                                                                >
+                                                                                    <Download size={12} />
+                                                                                </button>
                                                                                 <button
                                                                                     type="button"
                                                                                     onClick={() => {
@@ -13323,19 +14104,20 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                                         setReceiptModalOpen(true);
                                                                                     }}
                                                                                     style={{
-                                                                                        padding: '0.2rem 0.5rem',
-                                                                                        borderRadius: '5px',
-                                                                                        border: '1.5px solid #cbd5e1',
-                                                                                        background: '#ffffff',
-                                                                                        color: '#0f172a',
+                                                                                        padding: '0.22rem 0.6rem',
+                                                                                        borderRadius: '6px',
+                                                                                        border: '1.5px solid #0078d4',
+                                                                                        background: '#eff6ff',
+                                                                                        color: '#0078d4',
                                                                                         fontWeight: '800',
                                                                                         fontSize: '0.74rem',
                                                                                         cursor: 'pointer',
                                                                                         display: 'inline-flex',
                                                                                         alignItems: 'center',
-                                                                                        gap: '4px'
+                                                                                        gap: '4px',
+                                                                                        boxShadow: '0 1px 2px rgba(0, 120, 212, 0.15)'
                                                                                     }}
-                                                                                    title="Print Slip"
+                                                                                    title="Open Printable 2-Copy Fee Slip & Voucher"
                                                                                 >
                                                                                     <Printer size={12} /> Slip
                                                                                 </button>
@@ -13900,6 +14682,456 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     schoolInfo={localSchoolInfo || schoolInfo}
                 />
             )}
+
+            {/* 🎫 Direct 1-Click Fee Challan / Bill Print Modal (Exact 1-Page A4 Dual-Copy) */}
+            {printChallanModalData && typeof document !== "undefined" && createPortal(
+                <div
+                    className="fee-challan-modal-overlay"
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(15, 23, 42, 0.75)',
+                        backdropFilter: 'blur(5px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 99999,
+                        padding: '1rem',
+                        overflowY: 'auto'
+                    }}
+                    onClick={() => setPrintChallanModalData(null)}
+                >
+                    <div
+                        style={{
+                            background: '#ffffff',
+                            borderRadius: '16px',
+                            maxWidth: '780px',
+                            width: '100%',
+                            maxHeight: '92vh',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            overflow: 'hidden',
+                            boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.5)',
+                            border: '1.5px solid #cbd5e1',
+                            position: 'relative'
+                        }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header / Action Toolbar (Hidden on Print) */}
+                        <div
+                            className="no-print"
+                            style={{
+                                padding: '0.85rem 1.25rem',
+                                background: 'linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)',
+                                borderBottom: '1.5px solid #cbd5e1',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                flexShrink: 0,
+                                gap: '1rem'
+                            }}
+                        >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <div
+                                    style={{
+                                        width: '34px',
+                                        height: '34px',
+                                        borderRadius: '8px',
+                                        background: '#0078d4',
+                                        color: 'white',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        boxShadow: '0 2px 4px rgba(0, 120, 212, 0.3)'
+                                    }}
+                                >
+                                    <Printer size={18} />
+                                </div>
+                                <div>
+                                    <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', display: 'block', lineHeight: '1.2' }}>
+                                        Fee Challan & Billing Deposit Slip
+                                    </span>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+                                        {printChallanModalData.targetMonthName} {printChallanModalData.targetYear} • Parent & Office Dual Copy
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDownloadChallanForMonth(null)}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem',
+                                        padding: '0.45rem 0.85rem',
+                                        borderRadius: '8px',
+                                        border: '1.5px solid #cbd5e1',
+                                        background: '#ffffff',
+                                        color: '#334155',
+                                        fontSize: '0.8rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer'
+                                    }}
+                                    title="Download as PDF"
+                                >
+                                    <Download size={14} />
+                                    <span>Save PDF</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => window.print()}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.45rem 1.1rem',
+                                        borderRadius: '8px',
+                                        border: '1px solid #16a34a',
+                                        background: 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)',
+                                        color: '#ffffff',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 5px rgba(22, 163, 74, 0.25)',
+                                        transition: 'all 0.12s ease'
+                                    }}
+                                    title="Direct Print Slip"
+                                >
+                                    <Printer size={15} />
+                                    <span>Print Slip</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setPrintChallanModalData(null)}
+                                    style={{
+                                        width: '34px',
+                                        height: '34px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #cbd5e1',
+                                        background: '#ffffff',
+                                        color: '#475569',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.12s ease'
+                                    }}
+                                    title="Close Preview"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Scrollable Body */}
+                        <div
+                            style={{
+                                overflowY: 'auto',
+                                padding: '1rem',
+                                background: '#f8fafc',
+                                flex: 1
+                            }}
+                        >
+                            <div
+                                id="printable-fee-challan-container"
+                                style={{
+                                    width: '100%',
+                                    maxWidth: '720px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '0.85rem',
+                                    margin: '0 auto'
+                                }}
+                            >
+                                {['STUDENT / PARENT COPY', 'OFFICE / ACCOUNTS COPY'].map((copyType, copyIdx) => {
+                                    const st = printChallanModalData.student;
+                                    const bd = printChallanModalData.breakdown;
+                                    const sInfo = localSchoolInfo || schoolInfo || {};
+                                    const dueDay = printChallanModalData.feeSettings?.dueDate || 10;
+                                    const fineAmt = bd.penaltyFine || printChallanModalData.feeSettings?.penaltyAmount || 0;
+                                    const totalDue = bd.totalPayable || 0;
+                                    const totalAfterDue = totalDue + (fineAmt > 0 && !bd.isFineWaived ? fineAmt : 0);
+
+                                    return (
+                                        <React.Fragment key={copyIdx}>
+                                            <div
+                                                className="fee-challan-copy"
+                                                style={{
+                                                    background: '#ffffff',
+                                                    color: '#1e293b',
+                                                    borderRadius: '10px',
+                                                    border: '1.5px solid #0f172a',
+                                                    padding: '0.75rem 1rem',
+                                                    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '0.45rem',
+                                                    position: 'relative'
+                                                }}
+                                            >
+                                                {/* Watermark Copy Badge */}
+                                                <div
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: '8px',
+                                                        right: '12px',
+                                                        background: copyIdx === 0 ? '#eff6ff' : '#f0fdf4',
+                                                        border: `1px solid ${copyIdx === 0 ? '#93c5fd' : '#86efac'}`,
+                                                        color: copyIdx === 0 ? '#1d4ed8' : '#15803d',
+                                                        fontSize: '0.62rem',
+                                                        fontWeight: '900',
+                                                        padding: '2px 7px',
+                                                        borderRadius: '4px',
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.5px'
+                                                    }}
+                                                >
+                                                    {copyType}
+                                                </div>
+
+                                                {/* School Header */}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.4rem', paddingRight: '120px' }}>
+                                                    {sInfo.logo || sInfo.profileImage ? (
+                                                        <div style={{ width: '42px', height: '42px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#fff', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                            <img src={sInfo.logo || sInfo.profileImage} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                                        </div>
+                                                    ) : null}
+                                                    <div>
+                                                        <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '-0.2px', lineHeight: '1.2' }}>
+                                                            {sInfo.name || 'SCHOOL NAME'}
+                                                        </h3>
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', fontSize: '0.68rem', color: '#475569', fontWeight: '600', marginTop: '1px' }}>
+                                                            {sInfo.phone && <span>📞 {sInfo.phone}</span>}
+                                                            {sInfo.email && <span>✉️ {sInfo.email}</span>}
+                                                            {sInfo.address && <span>📍 {sInfo.address}</span>}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Challan Meta & Student Info Grid */}
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.5rem', background: '#f8fafc', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.72rem' }}>
+                                                    {/* Student Details */}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Student: </span><strong style={{ color: '#0f172a', fontSize: '0.82rem' }}>{st.name}</strong></div>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Father: </span><strong style={{ color: '#334155' }}>{st.parentDetails?.fatherName || st.fatherName || 'Parent'}</strong></div>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Class: </span><strong style={{ color: '#0078d4' }}>{st.className || 'N/A'}</strong> {st.rollNo && st.rollNo !== '-' ? `• Roll: ${st.rollNo}` : ''}</div>
+                                                    </div>
+
+                                                    {/* Challan Meta */}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', textAlign: 'right' }}>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Challan #: </span><strong style={{ color: '#0f172a', fontFamily: 'monospace', fontSize: '0.76rem' }}>{printChallanModalData.challanNo}</strong></div>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Billing Month: </span><strong style={{ color: '#0078d4' }}>{printChallanModalData.targetMonthName} {printChallanModalData.targetYear}</strong></div>
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Due Date: </span><strong style={{ color: '#dc2626' }}>{dueDay} {printChallanModalData.targetMonthName} {printChallanModalData.targetYear}</strong></div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Particulars Table */}
+                                                <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                                                        <thead>
+                                                            <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
+                                                                <th style={{ padding: '3px 8px', textAlign: 'left', fontWeight: '800', color: '#475569' }}>Fee Head / Description</th>
+                                                                <th style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '800', color: '#475569', width: '110px' }}>Amount (PKR)</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                <td style={{ padding: '3px 8px', color: '#1e293b' }}>Monthly Tuition Fee ({printChallanModalData.targetMonthName})</td>
+                                                                <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>Rs {Number(bd.tuitionPayable || bd.baseTuition || 0).toLocaleString()}</td>
+                                                            </tr>
+
+                                                            {bd.arrears > 0 && (
+                                                                <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#dc2626' }}>
+                                                                    <td style={{ padding: '3px 8px' }}>Pending Previous Arrears ({bd.arrearsMonthsCount || 1} Month{bd.arrearsMonthsCount > 1 ? 's' : ''})</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700' }}>Rs {Number(bd.arrears).toLocaleString()}</td>
+                                                                </tr>
+                                                            )}
+
+                                                            {bd.actionFee > 0 && (
+                                                                <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                    <td style={{ padding: '3px 8px', color: '#1e293b' }}>Special Actions & Exam Charges</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>Rs {Number(bd.actionFee).toLocaleString()}</td>
+                                                                </tr>
+                                                            )}
+
+                                                            {bd.storeDues > 0 && (
+                                                                <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                    <td style={{ padding: '3px 8px', color: '#1e293b' }}>Uniform & Store Purchases</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>Rs {Number(bd.storeDues).toLocaleString()}</td>
+                                                                </tr>
+                                                            )}
+
+                                                            {bd.discount > 0 && (
+                                                                <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#dc2626' }}>
+                                                                    <td style={{ padding: '3px 8px' }}>Concession / Sibling Discount</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700' }}>-Rs {Number(bd.discount).toLocaleString()}</td>
+                                                                </tr>
+                                                            )}
+
+                                                            {/* Total Rows */}
+                                                            <tr style={{ background: '#f0fdf4', borderTop: '1.5px solid #16a34a' }}>
+                                                                <td style={{ padding: '4px 8px', fontWeight: '900', color: '#166534', textTransform: 'uppercase' }}>Payable by Due Date ({dueDay} {printChallanModalData.targetMonthName})</td>
+                                                                <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: '900', color: '#166534', fontSize: '0.85rem' }}>
+                                                                    Rs {Number(totalDue).toLocaleString()}/-
+                                                                </td>
+                                                            </tr>
+                                                            {fineAmt > 0 && (
+                                                                <tr style={{ background: '#fef2f2', borderTop: '1px solid #fca5a5' }}>
+                                                                    <td style={{ padding: '3px 8px', fontWeight: '800', color: '#991b1b' }}>Payable after Due Date (+Rs {fineAmt} Late Surcharge)</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '800', color: '#991b1b' }}>
+                                                                        Rs {Number(totalAfterDue).toLocaleString()}/-
+                                                                    </td>
+                                                                </tr>
+                                                            )}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+
+                                                {/* In Words & Notes */}
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#475569', background: '#f8fafc', padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                                    <div>
+                                                        <span style={{ fontWeight: '700', color: '#334155' }}>Amount In Words: </span>
+                                                        <span style={{ fontWeight: '800', color: '#0f172a', fontStyle: 'italic' }}>
+                                                            {numberToWords(totalDue)}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        <span style={{ fontWeight: '700', color: '#dc2626' }}>Note: </span>
+                                                        <span>Please deposit before {dueDay} {printChallanModalData.targetMonthName}.</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Signatures & Micro Footer */}
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: '0.75rem', marginTop: '0.15rem' }}>
+                                                    <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                        <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '700', color: '#475569' }}>
+                                                            Parent / Depositor Signature
+                                                        </div>
+                                                    </div>
+
+                                                    <div style={{ fontSize: '0.58rem', color: '#94a3b8', textAlign: 'center' }}>
+                                                        Official Computer Generated Challan • School ERP
+                                                    </div>
+
+                                                    <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                        <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '800', color: '#0f172a' }}>
+                                                            Cashier / Principal Stamp
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Scissors Dotted Cut Line */}
+                                            {copyIdx === 0 && (
+                                                <div
+                                                    className="fee-challan-cut-line"
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.5rem',
+                                                        color: '#94a3b8',
+                                                        fontSize: '0.62rem',
+                                                        fontWeight: '700',
+                                                        margin: '0.2rem 0'
+                                                    }}
+                                                >
+                                                    <Scissors size={12} style={{ transform: 'rotate(-90deg)' }} />
+                                                    <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                                    <span>CUT HERE / ACCOUNTS COUNTER COPY</span>
+                                                    <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                                </div>
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {/* Scoped Print Styles for Fee Challan Modal */}
+            <style>{`
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 6mm 8mm 6mm 8mm;
+                    }
+                    *, *::before, *::after {
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        background: #ffffff !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        height: auto !important;
+                        min-height: auto !important;
+                        overflow: visible !important;
+                    }
+                    /* Strict Hide of entire root application */
+                    #root {
+                        display: none !important;
+                        height: 0 !important;
+                        overflow: hidden !important;
+                    }
+                    .no-print {
+                        display: none !important;
+                    }
+                    .fee-challan-modal-overlay {
+                        position: static !important;
+                        display: block !important;
+                        width: 100% !important;
+                        height: auto !important;
+                        background: transparent !important;
+                        backdrop-filter: none !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .fee-challan-modal-overlay > div {
+                        max-width: 100% !important;
+                        max-height: none !important;
+                        box-shadow: none !important;
+                        border: none !important;
+                        border-radius: 0 !important;
+                        overflow: visible !important;
+                        background: transparent !important;
+                        padding: 0 !important;
+                    }
+                    #printable-fee-challan-container {
+                        display: flex !important;
+                        flex-direction: column !important;
+                        gap: 3mm !important;
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        margin: 0 auto !important;
+                        padding: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .fee-challan-copy {
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        box-sizing: border-box !important;
+                        border: 1.5px solid #0f172a !important;
+                        border-radius: 6px !important;
+                        background: #ffffff !important;
+                        margin: 0 auto !important;
+                        padding: 6px 10px !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    .fee-challan-cut-line {
+                        display: flex !important;
+                        margin: 2mm 0 !important;
+                    }
+                }
+            `}</style>
         </div>
     );
 };

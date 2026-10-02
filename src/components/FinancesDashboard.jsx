@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
     Wallet, Users, ChevronRight, ChevronLeft, ArrowLeft, Ban, CheckCircle, Plus, Trash2, Edit2, X, 
     CheckSquare, Square, ArrowUpRight, ArrowDownRight, Download,
@@ -7,13 +8,13 @@ import {
     PieChart, BarChart3, Zap, ShieldCheck, Layers, Wifi, WifiOff, RefreshCw, Filter, ArrowRight,
     Award, AlertTriangle, Check, RotateCcw, RotateCw, ZoomIn, ZoomOut, Maximize2, CalendarDays, History, Send,
     Sliders, HelpCircle, ArrowDown, ArrowUp, AlertCircle, Database, PlayCircle,
-    ChevronDown, ChevronUp
+    ChevronDown, ChevronUp, Mail, MapPin, Scissors
 } from 'lucide-react';
 import {
     ResponsiveContainer, BarChart, Bar, AreaChart, Area, PieChart as RechartsPie, Pie, Cell,
     XAxis, YAxis, Tooltip as RechartsTooltip, Legend as RechartsLegend, CartesianGrid, Line, ComposedChart
 } from 'recharts';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from './CachedImage';
 import { db } from '../firebase';
@@ -45,6 +46,32 @@ const getLocalIsoDate = (d = new Date()) => {
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
+};
+
+// Helper: Convert number to Words (PKR Currency)
+const numberToWords = (num) => {
+    const a = [
+        '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+        'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'
+    ];
+    const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+    const inWords = (n) => {
+        if ((n = n.toString()).length > 9) return 'overflow';
+        let nArray = ('000000000' + n).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+        if (!nArray) return '';
+        let str = '';
+        str += (Number(nArray[1]) !== 0) ? (a[Number(nArray[1])] || b[nArray[1][0]] + ' ' + a[nArray[1][1]]) + ' Crore ' : '';
+        str += (Number(nArray[2]) !== 0) ? (a[Number(nArray[2])] || b[nArray[2][0]] + ' ' + a[nArray[2][1]]) + ' Lakh ' : '';
+        str += (Number(nArray[3]) !== 0) ? (a[Number(nArray[3])] || b[nArray[3][0]] + ' ' + a[nArray[3][1]]) + ' Thousand ' : '';
+        str += (Number(nArray[4]) !== 0) ? (a[Number(nArray[4])] || b[nArray[4][0]] + ' ' + a[nArray[4][1]]) + ' Hundred ' : '';
+        str += (Number(nArray[5]) !== 0) ? ((str !== '') ? 'and ' : '') + (a[Number(nArray[5])] || b[nArray[5][0]] + ' ' + a[nArray[5][1]]) + ' ' : '';
+        return str.trim();
+    };
+
+    const rounded = Math.round(Number(num) || 0);
+    if (rounded === 0) return 'Zero Rupees Only';
+    return inWords(rounded) + ' Rupees Only';
 };
 
 // Distinct 3D Vibrant Palette
@@ -192,6 +219,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const [proofModalState, setProofModalState] = useState({ isOpen: false, url: '', title: '' });
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
     const [isGeneratingDailyPDF, setIsGeneratingDailyPDF] = useState(false);
+    const [isDownloadingModalSlip, setIsDownloadingModalSlip] = useState(false);
 
     // Unified Add / Edit Modal State for Incomes & Expenses
     const [financeModalState, setFinanceModalState] = useState({ isOpen: false, category: 'incomes', item: null });
@@ -281,10 +309,14 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             try {
                 const schoolDoc = await getDocFast(doc(db, `schools/${schoolId}`));
                 if (schoolDoc.exists() && isMounted) {
-                    const data = schoolDoc.data();
                     const info = {
                         name: data.name || parentSchoolInfo?.name || 'School Report',
-                        logo: data.profileImage || parentSchoolInfo?.logo || ''
+                        logo: data.profileImage || parentSchoolInfo?.logo || '',
+                        phone: data.phone || data.contactNumber || parentSchoolInfo?.phone || '',
+                        emergencyPhone: data.emergencyPhone || data.alternatePhone || '',
+                        email: data.email || parentSchoolInfo?.email || '',
+                        address: data.address || parentSchoolInfo?.address || data.campus || '',
+                        campus: data.campus || parentSchoolInfo?.campus || ''
                     };
                     setSchoolInfo(info);
 
@@ -2326,6 +2358,461 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             alert("Could not generate daily PDF report: " + err.message);
         }
         setIsGeneratingDailyPDF(false);
+    };
+
+    // Download Single/Family Fee Receipt PDF from Modal (Exact Dual-Copy Matching Image 2)
+    const handleDownloadModalSlipPDF = async () => {
+        if (!selectedReceiptForModal) return;
+        setIsDownloadingModalSlip(true);
+        try {
+            const JsPdfClass = (typeof jsPDF === 'function')
+                ? jsPDF
+                : (jsPDF?.jsPDF || jsPDF?.default?.jsPDF || jsPDF?.default || (typeof window !== 'undefined' && (window.jspdf?.jsPDF || window.jsPDF)));
+            if (!JsPdfClass) throw new Error("jsPDF constructor is unavailable.");
+            const doc = new JsPdfClass({
+                orientation: 'portrait',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            const rec = selectedReceiptForModal;
+            const isMultiFamily = Boolean(rec.isFamilyCombined || (rec.familyStudents && rec.familyStudents.length > 1));
+            const cashierName = rec.collectedBy || auth?.currentUser?.displayName || 'Principal Office';
+
+            // 1. Fetch School Logo Base64 once for both copies
+            let logoBase64 = null;
+            let logoFormat = 'PNG';
+            const logoUrl = schoolInfo?.logo || schoolInfo?.logoUrl || '';
+            if (logoUrl) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 2500);
+                    const response = await fetch(logoUrl, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const base64Img = await new Promise((res) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => res(reader.result);
+                            reader.onerror = () => res(null);
+                            reader.readAsDataURL(blob);
+                        });
+                        if (base64Img) {
+                            logoFormat = base64Img.includes('image/png') ? 'PNG' : 'JPEG';
+                            logoBase64 = base64Img;
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Logo load error:", e);
+                }
+            }
+
+            const safeAutoTable = (typeof autoTable === 'function')
+                ? autoTable
+                : (autoTable?.default || autoTable?.autoTable || doc.autoTable);
+
+            const renderCopy = (copyTitle, startY, isOfficeCopy) => {
+                const startX = 10;
+                const copyWidth = 190;
+                const copyHeight = 134;
+                const padLeft = 14;
+                const padRight = 196;
+                const contentWidth = 182;
+
+                // 1. Outer Container Border
+                if (isOfficeCopy) {
+                    doc.setDrawColor(0, 120, 212); // #0078d4
+                    doc.setLineWidth(0.4);
+                    doc.setLineDashPattern([2, 1.5], 0);
+                    doc.setFillColor(250, 252, 255);
+                    doc.roundedRect(startX, startY, copyWidth, copyHeight, 2.5, 2.5, 'FD');
+                    doc.setLineDashPattern([], 0);
+                } else {
+                    doc.setDrawColor(15, 23, 42); // #0f172a
+                    doc.setLineWidth(0.4);
+                    doc.setFillColor(255, 255, 255);
+                    doc.roundedRect(startX, startY, copyWidth, copyHeight, 2.5, 2.5, 'FD');
+                }
+
+                // 2. Header
+                let headerTextX = padLeft;
+                if (logoBase64) {
+                    try {
+                        doc.addImage(logoBase64, logoFormat, padLeft, startY + 3.5, 11, 11);
+                        headerTextX = padLeft + 14;
+                    } catch (e) {
+                        headerTextX = padLeft;
+                    }
+                } else {
+                    doc.setFillColor(0, 120, 212);
+                    doc.circle(padLeft + 5.5, startY + 9, 5.5, 'F');
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(8);
+                    doc.setTextColor(255, 255, 255);
+                    const initial = (schoolInfo?.name || 'S').trim().charAt(0).toUpperCase();
+                    doc.text(initial, padLeft + 5.5, startY + 11.5, { align: 'center' });
+                    headerTextX = padLeft + 14;
+                }
+
+                // School Name
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(10.5);
+                doc.setTextColor(15, 23, 42);
+                const schoolName = (schoolInfo?.name && schoolInfo.name !== 'School Name' && schoolInfo.name !== 'School Report'
+                    ? schoolInfo.name
+                    : 'SMART PUBLIC SCHOOL').toUpperCase();
+                doc.text(schoolName, headerTextX, startY + 8);
+
+                // Subtitle / Address
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(6.5);
+                doc.setTextColor(100, 116, 139);
+                const addressText = schoolInfo?.address || 'Main Campus, Pakistan';
+                const phoneText = (schoolInfo?.phone || schoolInfo?.contact) ? ` | Contact: ${schoolInfo?.phone || schoolInfo?.contact}` : '';
+                doc.text(`${addressText}${phoneText}`, headerTextX, startY + 12.5);
+
+                // Right Header: Badge (Pill)
+                const badgeWidth = 44;
+                const badgeX = padRight - badgeWidth;
+                if (isOfficeCopy) {
+                    doc.setFillColor(0, 120, 212);
+                } else {
+                    doc.setFillColor(15, 23, 42);
+                }
+                doc.roundedRect(badgeX, startY + 3.5, badgeWidth, 5.5, 1, 1, 'F');
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(6.5);
+                doc.setTextColor(255, 255, 255);
+                doc.text(copyTitle, badgeX + (badgeWidth / 2), startY + 7.3, { align: 'center' });
+
+                // Slip Number below badge
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(7.5);
+                doc.setTextColor(0, 120, 212);
+                const slipNo = rec.receiptNo || rec.id || 'N/A';
+                doc.text(`Slip #${slipNo}`, padRight, startY + 13.5, { align: 'right' });
+
+                // Divider under Header
+                doc.setDrawColor(226, 232, 240);
+                doc.setLineWidth(0.3);
+                doc.line(padLeft, startY + 16.5, padRight, startY + 16.5);
+
+                // 3. Meta Details Bar (Row 1)
+                doc.setFillColor(248, 250, 252);
+                doc.setDrawColor(226, 232, 240);
+                doc.setLineWidth(0.25);
+                doc.roundedRect(padLeft, startY + 18.5, contentWidth, 10.5, 1.2, 1.2, 'FD');
+
+                const col1X = padLeft + 3;
+                const col2X = padLeft + 48;
+                const col3X = padLeft + 94;
+                const col4X = padLeft + 139;
+
+                // Date & Time
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('DATE & TIME', col1X, startY + 22.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(15, 23, 42);
+                const dtStr = `${rec.dateString || rec.dateIso || 'Today'} ${rec.timeString || ''}`.trim();
+                doc.text(dtStr, col1X, startY + 26);
+
+                // Payment Method
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('PAYMENT METHOD', col2X, startY + 22.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(22, 163, 74);
+                doc.text(rec.paymentMode || 'Cash', col2X, startY + 26);
+
+                // Received By
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('RECEIVED BY', col3X, startY + 22.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(15, 23, 42);
+                doc.text(cashierName, col3X, startY + 26);
+
+                // Trx / Ref No
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(5.5);
+                doc.setTextColor(100, 116, 139);
+                doc.text('TRX / REF NO', col4X, startY + 22.2);
+                doc.setFontSize(6.8);
+                doc.setTextColor(67, 56, 202);
+                const trxRef = rec.trxId || rec.transactionId || rec.referenceId || rec.senderAccount || 'Counter Cash';
+                doc.text(trxRef, col4X, startY + 26);
+
+                // 4. Student Information Grid (Row 2)
+                if (isMultiFamily) {
+                    doc.setFillColor(240, 249, 255);
+                    doc.setDrawColor(186, 230, 253);
+                    doc.setLineWidth(0.25);
+                    doc.roundedRect(padLeft, startY + 30.5, contentWidth, 10.5, 1.2, 1.2, 'FD');
+
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(6);
+                    doc.setTextColor(3, 105, 161);
+                    doc.text('Parent / Guardian:', col1X, startY + 34.5);
+                    doc.setTextColor(15, 23, 42);
+                    doc.text(rec.fatherName || 'Parent', col1X + 22, startY + 34.5);
+                    doc.setTextColor(2, 132, 199);
+                    doc.text(`${rec.familyStudents?.length || 0} Family Students Combined`, padRight - 3, startY + 34.5, { align: 'right' });
+
+                    doc.setTextColor(3, 105, 161);
+                    doc.text('Students:', col1X, startY + 38.5);
+                    doc.setTextColor(15, 23, 42);
+                    const famSummary = (rec.familyStudents || []).map(s => `${s.studentName} (${s.className || 'Class'})`).join(' - ');
+                    doc.text(famSummary, col1X + 13, startY + 38.5);
+                } else {
+                    doc.setFillColor(248, 250, 252);
+                    doc.setDrawColor(226, 232, 240);
+                    doc.setLineWidth(0.25);
+                    doc.roundedRect(padLeft, startY + 30.5, contentWidth, 10.5, 1.2, 1.2, 'FD');
+
+                    // Student Name
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(5.5);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text('STUDENT NAME', col1X, startY + 34.2);
+                    doc.setFontSize(6.8);
+                    doc.setTextColor(15, 23, 42);
+                    doc.text(rec.studentName || 'Student', col1X, startY + 38);
+
+                    // Father Name
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(5.5);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text('FATHER NAME', col2X, startY + 34.2);
+                    doc.setFontSize(6.8);
+                    doc.setTextColor(15, 23, 42);
+                    doc.text(rec.fatherName || 'N/A', col2X, startY + 38);
+
+                    // Class & Section
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(5.5);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text('CLASS & SECTION', col3X, startY + 34.2);
+                    doc.setFontSize(6.8);
+                    doc.setTextColor(15, 23, 42);
+                    doc.text(rec.className || 'Class', col3X, startY + 38);
+
+                    // Roll / Admission No
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(5.5);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text('ROLL / ADMISSION NO', col4X, startY + 34.2);
+                    doc.setFontSize(6.8);
+                    doc.setTextColor(0, 120, 212);
+                    doc.text(String(rec.rollNo || rec.admissionNo || 'N/A'), col4X, startY + 38);
+                }
+
+                // 5. Fee Particulars Table
+                const tableBody = [];
+                if (isMultiFamily) {
+                    (rec.familyStudents || []).forEach(st => {
+                        const itemNames = (st.items || []).map(it => it.name).join(', ') || 'Monthly Fee';
+                        const stAmt = Number(st.subtotal || st.totalDue || st.amount || 0);
+                        tableBody.push([
+                            `${st.studentName} (${st.className || 'Class'}) - ${itemNames}`,
+                            `Rs ${stAmt.toLocaleString()}`
+                        ]);
+                    });
+                } else {
+                    const rawItems = (rec.items && Array.isArray(rec.items) && rec.items.length > 0)
+                        ? rec.items
+                        : [{ name: 'Monthly Tuition (September)', amount: rec.totalPaid || rec.amount || 0 }];
+                    rawItems.forEach(it => {
+                        const name = typeof it === 'string' ? it : (it.name || it.title || 'Monthly Tuition Fee');
+                        const amt = typeof it === 'object' ? Number(it.amount || 0) : Number(it || 0);
+                        tableBody.push([name, `Rs ${amt.toLocaleString()}`]);
+                    });
+                }
+
+                if (Number(rec.fineAmount) > 0) {
+                    tableBody.push([
+                        '+ Late Fee Fine / Arrears',
+                        `Rs ${Number(rec.fineAmount).toLocaleString()}`
+                    ]);
+                }
+
+                if (Number(rec.discount) > 0) {
+                    tableBody.push([
+                        '- Concession / Discount Applied',
+                        `- Rs ${Number(rec.discount).toLocaleString()}`
+                    ]);
+                }
+
+                const totalPaidNumber = Number(rec.totalPaid || rec.amount || 0);
+
+                // Highlighted Total Amount Paid Row
+                tableBody.push([
+                    {
+                        content: 'TOTAL AMOUNT PAID',
+                        styles: {
+                            fontStyle: 'bold',
+                            textColor: [22, 101, 52],
+                            fillColor: [240, 253, 244],
+                            fontSize: 7.5
+                        }
+                    },
+                    {
+                        content: `Rs ${totalPaidNumber.toLocaleString()}/-`,
+                        styles: {
+                            halign: 'right',
+                            fontStyle: 'bold',
+                            textColor: [22, 101, 52],
+                            fillColor: [240, 253, 244],
+                            fontSize: 8
+                        }
+                    }
+                ]);
+
+                safeAutoTable(doc, {
+                    startY: startY + 42.5,
+                    margin: { left: padLeft, right: 210 - padRight },
+                    tableWidth: contentWidth,
+                    head: [['Fee Particulars / Description', 'Amount (PKR)']],
+                    body: tableBody,
+                    theme: 'plain',
+                    headStyles: {
+                        fillColor: [15, 23, 42],
+                        textColor: [255, 255, 255],
+                        fontStyle: 'bold',
+                        fontSize: 7.2,
+                        cellPadding: { top: 2, bottom: 2, left: 3, right: 3 }
+                    },
+                    columnStyles: {
+                        0: { halign: 'left', cellPadding: { top: 2, bottom: 2, left: 3, right: 3 } },
+                        1: { halign: 'right', cellPadding: { top: 2, bottom: 2, left: 3, right: 3 }, cellWidth: 38 }
+                    },
+                    styles: {
+                        font: 'helvetica',
+                        fontSize: 7,
+                        textColor: [15, 23, 42],
+                        lineColor: [226, 232, 240],
+                        lineWidth: 0.2
+                    },
+                    didDrawCell: function(data) {
+                        if (data.section === 'body') {
+                            doc.setDrawColor(226, 232, 240);
+                            doc.setLineWidth(0.2);
+                            doc.line(data.cell.x, data.cell.y + data.cell.height, data.cell.x + data.cell.width, data.cell.y + data.cell.height);
+                        }
+                    }
+                });
+
+                const tableEndY = doc.lastAutoTable?.finalY || (startY + 70);
+                const wordsY = tableEndY + 2;
+
+                // 6. In Words & Remarks Bar
+                doc.setFillColor(248, 250, 252);
+                doc.setDrawColor(226, 232, 240);
+                doc.setLineWidth(0.2);
+                doc.roundedRect(padLeft, wordsY, contentWidth, 5.5, 1.2, 1.2, 'FD');
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(6.5);
+                doc.setTextColor(51, 65, 85);
+                doc.text('Amount In Words: ', padLeft + 3, wordsY + 3.8);
+
+                const labelWidth = doc.getTextWidth('Amount In Words: ');
+                doc.setFont('helvetica', 'bolditalic');
+                doc.setTextColor(15, 23, 42);
+                const wordsText = numberToWords(totalPaidNumber);
+                doc.text(wordsText, padLeft + 3 + labelWidth, wordsY + 3.8);
+
+                if (rec.remarks) {
+                    doc.setFont('helvetica', 'normal');
+                    doc.setFontSize(6);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text(`Note: ${rec.remarks}`, padRight - 3, wordsY + 3.8, { align: 'right' });
+                }
+
+                // 7. Signatures & Micro Footer
+                const sigY = startY + copyHeight - 6;
+
+                // Depositor / Parent Signature
+                doc.setDrawColor(100, 116, 139);
+                doc.setLineDashPattern([1.5, 1.5], 0);
+                doc.line(padLeft + 4, sigY - 4, padLeft + 44, sigY - 4);
+                doc.setLineDashPattern([], 0);
+
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(6);
+                doc.setTextColor(71, 85, 105);
+                doc.text('Depositor / Parent Signature', padLeft + 24, sigY, { align: 'center' });
+
+                // Center ERP Verified Tag
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(5.5);
+                doc.setTextColor(148, 163, 184);
+                doc.text('Official Computer Generated Receipt - School ERP Verified', 105, sigY - 1, { align: 'center' });
+
+                // Cashier / Authorized Stamp
+                doc.setDrawColor(100, 116, 139);
+                doc.setLineDashPattern([1.5, 1.5], 0);
+                doc.line(padRight - 44, sigY - 4, padRight - 4, sigY - 4);
+                doc.setLineDashPattern([], 0);
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(6);
+                doc.setTextColor(15, 23, 42);
+                doc.text('Cashier / Authorized Stamp', padRight - 24, sigY, { align: 'center' });
+            };
+
+            // --- Render Copy 1: STUDENT / PARENT COPY (Top Half) ---
+            renderCopy('STUDENT / PARENT COPY', 8, false);
+
+            // --- Scissors Divider Line (Middle) ---
+            doc.setDrawColor(180, 190, 205);
+            doc.setLineWidth(0.3);
+            doc.setLineDashPattern([2, 1.5], 0);
+            doc.line(10, 146, 72, 146);
+            doc.line(138, 146, 200, 146);
+            doc.setLineDashPattern([], 0);
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(6.5);
+            doc.setTextColor(148, 163, 184);
+            doc.text('- - - - CUT HERE / ACCOUNTS COUNTER SLIP - - - -', 105, 147.2, { align: 'center' });
+
+            // --- Render Copy 2: OFFICE / ACCOUNTS COPY (Bottom Half) ---
+            renderCopy('OFFICE / ACCOUNTS COPY', 150, true);
+
+            // --- Save / Download PDF ---
+            const safeRecNo = String(rec.receiptNo || rec.id || 'Slip').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const safeName = String(isMultiFamily ? (rec.fatherName || 'Family') : (rec.studentName || 'Student')).replace(/[^a-zA-Z0-9_-]/g, '_');
+            const fileName = `Fee_Receipt_${safeRecNo}_${safeName}.pdf`;
+
+            try {
+                const pdfBlob = doc.output('blob');
+                const blobUrl = URL.createObjectURL(pdfBlob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = blobUrl;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => {
+                    try {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(blobUrl);
+                    } catch (e) {}
+                }, 3000);
+            } catch (saveErr) {
+                console.warn("Direct blob download fallback to doc.save:", saveErr);
+                doc.save(fileName);
+            }
+        } catch (err) {
+            console.error("PDF generation failed:", err);
+            alert("Failed to generate PDF: " + (err.message || 'Unknown error'));
+        } finally {
+            setIsDownloadingModalSlip(false);
+        }
     };
 
     return (
@@ -5393,9 +5880,10 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                 </div>
             )}
 
-            {/* 3. Student Fee Slip Preview Modal */}
-            {receiptModalOpen && selectedReceiptForModal && (
+            {/* 3. Student Fee Slip Preview Modal (createPortal + Strict 1-Page A4 Print) */}
+            {receiptModalOpen && selectedReceiptForModal && typeof document !== "undefined" && createPortal(
                 <div
+                    className="finance-receipt-modal-overlay"
                     style={{
                         position: 'fixed',
                         inset: 0,
@@ -5405,7 +5893,8 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                         alignItems: 'center',
                         justifyContent: 'center',
                         zIndex: 99999,
-                        padding: '1rem'
+                        padding: '1rem',
+                        overflowY: 'auto'
                     }}
                     onClick={() => {
                         setReceiptModalOpen(false);
@@ -5416,151 +5905,441 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                         style={{
                             background: '#ffffff',
                             borderRadius: '16px',
-                            maxWidth: '480px',
+                            maxWidth: '780px',
                             width: '100%',
+                            maxHeight: '92vh',
+                            display: 'flex',
+                            flexDirection: 'column',
                             overflow: 'hidden',
-                            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)',
-                            border: '1.5px solid #cbd5e1'
+                            boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.5)',
+                            border: '1.5px solid #cbd5e1',
+                            position: 'relative'
                         }}
                         onClick={e => e.stopPropagation()}
                     >
-                        {/* Header */}
-                        <div style={{
-                            padding: '1rem 1.25rem',
-                            background: 'linear-gradient(135deg, #0078d4 0%, #1e40af 100%)',
-                            color: '#ffffff',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
-                        }}>
-                            <div>
-                                <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: '900', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                    <FileText size={16} /> Official Fee Receipt
-                                </h4>
-                                <span style={{ fontSize: '0.75rem', opacity: 0.9 }}>
-                                    Slip #{selectedReceiptForModal.receiptNo || selectedReceiptForModal.id}
-                                </span>
-                            </div>
-                            <button
-                                onClick={() => {
-                                    setReceiptModalOpen(false);
-                                    setSelectedReceiptForModal(null);
-                                }}
-                                style={{ border: 'none', background: 'rgba(255,255,255,0.2)', borderRadius: '8px', color: '#ffffff', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
-                            >
-                                <X size={18} />
-                            </button>
-                        </div>
-
-                        {/* Slip Content */}
-                        <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem', fontSize: '0.85rem' }}>
-                            {/* School & Student Info */}
-                            <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-                                <div style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.95rem' }}>
-                                    {selectedReceiptForModal.studentName}
+                        {/* Header / Action Toolbar (Hidden on Print) */}
+                        <div
+                            className="no-print"
+                            style={{
+                                padding: '0.85rem 1.25rem',
+                                background: 'linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)',
+                                borderBottom: '1.5px solid #cbd5e1',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                flexShrink: 0,
+                                gap: '1rem'
+                            }}
+                        >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <div
+                                    style={{
+                                        width: '34px',
+                                        height: '34px',
+                                        borderRadius: '8px',
+                                        background: '#0078d4',
+                                        color: 'white',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        boxShadow: '0 2px 4px rgba(0, 120, 212, 0.3)'
+                                    }}
+                                >
+                                    <Printer size={18} />
                                 </div>
-                                {selectedReceiptForModal.fatherName && (
-                                    <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                                        Father: {selectedReceiptForModal.fatherName}
-                                    </div>
-                                )}
-                                <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '3px', fontWeight: '700' }}>
-                                    Class: {selectedReceiptForModal.className} {selectedReceiptForModal.rollNo && selectedReceiptForModal.rollNo !== '-' ? `• Roll: ${selectedReceiptForModal.rollNo}` : ''}
+                                <div>
+                                    <span style={{ fontSize: '0.92rem', fontWeight: '900', color: '#0f172a', display: 'block', lineHeight: '1.2' }}>
+                                        Fee Payment Deposit Slip & Voucher
+                                    </span>
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+                                        Slip #{selectedReceiptForModal.receiptNo || selectedReceiptForModal.id} • Official Cashier & Student Copy
+                                    </span>
                                 </div>
                             </div>
 
-                            {/* Payment Meta */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
-                                <div style={{ background: '#f1f5f9', padding: '0.6rem 0.75rem', borderRadius: '8px' }}>
-                                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Date & Time</span>
-                                    <strong style={{ display: 'block', color: '#0f172a', fontSize: '0.82rem', marginTop: '2px' }}>
-                                        {selectedReceiptForModal.dateString || selectedReceiptForModal.dateIso || 'N/A'} {selectedReceiptForModal.timeString ? `• ${selectedReceiptForModal.timeString}` : ''}
-                                    </strong>
-                                </div>
-                                <div style={{ background: '#f1f5f9', padding: '0.6rem 0.75rem', borderRadius: '8px' }}>
-                                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Payment Mode</span>
-                                    <strong style={{ display: 'block', color: '#0078d4', fontSize: '0.82rem', marginTop: '2px' }}>
-                                        {selectedReceiptForModal.paymentMode || 'Cash'}
-                                    </strong>
-                                </div>
-                            </div>
-
-                            {/* Fee Breakdown List */}
-                            <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                                <div style={{ background: '#f8fafc', padding: '0.45rem 0.75rem', fontSize: '0.75rem', fontWeight: '800', color: '#475569', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>Fee Particulars</span>
-                                    <span>Amount</span>
-                                </div>
-                                <div style={{ padding: '0.6rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                                    {selectedReceiptForModal.items && Array.isArray(selectedReceiptForModal.items) && selectedReceiptForModal.items.length > 0 ? (
-                                        selectedReceiptForModal.items.map((it, idx) => (
-                                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#334155' }}>
-                                                <span>{it.name || it.title || 'Fee'}</span>
-                                                <span style={{ fontWeight: '700' }}>Rs {Number(it.amount || 0).toLocaleString()}</span>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#334155' }}>
-                                            <span>Tuition / Session Fee</span>
-                                            <span style={{ fontWeight: '700' }}>Rs {Number(selectedReceiptForModal.totalPaid || 0).toLocaleString()}</span>
-                                        </div>
-                                    )}
-                                    {Number(selectedReceiptForModal.discount || 0) > 0 && (
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#dc2626' }}>
-                                            <span>Concession / Discount</span>
-                                            <span>-Rs {Number(selectedReceiptForModal.discount).toLocaleString()}</span>
-                                        </div>
-                                    )}
-                                </div>
-                                <div style={{ background: '#f0fdf4', padding: '0.6rem 0.75rem', borderTop: '1.5px solid #bbf7d0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontWeight: '900', color: '#166534', fontSize: '0.88rem' }}>Total Amount Paid:</span>
-                                    <strong style={{ fontWeight: '900', color: '#166534', fontSize: '1.1rem' }}>
-                                        Rs {Number(selectedReceiptForModal.totalPaid || 0).toLocaleString()}
-                                    </strong>
-                                </div>
-                            </div>
-
-                            {selectedReceiptForModal.remarks && (
-                                <div style={{ fontSize: '0.76rem', color: '#64748b', background: '#f8fafc', padding: '0.5rem 0.75rem', borderRadius: '6px' }}>
-                                    <strong>Remarks:</strong> {selectedReceiptForModal.remarks}
-                                </div>
-                            )}
-
-                            {/* Buttons */}
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.4rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 {selectedReceiptForModal.proofUrl && (
                                     <button
                                         type="button"
                                         onClick={() => setProofModalState({ isOpen: true, url: selectedReceiptForModal.proofUrl, title: `Payment Proof - ${selectedReceiptForModal.studentName}` })}
-                                        style={{ padding: '0.5rem 0.9rem', borderRadius: '8px', border: '1.5px solid #bfdbfe', background: '#eff6ff', color: '#0078d4', fontWeight: '800', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.35rem',
+                                            padding: '0.45rem 0.85rem',
+                                            borderRadius: '8px',
+                                            border: '1.5px solid #bfdbfe',
+                                            background: '#eff6ff',
+                                            color: '#0078d4',
+                                            fontSize: '0.8rem',
+                                            fontWeight: '800',
+                                            cursor: 'pointer'
+                                        }}
+                                        title="View Digital Payment Screenshot"
                                     >
-                                        <Eye size={13} /> View Proof Screenshot
+                                        <Eye size={14} />
+                                        <span>Proof</span>
                                     </button>
                                 )}
+
+                                <button
+                                    type="button"
+                                    onClick={handleDownloadModalSlipPDF}
+                                    disabled={isDownloadingModalSlip}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.45rem 1.05rem',
+                                        borderRadius: '8px',
+                                        border: '1.5px solid #cbd5e1',
+                                        background: '#ffffff',
+                                        color: '#0f172a',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '800',
+                                        cursor: isDownloadingModalSlip ? 'not-allowed' : 'pointer',
+                                        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                                        transition: 'all 0.12s ease',
+                                        opacity: isDownloadingModalSlip ? 0.7 : 1
+                                    }}
+                                    title="Download Official Fee Receipt PDF"
+                                >
+                                    {isDownloadingModalSlip ? <Loader2 size={15} className="animate-spin text-blue-600" /> : <Download size={15} className="text-blue-600" />}
+                                    <span>{isDownloadingModalSlip ? 'Saving...' : 'Save PDF'}</span>
+                                </button>
+
                                 <button
                                     type="button"
                                     onClick={() => window.print()}
-                                    style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: 'none', background: '#0f172a', color: '#ffffff', fontWeight: '800', fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.4rem',
+                                        padding: '0.45rem 1.1rem',
+                                        borderRadius: '8px',
+                                        border: '1px solid #16a34a',
+                                        background: 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)',
+                                        color: '#ffffff',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 5px rgba(22, 163, 74, 0.25)',
+                                        transition: 'all 0.12s ease'
+                                    }}
+                                    title="Direct Print Slip"
                                 >
-                                    <Printer size={13} /> Print Slip
+                                    <Printer size={15} />
+                                    <span>Print Slip</span>
                                 </button>
+
                                 <button
                                     type="button"
                                     onClick={() => {
                                         setReceiptModalOpen(false);
                                         setSelectedReceiptForModal(null);
                                     }}
-                                    style={{ padding: '0.5rem 0.9rem', borderRadius: '8px', border: '1.5px solid #cbd5e1', background: '#ffffff', color: '#64748b', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}
+                                    style={{
+                                        width: '34px',
+                                        height: '34px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #cbd5e1',
+                                        background: '#ffffff',
+                                        color: '#475569',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.12s ease'
+                                    }}
+                                    title="Close Preview"
                                 >
-                                    Close
+                                    <X size={18} />
                                 </button>
                             </div>
                         </div>
+
+                        {/* Scrollable Receipt Body */}
+                        <div
+                            style={{
+                                overflowY: 'auto',
+                                padding: '1rem',
+                                background: '#f8fafc',
+                                flex: 1
+                            }}
+                        >
+                            <div
+                                id="printable-finance-receipt-container"
+                                style={{
+                                    width: '100%',
+                                    maxWidth: '720px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '0.85rem',
+                                    margin: '0 auto'
+                                }}
+                            >
+                                {/* DUAL COPIES: 1. STUDENT COPY, 2. OFFICE COPY */}
+                                {['STUDENT / PARENT COPY', 'OFFICE / ACCOUNTS COPY'].map((copyType, copyIdx) => (
+                                    <React.Fragment key={copyIdx}>
+                                        <div
+                                            className="finance-receipt-copy"
+                                            style={{
+                                                background: '#ffffff',
+                                                color: '#1e293b',
+                                                borderRadius: '10px',
+                                                border: '1.5px solid #0f172a',
+                                                padding: '0.75rem 1rem',
+                                                boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: '0.45rem',
+                                                position: 'relative'
+                                            }}
+                                        >
+                                            {/* Watermark Copy Badge */}
+                                            <div
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: '8px',
+                                                    right: '12px',
+                                                    background: copyIdx === 0 ? '#eff6ff' : '#f0fdf4',
+                                                    border: `1px solid ${copyIdx === 0 ? '#93c5fd' : '#86efac'}`,
+                                                    color: copyIdx === 0 ? '#1d4ed8' : '#15803d',
+                                                    fontSize: '0.62rem',
+                                                    fontWeight: '900',
+                                                    padding: '2px 7px',
+                                                    borderRadius: '4px',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.5px'
+                                                }}
+                                            >
+                                                {copyType}
+                                            </div>
+
+                                            {/* School Header */}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.4rem', paddingRight: '120px' }}>
+                                                {schoolInfo.logo ? (
+                                                    <div style={{ width: '42px', height: '42px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#fff', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                        <img src={schoolInfo.logo} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                                    </div>
+                                                ) : null}
+                                                <div>
+                                                    <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '-0.2px', lineHeight: '1.2' }}>
+                                                        {schoolInfo.name || 'SCHOOL NAME'}
+                                                    </h3>
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', fontSize: '0.68rem', color: '#475569', fontWeight: '600', marginTop: '1px' }}>
+                                                        {schoolInfo.phone && <span>📞 {schoolInfo.phone}</span>}
+                                                        {schoolInfo.email && <span>✉️ {schoolInfo.email}</span>}
+                                                        {schoolInfo.address && <span>📍 {schoolInfo.address}</span>}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Receipt Meta & Student Info Grid */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.5rem', background: '#f8fafc', padding: '0.45rem 0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.72rem' }}>
+                                                {/* Student Details */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                    <div><span style={{ color: '#64748b', fontWeight: '700' }}>Student: </span><strong style={{ color: '#0f172a', fontSize: '0.82rem' }}>{selectedReceiptForModal.studentName}</strong></div>
+                                                    {selectedReceiptForModal.fatherName && (
+                                                        <div><span style={{ color: '#64748b', fontWeight: '700' }}>Father: </span><strong style={{ color: '#334155' }}>{selectedReceiptForModal.fatherName}</strong></div>
+                                                    )}
+                                                    <div><span style={{ color: '#64748b', fontWeight: '700' }}>Class: </span><strong style={{ color: '#0078d4' }}>{selectedReceiptForModal.className}</strong> {selectedReceiptForModal.rollNo && selectedReceiptForModal.rollNo !== '-' ? `• Roll: ${selectedReceiptForModal.rollNo}` : ''}</div>
+                                                </div>
+
+                                                {/* Voucher Meta */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', textAlign: 'right' }}>
+                                                    <div><span style={{ color: '#64748b', fontWeight: '700' }}>Slip No: </span><strong style={{ color: '#0f172a', fontFamily: 'monospace', fontSize: '0.78rem' }}>#{selectedReceiptForModal.receiptNo || selectedReceiptForModal.id}</strong></div>
+                                                    <div><span style={{ color: '#64748b', fontWeight: '700' }}>Date: </span><strong style={{ color: '#334155' }}>{selectedReceiptForModal.dateString || selectedReceiptForModal.dateIso || 'N/A'} {selectedReceiptForModal.timeString ? `• ${selectedReceiptForModal.timeString}` : ''}</strong></div>
+                                                    <div><span style={{ color: '#64748b', fontWeight: '700' }}>Mode: </span><span style={{ background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '4px', fontWeight: '800', fontSize: '0.66rem', textTransform: 'uppercase' }}>{selectedReceiptForModal.paymentMode || 'Cash'}</span></div>
+                                                </div>
+                                            </div>
+
+                                            {/* Particulars Table */}
+                                            <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflow: 'hidden' }}>
+                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                                                    <thead>
+                                                        <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #cbd5e1' }}>
+                                                            <th style={{ padding: '3px 8px', textAlign: 'left', fontWeight: '800', color: '#475569' }}>Fee Particulars / Description</th>
+                                                            <th style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '800', color: '#475569', width: '110px' }}>Amount (PKR)</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {selectedReceiptForModal.items && Array.isArray(selectedReceiptForModal.items) && selectedReceiptForModal.items.length > 0 ? (
+                                                            selectedReceiptForModal.items.map((it, idx) => (
+                                                                <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                    <td style={{ padding: '3px 8px', color: '#1e293b' }}>{it.name || it.title || 'Fee Particular'}</td>
+                                                                    <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>Rs {Number(it.amount || 0).toLocaleString()}</td>
+                                                                </tr>
+                                                            ))
+                                                        ) : (
+                                                            <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                <td style={{ padding: '3px 8px', color: '#1e293b' }}>Tuition / Monthly Session Fee</td>
+                                                                <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700', color: '#0f172a' }}>Rs {Number(selectedReceiptForModal.totalPaid || selectedReceiptForModal.amount || 0).toLocaleString()}</td>
+                                                            </tr>
+                                                        )}
+
+                                                        {Number(selectedReceiptForModal.discount || 0) > 0 && (
+                                                            <tr style={{ borderBottom: '1px solid #f1f5f9', color: '#dc2626' }}>
+                                                                <td style={{ padding: '3px 8px' }}>Concession / Discount Applied</td>
+                                                                <td style={{ padding: '3px 8px', textAlign: 'right', fontWeight: '700' }}>-Rs {Number(selectedReceiptForModal.discount).toLocaleString()}</td>
+                                                            </tr>
+                                                        )}
+
+                                                        {/* Total Row */}
+                                                        <tr style={{ background: '#f0fdf4', borderTop: '1.5px solid #16a34a' }}>
+                                                            <td style={{ padding: '4px 8px', fontWeight: '900', color: '#166534', textTransform: 'uppercase' }}>Total Amount Paid</td>
+                                                            <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: '900', color: '#166534', fontSize: '0.85rem' }}>
+                                                                Rs {Number(selectedReceiptForModal.totalPaid || selectedReceiptForModal.amount || 0).toLocaleString()}/-
+                                                            </td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
+                                            {/* In Words & Remarks Bar */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#475569', background: '#f8fafc', padding: '3px 8px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                                                <div>
+                                                    <span style={{ fontWeight: '700', color: '#334155' }}>Amount In Words: </span>
+                                                    <span style={{ fontWeight: '800', color: '#0f172a', fontStyle: 'italic' }}>
+                                                        {numberToWords(selectedReceiptForModal.totalPaid || selectedReceiptForModal.amount || 0)}
+                                                    </span>
+                                                </div>
+                                                {selectedReceiptForModal.remarks && (
+                                                    <div>
+                                                        <span style={{ fontWeight: '700' }}>Note: </span>
+                                                        <span>{selectedReceiptForModal.remarks}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Signatures & Micro Footer */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: '0.75rem', marginTop: '0.15rem' }}>
+                                                <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                    <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '700', color: '#475569' }}>
+                                                        Depositor / Parent Signature
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ fontSize: '0.58rem', color: '#94a3b8', textAlign: 'center' }}>
+                                                    Official Computer Generated Receipt • School ERP Verified
+                                                </div>
+
+                                                <div style={{ textAlign: 'center', minWidth: '130px' }}>
+                                                    <div style={{ borderTop: '1px dashed #64748b', paddingTop: '2px', fontSize: '0.62rem', fontWeight: '800', color: '#0f172a' }}>
+                                                        Cashier / Authorized Stamp
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Scissors Dotted Cut Line between Copies */}
+                                        {copyIdx === 0 && (
+                                            <div
+                                                className="finance-cut-line"
+                                                style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.5rem',
+                                                    color: '#94a3b8',
+                                                    fontSize: '0.62rem',
+                                                    fontWeight: '700',
+                                                    margin: '0.2rem 0'
+                                                }}
+                                            >
+                                                <Scissors size={12} style={{ transform: 'rotate(-90deg)' }} />
+                                                <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                                <span>CUT HERE / ACCOUNTS COUNTER SLIP</span>
+                                                <div style={{ flex: 1, borderBottom: '1.5px dashed #cbd5e1' }} />
+                                            </div>
+                                        )}
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                        </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
-            {/* 4. Payment Proof Screenshot Lightbox */}
+            {/* 4. Scoped Print Styles for 1-Page Exact A4 Layout */}
+            <style>{`
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 6mm 8mm 6mm 8mm;
+                    }
+                    *, *::before, *::after {
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        background: #ffffff !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        height: auto !important;
+                        min-height: auto !important;
+                        overflow: visible !important;
+                    }
+                    /* Strict Hide of entire root application */
+                    #root {
+                        display: none !important;
+                        height: 0 !important;
+                        overflow: hidden !important;
+                    }
+                    .no-print {
+                        display: none !important;
+                    }
+                    .finance-receipt-modal-overlay {
+                        position: static !important;
+                        display: block !important;
+                        width: 100% !important;
+                        height: auto !important;
+                        background: transparent !important;
+                        backdrop-filter: none !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .finance-receipt-modal-overlay > div {
+                        max-width: 100% !important;
+                        max-height: none !important;
+                        box-shadow: none !important;
+                        border: none !important;
+                        border-radius: 0 !important;
+                        overflow: visible !important;
+                        background: transparent !important;
+                        padding: 0 !important;
+                    }
+                    #printable-finance-receipt-container {
+                        display: flex !important;
+                        flex-direction: column !important;
+                        gap: 3mm !important;
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        margin: 0 auto !important;
+                        padding: 0 !important;
+                        overflow: visible !important;
+                    }
+                    .finance-receipt-copy {
+                        width: 100% !important;
+                        max-width: 100% !important;
+                        box-sizing: border-box !important;
+                        border: 1.5px solid #0f172a !important;
+                        border-radius: 6px !important;
+                        background: #ffffff !important;
+                        margin: 0 auto !important;
+                        padding: 6px 10px !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    .finance-cut-line {
+                        display: flex !important;
+                        margin: 2mm 0 !important;
+                    }
+                }
+            `}</style>
+
+            {/* 5. Payment Proof Screenshot Lightbox */}
             {proofModalState.isOpen && (
                 <div
                     style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '1.5rem' }}
