@@ -74,6 +74,119 @@ const numberToWords = (num) => {
     return inWords(rounded) + ' Rupees Only';
 };
 
+// Reusable Direct Clean Print Helper (Isolated Iframe, Zero Dark Bleed, Exact A4 Dual-Copy)
+const printElementDirectly = (containerElementOrId, docTitle = 'Fee_Slip') => {
+    if (typeof document === 'undefined') return;
+    const container = typeof containerElementOrId === 'string'
+        ? document.getElementById(containerElementOrId)
+        : containerElementOrId;
+
+    if (!container) {
+        console.error("Receipt container not found for direct printing:", containerElementOrId);
+        window.print();
+        return;
+    }
+
+    const clone = container.cloneNode(true);
+    clone.querySelectorAll('.no-print, button, input, .fee-receipt-modal-actions').forEach(el => el.remove());
+
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.top = '-10000px';
+    printFrame.style.left = '-10000px';
+    printFrame.style.width = '210mm';
+    printFrame.style.height = '297mm';
+    printFrame.style.border = 'none';
+    document.body.appendChild(printFrame);
+
+    const frameDoc = printFrame.contentWindow.document;
+    frameDoc.open();
+    frameDoc.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>${docTitle}</title>
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">
+            <style>
+                @page {
+                    size: A4 portrait;
+                    margin: 6mm 10mm;
+                }
+                * {
+                    box-sizing: border-box;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                }
+                html, body {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    background: #ffffff !important;
+                    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    color: #0f172a;
+                    width: 100% !important;
+                }
+                #printable-finance-receipt-container {
+                    width: 100% !important;
+                    max-width: 100% !important;
+                    margin: 0 auto !important;
+                    padding: 0 !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    background: #ffffff !important;
+                    display: flex !important;
+                    flex-direction: column !important;
+                    gap: 4mm !important;
+                }
+                .fee-receipt-copy {
+                    width: 100% !important;
+                    box-sizing: border-box !important;
+                    margin: 0 !important;
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                }
+                .fee-receipt-cut-line {
+                    margin: 1mm 0 !important;
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                }
+                table {
+                    width: 100% !important;
+                    border-collapse: collapse !important;
+                }
+                th, td {
+                    box-sizing: border-box !important;
+                }
+                .no-print, button {
+                    display: none !important;
+                }
+            </style>
+        </head>
+        <body>
+            ${clone.outerHTML}
+        </body>
+        </html>
+    `);
+    frameDoc.close();
+
+    setTimeout(() => {
+        try {
+            printFrame.contentWindow.focus();
+            printFrame.contentWindow.print();
+        } catch (e) {
+            console.error("Frame print error:", e);
+            window.print();
+        } finally {
+            setTimeout(() => {
+                try {
+                    document.body.removeChild(printFrame);
+                } catch (e) {}
+            }, 5000);
+        }
+    }, 450);
+};
+
 // Distinct 3D Vibrant Palette
 const WHEEL_COLORS = {
     netProfit: '#10b981',        // Emerald Green (Net Profit / Surplus)
@@ -6010,7 +6123,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
 
                                 <button
                                     type="button"
-                                    onClick={() => window.print()}
+                                    onClick={() => printElementDirectly('printable-finance-receipt-container', `Fee_Slip_${selectedReceiptForModal?.receiptNo || 'Receipt'}`)}
                                     style={{
                                         display: 'inline-flex',
                                         alignItems: 'center',

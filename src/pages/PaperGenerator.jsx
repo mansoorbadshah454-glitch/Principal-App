@@ -990,7 +990,114 @@ const PaperGenerator = () => {
     };
 
     const handlePrintPaper = () => {
-        window.print();
+        if (!pagesContainerRef.current) return;
+        const sheets = pagesContainerRef.current.querySelectorAll('.printable-paper-sheet');
+        if (!sheets || sheets.length === 0) {
+            alert("No paper sheets available to print.");
+            return;
+        }
+
+        let sheetsHtml = '';
+        sheets.forEach((sheet) => {
+            const clone = sheet.cloneNode(true);
+            clone.querySelectorAll('.no-print, button, .question-actions').forEach(el => el.remove());
+            sheetsHtml += clone.outerHTML;
+        });
+
+        const printFrame = document.createElement('iframe');
+        printFrame.style.position = 'fixed';
+        printFrame.style.top = '-10000px';
+        printFrame.style.left = '-10000px';
+        printFrame.style.width = '210mm';
+        printFrame.style.height = '297mm';
+        printFrame.style.border = 'none';
+        document.body.appendChild(printFrame);
+
+        const frameDoc = printFrame.contentWindow.document;
+        frameDoc.open();
+        frameDoc.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>${(schoolInfo?.name || 'School')}_Class${selectedClassName}_${selectedSubject}_ExamPaper</title>
+                <link rel="preconnect" href="https://fonts.googleapis.com">
+                <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">
+                <style>
+                    @page {
+                        size: A4 portrait;
+                        margin: 0mm;
+                    }
+                    * {
+                        box-sizing: border-box;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        background: #ffffff !important;
+                        width: 210mm;
+                        font-family: "Times New Roman", "Noto Nastaliq Urdu", Times, serif;
+                    }
+                    .urdu-paper-font {
+                        font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaliq', 'Urdu Typesetting', serif !important;
+                        line-height: 2.1 !important;
+                        font-feature-settings: "liga" 1;
+                        text-rendering: optimizeLegibility;
+                    }
+                    .printable-paper-sheet {
+                        width: 210mm !important;
+                        height: 297mm !important;
+                        min-height: 297mm !important;
+                        max-height: 297mm !important;
+                        padding: 16mm 20mm !important;
+                        margin: 0 !important;
+                        background: #ffffff !important;
+                        color: #000000 !important;
+                        box-sizing: border-box !important;
+                        position: relative !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justifyContent: space-between !important;
+                        overflow: hidden !important;
+                        page-break-after: always !important;
+                        break-after: page !important;
+                        box-shadow: none !important;
+                        border: none !important;
+                    }
+                    .printable-paper-sheet:last-of-type,
+                    .printable-paper-sheet:last-child {
+                        page-break-after: auto !important;
+                        break-after: auto !important;
+                    }
+                    .no-print, .question-actions, button {
+                        display: none !important;
+                    }
+                </style>
+            </head>
+            <body>
+                ${sheetsHtml}
+            </body>
+            </html>
+        `);
+        frameDoc.close();
+
+        setTimeout(() => {
+            try {
+                printFrame.contentWindow.focus();
+                printFrame.contentWindow.print();
+            } catch (e) {
+                console.error("Frame print error:", e);
+                window.print();
+            } finally {
+                setTimeout(() => {
+                    try {
+                        document.body.removeChild(printFrame);
+                    } catch (e) {}
+                }, 5000);
+            }
+        }, 500);
     };
 
     // Render Section A: MCQs
@@ -1441,17 +1548,66 @@ const PaperGenerator = () => {
                 }
 
                 @media print {
-                    .no-print { display: none !important; }
-                    body { background: #ffffff !important; margin: 0 !important; padding: 0 !important; }
+                    @page {
+                        size: A4 portrait;
+                        margin: 0mm;
+                    }
+                    * {
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                        box-sizing: border-box !important;
+                    }
+                    .no-print, .question-actions, button { 
+                        display: none !important; 
+                    }
+                    html, body { 
+                        background: #ffffff !important; 
+                        margin: 0 !important; 
+                        padding: 0 !important; 
+                        width: 210mm !important;
+                        overflow: visible !important;
+                    }
+                    .paper-studio-container,
+                    .main-content,
+                    main {
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        background: #ffffff !important;
+                        display: block !important;
+                        overflow: visible !important;
+                        min-height: 0 !important;
+                        height: auto !important;
+                        width: 100% !important;
+                    }
+                    .printable-pages-wrapper {
+                        zoom: 1 !important;
+                        gap: 0 !important;
+                        padding: 0 !important;
+                        margin: 0 !important;
+                        display: block !important;
+                        width: 210mm !important;
+                    }
                     .printable-paper-sheet { 
                         border: none !important; 
                         box-shadow: none !important; 
-                        width: 100% !important; 
-                        height: auto !important;
-                        min-height: 100vh !important;
+                        width: 210mm !important; 
+                        height: 297mm !important;
+                        min-height: 297mm !important;
+                        max-height: 297mm !important;
+                        margin: 0 auto !important;
+                        padding: 16mm 20mm !important;
+                        background: #ffffff !important;
+                        color: #000000 !important;
                         page-break-after: always !important;
                         break-after: page !important;
-                        padding: 1.5rem !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        overflow: hidden !important;
+                    }
+                    .printable-paper-sheet:last-of-type,
+                    .printable-paper-sheet:last-child {
+                        page-break-after: auto !important;
+                        break-after: auto !important;
                     }
                 }
             `}</style>
@@ -1643,6 +1799,31 @@ const PaperGenerator = () => {
                     >
                         <RefreshCw size={14} />
                         <span>Shuffle</span>
+                    </button>
+
+                    {/* Print Paper Button */}
+                    <button
+                        type="button"
+                        onClick={handlePrintPaper}
+                        title="Print Exam Paper directly (Standard A4)"
+                        style={{
+                            padding: '0.5rem 1.15rem',
+                            borderRadius: '10px',
+                            fontWeight: '800',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.45rem',
+                            background: '#1e293b',
+                            color: '#ffffff',
+                            border: '1.5px solid #334155',
+                            boxShadow: '0 4px 14px rgba(0, 0, 0, 0.25)',
+                            transition: 'all 0.15s ease'
+                        }}
+                    >
+                        <Printer size={15} color="#38bdf8" />
+                        <span>Print Paper</span>
                     </button>
 
                     {/* Download PDF Button */}
@@ -2581,6 +2762,7 @@ const PaperGenerator = () => {
                     {/* PHYSICAL A4 PAPER SHEETS CONTAINER */}
                     <div
                         ref={pagesContainerRef}
+                        className="printable-pages-wrapper"
                         style={{
                             display: 'flex',
                             flexDirection: 'column',
