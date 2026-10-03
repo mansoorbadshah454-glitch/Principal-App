@@ -2403,6 +2403,10 @@ export default function Exams() {
                         border: 1px solid #333 !important;
                         padding: 4px 6px !important;
                     }
+                    .gazette-print-table th {
+                        background: #f1f5f9 !important;
+                        color: #000 !important;
+                    }
                 }
             `}} />
 
@@ -2796,76 +2800,76 @@ export default function Exams() {
                                 )}
                             </div>
                         ) : (
-                            <div className="overflow-x-auto">
+                            <div className="overflow-x-auto max-h-[calc(100vh-270px)] overflow-y-auto print:max-h-none print:overflow-visible custom-scrollbar relative">
                                 <table className="w-full text-left text-xs border-collapse gazette-print-table">
-                                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider">
-                                        <tr>
+                                    <thead className="sticky top-0 z-20 bg-slate-900 text-white shadow-md border-b-2 border-slate-700 text-[11px] font-extrabold uppercase tracking-wider print:static print:bg-white print:text-black">
+                                        <tr className="bg-slate-900 text-white print:bg-white print:text-black">
                                             <th 
                                                 onClick={() => handleToggleSort('roll')} 
-                                                className="p-3.5 text-center w-14 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                                className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center w-14 cursor-pointer hover:bg-slate-800 transition-colors select-none border-r border-slate-800/80 print:static print:bg-white print:text-black"
                                             >
                                                 <div className="flex items-center justify-center gap-1">
                                                     <span>Roll</span>
-                                                    {sortBy === 'roll' && (<span className="text-indigo-600">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
+                                                    {sortBy === 'roll' && (<span className="text-sky-400">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
                                                 </div>
                                             </th>
                                             <th 
                                                 onClick={() => handleToggleSort('name')} 
-                                                className="p-3.5 min-w-[140px] cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                                className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 min-w-[140px] cursor-pointer hover:bg-slate-800 transition-colors select-none border-r border-slate-800/80 print:static print:bg-white print:text-black"
                                             >
                                                 <div className="flex items-center gap-1">
                                                     <span>Student Name</span>
-                                                    {sortBy === 'name' && (<span className="text-indigo-600">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
+                                                    {sortBy === 'name' && (<span className="text-sky-400">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
                                                 </div>
                                             </th>
                                             {tabulationData.subjects.map(subj => (
-                                                <th key={subj} className="p-3.5 text-center min-w-[70px]">
-                                                    <div>{subj}</div>
-                                                    <div className="text-[9px] font-normal text-slate-400">
+                                                <th key={subj} className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center min-w-[70px] border-r border-slate-800/80 print:static print:bg-white print:text-black">
+                                                    <div className="font-extrabold text-white">{subj}</div>
+                                                    <div className="text-[9px] font-medium text-slate-400">
                                                         Max: {tabulationData.subjectConfigs?.[subj]?.totalMarks || 100}
                                                     </div>
                                                 </th>
                                             ))}
                                             <th 
                                                 onClick={() => handleToggleSort('obtained')} 
-                                                className="p-3.5 text-center font-black cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                                className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center font-black cursor-pointer hover:bg-slate-800 transition-colors select-none border-r border-slate-800/80 print:static print:bg-white print:text-black"
                                             >
                                                 <div className="flex items-center justify-center gap-1">
                                                     <span>Obtained</span>
-                                                    {sortBy === 'obtained' && (<span className="text-indigo-600">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
+                                                    {sortBy === 'obtained' && (<span className="text-sky-400">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
                                                 </div>
                                             </th>
                                             <th 
                                                 onClick={() => handleToggleSort('percentage')} 
-                                                className="p-3.5 text-center font-black cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                                className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center font-black cursor-pointer hover:bg-slate-800 transition-colors select-none border-r border-slate-800/80 print:static print:bg-white print:text-black"
                                             >
                                                 <div className="flex items-center justify-center gap-1">
                                                     <span>%</span>
-                                                    {sortBy === 'percentage' && (<span className="text-indigo-600">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
+                                                    {sortBy === 'percentage' && (<span className="text-sky-400">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
                                                 </div>
                                             </th>
-                                            <th className="p-3.5 text-center font-black">Grade</th>
+                                            <th className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center font-black border-r border-slate-800/80 print:static print:bg-white print:text-black">Grade</th>
                                             <th 
                                                 onClick={() => handleToggleSort('position')} 
-                                                className="p-3.5 text-center font-black cursor-pointer bg-indigo-50/50 hover:bg-indigo-100 text-indigo-700 transition-colors select-none"
+                                                className="sticky top-0 z-20 bg-slate-800 text-sky-300 p-3.5 text-center font-black cursor-pointer hover:bg-slate-700 transition-colors select-none border-r border-slate-700 print:static print:bg-white print:text-black"
                                                 title="Click to toggle 1st, 2nd, 3rd positions ascending / descending"
                                             >
                                                 <div className="flex items-center justify-center gap-1">
                                                     <span>Pos</span>
-                                                    {sortBy === 'position' && (<span className="text-indigo-600">{sortOrder === 'asc' ? '▲ (1st)' : '▼'}</span>)}
+                                                    {sortBy === 'position' && (<span className="text-sky-400">{sortOrder === 'asc' ? '▲ (1st)' : '▼'}</span>)}
                                                 </div>
                                             </th>
-                                            <th className="p-3.5 text-center font-black">Status</th>
+                                            <th className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center font-black print:static print:bg-white print:text-black">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                                         {filteredRows.map((row, idx) => (
-                                            <tr key={row.studentId} className="hover:bg-slate-50/80 transition-colors">
-                                                <td className="p-3.5 text-center font-bold text-indigo-600 bg-indigo-50/20">
+                                            <tr key={row.studentId} className="group hover:bg-indigo-100 transition-all duration-150">
+                                                <td className="p-3.5 text-center font-bold text-indigo-700 bg-indigo-50/40 group-hover:bg-indigo-200/80 border-l-4 border-transparent group-hover:border-indigo-600 transition-all">
                                                     {row.rollNumber}
                                                 </td>
                                                 <td className="p-3.5">
-                                                    <div className="font-bold text-slate-800">{row.name}</div>
+                                                    <div className="font-bold text-slate-900 group-hover:text-indigo-950 transition-colors">{row.name}</div>
                                                     <div className="text-[10px] text-slate-400 font-normal">S/O: {row.fatherName}</div>
                                                 </td>
 
@@ -2888,7 +2892,7 @@ export default function Exams() {
                                                     );
                                                 })}
 
-                                                <td className="p-3.5 text-center font-black text-slate-900 bg-slate-50/50">
+                                                <td className="p-3.5 text-center font-black text-slate-900 bg-slate-50/50 group-hover:bg-indigo-200/70 transition-colors">
                                                     {row.totalObtained} <span className="text-[10px] font-normal text-slate-400">/ {row.totalMax}</span>
                                                 </td>
                                                 <td className="p-3.5 text-center font-black text-slate-800">
