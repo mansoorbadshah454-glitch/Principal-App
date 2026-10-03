@@ -11,6 +11,7 @@ import StudentProfileModal from '../components/StudentProfileModal';
 import StudentActionPopup from '../components/StudentActionPopup';
 import CachedImage from '../components/CachedImage';
 import ClassPhotoStudio from '../components/ClassPhotoStudio';
+import { getStudentAvatar } from '../utils/defaultAvatar';
 
 
 const ClassDetails = () => {
@@ -122,7 +123,7 @@ const ClassDetails = () => {
                         avgScore: avgScore,
                         homework: homework,
                         attendanceScore: attendanceScore, // Passed to modal
-                        avatar: data.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${doc.id}`
+                        avatar: getStudentAvatar(data)
                     };
                 });
 

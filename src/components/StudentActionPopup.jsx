@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import CachedImage from './CachedImage';
+import { getStudentAvatar } from '../utils/defaultAvatar';
 import {
     X, Camera, User, Phone, Briefcase,
     Loader2, CheckCircle2, AlertCircle, Trash2, Key, Edit
@@ -299,7 +300,7 @@ const StudentActionPopup = ({ isOpen, onClose, student, schoolId, classId, ...pr
 
                         <div style={styles.avatarWrapper}>
                             <CachedImage
-                                src={previewImage || student.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.id}`}
+                                src={previewImage || getStudentAvatar(student)}
                                 alt="Student"
                                 style={styles.avatar}
                             />

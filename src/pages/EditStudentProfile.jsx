@@ -4,6 +4,7 @@ import { ArrowLeft, Save, Plus, Trash2, User, Wallet, AlertCircle, Loader2, Chec
 import { db, auth } from '../firebase';
 import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import CachedImage from '../components/CachedImage';
+import { getStudentAvatar } from '../utils/defaultAvatar';
 
 const ACTION_CATEGORIES = [
     'Admission fee',
@@ -191,7 +192,7 @@ const EditStudentProfile = () => {
                             emergencyPhone: data.parentDetails?.emergencyPhone || '',
                             address: data.parentDetails?.address || ''
                         },
-                        avatar: data.avatar || data.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${studentId}`
+                        avatar: getStudentAvatar(data)
                     });
 
                     // Parse fee structure

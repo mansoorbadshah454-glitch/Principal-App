@@ -18,6 +18,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from './CachedImage';
+import { getStudentAvatar } from '../utils/defaultAvatar';
 import {
     MONTH_NAMES,
     MONTH_SHORT,
@@ -3509,7 +3510,7 @@ const FeeArrearsMatrix = ({
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                                                             <div style={{ width: '30px', height: '30px', borderRadius: '8px', overflow: 'hidden', flexShrink: 0, background: '#e2e8f0' }}>
                                                                 <CachedImage
-                                                                    src={st.avatar || st.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${st.id}`}
+                                                                    src={getStudentAvatar(st)}
                                                                     alt="avatar"
                                                                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                                                                 />
@@ -4691,7 +4692,7 @@ const FeeArrearsMatrix = ({
                                     }}>
                                         <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: 'white', padding: '2px', flexShrink: 0, border: '2px solid #e2e8f0', overflow: 'hidden' }}>
                                             <CachedImage
-                                                src={selectedFeeCardData.student.avatar || selectedFeeCardData.student.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedFeeCardData.student.id}`}
+                                                src={getStudentAvatar(selectedFeeCardData.student)}
                                                 alt="Student"
                                                 style={{ width: '100%', height: '100%', borderRadius: '12px', objectFit: 'cover' }}
                                             />

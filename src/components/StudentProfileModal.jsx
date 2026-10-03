@@ -12,6 +12,7 @@ import {
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import CachedImage from './CachedImage';
+import { getStudentAvatar } from '../utils/defaultAvatar';
 
 const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, cardRect, schoolId, classId }) => {
     // Position Logic
@@ -480,7 +481,7 @@ const StudentProfileModal = ({ isOpen, onClose, student, rank, classSubjects, ca
                             <div style={styles.avatarContainer}>
                                 <div style={styles.avatarInner}>
                                     <CachedImage
-                                        src={student.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.id}`}
+                                        src={getStudentAvatar(student)}
                                         alt={student.name}
                                         style={styles.img}
                                     />

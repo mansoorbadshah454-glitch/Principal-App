@@ -8,6 +8,7 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { compressImage } from '../utils/imageCompressor';
 import CachedImage from './CachedImage';
+import { getStudentAvatar } from '../utils/defaultAvatar';
 
 const ClassPhotoStudio = ({ schoolId, classId, students = [] }) => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -545,14 +546,8 @@ const ClassPhotoStudio = ({ schoolId, classId, students = [] }) => {
 
                         // Display image source priority:
                         // 1. Staged preview URL
-                        // 2. Existing avatar/photo
-                        // 3. Fallback Dicebear
-                        const displayImage = staged?.previewUrl || 
-                            student.profilePic || 
-                            student.avatar || 
-                            student.profileImageUrl || 
-                            student.photoUrl || 
-                            `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.id}`;
+                        // 2. Existing avatar/photo or clean neutral default avatar
+                        const displayImage = staged?.previewUrl || getStudentAvatar(student);
 
                         const isPendingSave = staged && !staged.isSaved;
 
