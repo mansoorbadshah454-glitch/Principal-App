@@ -23,14 +23,14 @@ messaging.onBackgroundMessage((payload) => {
 });
 
 // --- ENTERPRISE OFFLINE APP SHELL & STORAGE CACHES ---
-const APP_SHELL_CACHE = 'school-v5-shell-v1';
+const APP_SHELL_CACHE = 'school-v5-shell-v2';
 const STORAGE_CACHE = 'firebase-storage-cache-v1';
 
 const STATIC_PRECACHE_URLS = [
     '/',
     '/index.html',
     '/favicon.png',
-    '/favicon.svg',
+    '/app_icon_blue.png',
     'https://cdn.tailwindcss.com',
     'https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;600;700&family=Noto+Sans+Arabic:wght@400;600;700&display=swap'
 ];

@@ -8,6 +8,8 @@ import { AlertProvider } from './context/AlertContext';
 import { AuthPermissionsProvider } from './context/AuthPermissionsContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import appIcon from './assets/app_icon_blue.png';
+import { prefetchAllRoutesSilently } from './utils/routePrefetcher';
+import { prewarmSchoolDataOffline } from './utils/dataPrewarmer';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Classes = lazy(() => import('./pages/Classes'));
@@ -80,6 +82,22 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Silent Background Pre-caching for 1000% Offline Capability (Zero UI Overhead)
+  useEffect(() => {
+    if (user) {
+      prefetchAllRoutesSilently();
+      try {
+        const manualSession = localStorage.getItem('manual_session');
+        const sId = user?.schoolId || (manualSession ? JSON.parse(manualSession)?.schoolId : null);
+        if (sId) {
+          prewarmSchoolDataOffline(sId);
+        }
+      } catch (err) {
+        console.warn('Background prewarm school id parse error:', err);
+      }
+    }
+  }, [user]);
 
   if (loading) {
     return (

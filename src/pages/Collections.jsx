@@ -15252,11 +15252,21 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     );
 };
 
+// Module-level persistent cache across page navigations within the session (0ms instant restore)
+const _collectionsGlobalCache = {
+    activeTab: 'workflow',
+    visitedTabs: new Set(['workflow']),
+    classes: [],
+    currentAction: null,
+    schoolInfo: { name: 'School Report', logo: '' },
+    feeSettings: { dueDate: '', penaltyAmount: '' }
+};
+
 const Collections = () => {
     const { role, permissions, isPrincipal } = useAuthPermissions();
     const location = useLocation();
     const searchParams = new URLSearchParams(location.search);
-    const initialTab = searchParams.get('tab') || 'workflow';
+    const initialTab = searchParams.get('tab') || _collectionsGlobalCache.activeTab || 'workflow';
     const [preselectedClassId, setPreselectedClassId] = useState(searchParams.get('classId') || '');
     const [preselectedStudentId, setPreselectedStudentId] = useState(searchParams.get('studentId') || '');
     const [preselectedMonthIdx, setPreselectedMonthIdx] = useState(() => {
@@ -15264,6 +15274,14 @@ const Collections = () => {
         return (m !== null && m !== '' && !isNaN(parseInt(m, 10))) ? parseInt(m, 10) : null;
     });
     const [activeTab, setActiveTab] = useState(initialTab);
+
+    // Keep persistent cache updated whenever activeTab changes
+    useEffect(() => {
+        if (activeTab) {
+            _collectionsGlobalCache.activeTab = activeTab;
+            _collectionsGlobalCache.visitedTabs.add(activeTab);
+        }
+    }, [activeTab]);
 
     // Calculate which tabs the current user has permission to access
     const permittedTabs = useMemo(() => {
@@ -15297,7 +15315,7 @@ const Collections = () => {
         }
     }, [location.search, permittedTabs, isPrincipal]);
 
-    const [classes, setClasses] = useState([]);
+    const [classes, setClasses] = useState(() => _collectionsGlobalCache.classes || []);
     const [schoolId, setSchoolId] = useState(() => {
         try {
             const manualSession = localStorage.getItem('manual_session');
@@ -15309,12 +15327,12 @@ const Collections = () => {
         return null;
     });
     const [loading, setLoading] = useState(false);
-    const [currentAction, setCurrentAction] = useState(null);
+    const [currentAction, setCurrentAction] = useState(() => _collectionsGlobalCache.currentAction);
     const [showModal, setShowModal] = useState(false);
-    const [schoolInfo, setSchoolInfo] = useState({ name: 'School Report', logo: '' });
+    const [schoolInfo, setSchoolInfo] = useState(() => _collectionsGlobalCache.schoolInfo || { name: 'School Report', logo: '' });
     
     // Fee Settings State
-    const [feeSettings, setFeeSettings] = useState({ dueDate: '', penaltyAmount: '' });
+    const [feeSettings, setFeeSettings] = useState(() => _collectionsGlobalCache.feeSettings || { dueDate: '', penaltyAmount: '' });
     const [isSavingFeeSettings, setIsSavingFeeSettings] = useState(false);
     // Historical Paid Confirm Modal
     const [confirmHistoricalModal, setConfirmHistoricalModal] = useState(null); // null | { monthData, student }
@@ -15383,6 +15401,7 @@ const Collections = () => {
                 .filter(doc => doc.id !== 'action_metadata');
 
             classesData.sort((a, b) => getClassOrder(a.name) - getClassOrder(b.name));
+            _collectionsGlobalCache.classes = classesData;
             setClasses(classesData);
             setLoading(false);
         }, (err) => {
@@ -15394,8 +15413,10 @@ const Collections = () => {
         const actionRef = doc(db, 'schools', schoolId, 'classes', 'action_metadata');
         const unsubAction = onSnapshot(actionRef, (docSnap) => {
             if (docSnap.exists()) {
+                _collectionsGlobalCache.currentAction = docSnap.data();
                 setCurrentAction(docSnap.data());
             } else {
+                _collectionsGlobalCache.currentAction = null;
                 setCurrentAction(null);
             }
         }, (error) => {
@@ -15406,12 +15427,16 @@ const Collections = () => {
         const feeSettingsRef = doc(db, 'schools', schoolId, 'settings', 'feeSettings');
         const unsubFeeSettings = onSnapshot(feeSettingsRef, (docSnap) => {
             if (docSnap.exists()) {
-                setFeeSettings({
+                const s = {
                     dueDate: docSnap.data().dueDate || '',
                     penaltyAmount: docSnap.data().penaltyAmount || ''
-                });
+                };
+                _collectionsGlobalCache.feeSettings = s;
+                setFeeSettings(s);
             } else {
-                setFeeSettings({ dueDate: '', penaltyAmount: '' });
+                const s = { dueDate: '', penaltyAmount: '' };
+                _collectionsGlobalCache.feeSettings = s;
+                setFeeSettings(s);
             }
         }, (err) => {
             console.warn("FeeSettings listener warning:", err);
@@ -15421,10 +15446,12 @@ const Collections = () => {
         const profileRef = doc(db, 'schools', schoolId, 'settings', 'profile');
         const unsubProfile = onSnapshot(profileRef, (docSnap) => {
             if (docSnap.exists()) {
-                setSchoolInfo({
+                const p = {
                     name: docSnap.data().name || 'School Name',
                     logo: docSnap.data().profileImage || ''
-                });
+                };
+                _collectionsGlobalCache.schoolInfo = p;
+                setSchoolInfo(p);
             }
         }, (err) => {
             console.warn("Profile listener warning:", err);
@@ -15544,13 +15571,18 @@ const Collections = () => {
     };
 
     // Tab Persistence & Instant 0ms Switch Hub
-    const [visitedTabs, setVisitedTabs] = useState(() => new Set([initialTab]));
+    const [visitedTabs, setVisitedTabs] = useState(() => {
+        const initialSet = new Set(_collectionsGlobalCache.visitedTabs || ['workflow']);
+        initialSet.add(initialTab);
+        return initialSet;
+    });
 
     useEffect(() => {
         setVisitedTabs(prev => {
             if (!prev.has(activeTab)) {
                 const next = new Set(prev);
                 next.add(activeTab);
+                _collectionsGlobalCache.visitedTabs.add(activeTab);
                 return next;
             }
             return prev;

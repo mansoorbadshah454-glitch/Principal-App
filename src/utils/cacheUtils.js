@@ -9,13 +9,17 @@ import { getDocsFromCache, getDocs, getDocFromCache, getDoc } from 'firebase/fir
  * @returns {Promise<QuerySnapshot>} - The resulting snapshot
  */
 export const getDocsFast = async (colRef) => {
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     try {
         const snap = await getDocsFromCache(colRef);
-        // If cache is empty, we throw to force fallback to server
-        // (A collection might be legitimately empty, but falling back to server ensures accuracy)
-        if (snap.empty) throw new Error("cache empty");
+        // When online, if cache is empty, we fall back to server to ensure freshness.
+        // When offline, we must never try the server, return the local cache immediately.
+        if (snap.empty && !isOffline) throw new Error("cache empty");
         return snap;
     } catch (e) {
+        if (isOffline) {
+            return { empty: true, size: 0, docs: [] };
+        }
         return await getDocs(colRef);
     }
 };
@@ -27,12 +31,16 @@ export const getDocsFast = async (colRef) => {
  * @returns {Promise<DocumentSnapshot>} - The resulting document snapshot
  */
 export const getDocFast = async (docRef) => {
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     try {
         const snap = await getDocFromCache(docRef);
-        // If document doesn't exist in cache, fallback to server
-        if (!snap.exists()) throw new Error("cache miss");
+        // If document doesn't exist in cache and online, fallback to server
+        if (!snap.exists() && !isOffline) throw new Error("cache miss");
         return snap;
     } catch (e) {
+        if (isOffline) {
+            return { exists: () => false, data: () => null, id: docRef?.id };
+        }
         return await getDoc(docRef);
     }
 };

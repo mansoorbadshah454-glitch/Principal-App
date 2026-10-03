@@ -958,6 +958,10 @@ const FeeArrearsMatrix = ({
         }
 
         if (!localClasses || localClasses.length === 0) {
+            if (_globalFeeMatrixCache.studentsMapBySchool[schoolId] && Object.keys(_globalFeeMatrixCache.studentsMapBySchool[schoolId]).length > 0) {
+                setStudentsMap(_globalFeeMatrixCache.studentsMapBySchool[schoolId]);
+                setLoading(false);
+            }
             const timer = setTimeout(() => {
                 if (isMounted) setLoading(false);
             }, 300);
@@ -988,8 +992,8 @@ const FeeArrearsMatrix = ({
             };
         }
 
-        // Clean up any stale listeners if class list changed
-        if (existingUnsubs && existingUnsubs.length > 0) {
+        // Clean up any stale listeners ONLY if valid new class list truly changed
+        if (classesKey && existingUnsubs && existingUnsubs.length > 0 && existingKey && existingKey !== classesKey) {
             existingUnsubs.forEach(fn => {
                 try { fn(); } catch (e) {}
             });
