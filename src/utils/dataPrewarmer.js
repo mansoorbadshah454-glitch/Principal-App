@@ -27,11 +27,13 @@ export const prewarmSchoolDataOffline = async (schoolId) => {
         const profileRef = doc(db, 'schools', schoolId, 'settings', 'profile');
         const feeSettingsRef = doc(db, 'schools', schoolId, 'settings', 'feeSettings');
         const bankingRef = doc(db, `schools/${schoolId}/settings`, 'banking');
+        const financesRef = doc(db, `schools/${schoolId}/settings`, 'finances');
 
         const corePromises = [
             getDoc(profileRef),
             getDoc(feeSettingsRef),
             getDoc(bankingRef),
+            getDoc(financesRef),
             getDocs(query(collection(db, `schools/${schoolId}/teachers`), limit(100))).catch(() => {}),
             getDocs(query(collection(db, `schools/${schoolId}/store`), limit(100))).catch(() => {}),
             getDocs(query(collection(db, `schools/${schoolId}/transport`), limit(50))).catch(() => {})

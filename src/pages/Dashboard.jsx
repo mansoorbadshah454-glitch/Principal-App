@@ -2,9 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
-    Send, Activity, Award, User, Clock, ChevronRight, X, ChevronDown, GraduationCap, MessageCircle, MessagesSquare, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
+    Send, Activity, Award, User, Clock, ChevronRight, ChevronLeft, Wallet, X, ChevronDown, GraduationCap, MessageCircle, MessagesSquare, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
     Wifi, WifiOff, RefreshCw, Loader2, Sparkles
 } from 'lucide-react';
+import FinancesDashboard from '../components/FinancesDashboard';
+import { useAuthPermissions } from '../context/AuthPermissionsContext';
+import { checkFeeTabAccess } from '../constants/permissions';
 import { db, auth, functions } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, setDoc, doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -120,6 +123,20 @@ const Dashboard = () => {
 
     // messagingId is 'principal' for the principal, and UID for admins.
     const messagingId = (currentUserRole === 'principal') ? 'principal' : currentUserId;
+
+    // Dual-Dashboard Slide Navigation (Overview <---> Finance Hub)
+    const [dashboardView, setDashboardView] = useState('overview'); // 'overview' | 'finance'
+    const [hasOpenedFinance, setHasOpenedFinance] = useState(false);
+
+    // Auth Permissions Guard for Finance Access (Strictly hides Finance Hub for unauthorized User Admins)
+    const authPerms = useAuthPermissions();
+    const canAccessFinances = useMemo(() => {
+        if (!authPerms) return currentUserRole === 'principal';
+        if (authPerms.isPrincipal) return true;
+        const role = authPerms.role || currentUserRole;
+        const perms = authPerms.permissions || {};
+        return checkFeeTabAccess(role, perms, 'finances');
+    }, [authPerms, currentUserRole]);
 
     const [fetchedClasses, setFetchedClasses] = useState(() => cachedInitialData?.classes || []);
     const [messages, setMessages] = useState([]);
@@ -1306,68 +1323,117 @@ const Dashboard = () => {
 
 
     return (
-        <div className="animate-fade-in-up">
-            {/* Header Area */}
-            <div className="flex-between" style={{ marginBottom: '2.5rem' }}>
-                <div>
-                    <h1 style={{ fontSize: '2rem', fontWeight: '700' }}>{getGreeting()}, {currentUserName}</h1>
-                    <p style={{ color: 'var(--text-muted)' }}>Here's what's happening in your school today.</p>
-                </div>
-                <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center' }}>
-                    {/* Dynamic System Connection & Offline Queues Status Badge */}
-                    {!isOnline ? (
-                        <div className="card" style={{
-                            padding: '0.5rem 0.95rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            background: '#fff7ed',
-                            borderColor: '#fed7aa',
-                            color: '#ea580c'
-                        }}>
-                            <WifiOff size={16} color="#ea580c" />
-                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
-                                Offline Mode {pendingCount > 0 ? `(${pendingCount} Saved)` : '(Local)'}
-                            </span>
+        <div className="animate-fade-in-up" style={{ width: '100%', overflowX: 'hidden' }}>
+            <div style={{
+                display: 'flex',
+                width: canAccessFinances ? '200%' : '100%',
+                transform: (canAccessFinances && dashboardView === 'finance') ? 'translateX(-50%)' : 'translateX(0%)',
+                transition: 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                alignItems: 'flex-start'
+            }}>
+                {/* SLIDE 1: MAIN ACADEMIC DASHBOARD */}
+                <div style={{ width: canAccessFinances ? '50%' : '100%', flexShrink: 0, boxSizing: 'border-box', minWidth: 0 }}>
+                    {/* Header Area */}
+                    <div className="flex-between" style={{ marginBottom: '2.5rem' }}>
+                        <div>
+                            <h1 style={{ fontSize: '2rem', fontWeight: '700' }}>{getGreeting()}, {currentUserName}</h1>
+                            <p style={{ color: 'var(--text-muted)' }}>Here's what's happening in your school today.</p>
                         </div>
-                    ) : pendingCount > 0 ? (
-                        <div className="card" style={{
-                            padding: '0.5rem 0.95rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            background: '#eff6ff',
-                            borderColor: '#bfdbfe',
-                            color: '#2563eb'
-                        }}>
-                            <RefreshCw size={16} color="#2563eb" />
-                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
-                                Online ({pendingCount} Syncing...)
-                            </span>
-                        </div>
-                    ) : (
-                        <div className="card" style={{
-                            padding: '0.5rem 0.95rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            background: '#ecfdf5',
-                            borderColor: '#a7f3d0',
-                            color: '#059669'
-                        }}>
-                            <Wifi size={16} color="#059669" />
-                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
-                                Cloud Connected
-                            </span>
-                        </div>
-                    )}
+                        <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center' }}>
+                            {/* Dynamic System Connection & Offline Queues Status Badge */}
+                            {!isOnline ? (
+                                <div className="card" style={{
+                                    padding: '0.5rem 0.95rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    background: '#fff7ed',
+                                    borderColor: '#fed7aa',
+                                    color: '#ea580c'
+                                }}>
+                                    <WifiOff size={16} color="#ea580c" />
+                                    <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                        Offline Mode {pendingCount > 0 ? `(${pendingCount} Saved)` : '(Local)'}
+                                    </span>
+                                </div>
+                            ) : pendingCount > 0 ? (
+                                <div className="card" style={{
+                                    padding: '0.5rem 0.95rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    background: '#eff6ff',
+                                    borderColor: '#bfdbfe',
+                                    color: '#2563eb'
+                                }}>
+                                    <RefreshCw size={16} color="#2563eb" />
+                                    <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                        Online ({pendingCount} Syncing...)
+                                    </span>
+                                </div>
+                            ) : (
+                                <div className="card" style={{
+                                    padding: '0.5rem 0.95rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    background: '#ecfdf5',
+                                    borderColor: '#a7f3d0',
+                                    color: '#059669'
+                                }}>
+                                    <Wifi size={16} color="#059669" />
+                                    <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                        Cloud Connected
+                                    </span>
+                                </div>
+                            )}
 
-                    <div className="card" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Clock size={18} color="var(--primary)" />
-                        <span style={{ fontWeight: '600' }}>{new Date().toLocaleDateString()}</span>
+                            <div className="card" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Clock size={18} color="var(--primary)" />
+                                <span style={{ fontWeight: '600' }}>{new Date().toLocaleDateString()}</span>
+                            </div>
+
+                            {/* Slide to Finance Dashboard Shortcut Button (Strictly Guarded by Permissions) */}
+                            {canAccessFinances && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setHasOpenedFinance(true);
+                                        setDashboardView('finance');
+                                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                                    }}
+                                    className="card"
+                                    style={{
+                                        padding: '0.5rem 0.95rem',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        background: '#ecfdf5',
+                                        borderColor: '#a7f3d0',
+                                        color: '#059669',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                        userSelect: 'none'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.background = '#d1fae5';
+                                        e.currentTarget.style.borderColor = '#6ee7b7';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = '#ecfdf5';
+                                        e.currentTarget.style.borderColor = '#a7f3d0';
+                                    }}
+                                    title="Slide to Finance & Fee Dashboard"
+                                >
+                                    <Wallet size={16} color="#059669" />
+                                    <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                        Finance Hub
+                                    </span>
+                                    <ChevronRight size={16} color="#059669" />
+                                </button>
+                            )}
+                        </div>
                     </div>
-                </div>
-            </div>
 
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
@@ -2643,6 +2709,108 @@ const Dashboard = () => {
 
 
                 </div>
+            </div>
+                </div>
+
+                {/* SLIDE 2: FINANCE & FEE COLLECTIONS HUB (Guarded by Permissions) */}
+                {canAccessFinances && (
+                    <div style={{ width: '50%', flexShrink: 0, boxSizing: 'border-box', minWidth: 0 }}>
+                        {hasOpenedFinance && (
+                            <div>
+                                {/* Slide 2 Header Area */}
+                                <div className="flex-between" style={{ marginBottom: '2.5rem' }}>
+                                    <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            <div style={{
+                                                width: '38px',
+                                                height: '38px',
+                                                borderRadius: '10px',
+                                                background: '#ecfdf5',
+                                                border: '1px solid #a7f3d0',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                color: '#059669'
+                                            }}>
+                                                <Wallet size={20} />
+                                            </div>
+                                            <div>
+                                                <h1 style={{ fontSize: '2rem', fontWeight: '700', margin: 0, lineHeight: 1.2 }}>
+                                                    Finance & Accounts Hub
+                                                </h1>
+                                                <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>
+                                                    Direct synchronized access from Fee Collections module.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center' }}>
+                                        {/* Synced Status Badge */}
+                                        <div className="card" style={{
+                                            padding: '0.5rem 0.95rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            background: '#ecfdf5',
+                                            borderColor: '#a7f3d0',
+                                            color: '#059669'
+                                        }}>
+                                            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10b981' }} />
+                                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                                Collections Synced
+                                            </span>
+                                        </div>
+
+                                        {/* Back to School Overview Button (Positioned at exact top-right spot) */}
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setDashboardView('overview');
+                                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                                            }}
+                                            className="card"
+                                            style={{
+                                                padding: '0.5rem 0.95rem',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem',
+                                                background: '#ecfdf5',
+                                                borderColor: '#a7f3d0',
+                                                color: '#059669',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s ease',
+                                                userSelect: 'none'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.background = '#d1fae5';
+                                                e.currentTarget.style.borderColor = '#6ee7b7';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.background = '#ecfdf5';
+                                                e.currentTarget.style.borderColor = '#a7f3d0';
+                                            }}
+                                            title="Back to School Academic Overview"
+                                        >
+                                            <ChevronLeft size={16} color="#059669" />
+                                            <span style={{ fontWeight: '700', fontSize: '0.85rem' }}>
+                                                School Overview
+                                            </span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Direct Modular Finances Component */}
+                                <FinancesDashboard
+                                    schoolId={schoolId}
+                                    currentAction="view"
+                                    schoolInfo={{}}
+                                    classes={fetchedClasses}
+                                />
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Message Modal */}

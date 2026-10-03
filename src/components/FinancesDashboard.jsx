@@ -300,8 +300,24 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     // TIME-MACHINE CONTROLS
     // ==========================================
     const [selectedYear, setSelectedYear] = useState(currentYearNum);
-    const [selectedMonthMode, setSelectedMonthMode] = useState('current'); // 'today' | 'current' | 'all_year' | 'custom_month'
+    const [selectedMonthMode, setSelectedMonthMode] = useState('current'); // 'today' | 'current' | 'all_year' | 'custom_month' | 'specific_day'
     const [customSelectedMonthNum, setCustomSelectedMonthNum] = useState(currentMonthNum); // 1-12
+    const [selectedDayDateIso, setSelectedDayDateIso] = useState(null); // 'YYYY-MM-DD' when specific day is picked
+    const [isDayCalendarOpen, setIsDayCalendarOpen] = useState(false);
+    const dayCalendarRef = useRef(null);
+
+    // Auto-close calendar popover on click outside
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (dayCalendarRef.current && !dayCalendarRef.current.contains(e.target)) {
+                setIsDayCalendarOpen(false);
+            }
+        };
+        if (isDayCalendarOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isDayCalendarOpen]);
 
     // Main Sub Tabs: 'pulse' | 'visual_studio' | 'fee_ledger' | 'expenses_payroll'
     const [activeSubTab, setActiveSubTab] = useState('pulse');
@@ -1008,7 +1024,13 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
     const calculatedMetrics = useMemo(() => {
         const isTodayMode = selectedMonthMode === 'today';
         const isAllYearMode = selectedMonthMode === 'all_year';
-        const activeMonthNum = selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum;
+        const isSpecificDayMode = selectedMonthMode === 'specific_day';
+        const activeDayIso = isTodayMode ? todayIsoDate : (isSpecificDayMode ? selectedDayDateIso : null);
+        const activeMonthNum = selectedMonthMode === 'current' 
+            ? currentMonthNum 
+            : (selectedMonthMode === 'specific_day' && selectedDayDateIso 
+                ? Number(selectedDayDateIso.split('-')[1]) 
+                : customSelectedMonthNum);
         const activeMonthIso = `${selectedYear}-${String(activeMonthNum).padStart(2, '0')}`;
 
         // Helper: Filter Transaction by Selected Timeframe
@@ -1036,8 +1058,8 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                 }
             }
 
-            if (isTodayMode) {
-                return txIsoDate === todayIsoDate;
+            if (isTodayMode || isSpecificDayMode) {
+                return txIsoDate === activeDayIso;
             }
             if (isAllYearMode) {
                 return txYear === selectedYear;
@@ -1124,7 +1146,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             }
 
             if (entry.type === 'permanent') {
-                if (isTodayMode) return false; // Today mode is strictly for daily cash drawer
+                if (isTodayMode || isSpecificDayMode) return false; // Daily view is strictly for actual day cash drawer
                 // Prevent recurring entries from leaking into historical years before creation
                 if (eYear > 0 && selectedYear < eYear) return false;
                 if (eYear > 0 && selectedYear === eYear && !isAllYearMode && activeMonthNum < eMonth) return false;
@@ -1132,7 +1154,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             }
 
             if (!dStr) return false;
-            if (isTodayMode) return eIsoDate === todayIsoDate;
+            if (isTodayMode || isSpecificDayMode) return eIsoDate === activeDayIso;
             if (isAllYearMode) return eYear === selectedYear;
             return eYear === selectedYear && eMonth === activeMonthNum;
         };
@@ -1170,27 +1192,28 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     }
                 });
             }
-        } else if (isTodayMode) {
-            // Today Mode: Strictly calculate teacher salaries actually disbursed on today's date for current teachers
+        } else if (isTodayMode || isSpecificDayMode) {
+            // Today / Specific Day Mode: Strictly calculate teacher salaries actually disbursed on target date
+            const targetIso = isTodayMode ? todayIsoDate : selectedDayDateIso;
             const mPadded = String(activeMonthNum).padStart(2, '0');
             const pMeta = payrollMetaByMonth[`${selectedYear}_${mPadded}`] || payrollMetaByMonth[`${selectedYear}_${activeMonthNum}`] || {};
             teachersList.forEach(t => {
                 const tMeta = pMeta[t.id];
                 if (tMeta && tMeta.isPaid) {
-                    let isPaidToday = false;
+                    let isPaidOnTarget = false;
                     if (tMeta.paidDate) {
                         const d = new Date(tMeta.paidDate);
-                        if (!isNaN(d.getTime()) && getLocalIsoDate(d) === todayIsoDate) {
-                            isPaidToday = true;
+                        if (!isNaN(d.getTime()) && getLocalIsoDate(d) === targetIso) {
+                            isPaidOnTarget = true;
                         }
                     }
                     if (tMeta.paidAt?.seconds) {
                         const d = new Date(tMeta.paidAt.seconds * 1000);
-                        if (getLocalIsoDate(d) === todayIsoDate) {
-                            isPaidToday = true;
+                        if (getLocalIsoDate(d) === targetIso) {
+                            isPaidOnTarget = true;
                         }
                     }
-                    if (isPaidToday) {
+                    if (isPaidOnTarget) {
                         staffPaidCount += 1;
                         totalTeacherSalariesPaid += getTeacherPaidAmt(tMeta);
                     }
@@ -1550,9 +1573,15 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             smartInsight = `💡 Financial Insight: In ${monthLabel} ${selectedYear}, ${growthText} with a ${profitMarginPercent}% Net Profit Margin and ${digitalSharePct}% digital online collection share.`;
         }
 
+        if (isSpecificDayMode && selectedDayDateIso) {
+            smartInsight = `📅 Day Financial View: Showing finances strictly recorded on ${selectedDayDateIso}. Net balance for this day is Rs ${Math.abs(netProfit).toLocaleString()} (${netProfit >= 0 ? 'Surplus' : 'Deficit'}).`;
+        }
+
         return {
             isTodayMode,
             isAllYearMode,
+            isSpecificDayMode,
+            selectedDayDateIso,
             activeMonthNum,
             activeMonthIso,
             scopedTxs,
@@ -1597,7 +1626,7 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
             activePermanentExpenses
         };
     }, [
-        selectedYear, selectedMonthMode, customSelectedMonthNum, wheelViewMode, inspectedMonthNum,
+        selectedYear, selectedMonthMode, customSelectedMonthNum, selectedDayDateIso, wheelViewMode, inspectedMonthNum,
         feeTransactions, financesData, teachersList, payrollMetaByMonth, storeSales, classStudentsMap, currentMonthNum, currentYearNum, todayIsoDate
     ]);
 
@@ -3007,7 +3036,11 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                         {/* 1. Today */}
                         <button
                             type="button"
-                            onClick={() => setSelectedMonthMode('today')}
+                            onClick={() => {
+                                setSelectedMonthMode('today');
+                                setSelectedDayDateIso(null);
+                                setIsDayCalendarOpen(false);
+                            }}
                             style={{
                                 border: 'none',
                                 background: selectedMonthMode === 'today' ? '#0078d4' : 'transparent',
@@ -3032,38 +3065,179 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                             <span>Today</span>
                         </button>
 
-                        {/* 2. This Month */}
-                        <button
-                            type="button"
-                            onClick={() => setSelectedMonthMode('current')}
-                            style={{
-                                border: 'none',
-                                background: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '#0078d4' : 'transparent',
-                                color: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '#ffffff' : '#475569',
-                                fontWeight: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '800' : '700',
-                                padding: '6px 14px',
-                                borderRadius: '9px',
-                                fontSize: '0.82rem',
-                                cursor: 'pointer',
-                                boxShadow: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '0 2px 6px rgba(0, 120, 212, 0.35)' : 'none',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                transition: 'all 0.15s ease'
-                            }}
-                        >
-                            <Calendar 
-                                size={14} 
-                                strokeWidth={2.5} 
-                                style={{ color: selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' ? '#ffffff' : '#64748b' }} 
-                            />
-                            <span>This Month</span>
-                        </button>
+                        {/* 2. This Month & Day Picker Popover */}
+                        <div style={{ position: 'relative' }} ref={dayCalendarRef}>
+                            <button
+                                type="button"
+                                onClick={() => setIsDayCalendarOpen(prev => !prev)}
+                                style={{
+                                    border: 'none',
+                                    background: (selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' || selectedMonthMode === 'specific_day') ? '#0078d4' : 'transparent',
+                                    color: (selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' || selectedMonthMode === 'specific_day') ? '#ffffff' : '#475569',
+                                    fontWeight: (selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' || selectedMonthMode === 'specific_day') ? '800' : '700',
+                                    padding: '6px 14px',
+                                    borderRadius: '9px',
+                                    fontSize: '0.82rem',
+                                    cursor: 'pointer',
+                                    boxShadow: (selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' || selectedMonthMode === 'specific_day') ? '0 2px 6px rgba(0, 120, 212, 0.35)' : 'none',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <Calendar 
+                                    size={14} 
+                                    strokeWidth={2.5} 
+                                    style={{ color: (selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' || selectedMonthMode === 'specific_day') ? '#ffffff' : '#64748b' }} 
+                                />
+                                <span>
+                                    {selectedMonthMode === 'specific_day' && selectedDayDateIso 
+                                        ? `Day ${Number(selectedDayDateIso.split('-')[2])} (${MONTH_SHORT[Number(selectedDayDateIso.split('-')[1]) - 1]})`
+                                        : 'This Month'}
+                                </span>
+                                <ChevronDown 
+                                    size={13} 
+                                    style={{ 
+                                        transform: isDayCalendarOpen ? 'rotate(180deg)' : 'none', 
+                                        transition: 'transform 0.2s',
+                                        color: (selectedMonthMode === 'current' || selectedMonthMode === 'custom_month' || selectedMonthMode === 'specific_day') ? '#ffffff' : '#64748b'
+                                    }} 
+                                />
+                            </button>
+
+                            {/* Dropdown Mini Calendar Popover */}
+                            {isDayCalendarOpen && (
+                                <div style={{
+                                    position: 'absolute',
+                                    top: 'calc(100% + 8px)',
+                                    right: 0,
+                                    width: '280px',
+                                    background: '#ffffff',
+                                    borderRadius: '16px',
+                                    boxShadow: '0 16px 40px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0,0,0,0.08)',
+                                    padding: '12px 14px',
+                                    zIndex: 9999,
+                                    animation: 'fadeIn 0.15s ease-out'
+                                }}>
+                                    {/* Header */}
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                                        <span style={{ fontWeight: '800', fontSize: '0.88rem', color: '#0f172a' }}>
+                                            {MONTH_NAMES[((selectedMonthMode === 'current' ? currentMonthNum : customSelectedMonthNum) || currentMonthNum) - 1]} {selectedYear}
+                                        </span>
+                                        <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+                                            Daily Ledger
+                                        </span>
+                                    </div>
+
+                                    {/* Total This Month Button */}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedMonthMode('current');
+                                            setSelectedDayDateIso(null);
+                                            setIsDayCalendarOpen(false);
+                                        }}
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            borderRadius: '9px',
+                                            background: selectedMonthMode !== 'specific_day' ? '#eff6ff' : '#f8fafc',
+                                            border: selectedMonthMode !== 'specific_day' ? '1.5px solid #93c5fd' : '1px solid #e2e8f0',
+                                            color: selectedMonthMode !== 'specific_day' ? '#1d4ed8' : '#334155',
+                                            fontWeight: '700',
+                                            fontSize: '0.8rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '6px',
+                                            cursor: 'pointer',
+                                            marginBottom: '10px',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                    >
+                                        <Sparkles size={13} color="#2563eb" />
+                                        <span>Total This Month (Full Summary)</span>
+                                        {selectedMonthMode !== 'specific_day' && <Check size={13} color="#1d4ed8" />}
+                                    </button>
+
+                                    {/* Days of Week Header */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', textAlign: 'center', marginBottom: '6px' }}>
+                                        {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((dayName, idx) => (
+                                            <span key={idx} style={{ fontSize: '0.68rem', fontWeight: '700', color: '#94a3b8' }}>
+                                                {dayName}
+                                            </span>
+                                        ))}
+                                    </div>
+
+                                    {/* Month Days Grid */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+                                        {calendarGridCells.map((cell) => {
+                                            if (cell.type === 'empty') {
+                                                return <div key={cell.key} style={{ height: '30px' }} />;
+                                            }
+                                            const { day } = cell;
+                                            const isSelected = selectedMonthMode === 'specific_day' && selectedDayDateIso === day.dateIso;
+                                            const isToday = day.dateIso === todayIsoDate;
+                                            const isFuture = day.dateIso > todayIsoDate;
+                                            const hasActivity = (day.totalFeePaid > 0) || (day.totalDirectIncome > 0) || (day.totalExpenses > 0);
+
+                                            return (
+                                                <button
+                                                    key={cell.key}
+                                                    type="button"
+                                                    disabled={isFuture}
+                                                    onClick={() => {
+                                                        setSelectedDayDateIso(day.dateIso);
+                                                        setSelectedMonthMode('specific_day');
+                                                        setIsDayCalendarOpen(false);
+                                                    }}
+                                                    style={{
+                                                        height: '30px',
+                                                        borderRadius: '6px',
+                                                        border: isSelected ? '1.5px solid #0078d4' : (isToday ? '1.5px solid #f59e0b' : '1px solid transparent'),
+                                                        background: isSelected ? '#0078d4' : (isToday ? '#fef3c7' : (hasActivity ? '#f0fdf4' : 'transparent')),
+                                                        color: isSelected ? '#ffffff' : (isFuture ? '#cbd5e1' : (isToday ? '#92400e' : '#1e293b')),
+                                                        fontWeight: (isSelected || isToday) ? '800' : '600',
+                                                        fontSize: '0.78rem',
+                                                        cursor: isFuture ? 'not-allowed' : 'pointer',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        position: 'relative',
+                                                        padding: 0,
+                                                        transition: 'all 0.15s ease'
+                                                    }}
+                                                    title={isFuture ? 'Future date' : `${day.dateIso}${hasActivity ? ' (Has collections/expenses)' : ''}`}
+                                                >
+                                                    <span>{day.dayNumber}</span>
+                                                    {hasActivity && !isSelected && (
+                                                        <span style={{
+                                                            width: '4px',
+                                                            height: '4px',
+                                                            borderRadius: '50%',
+                                                            background: '#10b981',
+                                                            position: 'absolute',
+                                                            bottom: '2px'
+                                                        }} />
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
 
                         {/* 3. Whole Year */}
                         <button
                             type="button"
-                            onClick={() => setSelectedMonthMode('all_year')}
+                            onClick={() => {
+                                setSelectedMonthMode('all_year');
+                                setSelectedDayDateIso(null);
+                                setIsDayCalendarOpen(false);
+                            }}
                             style={{
                                 border: 'none',
                                 background: selectedMonthMode === 'all_year' ? '#0078d4' : 'transparent',
@@ -3233,6 +3407,73 @@ const FinancesDashboard = ({ schoolId, currentAction, schoolInfo: parentSchoolIn
                     </button>
                 </div>
             </div>
+
+            {/* Specific Day Filter Active Banner */}
+            {selectedMonthMode === 'specific_day' && selectedDayDateIso && (
+                <div style={{
+                    background: '#eff6ff',
+                    border: '1.5px solid #93c5fd',
+                    borderRadius: '14px',
+                    padding: '0.75rem 1.25rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '1rem',
+                    flexWrap: 'wrap',
+                    boxShadow: '0 2px 8px rgba(37, 99, 235, 0.08)'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                        <div style={{
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '8px',
+                            background: '#2563eb',
+                            color: '#ffffff',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}>
+                            <CalendarDays size={18} />
+                        </div>
+                        <div>
+                            <span style={{ fontSize: '0.92rem', fontWeight: '800', color: '#1e3a8a' }}>
+                                Day View Active: {selectedDayDateIso}
+                            </span>
+                            <span style={{ display: 'block', fontSize: '0.76rem', color: '#475569', fontWeight: '500' }}>
+                                Showing receipts, direct incomes, and operational expenses recorded strictly on this calendar date.
+                            </span>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setSelectedMonthMode('current');
+                            setSelectedDayDateIso(null);
+                        }}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.45rem',
+                            padding: '0.45rem 0.95rem',
+                            borderRadius: '8px',
+                            background: '#ffffff',
+                            color: '#1d4ed8',
+                            border: '1px solid #bfdbfe',
+                            fontWeight: '700',
+                            fontSize: '0.82rem',
+                            cursor: 'pointer',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                            transition: 'all 0.15s ease'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = '#dbeafe'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
+                    >
+                        <RotateCcw size={14} />
+                        <span>Reset to Whole Month</span>
+                    </button>
+                </div>
+            )}
 
             {/* ========================================================= */}
             {/* ENGLISH SMART AUTOMATED FINANCIAL INSIGHT BANNER */}
