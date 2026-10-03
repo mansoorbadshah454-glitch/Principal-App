@@ -2263,6 +2263,10 @@ export default function Exams() {
     };
 
     const handleOpenModerateModal = (studentRow) => {
+        if (selectedStudentForModerate?.studentId === studentRow?.studentId) {
+            setSelectedStudentForModerate(null);
+            return;
+        }
         setSelectedStudentForModerate(studentRow);
         const initialMarks = {};
         tabulationData.subjects.forEach(subj => {
@@ -3183,6 +3187,7 @@ export default function Exams() {
                             <div className="no-print grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {filteredRows.map(studentRow => {
                                     const isSelected = selectedStudentIdsForBatch.has(studentRow.studentId);
+                                    const isModerating = selectedStudentForModerate?.studentId === studentRow.studentId;
                                     const isForcePass = studentRow.moderationOverride === 'pass' || studentRow.moderationOverride === 'conditional_pass';
                                     const isForceFail = studentRow.moderationOverride === 'fail';
 
@@ -3225,7 +3230,7 @@ export default function Exams() {
                                         <div
                                             key={studentRow.studentId}
                                             className={`rounded-3xl p-5.5 transition-all duration-300 hover:-translate-y-1.5 cursor-pointer select-none ${card3dContainer} ${
-                                                isSelected ? 'ring-4 ring-indigo-400/80 scale-[1.02]' : 'opacity-100'
+                                                isSelected ? 'ring-4 ring-indigo-400/80 scale-[1.02]' : isModerating ? 'ring-4 ring-amber-400 shadow-2xl scale-[1.01]' : 'opacity-100'
                                             }`}
                                             onClick={() => {
                                                 const next = new Set(selectedStudentIdsForBatch);
@@ -3312,11 +3317,15 @@ export default function Exams() {
                                                         e.stopPropagation();
                                                         handleOpenModerateModal(studentRow);
                                                     }}
-                                                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs sm:text-sm font-black text-amber-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 rounded-xl transition-all border-b-3 border-b-amber-700 active:translate-y-0.5 shadow-md"
+                                                    className={`inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs sm:text-sm font-black rounded-xl transition-all border-b-3 active:translate-y-0.5 shadow-md ${
+                                                        isModerating
+                                                            ? 'text-white bg-amber-600 hover:bg-amber-700 border-b-amber-900 ring-2 ring-amber-300'
+                                                            : 'text-amber-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 border-b-amber-700'
+                                                    }`}
                                                     title="Examiner Moderation & Grace Marks"
                                                 >
-                                                    <Scale className="w-4 h-4 text-amber-950" />
-                                                    Grace / Edit
+                                                    <Scale className="w-4 h-4" />
+                                                    {isModerating ? 'Close Editor' : 'Grace / Edit'}
                                                 </button>
                                                 <button
                                                     onClick={(e) => {
@@ -3336,6 +3345,266 @@ export default function Exams() {
                                                     PDF
                                                 </button>
                                             </div>
+
+                                            {/* ================================================================= */}
+                                            {/* INLINE EXPANSION: EXAMINER MODERATION & GRACE MARKS PANEL         */}
+                                            {/* ================================================================= */}
+                                            {isModerating && (
+                                                <div
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    className="mt-4 bg-white text-slate-800 rounded-2xl p-4 shadow-2xl border-2 border-amber-400 space-y-4 cursor-default select-text animate-fadeIn"
+                                                >
+                                                    {/* Category 1: Header & Live Results Banner */}
+                                                    <div className="pb-3 border-b border-slate-100">
+                                                        <div className="flex items-center justify-between mb-2.5">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="p-1.5 bg-amber-100 text-amber-800 rounded-lg">
+                                                                    <Scale className="w-4 h-4" />
+                                                                </div>
+                                                                <div>
+                                                                    <h5 className="font-black text-xs text-slate-900 leading-tight">Examiner Moderation & Grace</h5>
+                                                                    <p className="text-[10px] text-slate-400 font-medium">Roll #{studentRow.rollNumber} • {studentRow.name}</p>
+                                                                </div>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSelectedStudentForModerate(null)}
+                                                                className="w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center font-bold text-xs transition-colors"
+                                                                title="Close"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </div>
+
+                                                        {/* Live Calculation Preview Banner */}
+                                                        {(() => {
+                                                            let totalObtained = 0;
+                                                            let totalMax = 0;
+                                                            let subjectsCount = tabulationData.subjects.length;
+                                                            let evaluatedCount = 0;
+                                                            let failedCount = 0;
+                                                            let hasAbsent = false;
+                                                            let totalGraceApplied = 0;
+
+                                                            tabulationData.subjects.forEach(subj => {
+                                                                const data = moderateSubjectMarks?.[subj] || {};
+                                                                const max = data.totalMarks || 100;
+                                                                const pass = data.passingMarks || 33;
+                                                                totalMax += max;
+
+                                                                if (data.isAbsent) {
+                                                                    hasAbsent = true;
+                                                                    failedCount++;
+                                                                } else {
+                                                                    const base = data.obtained === '' || data.obtained === null || data.obtained === undefined ? null : parseFloat(data.obtained);
+                                                                    const grace = parseFloat(data.graceMarks) || 0;
+                                                                    totalGraceApplied += grace;
+
+                                                                    if (base !== null && !isNaN(base)) {
+                                                                        const effective = base + grace;
+                                                                        totalObtained += effective;
+                                                                        evaluatedCount++;
+                                                                        if (effective < pass) {
+                                                                            failedCount++;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            });
+
+                                                            const percentage = totalMax > 0 ? (totalObtained / totalMax) * 100 : 0;
+                                                            const isComplete = subjectsCount > 0 && evaluatedCount === subjectsCount;
+                                                            let isPassCalc = isComplete && failedCount === 0 && percentage >= 33 && !hasAbsent;
+
+                                                            if (moderateStatusOverride === 'pass' || moderateStatusOverride === 'conditional_pass') {
+                                                                isPassCalc = true;
+                                                            } else if (moderateStatusOverride === 'fail') {
+                                                                isPassCalc = false;
+                                                            }
+
+                                                            const grade = calculateGrade(totalObtained, totalMax);
+
+                                                            return (
+                                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                                                                    <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
+                                                                        <span className="text-[9px] text-slate-400 uppercase font-bold block">Obtained</span>
+                                                                        <span className="text-sm font-black text-slate-800">{totalObtained} / {totalMax}</span>
+                                                                    </div>
+                                                                    <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
+                                                                        <span className="text-[9px] text-slate-400 uppercase font-bold block">% • Grade</span>
+                                                                        <span className="text-sm font-black text-indigo-700">{percentage.toFixed(1)}% ({grade})</span>
+                                                                    </div>
+                                                                    <div className="p-2 bg-slate-50 rounded-xl border border-slate-100">
+                                                                        <span className="text-[9px] text-slate-400 uppercase font-bold block">Grace</span>
+                                                                        <span className="text-sm font-black text-amber-600">+{totalGraceApplied}</span>
+                                                                    </div>
+                                                                    <div className={`p-2 rounded-xl border ${
+                                                                        !isComplete ? 'bg-amber-50 border-amber-200 text-amber-800' :
+                                                                        isPassCalc ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
+                                                                    }`}>
+                                                                        <span className="text-[9px] uppercase font-bold block opacity-75">Decision</span>
+                                                                        <span className="text-xs font-black uppercase block mt-0.5">
+                                                                            {!isComplete ? `Pending (${evaluatedCount}/${subjectsCount})` : isPassCalc ? 'PASS' : 'FAIL'}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+
+                                                    {/* Category 2: Subjects & Grace Allocation */}
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center justify-between text-[11px] font-black text-slate-700 uppercase tracking-wide px-1">
+                                                            <span>Subject Marks & Grace</span>
+                                                            <span className="text-[9px] text-slate-400 font-normal">Passing: 33%</span>
+                                                        </div>
+
+                                                        <div className="space-y-1.5 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                                                            {tabulationData.subjects.map(subj => {
+                                                                const entry = moderateSubjectMarks?.[subj] || { obtained: '', graceMarks: 0, isAbsent: false, totalMarks: 100, passingMarks: 33 };
+                                                                const baseVal = entry.obtained === '' || entry.obtained === null ? null : parseFloat(entry.obtained);
+                                                                const graceVal = parseFloat(entry.graceMarks) || 0;
+                                                                const effective = baseVal !== null && !isNaN(baseVal) ? baseVal + graceVal : null;
+                                                                const isFail = entry.isAbsent || (effective !== null && effective < (entry.passingMarks || 33));
+
+                                                                return (
+                                                                    <div key={subj} className="p-2.5 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200/70 flex items-center justify-between gap-2 transition-colors">
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <div className="font-bold text-xs text-slate-900 truncate">{subj}</div>
+                                                                            <div className="text-[10px] text-slate-400">Max: {entry.totalMarks || 100} • Pass: {entry.passingMarks || 33}</div>
+                                                                        </div>
+
+                                                                        <div className="flex items-center gap-2">
+                                                                            {/* Absent Toggle */}
+                                                                            <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer select-none">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={entry.isAbsent === true}
+                                                                                    onChange={(e) => {
+                                                                                        setModerateSubjectMarks(prev => ({
+                                                                                            ...prev,
+                                                                                            [subj]: { ...(prev?.[subj] || {}), isAbsent: e.target.checked }
+                                                                                        }));
+                                                                                    }}
+                                                                                    className="w-3.5 h-3.5 rounded text-rose-600 focus:ring-rose-500"
+                                                                                />
+                                                                                <span className={entry.isAbsent ? 'font-bold text-rose-600' : ''}>Abs</span>
+                                                                            </label>
+
+                                                                            {/* Obtained Marks Input */}
+                                                                            <div className="w-14">
+                                                                                <input
+                                                                                    type="number"
+                                                                                    placeholder="—"
+                                                                                    disabled={entry.isAbsent}
+                                                                                    value={entry.obtained}
+                                                                                    onChange={(e) => {
+                                                                                        const val = e.target.value;
+                                                                                        setModerateSubjectMarks(prev => ({
+                                                                                            ...prev,
+                                                                                            [subj]: { ...(prev?.[subj] || {}), obtained: val }
+                                                                                        }));
+                                                                                    }}
+                                                                                    className="w-full p-1.5 text-center text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:outline-none disabled:opacity-40"
+                                                                                    title="Obtained Marks"
+                                                                                />
+                                                                            </div>
+
+                                                                            {/* Grace Marks Input */}
+                                                                            <div className="w-14">
+                                                                                <input
+                                                                                    type="number"
+                                                                                    placeholder="+0"
+                                                                                    disabled={entry.isAbsent || entry.obtained === ''}
+                                                                                    value={entry.graceMarks || ''}
+                                                                                    onChange={(e) => {
+                                                                                        const val = e.target.value;
+                                                                                        setModerateSubjectMarks(prev => ({
+                                                                                            ...prev,
+                                                                                            [subj]: { ...(prev?.[subj] || {}), graceMarks: val }
+                                                                                        }));
+                                                                                    }}
+                                                                                    className="w-full p-1.5 text-center text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
+                                                                                    title="Grace Marks (+)"
+                                                                                />
+                                                                            </div>
+
+                                                                            {/* Effective Score Badge */}
+                                                                            <div className="w-12 text-center">
+                                                                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black ${
+                                                                                    entry.isAbsent ? 'bg-slate-200 text-slate-600' :
+                                                                                    effective === null ? 'bg-slate-100 text-slate-400' :
+                                                                                    isFail ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+                                                                                }`}>
+                                                                                    {entry.isAbsent ? 'ABS' : effective !== null ? `${effective}${graceVal > 0 ? '*' : ''}` : '—'}
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Category 3: Examiner Override & Official Remarks */}
+                                                    <div className="space-y-2 pt-2 border-t border-slate-100">
+                                                        <div>
+                                                            <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
+                                                                Promotion Override
+                                                            </label>
+                                                            <select
+                                                                value={moderateStatusOverride}
+                                                                onChange={(e) => setModerateStatusOverride(e.target.value)}
+                                                                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                                            >
+                                                                <option value="auto">⚡ Automatic (Formula Decision)</option>
+                                                                <option value="pass">🟢 Force Pass / Promoted on Trial</option>
+                                                                <option value="conditional_pass">🟡 Conditional Pass / Re-appear</option>
+                                                                <option value="fail">🔴 Force Retain / Fail</option>
+                                                            </select>
+                                                        </div>
+
+                                                        <div>
+                                                            <label className="block text-[10px] font-black text-slate-600 uppercase mb-1">
+                                                                Official DMC Note / Remark
+                                                            </label>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="e.g. Awarded 2 grace marks in Math. Promoted on trial."
+                                                                value={moderateRemarks}
+                                                                onChange={(e) => setModerateRemarks(e.target.value)}
+                                                                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Category 4: Action Footer */}
+                                                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSelectedStudentForModerate(null)}
+                                                            disabled={isSavingModeration}
+                                                            className="px-3 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-bold transition-colors text-xs"
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleSaveModeration}
+                                                            disabled={isSavingModeration}
+                                                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl font-black text-xs shadow-md shadow-indigo-200 transition-all disabled:opacity-50"
+                                                        >
+                                                            {isSavingModeration ? (
+                                                                <>Saving...</>
+                                                            ) : (
+                                                                <>
+                                                                    <Check className="w-3.5 h-3.5" />
+                                                                    Save & Update
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -3854,284 +4123,7 @@ export default function Exams() {
                 </div>
             )}
 
-            {/* ========================================================================= */}
-            {/* MODAL: EXAMINER MODERATION & GRACE MARKS ENGINE                           */}
-            {/* ========================================================================= */}
-            {selectedStudentForModerate && (
-                <div className="no-print fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
-                    <div className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl border border-slate-100 overflow-hidden max-h-[90vh] flex flex-col">
-                        {/* Header */}
-                        <div className="p-6 bg-gradient-to-r from-amber-600 via-orange-600 to-indigo-700 text-white flex items-center justify-between flex-shrink-0">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
-                                    <Scale className="w-6 h-6 text-amber-100" />
-                                </div>
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="font-black text-lg">Examiner Moderation & Grace Marks</h3>
-                                        <span className="px-2 py-0.5 text-[10px] font-black uppercase rounded-full bg-white/20 text-white">
-                                            Roll #{selectedStudentForModerate.rollNumber}
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-amber-100">{selectedStudentForModerate.name} • S/O {selectedStudentForModerate.fatherName} • {currentClass?.name}</p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => setSelectedStudentForModerate(null)}
-                                className="p-1.5 text-white/80 hover:text-white text-lg font-bold"
-                            >
-                                ✕
-                            </button>
-                        </div>
 
-                        {/* Modal Body (Scrollable) */}
-                        <div className="p-6 overflow-y-auto flex-1 space-y-5">
-                            {/* Live Calculation Preview Banner */}
-                            {(() => {
-                                let totalObtained = 0;
-                                let totalMax = 0;
-                                let subjectsCount = tabulationData.subjects.length;
-                                let evaluatedCount = 0;
-                                let failedCount = 0;
-                                let hasAbsent = false;
-                                let totalGraceApplied = 0;
-
-                                tabulationData.subjects.forEach(subj => {
-                                    const data = moderateSubjectMarks?.[subj] || {};
-                                    const max = data.totalMarks || 100;
-                                    const pass = data.passingMarks || 33;
-                                    totalMax += max;
-
-                                    if (data.isAbsent) {
-                                        hasAbsent = true;
-                                        failedCount++;
-                                    } else {
-                                        const base = data.obtained === '' || data.obtained === null || data.obtained === undefined ? null : parseFloat(data.obtained);
-                                        const grace = parseFloat(data.graceMarks) || 0;
-                                        totalGraceApplied += grace;
-
-                                        if (base !== null && !isNaN(base)) {
-                                            const effective = base + grace;
-                                            totalObtained += effective;
-                                            evaluatedCount++;
-                                            if (effective < pass) {
-                                                failedCount++;
-                                            }
-                                        }
-                                    }
-                                });
-
-                                const percentage = totalMax > 0 ? (totalObtained / totalMax) * 100 : 0;
-                                const isComplete = subjectsCount > 0 && evaluatedCount === subjectsCount;
-                                let isPassCalc = isComplete && failedCount === 0 && percentage >= 33 && !hasAbsent;
-
-                                if (moderateStatusOverride === 'pass' || moderateStatusOverride === 'conditional_pass') {
-                                    isPassCalc = true;
-                                } else if (moderateStatusOverride === 'fail') {
-                                    isPassCalc = false;
-                                }
-
-                                const grade = calculateGrade(totalObtained, totalMax);
-
-                                return (
-                                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200 text-center text-xs">
-                                        <div className="p-2 bg-white rounded-xl border border-slate-100">
-                                            <span className="text-[10px] text-slate-400 uppercase font-bold block">Obtained Marks</span>
-                                            <span className="text-base font-black text-slate-800">{totalObtained} / {totalMax}</span>
-                                        </div>
-                                        <div className="p-2 bg-white rounded-xl border border-slate-100">
-                                            <span className="text-[10px] text-slate-400 uppercase font-bold block">Percentage</span>
-                                            <span className="text-base font-black text-indigo-700">{percentage.toFixed(1)}%</span>
-                                        </div>
-                                        <div className="p-2 bg-white rounded-xl border border-slate-100">
-                                            <span className="text-[10px] text-slate-400 uppercase font-bold block">Grade</span>
-                                            <span className="text-base font-black text-purple-700">{grade}</span>
-                                        </div>
-                                        <div className="p-2 bg-white rounded-xl border border-slate-100">
-                                            <span className="text-[10px] text-slate-400 uppercase font-bold block">Total Grace</span>
-                                            <span className="text-base font-black text-amber-600">+{totalGraceApplied}</span>
-                                        </div>
-                                        <div className={`p-2 rounded-xl border col-span-2 sm:col-span-1 ${
-                                            !isComplete ? 'bg-amber-50 border-amber-200 text-amber-800' :
-                                            isPassCalc ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
-                                        }`}>
-                                            <span className="text-[10px] uppercase font-bold block opacity-75">Examiner Decision</span>
-                                            <span className="text-xs font-black uppercase block mt-0.5">
-                                                {!isComplete ? `Pending (${evaluatedCount}/${subjectsCount})` : isPassCalc ? 'PROMOTED / PASS' : 'FAILED / DETAINED'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Subjects Quick Marks & Grace Inputs Table */}
-                            <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm">
-                                <div className="p-3.5 bg-slate-50 border-b border-slate-200 font-black text-xs text-slate-700 flex items-center justify-between">
-                                    <span>Subject Marks & Grace Allocation</span>
-                                    <span className="text-[10px] font-normal text-slate-400">Total Passing Threshold: 33%</span>
-                                </div>
-
-                                <div className="divide-y divide-slate-100">
-                                    {tabulationData.subjects.map(subj => {
-                                        const entry = moderateSubjectMarks?.[subj] || { obtained: '', graceMarks: 0, isAbsent: false, totalMarks: 100, passingMarks: 33 };
-                                        const baseVal = entry.obtained === '' || entry.obtained === null ? null : parseFloat(entry.obtained);
-                                        const graceVal = parseFloat(entry.graceMarks) || 0;
-                                        const effective = baseVal !== null && !isNaN(baseVal) ? baseVal + graceVal : null;
-                                        const isFail = entry.isAbsent || (effective !== null && effective < (entry.passingMarks || 33));
-
-                                        return (
-                                            <div key={subj} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 transition-colors">
-                                                <div className="w-48">
-                                                    <div className="font-bold text-slate-800 text-xs">{subj}</div>
-                                                    <div className="text-[10px] text-slate-400">Max: {entry.totalMarks || 100} • Pass: {entry.passingMarks || 33}</div>
-                                                </div>
-
-                                                <div className="flex flex-wrap items-center gap-3">
-                                                    {/* Absent Toggle */}
-                                                    <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={entry.isAbsent === true}
-                                                            onChange={(e) => {
-                                                                setModerateSubjectMarks(prev => ({
-                                                                    ...prev,
-                                                                    [subj]: { ...(prev?.[subj] || {}), isAbsent: e.target.checked }
-                                                                }));
-                                                            }}
-                                                            className="w-3.5 h-3.5 rounded text-rose-600 focus:ring-rose-500"
-                                                        />
-                                                        <span className={entry.isAbsent ? 'font-bold text-rose-600' : ''}>Absent</span>
-                                                    </label>
-
-                                                    {/* Obtained Marks Input */}
-                                                    <div>
-                                                        <label className="text-[9px] text-slate-400 font-bold uppercase block mb-0.5">Obtained</label>
-                                                        <input
-                                                            type="number"
-                                                            placeholder="—"
-                                                            disabled={entry.isAbsent}
-                                                            value={entry.obtained}
-                                                            onChange={(e) => {
-                                                                const val = e.target.value;
-                                                                setModerateSubjectMarks(prev => ({
-                                                                    ...prev,
-                                                                    [subj]: { ...(prev?.[subj] || {}), obtained: val }
-                                                                }));
-                                                            }}
-                                                            className="w-20 p-2 text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-40"
-                                                        />
-                                                    </div>
-
-                                                    {/* Grace Marks Input */}
-                                                    <div>
-                                                        <label className="text-[9px] text-amber-600 font-bold uppercase block mb-0.5">+ Grace</label>
-                                                        <input
-                                                            type="number"
-                                                            placeholder="0"
-                                                            disabled={entry.isAbsent || entry.obtained === ''}
-                                                            value={entry.graceMarks || ''}
-                                                            onChange={(e) => {
-                                                                const val = e.target.value;
-                                                                setModerateSubjectMarks(prev => ({
-                                                                    ...prev,
-                                                                    [subj]: { ...(prev?.[subj] || {}), graceMarks: val }
-                                                                }));
-                                                            }}
-                                                            className="w-16 p-2 text-xs font-bold text-amber-800 bg-amber-50/50 border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
-                                                        />
-                                                    </div>
-
-                                                    {/* Effective Score & Status */}
-                                                    <div className="w-24 text-right">
-                                                        <span className="text-[9px] text-slate-400 font-bold uppercase block mb-0.5">Effective</span>
-                                                        <div className="flex items-center justify-end gap-1.5">
-                                                            <span className="font-black text-xs text-slate-900">
-                                                                {entry.isAbsent ? 'ABS' : effective !== null ? `${effective}${graceVal > 0 ? '*' : ''}` : '—'}
-                                                            </span>
-                                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${
-                                                                entry.isAbsent ? 'bg-slate-100 text-slate-600' :
-                                                                effective === null ? 'bg-slate-100 text-slate-400' :
-                                                                isFail ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
-                                                            }`}>
-                                                                {entry.isAbsent ? 'ABS' : effective === null ? '-' : isFail ? 'FAIL' : 'PASS'}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-
-                            {/* Examiner Override & Official Remarks */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                                    <label className="block text-xs font-black text-slate-800">
-                                        Examiner Promotion Override
-                                    </label>
-                                    <select
-                                        value={moderateStatusOverride}
-                                        onChange={(e) => setModerateStatusOverride(e.target.value)}
-                                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                                    >
-                                        <option value="auto">⚡ Automatic (Formula Decision)</option>
-                                        <option value="pass">🟢 Force Pass / Promoted on Trial</option>
-                                        <option value="conditional_pass">🟡 Conditional Pass / Re-appear</option>
-                                        <option value="fail">🔴 Force Retain / Fail</option>
-                                    </select>
-                                    <p className="text-[10px] text-slate-400">
-                                        Principal / Examiner authority to override system pass/fail calculation.
-                                    </p>
-                                </div>
-
-                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                                    <label className="block text-xs font-black text-slate-800">
-                                        Official Examiner Note / Footnote
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Awarded 2 grace marks in Math. Promoted on trial."
-                                        value={moderateRemarks}
-                                        onChange={(e) => setModerateRemarks(e.target.value)}
-                                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                                    />
-                                    <p className="text-[10px] text-slate-400">
-                                        This remark will be printed on the official DMC Result Card.
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Footer */}
-                        <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3 flex-shrink-0">
-                            <button
-                                type="button"
-                                onClick={() => setSelectedStudentForModerate(null)}
-                                disabled={isSavingModeration}
-                                className="px-4 py-2.5 text-slate-600 hover:bg-slate-200/60 rounded-xl font-bold transition-colors text-xs"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleSaveModeration}
-                                disabled={isSavingModeration}
-                                className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl font-black text-xs shadow-lg shadow-indigo-200 transition-all disabled:opacity-50"
-                            >
-                                {isSavingModeration ? (
-                                    <>Saving Moderation...</>
-                                ) : (
-                                    <>
-                                        <Check className="w-4 h-4" />
-                                        Save Moderation & Update Result
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
