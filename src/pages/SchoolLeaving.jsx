@@ -20,6 +20,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
 import SLCOverviewDashboard from '../components/SLCOverviewDashboard';
+import { checkIs100PercentFree, isMonthSettled, calculateItemizedFeeBreakdown } from '../utils/feePipeline';
 
 // Multi-Strategy Base64 Image Loader (Bypasses Storage & CORS for jsPDF)
 async function fetchImageAsBase64(url) {
@@ -681,63 +682,133 @@ function calculateStudentRealDues(st, manualOverride = null) {
         };
     }
 
-    // 1. Tuition Fee & Arrears Audit (Support Flat fields + feeStructure array + unpaidMonthsCount)
-    let tuitionDues = 0;
-    let baseMonthlyTuition = 0;
-    let baseMonthlyTransport = 0;
+    // 0.1 Check if student is 100% Free / Scholarship
+    if (checkIs100PercentFree(st)) {
+        return {
+            duesStatus: 'cleared',
+            totalDues: 0,
+            tuitionDues: 0,
+            transportDues: 0,
+            storeDues: 0,
+            actionDues: 0,
+            finesDues: 0,
+            sourceLabel: '100% Free / Scholarship',
+            isManualOverride: false,
+            clearanceNote: 'Student is on 100% Free Scholarship / Concession. Exempt from regular tuition fees.',
+            certificatePaidUpTo: 'All Dues Paid in Full (100% Scholarship)',
+            storeBreakdown: [],
+            actionBreakdown: [],
+            finesBreakdown: []
+        };
+    }
 
-    // Scan feeStructure array from Admission / Profile
-    if (Array.isArray(st.feeStructure) && st.feeStructure.length > 0) {
-        st.feeStructure.forEach(item => {
-            const name = (item.name || item.title || '').toLowerCase();
-            const amt = Number(item.amount || 0);
-            if (amt > 0) {
-                if (name.includes('transport') || name.includes('bus') || name.includes('van')) {
-                    baseMonthlyTransport += amt;
-                } else if (name.includes('tuition') || name.includes('monthly') || name.includes('school fee')) {
-                    baseMonthlyTuition += amt;
-                } else {
-                    baseMonthlyTuition += amt;
-                }
+    // Check if student has any active fee configuration or ledger record in the system
+    const hasFeeStructure = Array.isArray(st.feeStructure) && st.feeStructure.length > 0;
+    const hasFlatTuition = Number(st.tuitionFee || st.monthlyFee || st.fee || 0) > 0;
+    const hasTransportFee = Number(st.transportFee || st.monthlyTransportFee || 0) > 0;
+    const hasArrearsOrBalance = Number(st.feeDues || st.arrears || st.balance || st.remaining || 0) > 0;
+    const hasExplicitFeeStatus = Boolean(st.monthlyFeeStatus) || Boolean(st.transportFeeStatus);
+    const hasMonthlyFeeHistory = Boolean(st.monthlyFeeHistory && typeof st.monthlyFeeHistory === 'object' && Object.keys(st.monthlyFeeHistory).length > 0);
+    const hasPaidMonths = Array.isArray(st.paidMonths) && st.paidMonths.length > 0;
+    const hasStoreCharges = (Array.isArray(st.storeCharges) && st.storeCharges.length > 0) || (Array.isArray(st.storePurchases) && st.storePurchases.length > 0);
+    const hasIndividualActions = Array.isArray(st.individualActions) && st.individualActions.length > 0;
+    const hasCustomAssignments = Array.isArray(st.customFeeAssignments) && st.customFeeAssignments.length > 0;
+    const hasCustomPayments = Boolean(st.customPayments && typeof st.customPayments === 'object' && Object.keys(st.customPayments).length > 0);
+
+    const hasAnyFeeRecord = hasFeeStructure || hasFlatTuition || hasTransportFee || hasArrearsOrBalance || hasExplicitFeeStatus || hasMonthlyFeeHistory || hasPaidMonths || hasStoreCharges || hasIndividualActions || hasCustomAssignments || hasCustomPayments;
+
+    if (!hasAnyFeeRecord) {
+        return {
+            duesStatus: 'no_record',
+            totalDues: 0,
+            tuitionDues: 0,
+            transportDues: 0,
+            storeDues: 0,
+            actionDues: 0,
+            finesDues: 0,
+            sourceLabel: 'No Fee Ledger Record',
+            isManualOverride: false,
+            clearanceNote: 'No billing ledger or tuition fees recorded in system (Default Clean for New School).',
+            certificatePaidUpTo: 'No Outstanding Dues Recorded',
+            storeBreakdown: [],
+            actionBreakdown: [],
+            finesBreakdown: []
+        };
+    }
+
+    // Connect to Fee Pipeline Single Source of Truth
+    const today = new Date();
+    const currentMonthIdx = today.getMonth();
+    const currentYear = today.getFullYear();
+
+    const breakdown = calculateItemizedFeeBreakdown(st, null, {}, currentMonthIdx, currentYear);
+    const isCurrentSettled = isMonthSettled(st, currentMonthIdx, currentYear);
+
+    // Count past unpaid months within the current school year
+    let pastUnpaidMonths = 0;
+    let admMonth = 0;
+    if (st.admissionDate) {
+        try {
+            const d = new Date(st.admissionDate);
+            if (!isNaN(d.getTime()) && d.getFullYear() === currentYear) {
+                admMonth = d.getMonth();
             }
-        });
+        } catch (_) {}
+    }
+    for (let m = admMonth; m < currentMonthIdx; m++) {
+        if (!isMonthSettled(st, m, currentYear)) {
+            pastUnpaidMonths++;
+        }
     }
 
-    // Fallback to flat fields if not in feeStructure
-    if (baseMonthlyTuition === 0) {
-        baseMonthlyTuition = Number(st.tuitionFee || st.monthlyFee || st.fee || 0);
-    }
-    if (baseMonthlyTransport === 0) {
-        baseMonthlyTransport = Number(st.transportFee || 0);
-    }
+    const explicitUnpaid = Number(st.unpaidMonthsCount) || Number(st.previousMonthsUnpaidCount) || (st.unpaidMonths ? Number(st.unpaidMonths) : 0);
+    const totalUnpaidMonths = Math.max(
+        explicitUnpaid,
+        pastUnpaidMonths + (!isCurrentSettled ? 1 : 0)
+    );
 
-    const isMonthlyPaid = (st.monthlyFeeStatus || '').toLowerCase() === 'paid';
-    const unpaidMonths = Number(st.unpaidMonthsCount) || Number(st.previousMonthsUnpaidCount) || (st.unpaidMonths ? Number(st.unpaidMonths) : (isMonthlyPaid ? 0 : 1));
-
-    if (!isMonthlyPaid || unpaidMonths > 0) {
-        tuitionDues += (baseMonthlyTuition * Math.max(1, unpaidMonths));
+    // 1. Tuition Fee & Arrears Audit
+    let tuitionDues = 0;
+    if (totalUnpaidMonths > 0) {
+        tuitionDues += (breakdown.tuitionPayable * totalUnpaidMonths);
     }
-
     const arrears = Number(st.feeDues || st.arrears || st.balance || 0);
     tuitionDues += arrears;
 
     // 2. Transport Fleet Fee
     let transportDues = 0;
+    const baseMonthlyTransport = breakdown.transportFee || Number(st.transportFee || st.monthlyTransportFee || 0);
     if (baseMonthlyTransport > 0) {
-        const isTransportPaid = (st.transportFeeStatus || '').toLowerCase() === 'paid';
-        if (!isTransportPaid && (!st.transportFeeStatus ? !isMonthlyPaid : true)) {
-            transportDues += (baseMonthlyTransport * Math.max(1, unpaidMonths));
+        const isTransportPaid = String(st.transportFeeStatus || '').toLowerCase() === 'paid';
+        if (!isTransportPaid) {
+            const transportMonths = totalUnpaidMonths > 0 ? totalUnpaidMonths : (!isCurrentSettled ? 1 : 0);
+            transportDues += (baseMonthlyTransport * Math.max(1, transportMonths));
         }
     }
 
     // 3. Store & Inventory Purchases (Books, Uniforms, Stationery)
     let storeDues = 0;
     const storeBreakdown = [];
+    if (Array.isArray(st.storePurchases)) {
+        st.storePurchases.forEach(sp => {
+            if (sp.status === 'unpaid' || sp.status === 'pending' || !sp.status) {
+                const amt = Number(sp.amount || sp.price || 0);
+                if (amt > 0) {
+                    storeDues += amt;
+                    storeBreakdown.push({
+                        id: sp.id || sp.receiptNo || Math.random(),
+                        title: sp.title || sp.name || `Store Purchase #${sp.receiptNo || ''}`,
+                        amount: amt
+                    });
+                }
+            }
+        });
+    }
     if (Array.isArray(st.storeCharges)) {
         st.storeCharges.forEach(sc => {
             if (sc.status === 'unpaid' || sc.status === 'pending' || !sc.status) {
                 const amt = Number(sc.amount || 0);
-                if (amt > 0) {
+                if (amt > 0 && !storeBreakdown.some(b => b.title === sc.title || (sc.receiptNo && b.id === sc.receiptNo))) {
                     storeDues += amt;
                     storeBreakdown.push({
                         id: sc.receiptNo || sc.id || Math.random(),
@@ -750,7 +821,7 @@ function calculateStudentRealDues(st, manualOverride = null) {
     }
     if (Array.isArray(st.individualActions)) {
         st.individualActions.forEach(ia => {
-            if ((ia.type === 'store_inventory' || (ia.receiptNo && ia.receiptNo.startsWith('INV-'))) && (ia.status === 'unpaid' || ia.status === 'pending')) {
+            if ((ia.type === 'store_inventory' || (ia.receiptNo && String(ia.receiptNo).startsWith('INV-'))) && (ia.status === 'unpaid' || ia.status === 'pending')) {
                 const amt = Number(ia.amount || 0);
                 if (amt > 0 && !storeBreakdown.some(b => b.title === ia.name || b.id === ia.receiptNo)) {
                     storeDues += amt;
@@ -799,13 +870,20 @@ function calculateStudentRealDues(st, manualOverride = null) {
     }
 
     // 5. Departmental Fines & Penalties
-    let finesDues = 0;
+    let finesDues = breakdown.penaltyFine || 0;
     const finesBreakdown = [];
+    if (finesDues > 0) {
+        finesBreakdown.push({
+            id: 'penalty_late_fee',
+            title: 'Late Fee / Fine',
+            amount: finesDues
+        });
+    }
     if (Array.isArray(st.individualActions)) {
         st.individualActions.forEach(ia => {
-            if (ia.type !== 'store_inventory' && (!ia.receiptNo || !ia.receiptNo.startsWith('INV-')) && (ia.status === 'unpaid' || ia.status === 'pending')) {
+            if (ia.type !== 'store_inventory' && (!ia.receiptNo || !String(ia.receiptNo).startsWith('INV-')) && (ia.status === 'unpaid' || ia.status === 'pending')) {
                 const amt = Number(ia.amount || 0);
-                if (amt > 0) {
+                if (amt > 0 && !finesBreakdown.some(b => b.id === ia.id)) {
                     finesDues += amt;
                     finesBreakdown.push({
                         id: ia.id || ia.name,
@@ -915,7 +993,7 @@ export default function SchoolLeaving() {
     const [slcSerialNo, setSlcSerialNo] = useState(() => `SLC-${new Date().getFullYear()}/${String(Math.floor(Math.random() * 899) + 100)}`);
     const [slcLeavingDate, setSlcLeavingDate] = useState(() => new Date().toISOString().split('T')[0]);
     const [slcDob, setSlcDob] = useState('2009-04-14');
-    const [slcReason, setSlcReason] = useState('Completed Matriculation Examination');
+    const [slcReason, setSlcReason] = useState('On Parents / Guardians Written Request');
     const [slcConduct, setSlcConduct] = useState('Exemplary / Very Good');
     const [slcRemarks, setSlcRemarks] = useState('Student has maintained high moral character, good attendance, and exemplary discipline.');
 
@@ -1428,6 +1506,19 @@ export default function SchoolLeaving() {
         setDossierStep(1);
         if (student) {
             setSlcSerialNo(`SLC-${new Date().getFullYear()}/${student.rollNo ? String(student.rollNo).padStart(3, '0') : String(Math.floor(Math.random() * 899) + 100)}`);
+            
+            // Smart Class-Aware Default Leaving Reason (Matric vs Middle vs Junior classes)
+            const currentClsName = String(student.className || classes.find(c => c.id === selectedClassId)?.name || '').toLowerCase().trim();
+            const isMatric = currentClsName.includes('10') || currentClsName.includes('matric') || currentClsName.includes('ssc') || currentClsName.includes('tenth');
+            const isMiddle = currentClsName.includes('8') || currentClsName.includes('eighth') || currentClsName.includes('middle');
+
+            if (isMatric) {
+                setSlcReason('Completed Matriculation Examination');
+            } else if (isMiddle) {
+                setSlcReason('Completed Middle Standard Examination');
+            } else {
+                setSlcReason('On Parents / Guardians Written Request');
+            }
         }
     };
 
@@ -1602,6 +1693,44 @@ export default function SchoolLeaving() {
             };
         }
 
+        if (studentClearanceStatus.duesStatus === 'no_record') {
+            return {
+                score: 100,
+                badgeLabel: 'No Record / Clean',
+                badgeColor: '#64748b',
+                onTimeRate: 100,
+                message: 'No billing ledger or fee records recorded in system (Default Clean for New School).',
+                tenureTier: 'Clean Slate Tier',
+                tenureSubtext: 'No Fee Ledger Record',
+                paidCount: 0,
+                unpaidCount: 0,
+                timeline: monthsMeta.map((m, idx) => ({
+                    ...m,
+                    status: 'upcoming',
+                    label: 'No Record'
+                }))
+            };
+        }
+
+        if (checkIs100PercentFree(selectedStudent)) {
+            return {
+                score: 100,
+                badgeLabel: '100% Scholarship',
+                badgeColor: '#10b981',
+                onTimeRate: 100,
+                message: 'Student is on 100% Free Scholarship / Concession.',
+                tenureTier: 'Scholarship Tier',
+                tenureSubtext: 'Exempt from Tuition',
+                paidCount: currentMonthIdx + 1,
+                unpaidCount: 0,
+                timeline: monthsMeta.map((m, idx) => ({
+                    ...m,
+                    status: 'paid',
+                    label: 'Scholarship'
+                }))
+            };
+        }
+
         const totalDues = studentClearanceStatus.totalDues;
         const isCurrentPaid = (selectedStudent.monthlyFeeStatus || '').toLowerCase() === 'paid';
         let paidDate = null;
@@ -1621,27 +1750,16 @@ export default function SchoolLeaving() {
             unpaidCount = 1;
         }
 
-        // Build 12-month timeline Jan -> Dec matching Parent Mobile App yearly_fee_calendar.dart
+        // Build 12-month timeline Jan -> Dec using Single Source of Truth
         const timeline = monthsMeta.map((m, idx) => {
             const monthNumber = idx + 1;
             const currentMonthNumber = currentMonthIdx + 1;
             let status = 'paid';
             let label = 'Paid';
 
-            if (monthNumber < currentMonthNumber) {
-                // Past months: check if within trailing unpaid count
-                const distanceToCurrent = currentMonthNumber - 1 - monthNumber;
-                const pastUnpaidSpan = isCurrentPaid ? unpaidCount : Math.max(0, unpaidCount - 1);
-                if (distanceToCurrent < pastUnpaidSpan) {
-                    status = 'due';
-                    label = 'Due';
-                } else {
-                    status = 'paid';
-                    label = 'Paid';
-                }
-            } else if (monthNumber === currentMonthNumber) {
-                // Current month
-                if (isCurrentPaid) {
+            if (monthNumber <= currentMonthNumber) {
+                const settled = isMonthSettled(selectedStudent, idx, currentYear);
+                if (settled) {
                     status = 'paid';
                     label = 'Paid';
                 } else {
@@ -1649,7 +1767,6 @@ export default function SchoolLeaving() {
                     label = 'Due';
                 }
             } else {
-                // Future months (not recorded yet / upcoming)
                 status = 'upcoming';
                 label = 'Upcoming';
             }
@@ -2563,7 +2680,7 @@ export default function SchoolLeaving() {
             return;
         }
 
-        if (studentClearanceStatus.duesStatus !== 'cleared') {
+        if (studentClearanceStatus.duesStatus === 'pending' && studentClearanceStatus.totalDues > 0) {
             const confirmPending = window.confirm(`⚠️ WARNING: Student has Rs. ${studentClearanceStatus.totalDues.toLocaleString()} in pending dues (tuition, transport, store inventory, or fines).\n\nAre you sure you want to issue SLC before complete dues clearance?`);
             if (!confirmPending) return;
         }
@@ -2933,7 +3050,7 @@ export default function SchoolLeaving() {
         return {
             totalIssued: slcHistory.length,
             thisSession: slcHistory.filter(h => (h.session || '').includes(String(currentYear)) || h.year === currentYear).length,
-            duesCleared: slcHistory.filter(h => h.duesStatus === 'cleared').length,
+            duesCleared: slcHistory.filter(h => h.duesStatus === 'cleared' || h.duesStatus === 'no_record').length,
             matricPass: slcHistory.filter(h => (h.reason || '').toLowerCase().includes('matric')).length,
             migrations: slcHistory.filter(h => !(h.reason || '').toLowerCase().includes('matric')).length
         };
@@ -3199,7 +3316,13 @@ export default function SchoolLeaving() {
                                             const duesInfo = calculateStudentRealDues(st);
                                             return (
                                                 <option key={st.id} value={st.id}>
-                                                    Roll #{st.rollNo || 'N/A'} — {st.name} s/o {st.fatherName || 'N/A'} {duesInfo.duesStatus === 'pending' ? `(⚠️ Rs. ${duesInfo.totalDues.toLocaleString()} Due)` : '(✅ 100% Cleared)'}
+                                                    Roll #{st.rollNo || 'N/A'} — {st.name} s/o {st.fatherName || 'N/A'} {
+                                                        duesInfo.duesStatus === 'pending'
+                                                            ? `(⚠️ Rs. ${duesInfo.totalDues.toLocaleString()} Due)`
+                                                            : duesInfo.duesStatus === 'no_record'
+                                                                ? '(⚪ No Fee Record)'
+                                                                : '(✅ 100% Cleared)'
+                                                    }
                                                 </option>
                                             );
                                         })}
@@ -3267,7 +3390,13 @@ export default function SchoolLeaving() {
                                                 const duesInfo = calculateStudentRealDues(st);
                                                 return (
                                                     <option key={st.id} value={st.id}>
-                                                        Roll #{st.rollNo || 'N/A'} — {st.name} s/o {st.fatherName || 'N/A'} {duesInfo.duesStatus === 'pending' ? `(⚠️ Rs. ${duesInfo.totalDues.toLocaleString()} Due)` : '(✅ 100% Cleared)'}
+                                                        Roll #{st.rollNo || 'N/A'} — {st.name} s/o {st.fatherName || 'N/A'} {
+                                                            duesInfo.duesStatus === 'pending'
+                                                                ? `(⚠️ Rs. ${duesInfo.totalDues.toLocaleString()} Due)`
+                                                                : duesInfo.duesStatus === 'no_record'
+                                                                    ? '(⚪ No Fee Record)'
+                                                                    : '(✅ 100% Cleared)'
+                                                        }
                                                     </option>
                                                 );
                                             })}
@@ -3277,34 +3406,46 @@ export default function SchoolLeaving() {
                                     {/* 360° Traffic Light Clearance Radar Widget */}
                                     {selectedStudent && (
                                         <div className={`p-4 rounded-2xl border transition-all ${
-                                            studentClearanceStatus.duesStatus === 'cleared'
-                                                ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
-                                                : 'bg-rose-50/80 border-rose-200 text-rose-950'
+                                            studentClearanceStatus.duesStatus === 'pending'
+                                                ? 'bg-rose-50/80 border-rose-200 text-rose-950'
+                                                : studentClearanceStatus.duesStatus === 'no_record'
+                                                    ? 'bg-slate-100/90 border-slate-300 text-slate-900'
+                                                    : 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
                                         }`}>
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-2.5">
-                                                    {studentClearanceStatus.duesStatus === 'cleared' ? (
-                                                        <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shadow-xs">
-                                                            <CheckCircle2 size={18} />
-                                                        </div>
-                                                    ) : (
+                                                    {studentClearanceStatus.duesStatus === 'pending' ? (
                                                         <div className="w-8 h-8 rounded-xl bg-rose-600 text-white flex items-center justify-center font-black animate-pulse shadow-xs">
                                                             <AlertCircle size={18} />
+                                                        </div>
+                                                    ) : studentClearanceStatus.duesStatus === 'no_record' ? (
+                                                        <div className="w-8 h-8 rounded-xl bg-slate-600 text-white flex items-center justify-center font-black shadow-xs">
+                                                            <ShieldCheck size={18} />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shadow-xs">
+                                                            <CheckCircle2 size={18} />
                                                         </div>
                                                     )}
                                                     <div>
                                                         <h4 className="text-xs font-black text-slate-900">
-                                                            {studentClearanceStatus.duesStatus === 'cleared' ? 'Clearance Status: 100% Cleared' : 'Clearance Status: Dues Pending'}
+                                                            {studentClearanceStatus.duesStatus === 'pending'
+                                                                ? 'Clearance Status: Dues Pending'
+                                                                : studentClearanceStatus.duesStatus === 'no_record'
+                                                                    ? 'Clearance Status: No Fee Record (Clean)'
+                                                                    : 'Clearance Status: 100% Cleared'}
                                                         </h4>
                                                         <p className="text-[11px] text-slate-600 font-medium">
-                                                            {studentClearanceStatus.duesStatus === 'cleared'
-                                                                ? 'All tuition & campus charges cleared. Ready for SLC.'
-                                                                : `Total pending dues: Rs. ${studentClearanceStatus.totalDues}`}
+                                                            {studentClearanceStatus.duesStatus === 'pending'
+                                                                ? `Total pending dues: Rs. ${studentClearanceStatus.totalDues.toLocaleString()}`
+                                                                : studentClearanceStatus.duesStatus === 'no_record'
+                                                                    ? 'No fee ledger or dues recorded for this student (Clean for SLC issuance).'
+                                                                    : 'All tuition & campus charges cleared. Ready for SLC.'}
                                                         </p>
                                                     </div>
                                                 </div>
 
-                                                {studentClearanceStatus.duesStatus !== 'cleared' && (
+                                                {studentClearanceStatus.duesStatus === 'pending' && (
                                                     <button
                                                         type="button"
                                                         onClick={() => {
@@ -3659,15 +3800,20 @@ export default function SchoolLeaving() {
                                         {/* Clearance Status Badge */}
                                         <div className="sm:text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
                                             <span className="text-[10px] font-black uppercase text-blue-200">Departure Clearance</span>
-                                            {studentClearanceStatus.duesStatus === 'cleared' ? (
+                                            {studentClearanceStatus.duesStatus === 'pending' ? (
+                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-rose-800 border border-white/80 text-xs font-black animate-pulse shadow-xs">
+                                                    <AlertCircle size={14} className="text-rose-600" />
+                                                    Rs. {studentClearanceStatus.totalDues.toLocaleString()} Due
+                                                </span>
+                                            ) : studentClearanceStatus.duesStatus === 'no_record' ? (
+                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-slate-800 border border-white/80 text-xs font-black shadow-xs">
+                                                    <ShieldCheck size={14} className="text-slate-600" />
+                                                    No Fee Record (Clean)
+                                                </span>
+                                            ) : (
                                                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-emerald-800 border border-white/80 text-xs font-black shadow-xs">
                                                     <CheckCircle2 size={14} className="text-emerald-600" />
                                                     100% Cleared
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-rose-800 border border-white/80 text-xs font-black animate-pulse shadow-xs">
-                                                    <AlertCircle size={14} className="text-rose-600" />
-                                                    Rs. {studentClearanceStatus.totalDues} Due
                                                 </span>
                                             )}
                                         </div>
@@ -3700,7 +3846,7 @@ export default function SchoolLeaving() {
                                 {/* CLEARANCE STAGE SELECTOR TABS (1-CARD-AT-A-TIME STEPPER) */}
                                 <div className="bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/90 flex flex-wrap items-center justify-between gap-1.5">
                                     {[
-                                        { id: 1, label: '1. Financial Dues', icon: Wallet, status: studentClearanceStatus.duesStatus === 'cleared' ? 'Cleared' : 'Pending', color: studentClearanceStatus.duesStatus === 'cleared' ? 'text-emerald-600' : 'text-rose-600' },
+                                        { id: 1, label: '1. Financial Dues', icon: Wallet, status: studentClearanceStatus.duesStatus === 'pending' ? 'Pending' : studentClearanceStatus.duesStatus === 'no_record' ? 'No Record' : 'Cleared', color: studentClearanceStatus.duesStatus === 'pending' ? 'text-rose-600' : studentClearanceStatus.duesStatus === 'no_record' ? 'text-slate-600' : 'text-emerald-600' },
                                         { id: 2, label: '2. Payment Reliability', icon: Sparkles, status: `${studentReliabilityData.score}%`, color: 'text-indigo-600' },
                                         { id: 3, label: '3. Academic Records', icon: Award, status: studentAcademicData.grade, color: 'text-cyan-600' },
                                         { id: 4, label: '4. Attendance & Conduct', icon: Activity, status: `${studentAttendanceData.rate}%`, color: 'text-amber-600' }
@@ -3771,37 +3917,35 @@ export default function SchoolLeaving() {
                                                         {studentClearanceStatus.sourceLabel}
                                                     </span>
                                                     <span className={`px-3 py-1 rounded-full text-xs font-black border ${
-                                                        studentClearanceStatus.duesStatus === 'cleared'
-                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                            : 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
+                                                        studentClearanceStatus.duesStatus === 'pending'
+                                                            ? 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
+                                                            : studentClearanceStatus.duesStatus === 'no_record'
+                                                                ? 'bg-slate-100 text-slate-700 border-slate-300'
+                                                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                                     }`}>
-                                                        {studentClearanceStatus.duesStatus === 'cleared' ? '✅ 100% Cleared' : '⚠️ Action Required'}
+                                                        {studentClearanceStatus.duesStatus === 'pending'
+                                                            ? '⚠️ Action Required'
+                                                            : studentClearanceStatus.duesStatus === 'no_record'
+                                                                ? '⚪ No Fee Record'
+                                                                : '✅ 100% Cleared'}
                                                     </span>
                                                 </div>
                                             </div>
 
                                         {/* Hero Visual Audit Banner */}
                                         <div className={`p-5 rounded-2xl border text-center transition-all ${
-                                            studentClearanceStatus.duesStatus === 'cleared'
-                                                ? 'bg-gradient-to-b from-emerald-50/60 to-emerald-50/20 border-emerald-200'
-                                                : 'bg-gradient-to-b from-rose-50/70 to-rose-50/20 border-rose-200'
+                                            studentClearanceStatus.duesStatus === 'pending'
+                                                ? 'bg-gradient-to-b from-rose-50/70 to-rose-50/20 border-rose-200'
+                                                : studentClearanceStatus.duesStatus === 'no_record'
+                                                    ? 'bg-gradient-to-b from-slate-100/70 to-slate-50/30 border-slate-300'
+                                                    : 'bg-gradient-to-b from-emerald-50/60 to-emerald-50/20 border-emerald-200'
                                         }`}>
-                                            {studentClearanceStatus.duesStatus === 'cleared' ? (
-                                                <div className="space-y-2">
-                                                    <div className="w-16 h-16 rounded-3xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-md">
-                                                        <CheckCircle2 size={32} />
-                                                    </div>
-                                                    <h5 className="text-base font-black text-emerald-900">Accounts & Dues 100% Certified</h5>
-                                                    <p className="text-xs text-emerald-700 max-w-md mx-auto font-medium">
-                                                        Student has settled all tuition and campus charges. 0 pending balance recorded on the general ledger.
-                                                    </p>
-                                                </div>
-                                            ) : (
+                                            {studentClearanceStatus.duesStatus === 'pending' ? (
                                                 <div className="space-y-2">
                                                     <div className="w-16 h-16 rounded-3xl bg-rose-500 text-white flex items-center justify-center mx-auto shadow-md animate-bounce">
                                                         <AlertCircle size={32} />
                                                     </div>
-                                                    <h5 className="text-base font-black text-rose-900">Outstanding Balance: Rs. {studentClearanceStatus.totalDues}</h5>
+                                                    <h5 className="text-base font-black text-rose-900">Outstanding Balance: Rs. {studentClearanceStatus.totalDues.toLocaleString()}</h5>
                                                     <p className="text-xs text-rose-700 max-w-md mx-auto font-medium">
                                                         Tuition or extracurricular charges are unpaid. Clear dues to qualify for official School Leaving Certificate.
                                                     </p>
@@ -3814,8 +3958,28 @@ export default function SchoolLeaving() {
                                                         className="mt-2 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-md cursor-pointer transition-all inline-flex items-center gap-2"
                                                     >
                                                         <DollarSign size={14} />
-                                                        <span>Settle Dues Instant Modal (Rs. {studentClearanceStatus.totalDues}) ⚡</span>
+                                                        <span>Settle Dues Instant Modal (Rs. {studentClearanceStatus.totalDues.toLocaleString()}) ⚡</span>
                                                     </button>
+                                                </div>
+                                            ) : studentClearanceStatus.duesStatus === 'no_record' ? (
+                                                <div className="space-y-2">
+                                                    <div className="w-16 h-16 rounded-3xl bg-slate-600 text-white flex items-center justify-center mx-auto shadow-md">
+                                                        <ShieldCheck size={32} />
+                                                    </div>
+                                                    <h5 className="text-base font-black text-slate-800">No Fee Record Registered (Clean for SLC)</h5>
+                                                    <p className="text-xs text-slate-600 max-w-md mx-auto font-medium">
+                                                        No fee challans or balance records found in the database. Defaults to clean status for brand new school setups.
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    <div className="w-16 h-16 rounded-3xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-md">
+                                                        <CheckCircle2 size={32} />
+                                                    </div>
+                                                    <h5 className="text-base font-black text-emerald-900">Accounts & Dues 100% Certified</h5>
+                                                    <p className="text-xs text-emerald-700 max-w-md mx-auto font-medium">
+                                                        Student has settled all tuition and campus charges. 0 pending balance recorded on the general ledger.
+                                                    </p>
                                                 </div>
                                             )}
                                         </div>
@@ -4609,8 +4773,29 @@ export default function SchoolLeaving() {
 
                                             <div className="grid grid-cols-12 py-1 border-b border-slate-100">
                                                 <span className="col-span-5 font-bold text-slate-500">7. Dues Status:</span>
-                                                <span className="col-span-7 font-black text-emerald-700 flex items-center gap-1">
-                                                    <CheckCircle size={12} /> All Dues Paid in Full (100% Cleared)
+                                                <span className={`col-span-7 font-black flex items-center gap-1 ${
+                                                    studentClearanceStatus.duesStatus === 'pending'
+                                                        ? 'text-rose-700'
+                                                        : studentClearanceStatus.duesStatus === 'no_record'
+                                                            ? 'text-slate-800'
+                                                            : 'text-emerald-700'
+                                                }`}>
+                                                    {studentClearanceStatus.duesStatus === 'pending' ? (
+                                                        <>
+                                                            <AlertCircle size={12} className="text-rose-600" />
+                                                            <span>Pending Dues: Rs. {studentClearanceStatus.totalDues.toLocaleString()}</span>
+                                                        </>
+                                                    ) : studentClearanceStatus.duesStatus === 'no_record' ? (
+                                                        <>
+                                                            <CheckCircle size={12} className="text-slate-600" />
+                                                            <span>No Outstanding Dues Recorded</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <CheckCircle size={12} className="text-emerald-600" />
+                                                            <span>All Dues Paid in Full (100% Cleared)</span>
+                                                        </>
+                                                    )}
                                                 </span>
                                             </div>
 
