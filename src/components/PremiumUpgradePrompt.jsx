@@ -67,13 +67,32 @@ const PremiumUpgradePrompt = ({ moduleKey = 'transport', moduleName = 'This Modu
 
     const Icon = config.icon;
 
+    // Platform Official Support & Sales Contact (Universal SSOT Default for MAI SMS)
+    const MAI_SMS_SUPPORT_PHONE_INTL = '923345722302'; // 03345722302
+
     const handleWhatsApp = () => {
-        const text = encodeURIComponent(`Hello MAI SMS Team, I want to upgrade our school system to the Premium Package to unlock "${config.title}". Please assist us with the upgrade process.`);
-        window.open(`https://wa.me/923000000000?text=${text}`, '_blank');
+        let schoolName = 'Our School';
+        try {
+            const cached = localStorage.getItem('cached_school_data');
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (parsed?.name) schoolName = parsed.name;
+            }
+        } catch (_) {}
+        if (schoolName === 'Our School') {
+            schoolName = localStorage.getItem('schoolName') || 'Our School';
+        }
+
+        const text = encodeURIComponent(
+            `Assalam-o-Alaikum MAI SMS Team,\n\n` +
+            `I am contacting from "${schoolName}". We want to upgrade our school system to the Premium Package to unlock "${config.title}".\n\n` +
+            `Please assist us with the package upgrade and activation process.`
+        );
+        window.open(`https://wa.me/${MAI_SMS_SUPPORT_PHONE_INTL}?text=${text}`, '_blank');
     };
 
     const handleCall = () => {
-        window.location.href = 'tel:+923000000000';
+        window.location.href = `tel:+${MAI_SMS_SUPPORT_PHONE_INTL}`;
     };
 
     const content = (
