@@ -59,10 +59,15 @@ const EditStudentProfile = () => {
         name: '',
         rollNo: '',
         registrationNo: '',
+        admissionNo: '',
+        section: '',
+        religion: '',
+        fatherCnic: '',
         dob: '',
         admissionDate: '',
         parentDetails: {
             fatherName: '',
+            fatherCnic: '',
             occupation: '',
             phone: '',
             emergencyPhone: '',
@@ -170,12 +175,17 @@ const EditStudentProfile = () => {
                     setProfile({
                         name: data.name || data.studentName || '',
                         rollNo: data.rollNo || '',
-                        registrationNo: data.registrationNo || '',
+                        registrationNo: data.registrationNo || data.admissionNo || '',
+                        admissionNo: data.admissionNo || data.registrationNo || '',
+                        section: data.section || data.classSection || '',
+                        religion: data.religion || '',
+                        fatherCnic: data.parentDetails?.fatherCnic || data.fatherCnic || '',
                         dob: data.dob || '',
                         admissionDate: data.admissionDate || '',
                         parentDetails: {
                             ...(data.parentDetails || {}),
                             fatherName: data.parentDetails?.fatherName || data.fatherName || '',
+                            fatherCnic: data.parentDetails?.fatherCnic || data.fatherCnic || '',
                             occupation: data.parentDetails?.occupation || '',
                             phone: data.parentDetails?.phone || data.fatherPhone || '',
                             emergencyPhone: data.parentDetails?.emergencyPhone || '',
@@ -419,10 +429,17 @@ const EditStudentProfile = () => {
             const updatePayload = {
                 name: profile.name,
                 rollNo: profile.rollNo,
-                registrationNo: profile.registrationNo,
+                registrationNo: profile.registrationNo || profile.admissionNo,
+                admissionNo: profile.admissionNo || profile.registrationNo,
+                section: profile.section || '',
+                religion: profile.religion || '',
                 dob: profile.dob,
                 admissionDate: profile.admissionDate,
-                parentDetails: profile.parentDetails,
+                fatherCnic: profile.parentDetails?.fatherCnic || profile.fatherCnic || '',
+                parentDetails: {
+                    ...profile.parentDetails,
+                    fatherCnic: profile.parentDetails?.fatherCnic || profile.fatherCnic || ''
+                },
                 fatherName: profile.parentDetails?.fatherName || '',
                 fatherPhone: profile.parentDetails?.phone || profile.parentDetails?.fatherPhone || '',
                 phone: profile.parentDetails?.phone || profile.parentDetails?.fatherPhone || '',
@@ -658,8 +675,22 @@ const EditStudentProfile = () => {
                                     <input type="text" value={profile.rollNo} onChange={(e) => handleProfileChange(e, 'rollNo')} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }} />
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginBottom: '0.35rem' }}>Registration Number</label>
-                                    <input type="text" value={profile.registrationNo} onChange={(e) => handleProfileChange(e, 'registrationNo')} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }} />
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginBottom: '0.35rem' }}>Admission / Reg Number</label>
+                                    <input type="text" value={profile.admissionNo || profile.registrationNo} onChange={(e) => {
+                                        const v = e.target.value;
+                                        setProfile(prev => ({ ...prev, admissionNo: v, registrationNo: v }));
+                                    }} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }} />
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginBottom: '0.35rem' }}>Class Section</label>
+                                    <input type="text" placeholder="e.g. A, Green, Rose" value={profile.section || ''} onChange={(e) => handleProfileChange(e, 'section')} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }} />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginBottom: '0.35rem' }}>Religion</label>
+                                    <input type="text" placeholder="e.g. Muslim, Christian" value={profile.religion || ''} onChange={(e) => handleProfileChange(e, 'religion')} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }} />
                                 </div>
                             </div>
 
@@ -674,9 +705,22 @@ const EditStudentProfile = () => {
                                 </div>
                             </div>
 
-                            <div>
-                                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginBottom: '0.35rem' }}>Father / Guardian Name</label>
-                                <input type="text" value={profile.parentDetails.fatherName} onChange={(e) => handleProfileChange(e, 'fatherName', true)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc', fontWeight: '600' }} />
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginBottom: '0.35rem' }}>Father / Guardian Name</label>
+                                    <input type="text" value={profile.parentDetails.fatherName} onChange={(e) => handleProfileChange(e, 'fatherName', true)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc', fontWeight: '600' }} />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#64748b', marginBottom: '0.35rem' }}>Father / Guardian CNIC</label>
+                                    <input type="text" placeholder="e.g. 35201-1234567-1" value={profile.parentDetails.fatherCnic || profile.fatherCnic || ''} onChange={(e) => {
+                                        const v = e.target.value;
+                                        setProfile(prev => ({
+                                            ...prev,
+                                            fatherCnic: v,
+                                            parentDetails: { ...prev.parentDetails, fatherCnic: v }
+                                        }));
+                                    }} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc' }} />
+                                </div>
                             </div>
 
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
