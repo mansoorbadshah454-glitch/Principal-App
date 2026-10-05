@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -78,6 +79,13 @@ const STANDARD_EXAM_PRESETS = [
         session: '2025-2026',
         status: 'upcoming',
         description: 'Final annual comprehensive examination.'
+    },
+    {
+        id: 'custom',
+        title: '✨ Custom Examination (Create Your Own)',
+        session: '2025-2026',
+        status: 'active',
+        description: 'Custom academic assessment / evaluation test.'
     }
 ];
 
@@ -1326,19 +1334,19 @@ export default function Exams() {
     };
 
     // --- Actions: Create/Edit Exam ---
-    const handleOpenCreateExam = () => {
+    const handleOpenCreateExam = (initialPresetId = 'first_term_2026') => {
         setEditingExam(null);
-        const firstPreset = STANDARD_EXAM_PRESETS[0];
+        const preset = STANDARD_EXAM_PRESETS.find(p => p.id === initialPresetId) || STANDARD_EXAM_PRESETS[0];
         setExamForm({
-            presetId: firstPreset.id,
-            title: firstPreset.title,
-            session: firstPreset.session,
-            status: firstPreset.status,
+            presetId: preset.id,
+            title: preset.id === 'custom' ? '' : preset.title,
+            session: '2025-2026',
+            status: preset.status || 'active',
             startDate: new Date().toISOString().split('T')[0],
             endDate: '',
             defaultTotalMarks: 100,
             passingMarks: 33,
-            description: firstPreset.description
+            description: preset.id === 'custom' ? 'Custom academic assessment / evaluation test.' : preset.description
         });
         setShowExamModal(true);
     };
@@ -1349,7 +1357,7 @@ export default function Exams() {
             setExamForm(prev => ({
                 ...prev,
                 presetId: preset.id,
-                title: preset.id === 'custom' ? (prev.title || '') : preset.title,
+                title: preset.id === 'custom' ? (prev.presetId === 'custom' ? prev.title : '') : preset.title,
                 status: preset.status,
                 description: preset.description
             }));
@@ -1358,7 +1366,7 @@ export default function Exams() {
 
     const handleOpenEditExam = (exam) => {
         setEditingExam(exam);
-        const matchedPreset = STANDARD_EXAM_PRESETS.find(p => p.id === exam.id || p.title === exam.title);
+        const matchedPreset = STANDARD_EXAM_PRESETS.find(p => p.id === exam.id || (p.id !== 'custom' && p.title === exam.title));
         setExamForm({
             presetId: matchedPreset ? matchedPreset.id : 'custom',
             title: exam.title || '',
@@ -1375,18 +1383,22 @@ export default function Exams() {
 
     const handleSaveExam = async (e) => {
         e.preventDefault();
-        if (!examForm.title.trim() || !schoolId) return;
+        const cleanTitle = (examForm.title || '').trim();
+        if (!cleanTitle || !schoolId) {
+            alert("Please enter a valid examination title.");
+            return;
+        }
 
         try {
             const dataToSave = {
-                title: examForm.title.trim(),
-                session: examForm.session.trim(),
-                status: examForm.status,
+                title: cleanTitle,
+                session: (examForm.session || '2025-2026').trim(),
+                status: examForm.status || 'active',
                 startDate: examForm.startDate || null,
                 endDate: examForm.endDate || null,
                 defaultTotalMarks: parseInt(examForm.defaultTotalMarks) || 100,
                 passingMarks: parseInt(examForm.passingMarks) || 33,
-                description: examForm.description.trim(),
+                description: (examForm.description || '').trim(),
                 updatedAt: serverTimestamp()
             };
 
@@ -1395,7 +1407,8 @@ export default function Exams() {
                 if (examForm.presetId && examForm.presetId !== 'custom') {
                     targetDocId = examForm.presetId;
                 } else {
-                    targetDocId = examForm.title.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 40);
+                    const cleanSlug = cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').substring(0, 30);
+                    targetDocId = cleanSlug ? `exam_${cleanSlug}_${Date.now().toString(36)}` : `exam_${Date.now()}`;
                 }
                 dataToSave.createdAt = serverTimestamp();
             }
@@ -2491,13 +2504,23 @@ export default function Exams() {
                             <h2 className="text-lg font-bold text-slate-800">Examination Terms & Sessions</h2>
                             <p className="text-xs text-slate-500">Configure academic terms available for marks entry across Teacher Mobile Apps</p>
                         </div>
-                        <button
-                            onClick={handleOpenCreateExam}
-                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 transition-colors"
-                        >
-                            <Plus className="w-4 h-4" />
-                            Create New Exam Term
-                        </button>
+                        <div className="flex items-center gap-2.5">
+                            <button
+                                onClick={() => handleOpenCreateExam('custom')}
+                                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs rounded-xl border border-violet-200 transition-colors shadow-sm"
+                                title="Quickly create a custom examination with your own title"
+                            >
+                                <Sparkles className="w-4 h-4 text-violet-600" />
+                                Create Custom Exam
+                            </button>
+                            <button
+                                onClick={() => handleOpenCreateExam()}
+                                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 transition-colors"
+                            >
+                                <Plus className="w-4 h-4" />
+                                Create New Exam Term
+                            </button>
+                        </div>
                     </div>
 
                     {/* Exams Cards Grid */}
@@ -4002,10 +4025,13 @@ export default function Exams() {
             {/* ========================================================================= */}
             {/* MODAL: CREATE / EDIT EXAM TERM                                            */}
             {/* ========================================================================= */}
-            {showExamModal && (
-                <div className="no-print fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
-                    <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
-                        <div className="p-6 bg-gradient-to-r from-indigo-600 to-violet-600 text-white flex items-center justify-between">
+            {/* ========================================================================= */}
+            {/* MODAL: CREATE / EDIT EXAM TERM                                            */}
+            {/* ========================================================================= */}
+            {showExamModal && typeof document !== 'undefined' && createPortal(
+                <div className="no-print fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+                    <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+                        <div className="p-6 bg-gradient-to-r from-indigo-600 to-violet-600 text-white flex items-center justify-between flex-shrink-0">
                             <div className="flex items-center gap-3">
                                 <Award className="w-6 h-6" />
                                 <h3 className="font-bold text-lg">{editingExam ? 'Edit Examination Term' : 'Create New Examination Term'}</h3>
@@ -4013,9 +4039,9 @@ export default function Exams() {
                             <button onClick={() => setShowExamModal(false)} className="text-white/80 hover:text-white text-lg font-bold">✕</button>
                         </div>
 
-                        <form onSubmit={handleSaveExam} className="p-6 space-y-4 text-xs font-semibold text-slate-700">
+                        <form onSubmit={handleSaveExam} className="p-6 space-y-4 text-xs font-semibold text-slate-700 overflow-y-auto flex-1">
                             <div>
-                                <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">Select Examination Preset / Title *</label>
+                                <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">Select Examination Preset / Mode *</label>
                                 <select
                                     value={examForm.presetId}
                                     onChange={(e) => handlePresetChange(e.target.value)}
@@ -4028,6 +4054,27 @@ export default function Exams() {
                                     ))}
                                 </select>
                             </div>
+
+                            {/* Custom Exam Title Input */}
+                            {examForm.presetId === 'custom' && (
+                                <div className="space-y-1.5 animate-fadeIn">
+                                    <label className="block text-[11px] font-bold text-indigo-700 uppercase">
+                                        Custom Examination Title *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        required
+                                        placeholder="e.g., Pre-Board Examination 2026, Weekly Test 1, Send-Up Test..."
+                                        value={examForm.title}
+                                        onChange={(e) => setExamForm({ ...examForm, title: e.target.value })}
+                                        className="w-full p-2.5 bg-indigo-50/40 border border-indigo-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800"
+                                        autoFocus
+                                    />
+                                    <p className="text-[10px] text-indigo-600 font-medium">
+                                        ⚡ This title will automatically appear in Teacher Mobile App & Parent Mobile App.
+                                    </p>
+                                </div>
+                            )}
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
@@ -4051,6 +4098,31 @@ export default function Exams() {
                                         <option value="upcoming">Upcoming</option>
                                         <option value="completed">Completed</option>
                                     </select>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">Default Total Marks</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        placeholder="e.g., 100"
+                                        value={examForm.defaultTotalMarks}
+                                        onChange={(e) => setExamForm({ ...examForm, defaultTotalMarks: e.target.value })}
+                                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">Passing Marks</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        placeholder="e.g., 33"
+                                        value={examForm.passingMarks}
+                                        onChange={(e) => setExamForm({ ...examForm, passingMarks: e.target.value })}
+                                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold"
+                                    />
                                 </div>
                             </div>
 
@@ -4086,7 +4158,7 @@ export default function Exams() {
                                 />
                             </div>
 
-                            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 flex-shrink-0">
                                 <button
                                     type="button"
                                     onClick={() => setShowExamModal(false)}
@@ -4103,7 +4175,8 @@ export default function Exams() {
                             </div>
                         </form>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
 
@@ -4111,10 +4184,10 @@ export default function Exams() {
             {/* ========================================================================= */}
             {/* MODAL: CONFIRM UPLOAD RESULT CARDS TO PARENTS                             */}
             {/* ========================================================================= */}
-            {showUploadToParentsModal && (
-                <div className="no-print fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
-                    <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-100 overflow-hidden">
-                        <div className="p-6 bg-gradient-to-r from-indigo-600 to-violet-600 text-white flex items-center justify-between">
+            {showUploadToParentsModal && typeof document !== 'undefined' && createPortal(
+                <div className="no-print fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+                    <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+                        <div className="p-6 bg-gradient-to-r from-indigo-600 to-violet-600 text-white flex items-center justify-between flex-shrink-0">
                             <div className="flex items-center gap-3">
                                 <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
                                     <UploadCloud className="w-6 h-6 text-indigo-100" />
@@ -4132,7 +4205,7 @@ export default function Exams() {
                             </button>
                         </div>
 
-                        <div className="p-6 space-y-4">
+                        <div className="p-6 space-y-4 overflow-y-auto flex-1">
                             <div className="p-4 bg-indigo-50/60 rounded-2xl border border-indigo-100 text-xs text-slate-700 space-y-2">
                                 <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
                                     <Sparkles className="w-4 h-4 text-indigo-600" />
@@ -4169,7 +4242,7 @@ export default function Exams() {
                                 </p>
                             </div>
 
-                            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 flex-shrink-0">
                                 <button
                                     type="button"
                                     onClick={() => setShowUploadToParentsModal(false)}
@@ -4196,7 +4269,8 @@ export default function Exams() {
                             </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
 
