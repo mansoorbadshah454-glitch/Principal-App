@@ -182,10 +182,10 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                             background: '#bc1888', color: 'white',
                             display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem'
                         }}>
-                            {parent.name.charAt(0)}
+                            {parent?.name ? parent.name.charAt(0).toUpperCase() : 'P'}
                         </div>
                         <div>
-                            <h4 style={{ fontWeight: '700', margin: 0, fontSize: '0.95rem' }}>{parent.name}</h4>
+                            <h4 style={{ fontWeight: '700', margin: 0, fontSize: '0.95rem' }}>{parent?.name || 'Parent'}</h4>
                             <p style={{ fontSize: '0.75rem', color: '#64748b', margin: 0 }}>Write your private message below</p>
                         </div>
                     </div>
@@ -488,11 +488,11 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                             color: '#dc2743', fontWeight: '800', fontSize: '1.4rem',
                             boxShadow: '0 4px 10px rgba(0,0,0,0.1)'
                         }}>
-                            {parent.name.charAt(0).toUpperCase()}
+                            {parent?.name ? parent.name.charAt(0).toUpperCase() : 'P'}
                         </div>
                         <div>
                             <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'white', marginBottom: '0.1rem' }}>
-                                {parent.name}
+                                {parent?.name || 'Parent'}
                             </h3>
                             <span style={{
                                 fontSize: '0.75rem', color: 'white',
@@ -1561,12 +1561,24 @@ const Parents = () => {
             limit(parentLimit)
         );
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const parentsData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            const parentsData = snapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    ...data,
+                    name: data.name || data.fatherName || data.displayName || 'Parent'
+                };
+            });
             setParents(parentsData);
             setLoading(false);
+
+            // Self-healing desync: If live parents count is 0, auto-heal atomic counter to 0
+            if (parentsData.length === 0) {
+                setParentCount(0);
+                setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), {
+                    parentCount: 0
+                }, { merge: true }).catch(() => {});
+            }
         }, (error) => {
             console.error("Error fetching parents:", error);
             setLoading(false);
@@ -1947,6 +1959,17 @@ const Parents = () => {
                 schoolId: schoolId
             });
 
+            // Atomically decrement atomic counter to keep counts perfectly synchronized
+            try {
+                const { increment } = await import('firebase/firestore');
+                await setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), {
+                    parentCount: increment(-1)
+                }, { merge: true });
+                setParentCount(prev => Math.max(0, (prev || 1) - 1));
+            } catch (cntErr) {
+                console.warn("Metrics decrement error:", cntErr);
+            }
+
             setShowDeleteConfirm(false);
             setParentToDelete(null);
             showAlert("Parent account removed successfully!", "success");
@@ -2081,7 +2104,7 @@ const Parents = () => {
                 {[
                     {
                         label: 'Total Parents',
-                        value: parentCount || parents.length,
+                        value: parents.length === 0 ? 0 : (parentCount || parents.length),
                         icon: Users,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f5f7ff 100%)',
                         border: '#e0e7ff',

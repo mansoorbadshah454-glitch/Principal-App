@@ -376,11 +376,11 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             color: purpleHeader, fontWeight: '700', fontSize: '1.2rem'
                         }}>
-                            {teacher.name.charAt(0).toUpperCase()}
+                            {teacher?.name ? teacher.name.charAt(0).toUpperCase() : 'T'}
                         </div>
                         <div>
                             <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'white', marginBottom: '0.2rem' }}>
-                                {teacher.name}
+                                {teacher?.name || 'Teacher'}
                             </h3>
                             <span style={{
                                 fontSize: '0.8rem', color: 'white',
@@ -1807,16 +1807,39 @@ const Teachers = () => {
 
         const q = query(
             collection(db, `schools/${schoolId}/teachers`),
-            orderBy('name'),
             limit(teacherLimit)
         );
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const teachersData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            const teachersData = snapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    ...data,
+                    name: data.name || data.displayName || 'Teacher'
+                };
+            });
+            teachersData.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             setTeachers(teachersData);
             setLoading(false);
+
+            // Self-healing desync: If live teachers count is 0, auto-heal atomic counter and dashboard cache
+            if (teachersData.length === 0) {
+                setTeacherCount(0);
+                setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), {
+                    teacherCount: 0
+                }, { merge: true }).catch(() => {});
+                try {
+                    const raw = localStorage.getItem(`cached_dash_full_${schoolId}`);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (parsed.atomicCounts) {
+                            parsed.atomicCounts.teacherCount = 0;
+                            parsed.teachers = [];
+                            localStorage.setItem(`cached_dash_full_${schoolId}`, JSON.stringify(parsed));
+                        }
+                    }
+                } catch (_) {}
+            }
         }, (error) => {
             console.error("Error fetching teachers:", error);
             setLoading(false);
@@ -2131,6 +2154,16 @@ const Teachers = () => {
         setIsDeletingTeacher(true);
         try {
             await deleteDoc(doc(db, `schools/${schoolId}/teachers`, teacherToDelete));
+            // Atomically decrement atomic counter to keep counts perfectly synchronized
+            try {
+                const { increment } = await import('firebase/firestore');
+                await setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), {
+                    teacherCount: increment(-1)
+                }, { merge: true });
+                setTeacherCount(prev => Math.max(0, (prev || 1) - 1));
+            } catch (cntErr) {
+                console.warn("Metrics decrement error:", cntErr);
+            }
             setShowDeleteConfirm(false);
             setTeacherToDelete(null);
             showAlert("Teacher removed successfully!", "success");
@@ -2238,7 +2271,7 @@ const Teachers = () => {
                 {[
                     {
                         label: 'Total Teachers',
-                        value: teacherCount || teachers.length, // Fallback to array length if atomic counter is missing
+                        value: teachers.length === 0 ? 0 : (teacherCount || teachers.length), // Always 0 if list is empty
                         icon: Users,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f5f7ff 100%)',
                         border: '#e0e7ff',

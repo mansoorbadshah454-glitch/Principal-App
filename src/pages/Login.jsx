@@ -63,16 +63,27 @@ const Login = () => {
         }
     }, []);
 
+    const matchSchoolId = (id1, id2) => {
+        if (!id1 || !id2) return false;
+        const s1 = String(id1).trim().toUpperCase();
+        const s2 = String(id2).trim().toUpperCase();
+        if (s1 === s2) return true;
+        const clean1 = s1.replace(/^SCHOOL_/i, '').trim();
+        const clean2 = s2.replace(/^SCHOOL_/i, '').trim();
+        return clean1 === clean2;
+    };
+
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
         setError('');
 
         const normalizedEmail = email.toLowerCase().trim();
-        let normalizedSchoolId = schoolIdInput.trim();
+        const rawSchoolInput = schoolIdInput.trim();
+        let normalizedSchoolId = rawSchoolInput;
 
         // Auto-format School ID: 
-        // If they typed just numeric digits (e.g., "6257"), automatically add the "SCHOOL_" prefix.
+        // If they typed just numeric digits (e.g., "6257" or "2255"), automatically add the "SCHOOL_" prefix.
         if (/^\d+$/.test(normalizedSchoolId)) {
             normalizedSchoolId = `SCHOOL_${normalizedSchoolId}`;
         } else {
@@ -80,7 +91,7 @@ const Login = () => {
             normalizedSchoolId = normalizedSchoolId.toUpperCase();
         }
 
-        if (!normalizedSchoolId) {
+        if (!rawSchoolInput) {
             setError('Please enter your School ID.');
             setLoading(false);
             return;
@@ -94,8 +105,8 @@ const Login = () => {
             // Secure Claim Check with Force Refresh
             let tokenResult = await user.getIdTokenResult(true);
             let claims = tokenResult.claims;
-            let role = claims.role;
-            let schoolId = claims.schoolId;
+            let role = claims?.role;
+            let schoolId = claims?.schoolId;
 
             // Document Fallback: If custom claims are still propagating, check global_users directly
             if (!schoolId || !role) {
@@ -106,29 +117,51 @@ const Login = () => {
                         const uData = userDocSnap.data();
                         if (uData.schoolId) schoolId = uData.schoolId;
                         if (uData.role) role = uData.role;
+                    } else {
+                        const gq = query(collection(db, 'global_users'), where('email', '==', normalizedEmail));
+                        const gSnap = await getDocs(gq);
+                        if (!gSnap.empty) {
+                            const uData = gSnap.docs[0].data();
+                            if (uData.schoolId) schoolId = uData.schoolId;
+                            if (uData.role) role = uData.role;
+                        }
                     }
                 } catch (docErr) {
                     console.warn("Could not fetch global_users doc for fallback claims", docErr);
                 }
             }
 
-            if (role === 'principal' || role === 'super_admin' || role === 'school Admin' || role === 'school_admin' || role === 'admin') {
-                if (!schoolId) {
-                    await auth.signOut();
-                    setError('Security Error: No School ID associated with this account.');
-                    return;
+            // Fallback: Check school user doc for role if schoolId is known
+            const effectiveSchoolId = schoolId || normalizedSchoolId;
+            if (!role && effectiveSchoolId) {
+                try {
+                    const schoolUserRef = doc(db, `schools/${effectiveSchoolId}/users`, user.uid);
+                    const schoolUserSnap = await getDoc(schoolUserRef);
+                    if (schoolUserSnap.exists()) {
+                        role = schoolUserSnap.data().role;
+                    }
+                } catch (e) {
+                    console.warn("Could not check school user doc for role", e);
                 }
+            }
 
-                if (schoolId !== normalizedSchoolId && role !== 'super_admin') {
+            const cleanRole = (role || 'principal').toLowerCase().trim();
+            const isAllowedRole = ['principal', 'super_admin', 'school admin', 'school_admin', 'admin'].includes(cleanRole);
+
+            if (isAllowedRole) {
+                // If account has an explicit schoolId, verify it matches the user's input (tolerant of SCHOOL_ prefix)
+                if (schoolId && !matchSchoolId(schoolId, rawSchoolInput) && cleanRole !== 'super_admin') {
                     await auth.signOut();
                     setError('Security Error: The provided School ID does not match your account.');
                     return;
                 }
 
+                const finalSchoolId = schoolId || normalizedSchoolId;
+
                 localStorage.setItem('manual_session', JSON.stringify({
                     uid: user.uid,
-                    schoolId: schoolId,
-                    role: role,
+                    schoolId: finalSchoolId,
+                    role: role || 'principal',
                     email: user.email,
                     isManual: false
                 }));
@@ -147,24 +180,29 @@ const Login = () => {
                 return;
             }
         } catch (authErr) {
-            console.log("Auth failed, checking for manual bypass...");
+            console.log("Auth failed, checking for manual bypass...", authErr);
 
             try {
                 const q = query(collection(db, "global_users"), where("email", "==", normalizedEmail));
-                const querySnapshot = await getDocs(q);
+                let querySnapshot = await getDocs(q);
+                if (querySnapshot.empty && email.trim() !== normalizedEmail) {
+                    const q2 = query(collection(db, "global_users"), where("email", "==", email.trim()));
+                    querySnapshot = await getDocs(q2);
+                }
 
                 if (!querySnapshot.empty) {
                     let userData = null;
                     for (const docSnap of querySnapshot.docs) {
-                        if (docSnap.data().schoolId === normalizedSchoolId) {
-                            userData = docSnap.data();
+                        const d = docSnap.data();
+                        if (matchSchoolId(d.schoolId, rawSchoolInput)) {
+                            userData = d;
                             break;
                         }
                     }
 
                     if (userData) {
                         const schoolId = userData.schoolId;
-                        const uid = userData.uid;
+                        const uid = userData.uid || userData.id;
 
                         const schoolUserRef = doc(db, `schools/${schoolId}/users`, uid);
                         const schoolUserDoc = await getDoc(schoolUserRef);
@@ -173,12 +211,10 @@ const Login = () => {
                             const storedManualPassword = schoolUserDoc.data().manualPassword;
                             const userRole = schoolUserDoc.data().role || 'principal';
 
-                            if (storedManualPassword && storedManualPassword === password) {
-
-
+                            if (storedManualPassword && (storedManualPassword === password || storedManualPassword.trim() === password.trim())) {
                                 let displayNameFinal = normalizedEmail.split('@')[0];
 
-                                if (userRole === 'school Admin') {
+                                if ((userRole || '').toLowerCase().includes('admin')) {
                                     // Fetch custom display name from admin_users
                                     const adminDocRef = doc(db, `schools/${schoolId}/admin_users`, schoolUserDoc.id);
                                     const adminDocSnap = await getDoc(adminDocRef);
@@ -214,7 +250,18 @@ const Login = () => {
                 console.error("Fallback check failed:", fallbackErr);
             }
 
-            setError("Invalid credentials. Please verify your email and password.");
+            let errMsg = "Invalid credentials. Please verify your email and password.";
+            if (authErr?.code === 'auth/user-not-found') {
+                errMsg = "No account found with this email.";
+            } else if (authErr?.code === 'auth/wrong-password') {
+                errMsg = "Incorrect password. Please try again.";
+            } else if (authErr?.code === 'auth/invalid-credential') {
+                errMsg = "Invalid email or password. Please verify your credentials.";
+            } else if (authErr?.code === 'auth/too-many-requests') {
+                errMsg = "Too many failed login attempts. Please try again later or reset password.";
+            }
+
+            setError(errMsg);
         } finally {
             setLoading(false);
         }

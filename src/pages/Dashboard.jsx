@@ -462,6 +462,27 @@ const Dashboard = () => {
             setTeachers(list);
             if (schoolId) {
                 cacheDashboardFullData(schoolId, { teachers: list });
+                if (list.length === 0) {
+                    setAtomicCounts(prev => ({ ...prev, teacherCount: 0 }));
+                    setRankingData([]);
+                    setDoc(doc(db, `schools/${schoolId}/metrics`, 'teacherRanking'), {
+                        rankings: [],
+                        totalTeachers: 0,
+                        lastCalculatedAt: serverTimestamp()
+                    }, { merge: true }).catch(() => {});
+                    try {
+                        const raw = localStorage.getItem(`cached_dash_full_${schoolId}`);
+                        if (raw) {
+                            const parsed = JSON.parse(raw);
+                            if (parsed.atomicCounts) {
+                                parsed.atomicCounts.teacherCount = 0;
+                            }
+                            parsed.teachers = [];
+                            parsed.rankingData = [];
+                            localStorage.setItem(`cached_dash_full_${schoolId}`, JSON.stringify(parsed));
+                        }
+                    } catch (_) {}
+                }
             }
         });
         return () => unsubscribe();
@@ -815,10 +836,17 @@ const Dashboard = () => {
 
     // Derived 4-Pillar Teacher Performance Rankings
     const effectiveRankings = useMemo(() => {
-        if (rankingData && rankingData.length > 0) {
-            return rankingData;
-        }
         if (!teachers || teachers.length === 0) return [];
+
+        if (rankingData && rankingData.length > 0) {
+            const valid = rankingData.filter(r =>
+                teachers.some(t => t.id && (t.id === r.teacherId || t.id === r.id))
+            );
+            if (valid.length > 0) {
+                return valid.map((r, i) => ({ ...r, rank: i + 1 }));
+            }
+            return [];
+        }
 
         return teachers.map((t, idx) => {
             const tName = String(t.name || t.id || 'Teacher');

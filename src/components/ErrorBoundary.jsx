@@ -14,6 +14,13 @@ class ErrorBoundary extends React.Component {
     componentDidCatch(error, errorInfo) {
         this.setState({ error, errorInfo });
         console.error("Uncaught error:", error, errorInfo);
+        if (error && error.message && error.message.includes('Failed to fetch dynamically imported module')) {
+            const hasReloaded = sessionStorage.getItem('vite_retry_reload');
+            if (!hasReloaded) {
+                sessionStorage.setItem('vite_retry_reload', 'true');
+                window.location.reload();
+            }
+        }
     }
 
     render() {

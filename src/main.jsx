@@ -15,6 +15,13 @@ import './index.css';
 //   </React.StrictMode>,
 // );
 
+// Auto-reload on stale Vite dynamic chunk preload errors
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event) => {
+    window.location.reload();
+  });
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <ErrorBoundary>
     <BrowserRouter>
