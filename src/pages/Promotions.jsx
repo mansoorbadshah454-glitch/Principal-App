@@ -1757,7 +1757,7 @@ const Promotions = () => {
             doc.setFontSize(22);
             doc.setTextColor(255, 255, 255); // White
             doc.setFont("helvetica", "bold");
-            doc.text(schoolDetails.name.toUpperCase(), 50, 22);
+            doc.text((schoolDetails?.name || 'SCHOOL').toUpperCase(), 50, 22);
 
             // Report Title
             doc.setFontSize(14);

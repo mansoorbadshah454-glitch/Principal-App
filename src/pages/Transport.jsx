@@ -998,7 +998,7 @@ const Transport = () => {
         const vehicle = vehicles.find(v => v.id === (route ? route.vehicleId : alloc.vehicleId));
         const stop = (route?.stops || []).find(s => s.stopName === alloc.stopName) || { morningTime: '07:15 AM', afternoonTime: '02:00 PM', fare: alloc.monthlyFare };
 
-        let text = `🏫 *${schoolInfo.name.toUpperCase()} - TRANSPORT ALLOCATION*\n`;
+        let text = `🏫 *${(schoolInfo?.name || 'SCHOOL').toUpperCase()} - TRANSPORT ALLOCATION*\n`;
         text += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
         text += `Assalam-o-Alaikum Dear Parent,\n`;
         text += `Your child *${studentName}* (Class: *${alloc.className}*) is successfully allocated to the School Transport Fleet.\n\n`;
@@ -1034,10 +1034,10 @@ const Transport = () => {
         const nowTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
         const tripLabel = attendanceTripType === 'morning' ? 'Morning Pick-up Trip' : 'Afternoon Drop Trip';
 
-        let text = `🏫 *${schoolInfo.name.toUpperCase()} - TRANSPORT ALERT*\n`;
+        let text = `🏫 *${(schoolInfo?.name || 'SCHOOL').toUpperCase()} - TRANSPORT ALERT*\n`;
         text += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
         text += `Assalam-o-Alaikum Dear Parent,\n`;
-        text += `This is to notify that *${alloc.studentName}* (${alloc.className}) has *${status.toUpperCase()}* the school transport for *${tripLabel}*.\n\n`;
+        text += `This is to notify that *${alloc.studentName}* (${alloc.className}) has *${(status || 'UPDATED').toUpperCase()}* the school transport for *${tripLabel}*.\n\n`;
         text += `🚌 *Vehicle:* ${vehicle ? vehicle.regNo : 'School Van'}\n`;
         text += `📍 *Stop:* ${alloc.stopName}\n`;
         text += `⏰ *Timestamp:* ${nowTime}\n`;
@@ -1385,7 +1385,7 @@ const Transport = () => {
         const assignedVeh = vehicles.find(v => v.id === drv.assignedVehicleId);
         const assignedRoute = routes.find(r => r.vehicleId === drv.assignedVehicleId);
 
-        let text = `🏫 *${schoolInfo.name.toUpperCase()} - DRIVER MOBILE APP LOGIN*\n`;
+        let text = `🏫 *${(schoolInfo?.name || 'SCHOOL').toUpperCase()} - DRIVER MOBILE APP LOGIN*\n`;
         text += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
         text += `Assalam-o-Alaikum *${drv.name}*,\n`;
         text += `Aapka School Driver Mobile App account create ho chuka hai. Daily route trips aur student boarding manage karne ke liye app login karein:\n\n`;

@@ -4560,7 +4560,7 @@ const Admission = () => {
                                   color: "#0f172a",
                                 }}
                               >
-                                {stu.name.toUpperCase()}
+                                { (stu?.name || 'STUDENT').toUpperCase() }
                               </h4>
                               <div
                                 style={{

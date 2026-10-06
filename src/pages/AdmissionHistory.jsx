@@ -2528,7 +2528,7 @@ export default function AdmissionHistory() {
                     <div key={i} className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
                       <div className="flex items-center justify-between mb-2 border-b border-slate-200 pb-1.5">
                         <div>
-                          <h3 className="text-xs font-extrabold text-slate-900">{stu.name.toUpperCase()}</h3>
+                          <h3 className="text-xs font-extrabold text-slate-900">{(stu?.name || 'STUDENT').toUpperCase()}</h3>
                           <span className="text-[11px] font-bold text-indigo-600">{stu.className}</span>
                         </div>
                         <div className="text-right text-[11px]">

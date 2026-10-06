@@ -635,7 +635,7 @@ const HRDocuments = () => {
         if (phone.startsWith('0092')) phone = '92' + phone.slice(4);
 
         const currentType = DOCUMENT_TYPES.find(d => d.id === docType)?.label || 'HR Document';
-        const text = `*${schoolInfo.name.toUpperCase()}*\n*OFFICIAL HR NOTIFICATION*\n\nDear *${formData.candidateName}*,\nYour official *${currentType}* has been issued.\n\n📄 *Document Details:*\n• *Reference No:* ${formData.refNo}\n• *Designation:* ${formData.designation}\n• *Date of Issue:* ${formData.issueDate}\n\nPlease collect your signed copy from the School Administration Office or contact the HR department.\n\n*Regards,*\n*${formData.signatoryName}*\n${formData.signatoryTitle}\n${schoolInfo.name}`;
+        const text = `*${(schoolInfo?.name || 'SCHOOL').toUpperCase()}*\n*OFFICIAL HR NOTIFICATION*\n\nDear *${formData.candidateName}*,\nYour official *${currentType}* has been issued.\n\n📄 *Document Details:*\n• *Reference No:* ${formData.refNo}\n• *Designation:* ${formData.designation}\n• *Date of Issue:* ${formData.issueDate}\n\nPlease collect your signed copy from the School Administration Office or contact the HR department.\n\n*Regards,*\n*${formData.signatoryName}*\n${formData.signatoryTitle}\n${schoolInfo?.name || 'School'}`;
 
         const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
         window.open(url, '_blank');
