@@ -10115,25 +10115,70 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     gap: '1.25rem',
                     alignItems: 'start'
                 }}>
-                    {/* LEFT PANEL: Smart Cashier Counter */}
+                    {/* LEFT PANEL: Smart Cashier Counter (Skeuomorphic POS Terminal Edition) */}
                     <div className="card" style={{
-                        background: '#ffffff',
-                        borderRadius: '14px',
-                        padding: '1.4rem',
-                        border: '1px solid #e2e8f0',
-                        boxShadow: '0 2px 8px -2px rgba(0,0,0,0.04)'
+                        background: 'linear-gradient(180deg, #f8fafc 0%, #edf2f7 50%, #e2e8f0 100%)',
+                        borderRadius: '18px',
+                        padding: '1.35rem',
+                        border: '1.5px solid #cbd5e1',
+                        boxShadow: '0 16px 36px -6px rgba(15, 23, 42, 0.12), 0 4px 12px -2px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -3px 6px rgba(0, 0, 0, 0.05)',
+                        position: 'relative'
                     }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <div style={{ width: '34px', height: '34px', borderRadius: '9px', background: activeDailyMode === 'fee_submission' ? '#eff6ff' : '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: activeDailyMode === 'fee_submission' ? '#0078d4' : '#16a34a' }}>
-                                    {activeDailyMode === 'fee_submission' ? <Wallet size={18} /> : <TrendingUp size={18} />}
+                        {/* Skeuomorphic Hardware Terminal Nameplate / Header */}
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            marginBottom: '1.1rem',
+                            padding: '0.75rem 1rem',
+                            borderRadius: '12px',
+                            background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)',
+                            border: '1px solid #334155',
+                            boxShadow: '0 4px 10px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2), inset 0 -2px 3px rgba(0, 0, 0, 0.4)',
+                            flexWrap: 'wrap',
+                            gap: '0.5rem'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                <div style={{
+                                    width: '36px',
+                                    height: '36px',
+                                    borderRadius: '10px',
+                                    background: activeDailyMode === 'fee_submission'
+                                        ? 'linear-gradient(180deg, #0284c7 0%, #0369a1 100%)'
+                                        : 'linear-gradient(180deg, #16a34a 0%, #15803d 100%)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: '#ffffff',
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.4)',
+                                    border: '1px solid rgba(255,255,255,0.2)'
+                                }}>
+                                    {activeDailyMode === 'fee_submission' ? <Wallet size={19} /> : <TrendingUp size={19} />}
                                 </div>
                                 <div>
-                                    <h3 style={{ fontSize: '1rem', fontWeight: '900', color: '#0f172a', margin: 0, letterSpacing: '0.04em' }}>
-                                        {activeDailyMode === 'fee_submission' ? 'FEE COUNTER' : 'Income & Expense Book'}
-                                    </h3>
-                                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                                        {activeDailyMode === 'fee_submission' ? 'Quick student lookup & instant receipt' : 'Add manual daily income & bills'}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                                        <h3 style={{ fontSize: '1.02rem', fontWeight: '900', color: '#f8fafc', margin: 0, letterSpacing: '0.06em', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                                            {activeDailyMode === 'fee_submission' ? 'FEE COUNTER' : 'INCOME & EXPENSE'}
+                                        </h3>
+                                        <span style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            fontSize: '0.65rem',
+                                            fontWeight: '800',
+                                            padding: '2px 7px',
+                                            borderRadius: '999px',
+                                            background: '#052e16',
+                                            color: '#4ade80',
+                                            border: '1px solid #166534',
+                                            boxShadow: '0 0 8px rgba(74, 222, 128, 0.3)'
+                                        }}>
+                                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
+                                            POS READY
+                                        </span>
+                                    </div>
+                                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: '1px' }}>
+                                        {activeDailyMode === 'fee_submission' ? 'Tactile cashier terminal & instant receipt' : 'Add manual daily income & bills'}
                                     </span>
                                 </div>
                             </div>
@@ -10144,18 +10189,20 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     style={{
                                         display: 'inline-flex',
                                         alignItems: 'center',
-                                        gap: '0.3rem',
-                                        padding: '4px 10px',
-                                        borderRadius: '6px',
-                                        background: '#f1f5f9',
-                                        border: '1px solid #cbd5e1',
-                                        color: '#475569',
-                                        fontSize: '0.75rem',
-                                        fontWeight: '700',
-                                        cursor: 'pointer'
+                                        gap: '0.35rem',
+                                        padding: '5px 12px',
+                                        borderRadius: '7px',
+                                        background: 'linear-gradient(180deg, #334155 0%, #1e293b 100%)',
+                                        border: '1px solid #475569',
+                                        color: '#e2e8f0',
+                                        fontSize: '0.74rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 0 #0f172a, 0 3px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15)',
+                                        transition: 'all 0.1s ease'
                                     }}
                                 >
-                                    <X size={13} /> Reset
+                                    <X size={13} /> Reset Counter
                                 </button>
                             )}
                         </div>
@@ -10286,25 +10333,31 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             </div>
                         ) : (
                             <>
-                                {/* Instant Search Bar */}
-                                <div style={{ position: 'relative', width: '100%', marginBottom: '0.75rem' }}>
-                                    <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: '800', color: '#334155', marginBottom: '0.25rem' }}>
-                                        🔍 Quick Student Search (Name, Roll No, Father)
-                                    </label>
+                                {/* Instant Search Bar (Recessed Skeuomorphic Input Well) */}
+                                <div style={{ position: 'relative', width: '100%', marginBottom: '0.85rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                                        <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                            🔍 Student Quick Lookup
+                                        </label>
+                                        <span style={{ fontSize: '0.68rem', fontWeight: '700', color: '#64748b' }}>
+                                            Name &bull; Roll # &bull; Father
+                                        </span>
+                                    </div>
                                     <div style={{
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '0.5rem',
-                                        padding: '0.5rem 0.75rem',
-                                        borderRadius: '9px',
-                                        background: '#f8fafc',
+                                        padding: '0.55rem 0.85rem',
+                                        borderRadius: '11px',
+                                        background: '#ffffff',
                                         border: '1.5px solid #cbd5e1',
+                                        boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 0 rgba(255, 255, 255, 0.9)',
                                         transition: 'all 0.2s'
                                     }}>
-                                        <Search size={15} color="#64748b" />
+                                        <Search size={16} color="#0284c7" />
                                         <input
                                             type="text"
-                                            placeholder="Type Name, Roll #, or Father name..."
+                                            placeholder="Type Name, Roll #, or Father name to scan..."
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
                                             onFocus={() => {
@@ -10315,9 +10368,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 outline: 'none',
                                                 background: 'transparent',
                                                 width: '100%',
-                                                fontSize: '0.84rem',
+                                                fontSize: '0.86rem',
                                                 color: '#0f172a',
-                                                fontWeight: '600'
+                                                fontWeight: '700'
                                             }}
                                         />
                                         {searchQuery && (
@@ -10326,7 +10379,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 onClick={() => { setSearchQuery(''); setShowSearchDropdown(false); }}
                                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0 }}
                                             >
-                                                <X size={14} />
+                                                <X size={15} />
                                             </button>
                                         )}
                                     </div>
@@ -10400,11 +10453,11 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                     )}
                                 </div>
 
-                                {/* Class & Student Selectors */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.85rem' }}>
+                                {/* Class & Student Selectors (Tactile Recessed Slots) */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '0.95rem' }}>
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
-                                            Class
+                                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '800', color: '#1e293b', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                            Class Slot
                                         </label>
                                         <select
                                             value={selectedClassId}
@@ -10417,14 +10470,16 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                             }}
                                             style={{
                                                 width: '100%',
-                                                padding: '0.5rem 0.7rem',
-                                                borderRadius: '8px',
-                                                border: '1px solid #cbd5e1',
+                                                padding: '0.55rem 0.75rem',
+                                                borderRadius: '10px',
+                                                border: '1.5px solid #cbd5e1',
                                                 outline: 'none',
-                                                background: '#ffffff',
-                                                fontWeight: '600',
+                                                background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
+                                                boxShadow: 'inset 0 1.5px 3px rgba(0, 0, 0, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9)',
+                                                fontWeight: '700',
                                                 color: '#0f172a',
-                                                fontSize: '0.82rem'
+                                                fontSize: '0.84rem',
+                                                cursor: 'pointer'
                                             }}
                                         >
                                             <option value="">-- Choose Class --</option>
@@ -10434,19 +10489,21 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                         </select>
                                     </div>
                                     <div ref={studentDropdownRef} style={{ position: 'relative' }}>
-                                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '700', color: '#475569', marginBottom: '0.2rem' }}>
-                                            Student
+                                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: '800', color: '#1e293b', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                            Student Slot
                                         </label>
                                         {/* Custom Searchable Student Dropdown */}
                                         <div
                                             style={{
                                                 width: '100%',
-                                                borderRadius: '8px',
-                                                border: studentDropdownOpen ? '1.5px solid #0078d4' : '1px solid #cbd5e1',
-                                                background: !selectedClassId ? '#f1f5f9' : '#ffffff',
+                                                borderRadius: '10px',
+                                                border: studentDropdownOpen ? '1.5px solid #0078d4' : '1.5px solid #cbd5e1',
+                                                background: !selectedClassId ? '#f1f5f9' : 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
                                                 boxSizing: 'border-box',
-                                                boxShadow: studentDropdownOpen ? '0 0 0 2px rgba(0,120,212,0.12)' : 'none',
-                                                transition: 'border 0.15s, box-shadow 0.15s',
+                                                boxShadow: studentDropdownOpen
+                                                    ? '0 0 0 3px rgba(0,120,212,0.18), inset 0 1px 2px rgba(0,0,0,0.06)'
+                                                    : 'inset 0 1.5px 3px rgba(0, 0, 0, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9)',
+                                                transition: 'all 0.15s ease',
                                                 opacity: !selectedClassId ? 0.65 : 1,
                                                 cursor: !selectedClassId ? 'not-allowed' : 'default',
                                             }}
@@ -10567,97 +10624,111 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                 </div>
 
                                 {!selectedStudent ? (
-                                    /* Empty Cashier State Card */
+                                    /* Empty Cashier State Card (Recessed POS Standby Screen) */
                                     <div style={{
-                                        background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
-                                        border: '1.5px dashed #cbd5e1',
-                                        borderRadius: '12px',
-                                        padding: '2rem 1.5rem',
+                                        background: 'linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)',
+                                        border: '1.5px solid #cbd5e1',
+                                        borderRadius: '14px',
+                                        padding: '2.2rem 1.5rem',
                                         textAlign: 'center',
                                         display: 'flex',
                                         flexDirection: 'column',
                                         alignItems: 'center',
-                                        gap: '0.75rem'
+                                        gap: '0.85rem',
+                                        boxShadow: 'inset 0 2px 6px rgba(0, 0, 0, 0.08), 0 1px 0 rgba(255, 255, 255, 0.95)'
                                     }}>
                                         <div style={{
-                                            width: '48px',
-                                            height: '48px',
+                                            width: '52px',
+                                            height: '52px',
                                             borderRadius: '50%',
-                                            background: '#e0f2fe',
-                                            color: '#0284c7',
+                                            background: 'linear-gradient(180deg, #0284c7 0%, #0369a1 100%)',
+                                            color: '#ffffff',
                                             display: 'flex',
                                             alignItems: 'center',
-                                            justifyContent: 'center'
+                                            justifyContent: 'center',
+                                            boxShadow: '0 4px 10px rgba(2, 132, 199, 0.35), inset 0 1px 2px rgba(255,255,255,0.4)',
+                                            border: '1px solid #38bdf8'
                                         }}>
-                                            <Wallet size={24} />
+                                            <Wallet size={26} />
                                         </div>
                                         <div>
-                                            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#0f172a' }}>
-                                                Smart Cashier Ready
+                                            <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: '900', color: '#0f172a', letterSpacing: '0.02em' }}>
+                                                POS Cashier Terminal Standby
                                             </h4>
-                                            <p style={{ margin: '0.35rem 0 0', fontSize: '0.78rem', color: '#64748b' }}>
-                                                Search student name, roll # or select class above to start fast fee collection with animated POS voucher.
+                                            <p style={{ margin: '0.35rem 0 0', fontSize: '0.78rem', color: '#64748b', maxWidth: '340px' }}>
+                                                Scan student name, roll number, or select class above to initiate instant fee vouchers with animated POS printing.
                                             </p>
                                         </div>
-                                        <div style={{ display: 'flex', gap: '6px', fontSize: '0.7rem', color: '#0369a1', fontWeight: '700' }}>
-                                            <span style={{ background: '#e0f2fe', padding: '2px 8px', borderRadius: '5px' }}>⚡ Fast Lookup</span>
-                                            <span style={{ background: '#dcfce7', padding: '2px 8px', borderRadius: '5px', color: '#15803d' }}>📄 Instant PDF Slip</span>
-                                            <span style={{ background: '#fef3c7', padding: '2px 8px', borderRadius: '5px', color: '#b45309' }}>💬 WhatsApp Slip</span>
+                                        <div style={{ display: 'flex', gap: '6px', fontSize: '0.7rem', fontWeight: '800' }}>
+                                            <span style={{ background: '#ffffff', color: '#0369a1', padding: '3px 9px', borderRadius: '6px', border: '1px solid #bfdbfe', boxShadow: '0 2px 0 #cbd5e1' }}>⚡ Fast Lookup</span>
+                                            <span style={{ background: '#ffffff', color: '#15803d', padding: '3px 9px', borderRadius: '6px', border: '1px solid #bbf7d0', boxShadow: '0 2px 0 #cbd5e1' }}>📄 Instant PDF Slip</span>
+                                            <span style={{ background: '#ffffff', color: '#b45309', padding: '3px 9px', borderRadius: '6px', border: '1px solid #fde68a', boxShadow: '0 2px 0 #cbd5e1' }}>💬 WhatsApp Slip</span>
                                         </div>
                                     </div>
                                 ) : (
                                     <>
-                                        {/* Stepper Breadcrumbs Bar */}
+                                        {/* Stepper Breadcrumbs Bar (Tactile Recessed Channel with 3D Keys) */}
                                         <div style={{
                                             display: 'flex',
                                             alignItems: 'center',
                                             justifyContent: 'space-between',
-                                            marginBottom: '0.85rem',
-                                            background: '#f8fafc',
-                                            padding: '0.4rem 0.65rem',
-                                            borderRadius: '10px',
-                                            border: '1.5px solid #e2e8f0'
+                                            marginBottom: '0.9rem',
+                                            background: '#e2e8f0',
+                                            padding: '0.45rem 0.7rem',
+                                            borderRadius: '12px',
+                                            border: '1.5px solid #cbd5e1',
+                                            boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.9)'
                                         }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <button
                                                     type="button"
                                                     onClick={() => setCashierStep(1)}
                                                     style={{
-                                                        padding: '4px 10px',
-                                                        borderRadius: '6px',
-                                                        background: cashierStep === 1 ? '#0078d4' : '#e2e8f0',
+                                                        padding: '5px 12px',
+                                                        borderRadius: '8px',
+                                                        background: cashierStep === 1
+                                                            ? 'linear-gradient(180deg, #0284c7 0%, #0369a1 100%)'
+                                                            : 'linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)',
                                                         color: cashierStep === 1 ? '#ffffff' : '#475569',
                                                         fontWeight: '800',
-                                                        fontSize: '0.74rem',
-                                                        border: 'none',
+                                                        fontSize: '0.76rem',
+                                                        border: cashierStep === 1 ? '1px solid #0284c7' : '1px solid #cbd5e1',
                                                         cursor: 'pointer',
                                                         display: 'flex',
                                                         alignItems: 'center',
-                                                        gap: '4px',
-                                                        boxShadow: cashierStep === 1 ? '0 2px 6px rgba(0, 120, 212, 0.3)' : 'none',
-                                                        transition: 'all 0.15s ease'
+                                                        gap: '5px',
+                                                        boxShadow: cashierStep === 1
+                                                            ? '0 3px 0 #075985, 0 4px 8px rgba(2, 132, 199, 0.35), inset 0 1px 1px rgba(255,255,255,0.4)'
+                                                            : '0 2.5px 0 #cbd5e1, 0 2px 4px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)',
+                                                        transform: cashierStep === 1 ? 'translateY(-1px)' : 'none',
+                                                        transition: 'all 0.12s ease'
                                                     }}
                                                 >
                                                     <span>1.</span> Student & Parent
                                                 </button>
-                                                <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: '800' }}>➔</span>
+                                                <span style={{ color: '#64748b', fontSize: '0.8rem', fontWeight: '900' }}>➔</span>
                                                 <button
                                                     type="button"
                                                     onClick={() => setCashierStep(2)}
                                                     style={{
-                                                        padding: '4px 10px',
-                                                        borderRadius: '6px',
-                                                        background: cashierStep === 2 ? '#0078d4' : '#e2e8f0',
+                                                        padding: '5px 12px',
+                                                        borderRadius: '8px',
+                                                        background: cashierStep === 2
+                                                            ? 'linear-gradient(180deg, #0284c7 0%, #0369a1 100%)'
+                                                            : 'linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)',
                                                         color: cashierStep === 2 ? '#ffffff' : '#475569',
                                                         fontWeight: '800',
-                                                        fontSize: '0.74rem',
-                                                        border: 'none',
+                                                        fontSize: '0.76rem',
+                                                        border: cashierStep === 2 ? '1px solid #0284c7' : '1px solid #cbd5e1',
                                                         cursor: 'pointer',
                                                         display: 'flex',
                                                         alignItems: 'center',
-                                                        gap: '4px',
-                                                        boxShadow: cashierStep === 2 ? '0 2px 6px rgba(0, 120, 212, 0.3)' : 'none',
-                                                        transition: 'all 0.15s ease'
+                                                        gap: '5px',
+                                                        boxShadow: cashierStep === 2
+                                                            ? '0 3px 0 #075985, 0 4px 8px rgba(2, 132, 199, 0.35), inset 0 1px 1px rgba(255,255,255,0.4)'
+                                                            : '0 2.5px 0 #cbd5e1, 0 2px 4px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)',
+                                                        transform: cashierStep === 2 ? 'translateY(-1px)' : 'none',
+                                                        transition: 'all 0.12s ease'
                                                     }}
                                                 >
                                                     <span>2.</span> Financial POS
@@ -10667,7 +10738,15 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                 <button
                                                     type="button"
                                                     onClick={() => setAudioChimeEnabled(prev => !prev)}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', opacity: audioChimeEnabled ? 1 : 0.4 }}
+                                                    style={{
+                                                        padding: '3px 8px',
+                                                        borderRadius: '6px',
+                                                        background: audioChimeEnabled ? '#dcfce7' : '#f1f5f9',
+                                                        border: `1px solid ${audioChimeEnabled ? '#86efac' : '#cbd5e1'}`,
+                                                        boxShadow: '0 2px 0 rgba(0,0,0,0.1)',
+                                                        cursor: 'pointer',
+                                                        fontSize: '0.85rem'
+                                                    }}
                                                     title={audioChimeEnabled ? "Chime Sound ON" : "Chime Sound OFF"}
                                                 >
                                                     {audioChimeEnabled ? '🔔' : '🔕'}
@@ -11693,7 +11772,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                         </div>
                                                     )}
 
-                                                    {/* BIG STEP 1 CTA BUTTON TO SWIPE TO STEP 2 */}
+                                                    {/* BIG STEP 1 CTA BUTTON TO SWIPE TO STEP 2 (Tactile 3D Mechanical Action Key) */}
                                                     {(() => {
                                                         const activeCalc = (siblingPaymentScope === 'family' && detectedSiblings.length > 1)
                                                             ? feeCalculation
@@ -11711,25 +11790,35 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 }}
                                                                 style={{
                                                                     width: '100%',
-                                                                    padding: '0.9rem',
-                                                                    borderRadius: '12px',
+                                                                    padding: '0.95rem 1rem',
+                                                                    borderRadius: '13px',
                                                                     background: isLocked
-                                                                        ? 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)'
+                                                                        ? 'linear-gradient(180deg, #94a3b8 0%, #64748b 100%)'
                                                                         : isPartial
-                                                                            ? 'linear-gradient(135deg, #d97706 0%, #b45309 100%)'
-                                                                            : 'linear-gradient(135deg, #0078d4 0%, #1d4ed8 100%)',
-                                                                    border: 'none',
+                                                                            ? 'linear-gradient(180deg, #f59e0b 0%, #d97706 50%, #b45309 100%)'
+                                                                            : 'linear-gradient(180deg, #0284c7 0%, #0369a1 50%, #075985 100%)',
+                                                                    border: isLocked
+                                                                        ? '1px solid #64748b'
+                                                                        : isPartial
+                                                                            ? '1px solid #b45309'
+                                                                            : '1px solid #075985',
                                                                     color: '#ffffff',
                                                                     fontWeight: '900',
                                                                     fontSize: '0.98rem',
+                                                                    letterSpacing: '0.02em',
                                                                     cursor: isLocked ? 'not-allowed' : 'pointer',
                                                                     display: 'flex',
                                                                     alignItems: 'center',
                                                                     justifyContent: 'center',
-                                                                    gap: '0.5rem',
-                                                                    boxShadow: isLocked ? 'none' : isPartial ? '0 4px 14px rgba(217, 119, 6, 0.4)' : '0 4px 14px rgba(0, 120, 212, 0.4)',
+                                                                    gap: '0.55rem',
+                                                                    boxShadow: isLocked
+                                                                        ? 'none'
+                                                                        : isPartial
+                                                                            ? '0 5px 0 #78350f, 0 8px 18px rgba(217, 119, 6, 0.45), inset 0 1px 2px rgba(255,255,255,0.4)'
+                                                                            : '0 5px 0 #0c4a6e, 0 8px 18px rgba(2, 132, 199, 0.45), inset 0 1px 2px rgba(255,255,255,0.4)',
+                                                                    transform: isLocked ? 'none' : 'translateY(-2px)',
                                                                     opacity: isLocked ? 0.8 : 1,
-                                                                    transition: 'all 0.18s ease'
+                                                                    transition: 'all 0.12s ease'
                                                                 }}
                                                             >
                                                                 {isLocked ? (
@@ -11757,16 +11846,16 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                         );
                                                     })()}
 
-                                                    {/* Print & Download Pre-payment Challan Buttons */}
-                                                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                                    {/* Print & Download Pre-payment Challan Buttons (Tactile Key Pair) */}
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.6rem', marginTop: '0.65rem' }}>
                                                         <button
                                                             type="button"
                                                             onClick={() => handlePrintChallanForMonth(null)}
                                                             style={{
-                                                                padding: '0.6rem 0.75rem',
-                                                                borderRadius: '8px',
+                                                                padding: '0.65rem 0.75rem',
+                                                                borderRadius: '9px',
                                                                 background: 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)',
-                                                                border: '1px solid #16a34a',
+                                                                border: '1px solid #15803d',
                                                                 color: '#ffffff',
                                                                 fontWeight: '800',
                                                                 fontSize: '0.78rem',
@@ -11774,9 +11863,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 display: 'flex',
                                                                 alignItems: 'center',
                                                                 justifyContent: 'center',
-                                                                gap: '0.4rem',
-                                                                boxShadow: '0 2px 4px rgba(22, 163, 74, 0.25)',
-                                                                transition: 'all 0.15s ease'
+                                                                gap: '0.45rem',
+                                                                boxShadow: '0 3px 0 #15803d, 0 4px 8px rgba(22, 163, 74, 0.25), inset 0 1px 1px rgba(255,255,255,0.4)',
+                                                                transition: 'all 0.12s ease'
                                                             }}
                                                             title="1-Click Direct Print Challan / Slip for Parent & Office"
                                                         >
@@ -11786,9 +11875,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                             type="button"
                                                             onClick={() => handleDownloadChallanForMonth(null)}
                                                             style={{
-                                                                padding: '0.6rem 0.75rem',
-                                                                borderRadius: '8px',
-                                                                background: '#ffffff',
+                                                                padding: '0.65rem 0.75rem',
+                                                                borderRadius: '9px',
+                                                                background: 'linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)',
                                                                 border: '1.5px solid #0f172a',
                                                                 color: '#0f172a',
                                                                 fontWeight: '800',
@@ -11797,8 +11886,9 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                 display: 'flex',
                                                                 alignItems: 'center',
                                                                 justifyContent: 'center',
-                                                                gap: '0.4rem',
-                                                                transition: 'all 0.15s ease'
+                                                                gap: '0.45rem',
+                                                                boxShadow: '0 3px 0 #0f172a, 0 3px 6px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1)',
+                                                                transition: 'all 0.12s ease'
                                                             }}
                                                             title="Download fee voucher / challan for parents before payment"
                                                         >
@@ -12329,40 +12419,51 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     </div>
                                                                 )}
 
-                                                                {/* Tactile Payment Method Chips */}
-                                                                <div style={{ marginBottom: '0.65rem' }}>
-                                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.35rem' }}>
+                                                                {/* Tactile Payment Method Push Keys (Skeuomorphic 3D Mechanical Channel) */}
+                                                                <div style={{ marginBottom: '0.75rem' }}>
+                                                                    <div style={{ fontSize: '0.72rem', fontWeight: '800', color: '#475569', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                                                        Payment Channel Selection
+                                                                    </div>
+                                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.45rem' }}>
                                                                         {[
                                                                             { id: 'Cash', label: 'Cash', icon: '💵', color: '#16a34a', bg: '#f0fdf4', border: '#86efac' },
                                                                             { id: 'Bank Transfer', label: 'Bank', icon: '🏛️', color: '#2563eb', bg: '#eff6ff', border: '#93c5fd' },
                                                                             { id: 'EasyPaisa', label: 'EasyPaisa', icon: '📱', color: '#059669', bg: '#ecfdf5', border: '#6ee7b7' },
                                                                             { id: 'JazzCash', label: 'JazzCash', icon: '💳', color: '#dc2626', bg: '#fef2f2', border: '#fca5a5' }
-                                                                        ].map((m) => (
-                                                                            <button
-                                                                                key={m.id}
-                                                                                type="button"
-                                                                                onClick={() => setPaymentMode(m.id)}
-                                                                                style={{
-                                                                                    padding: '0.35rem 0.15rem',
-                                                                                    borderRadius: '7px',
-                                                                                    border: paymentMode === m.id ? `1.5px solid ${m.color}` : '1px solid #e2e8f0',
-                                                                                    background: paymentMode === m.id ? m.bg : '#ffffff',
-                                                                                    color: paymentMode === m.id ? m.color : '#475569',
-                                                                                    fontWeight: '700',
-                                                                                    fontSize: '0.68rem',
-                                                                                    cursor: 'pointer',
-                                                                                    display: 'flex',
-                                                                                    flexDirection: 'column',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '1px',
-                                                                                    boxShadow: paymentMode === m.id ? `0 2px 6px ${m.color}22` : 'none',
-                                                                                    transition: 'all 0.15s ease'
-                                                                                }}
-                                                                            >
-                                                                                <span style={{ fontSize: '0.8rem' }}>{m.icon}</span>
-                                                                                <span>{m.label}</span>
-                                                                            </button>
-                                                                        ))}
+                                                                        ].map((m) => {
+                                                                            const isCurrent = paymentMode === m.id;
+                                                                            return (
+                                                                                <button
+                                                                                    key={m.id}
+                                                                                    type="button"
+                                                                                    onClick={() => setPaymentMode(m.id)}
+                                                                                    style={{
+                                                                                        padding: '0.45rem 0.2rem',
+                                                                                        borderRadius: '9px',
+                                                                                        border: isCurrent ? `1.5px solid ${m.color}` : '1px solid #cbd5e1',
+                                                                                        background: isCurrent
+                                                                                            ? `linear-gradient(180deg, #ffffff 0%, ${m.bg} 100%)`
+                                                                                            : 'linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)',
+                                                                                        color: isCurrent ? m.color : '#475569',
+                                                                                        fontWeight: '800',
+                                                                                        fontSize: '0.72rem',
+                                                                                        cursor: 'pointer',
+                                                                                        display: 'flex',
+                                                                                        flexDirection: 'column',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '2px',
+                                                                                        boxShadow: isCurrent
+                                                                                            ? `0 3.5px 0 ${m.color}, 0 5px 10px ${m.color}33, inset 0 1px 1px rgba(255,255,255,0.9)`
+                                                                                            : '0 2.5px 0 #cbd5e1, 0 1px 3px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)',
+                                                                                        transform: isCurrent ? 'translateY(-1px)' : 'none',
+                                                                                        transition: 'all 0.12s ease'
+                                                                                    }}
+                                                                                >
+                                                                                    <span style={{ fontSize: '0.88rem' }}>{m.icon}</span>
+                                                                                    <span>{m.label}</span>
+                                                                                </button>
+                                                                            );
+                                                                        })}
                                                                     </div>
                                                                 </div>
 
@@ -13008,22 +13109,46 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             </div>
                                                                         </div>
 
-                                                                        {/* Net Payable Total */}
-                                                                        <div style={{ borderTop: '2px solid #0f172a', paddingTop: '0.4rem', marginTop: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                                            <strong style={{ color: '#0f172a', fontSize: '0.82rem', fontWeight: '900' }}>
-                                                                                {isTargetMonthFullyPaid && hasUnpaidCustomActions ? 'Supplementary Action Total:' : 'Payable Total:'}
-                                                                            </strong>
-                                                                            <strong style={{ color: '#0f172a', fontSize: '1.15rem', fontWeight: '900' }}>
-                                                                                Rs {payableNetTotal.toLocaleString()}
-                                                                            </strong>
+                                                                        {/* Net Payable Total (Skeuomorphic Digital POS Screen Bezel) */}
+                                                                        <div style={{
+                                                                            background: 'linear-gradient(180deg, #0f172a 0%, #020617 100%)',
+                                                                            borderRadius: '11px',
+                                                                            padding: '0.65rem 0.95rem',
+                                                                            marginTop: '0.45rem',
+                                                                            border: '1.5px solid #1e293b',
+                                                                            boxShadow: 'inset 0 3px 8px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(255, 255, 255, 0.85)',
+                                                                            display: 'flex',
+                                                                            justifyContent: 'space-between',
+                                                                            alignItems: 'center'
+                                                                        }}>
+                                                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                                                <span style={{ color: '#38bdf8', fontSize: '0.66rem', fontWeight: '800', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                                                                                    ● POS SCREEN READOUT
+                                                                                </span>
+                                                                                <strong style={{ color: '#e2e8f0', fontSize: '0.82rem', fontWeight: '900' }}>
+                                                                                    {isTargetMonthFullyPaid && hasUnpaidCustomActions ? 'Supplementary Action:' : 'Payable Balance:'}
+                                                                                </strong>
+                                                                            </div>
+                                                                            <div style={{ textAlign: 'right' }}>
+                                                                                <strong style={{
+                                                                                    color: '#38bdf8',
+                                                                                    fontSize: '1.35rem',
+                                                                                    fontWeight: '900',
+                                                                                    letterSpacing: '0.04em',
+                                                                                    textShadow: '0 0 12px rgba(56, 189, 248, 0.65)',
+                                                                                    fontFamily: 'monospace, sans-serif'
+                                                                                }}>
+                                                                                    Rs {payableNetTotal.toLocaleString()}
+                                                                                </strong>
+                                                                            </div>
                                                                         </div>
                                                                     </div>
                                                                 )}
 
-                                                                {/* Concession / Discount Input */}
-                                                                <div style={{ marginBottom: '0.65rem' }}>
-                                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '700', color: '#475569', marginBottom: '0.15rem' }}>
-                                                                        Concession / Discount (Rs)
+                                                                {/* Concession / Discount Input (Tactile Sunken Slot) */}
+                                                                <div style={{ marginBottom: '0.75rem' }}>
+                                                                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: '#475569', marginBottom: '0.2rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                                                        Concession / Special Discount (Rs)
                                                                     </label>
                                                                     <input
                                                                         type="number"
@@ -13033,43 +13158,46 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         placeholder="0 (e.g. 500)"
                                                                         style={{
                                                                             width: '100%',
-                                                                            padding: '0.45rem 0.65rem',
-                                                                            borderRadius: '7px',
-                                                                            border: '1px solid #cbd5e1',
+                                                                            padding: '0.5rem 0.75rem',
+                                                                            borderRadius: '9px',
+                                                                            border: '1.5px solid #cbd5e1',
                                                                             outline: 'none',
-                                                                            background: '#ffffff',
+                                                                            background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
+                                                                            boxShadow: 'inset 0 1.5px 3px rgba(0, 0, 0, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9)',
                                                                             fontWeight: '700',
                                                                             color: '#0f172a',
-                                                                            fontSize: '0.82rem',
+                                                                            fontSize: '0.84rem',
                                                                             boxSizing: 'border-box'
                                                                         }}
                                                                     />
                                                                 </div>
 
-                                                                {/* Received Amount & Live Total with Reset */}
+                                                                {/* Received Amount & Live Total with Reset (Skeuomorphic Cash Drawer Well) */}
                                                                 <div style={{
-                                                                    background: '#f0fdf4',
+                                                                    background: 'linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%)',
                                                                     border: '1.5px solid #86efac',
-                                                                    borderRadius: '9px',
-                                                                    padding: '0.65rem 0.8rem',
-                                                                    marginBottom: '0.65rem'
+                                                                    borderRadius: '12px',
+                                                                    padding: '0.75rem 0.9rem',
+                                                                    marginBottom: '0.75rem',
+                                                                    boxShadow: 'inset 0 2px 5px rgba(22, 163, 74, 0.15), 0 1px 0 rgba(255, 255, 255, 0.9)'
                                                                 }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-                                                                        <label style={{ fontSize: '0.74rem', fontWeight: '800', color: '#166534' }}>
-                                                                            Received Amount (Rs)
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                                                        <label style={{ fontSize: '0.76rem', fontWeight: '900', color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                                                            💵 Cash Received Slot (Rs)
                                                                         </label>
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => setReceivedAmount(String(payableNetTotal))}
                                                                             style={{
-                                                                                background: '#dcfce7',
+                                                                                background: 'linear-gradient(180deg, #dcfce7 0%, #bbf7d0 100%)',
                                                                                 border: '1px solid #86efac',
-                                                                                borderRadius: '5px',
+                                                                                borderRadius: '6px',
                                                                                 color: '#15803d',
-                                                                                fontSize: '0.66rem',
+                                                                                fontSize: '0.68rem',
                                                                                 fontWeight: '800',
-                                                                                padding: '1px 6px',
-                                                                                cursor: 'pointer'
+                                                                                padding: '3px 8px',
+                                                                                cursor: 'pointer',
+                                                                                boxShadow: '0 2px 0 #86efac, 0 2px 4px rgba(22, 163, 74, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.9)'
                                                                             }}
                                                                             title="Click to reset to exact calculated total"
                                                                         >
@@ -13083,30 +13211,31 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         min="0"
                                                                         style={{
                                                                             width: '100%',
-                                                                            padding: '0.45rem 0.65rem',
-                                                                            borderRadius: '7px',
-                                                                            border: '1px solid #16a34a',
+                                                                            padding: '0.55rem 0.75rem',
+                                                                            borderRadius: '9px',
+                                                                            border: '1.5px solid #16a34a',
                                                                             outline: 'none',
                                                                             background: '#ffffff',
                                                                             fontWeight: '900',
                                                                             color: '#166534',
-                                                                            fontSize: '1.15rem',
+                                                                            fontSize: '1.25rem',
+                                                                            boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.08), 0 1px 0 rgba(255, 255, 255, 0.9)',
                                                                             boxSizing: 'border-box'
                                                                         }}
                                                                     />
-                                                                    <div style={{ marginTop: '0.25rem', fontSize: '0.68rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                    <div style={{ marginTop: '0.35rem', fontSize: '0.7rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                                         {Number(receivedAmount) === payableNetTotal ? (
-                                                                            <span style={{ color: '#15803d', fontWeight: '700' }}>✓ Full Payment Settled</span>
+                                                                            <span style={{ color: '#15803d', fontWeight: '800' }}>✓ Full Payment Settled</span>
                                                                         ) : Number(receivedAmount) < payableNetTotal ? (
-                                                                            <span style={{ color: '#b45309', fontWeight: '700' }}>
+                                                                            <span style={{ color: '#b45309', fontWeight: '800' }}>
                                                                                 ⚠️ Partial: Rs {(payableNetTotal - Number(receivedAmount)).toLocaleString()} remaining
                                                                             </span>
                                                                         ) : (
-                                                                            <span style={{ color: '#0284c7', fontWeight: '700' }}>
+                                                                            <span style={{ color: '#0284c7', fontWeight: '800' }}>
                                                                                 ℹ️ Advance: +Rs {(Number(receivedAmount) - payableNetTotal).toLocaleString()}
                                                                             </span>
                                                                         )}
-                                                                        <span style={{ color: '#64748b' }}>
+                                                                        <span style={{ color: '#475569', fontWeight: '700' }}>
                                                                             {selectedPayableItems.length} item{selectedPayableItems.length === 1 ? '' : 's'}
                                                                         </span>
                                                                     </div>
@@ -13198,27 +13327,74 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     </label>
                                                                 </div>
 
-                                                                {/* Big Confirm & Print Button */}
+                                                                {/* Thermal Receipt Paper Ejection Slot Bezel */}
+                                                                <div style={{
+                                                                    display: 'flex',
+                                                                    flexDirection: 'column',
+                                                                    alignItems: 'center',
+                                                                    marginBottom: '0.65rem'
+                                                                }}>
+                                                                    <div style={{
+                                                                        width: '92%',
+                                                                        height: '6px',
+                                                                        background: '#090d16',
+                                                                        borderRadius: '999px',
+                                                                        boxShadow: 'inset 0 3px 4px rgba(0,0,0,0.9), 0 1px 0 rgba(255,255,255,0.7)',
+                                                                        position: 'relative'
+                                                                    }}>
+                                                                        {/* Simulated paper lip */}
+                                                                        <div style={{
+                                                                            position: 'absolute',
+                                                                            top: '-3px',
+                                                                            left: '50%',
+                                                                            transform: 'translateX(-50%)',
+                                                                            width: '44px',
+                                                                            height: '3px',
+                                                                            background: '#ffffff',
+                                                                            borderRadius: '2px 2px 0 0',
+                                                                            boxShadow: '0 -1px 2px rgba(0,0,0,0.15)'
+                                                                        }} />
+                                                                    </div>
+                                                                    <span style={{
+                                                                        fontSize: '0.58rem',
+                                                                        fontWeight: '800',
+                                                                        color: '#94a3b8',
+                                                                        letterSpacing: '0.08em',
+                                                                        textTransform: 'uppercase',
+                                                                        marginTop: '2px'
+                                                                    }}>
+                                                                        ▼ THERMAL RECEIPT DISPENSER ▼
+                                                                    </span>
+                                                                </div>
+
+                                                                {/* Big Confirm & Print Button - 3D Mechanical Push Switch */}
                                                                 <button
                                                                     type="button"
                                                                     onClick={handleSubmitFee}
                                                                     disabled={isSubmitting || !selectedStudent}
                                                                     style={{
                                                                         width: '100%',
-                                                                        padding: '0.75rem',
-                                                                        borderRadius: '10px',
-                                                                        background: isSubmitting ? '#94a3b8' : 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)',
-                                                                        border: 'none',
+                                                                        padding: '0.8rem 1rem',
+                                                                        borderRadius: '11px',
+                                                                        background: isSubmitting
+                                                                            ? '#94a3b8'
+                                                                            : 'linear-gradient(180deg, #22c55e 0%, #16a34a 55%, #15803d 100%)',
+                                                                        border: isSubmitting ? '1px solid #64748b' : '1px solid #16a34a',
+                                                                        borderBottom: isSubmitting ? '2px solid #64748b' : '4px solid #14532d',
                                                                         color: '#ffffff',
                                                                         fontWeight: '900',
-                                                                        fontSize: '0.92rem',
-                                                                        cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                                                                        fontSize: '0.94rem',
+                                                                        cursor: isSubmitting || !selectedStudent ? 'not-allowed' : 'pointer',
                                                                         display: 'flex',
                                                                         alignItems: 'center',
                                                                         justifyContent: 'center',
-                                                                        gap: '0.5rem',
-                                                                        boxShadow: '0 4px 12px rgba(22, 163, 74, 0.35)',
-                                                                        transition: 'all 0.18s ease'
+                                                                        gap: '0.55rem',
+                                                                        textShadow: '0 -1px 1px rgba(0,0,0,0.4)',
+                                                                        boxShadow: isSubmitting
+                                                                            ? 'none'
+                                                                            : 'inset 0 1px 0 rgba(255,255,255,0.45), 0 4px 0 #14532d, 0 8px 18px rgba(22, 101, 52, 0.35)',
+                                                                        transform: isSubmitting ? 'none' : 'translateY(-1px)',
+                                                                        transition: 'all 0.15s ease'
                                                                     }}
                                                                 >
                                                                     {isSubmitting ? (
@@ -13227,7 +13403,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                         </>
                                                                     ) : (
                                                                         <>
-                                                                            <Printer size={16} />
+                                                                            <Printer size={17} style={{ filter: 'drop-shadow(0 -1px 0 rgba(0,0,0,0.3))' }} />
                                                                             <span>
                                                                                 {isTargetMonthFullyPaid && hasUnpaidCustomActions
                                                                                     ? `Submit Supplementary Action (Rs ${Number(receivedAmount).toLocaleString()})`
