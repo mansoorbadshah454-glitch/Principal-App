@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
     Send, Activity, Award, User, Clock, ChevronRight, ChevronLeft, Wallet, X, ChevronDown, GraduationCap, MessageCircle, MessagesSquare, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
-    Wifi, WifiOff, RefreshCw, Loader2, Sparkles
+    Wifi, WifiOff, RefreshCw, Loader2, Sparkles, ClipboardList, Trophy, Medal
 } from 'lucide-react';
 import FinancesDashboard from '../components/FinancesDashboard';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
@@ -12,12 +12,23 @@ import { db, auth, functions } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, setDoc, doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { cacheDashboardStats, getCachedDashboardStats, cacheDashboardFullData, getCachedDashboardFullData } from '../utils/offlineDataEngine';
+import { getDocsFast } from '../utils/cacheUtils';
 import {
     ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
     CartesianGrid, Tooltip, BarChart, Bar, Cell, LineChart, Line, RadialBarChart, RadialBar, Legend
 } from 'recharts';
 
-const MetricTooltipPill = ({ label, value, fullTitle, weight }) => {
+const getTeacherInitials = (name) => {
+    if (!name) return 'T';
+    const clean = String(name).replace(/^(mr\.|mrs\.|ms\.|dr\.|sir\s+|teacher\s+)/i, '').trim();
+    const parts = clean.split(/\s+/);
+    if (parts.length >= 2) {
+        return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return clean.substring(0, 2).toUpperCase();
+};
+
+const MetricTooltipPill = ({ label, value, fullTitle, weight, extraInfo }) => {
     const [showTooltip, setShowTooltip] = useState(false);
     return (
         <div 
@@ -49,7 +60,7 @@ const MetricTooltipPill = ({ label, value, fullTitle, weight }) => {
                     transform: 'translateX(-50%)',
                     background: '#0f172a',
                     color: '#ffffff',
-                    padding: '5px 10px',
+                    padding: '6px 10px',
                     borderRadius: '7px',
                     fontSize: '0.72rem',
                     fontWeight: '600',
@@ -59,9 +70,16 @@ const MetricTooltipPill = ({ label, value, fullTitle, weight }) => {
                     pointerEvents: 'none',
                     border: '1px solid rgba(255,255,255,0.1)'
                 }}>
-                    <span style={{ color: '#f8fafc' }}>{fullTitle}: </span>
-                    <span style={{ color: '#38bdf8', fontWeight: '800' }}>{value}% </span>
-                    <span style={{ color: '#94a3b8', fontSize: '0.65rem', fontWeight: '500' }}>({weight}% Weight)</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span style={{ color: '#f8fafc' }}>{fullTitle}: </span>
+                        <span style={{ color: '#38bdf8', fontWeight: '800' }}>{value}% </span>
+                        <span style={{ color: '#94a3b8', fontSize: '0.65rem', fontWeight: '500' }}>({weight}% Weight)</span>
+                    </div>
+                    {extraInfo && (
+                        <div style={{ color: '#67e8f9', fontSize: '0.65rem', marginTop: '2px', fontWeight: '500' }}>
+                            📊 {extraInfo}
+                        </div>
+                    )}
                     <div style={{
                         position: 'absolute',
                         top: '100%',
@@ -150,6 +168,12 @@ const Dashboard = () => {
         cachedInitialData?.atomicCounts?.studentCount ||
         (cachedInitialData?.classes && cachedInitialData.classes.length > 0)
     ));
+    const [allClassesData, setAllClassesData] = useState(() => {
+        if (cachedInitialData?.classStatsMap) {
+            return new Map(Object.entries(cachedInitialData.classStatsMap));
+        }
+        return new Map();
+    });
 
     // 2. UI State
     const [selectedTeacher, setSelectedTeacher] = useState(null);
@@ -165,6 +189,11 @@ const Dashboard = () => {
     const [rankingCycle, setRankingCycle] = useState(() => cachedInitialData?.rankingCycle || '');
     const [isSyncingRankings, setIsSyncingRankings] = useState(false);
     const [lastRankingSync, setLastRankingSync] = useState(null);
+    const [teacherHomeworkCounts, setTeacherHomeworkCounts] = useState(() => cachedInitialData?.teacherHomeworkCounts || {});
+    const [teacherMonthlyAttendance, setTeacherMonthlyAttendance] = useState(() => cachedInitialData?.teacherMonthlyAttendance || {});
+    const [teacherSyllabusScores, setTeacherSyllabusScores] = useState(() => cachedInitialData?.teacherSyllabusScores || {});
+    const [teacherAcademicScores, setTeacherAcademicScores] = useState(() => cachedInitialData?.teacherAcademicScores || {});
+    const [masterTimetable, setMasterTimetable] = useState(() => cachedInitialData?.masterTimetable || null);
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
     const [isInjectingSyllabus, setIsInjectingSyllabus] = useState(false);
 
@@ -518,60 +547,353 @@ const Dashboard = () => {
         return () => unsubscribe();
     }, [schoolId]);
 
+    // Real-Time Listener for School Weekly Master Timetable (Single Document, Zero DB Overhead, 100% Offline Cached)
+    useEffect(() => {
+        if (!schoolId) return;
+        const ttRef = doc(db, 'schools', schoolId, 'timetables', 'weeklyMaster');
+        const unsub = onSnapshot(ttRef, (snap) => {
+            if (snap.exists()) {
+                const data = snap.data();
+                setMasterTimetable(data);
+                if (schoolId) {
+                    cacheDashboardFullData(schoolId, { masterTimetable: data });
+                }
+            }
+        }, (err) => {
+            console.warn("[Dashboard] Error fetching master timetable:", err);
+        });
+        return () => unsub();
+    }, [schoolId]);
+
+    // Helper: Extract all unique { className, subjectName } slots for a teacher from master timetable (with fallback)
+    const getTeacherTimetableSlots = (t, timetable) => {
+        const slots = [];
+        if (!t) return slots;
+        const tId = String(t.id || '').trim();
+        const tName = String(t.name || '').trim().toLowerCase();
+
+        if (timetable && Array.isArray(timetable.rows)) {
+            const row = timetable.rows.find(r => 
+                String(r.teacherId || '').trim() === tId ||
+                String(r.id || '').trim() === tId ||
+                String(r.teacherName || '').trim().toLowerCase() === tName
+            );
+            if (row && Array.isArray(row.cells)) {
+                row.cells.forEach(cell => {
+                    const cName = String(cell?.class || '').trim();
+                    const sName = String(cell?.subject || '').trim();
+                    if (cName && sName && cName !== 'FREE' && cName !== 'BREAK') {
+                        if (!slots.some(s => s.className.toLowerCase() === cName.toLowerCase() && s.subjectName.toLowerCase() === sName.toLowerCase())) {
+                            slots.push({ className: cName, subjectName: sName });
+                        }
+                    }
+                });
+            }
+        }
+
+        // Fallback: If no slots found in timetable, fallback to teacher's assignedClasses & subjects
+        if (slots.length === 0) {
+            const assignedClasses = Array.isArray(t.assignedClasses) && t.assignedClasses.length > 0
+                ? t.assignedClasses
+                : (t.assignedClass ? [t.assignedClass] : (t.class ? [t.class] : []));
+            const assignedSubjects = Array.isArray(t.subjects) && t.subjects.length > 0
+                ? t.subjects
+                : (Array.isArray(t.displaySubjects) && t.displaySubjects.length > 0 ? t.displaySubjects : (t.subject ? [t.subject] : []));
+
+            assignedClasses.forEach(cName => {
+                assignedSubjects.forEach(sName => {
+                    const cn = String(cName || '').trim();
+                    const sn = String(sName || '').trim();
+                    if (cn && sn && !slots.some(s => s.className.toLowerCase() === cn.toLowerCase() && s.subjectName.toLowerCase() === sn.toLowerCase())) {
+                        slots.push({ className: cn, subjectName: sn });
+                    }
+                });
+            });
+        }
+
+        return slots;
+    };
+
+    // Helper: Compute Academic Score for a teacher strictly from their assigned subjects in their assigned classes
+    const computeTeacherAcademicScore = (t, timetable, classesList, classDataMap) => {
+        const slots = getTeacherTimetableSlots(t, timetable);
+        if (slots.length === 0 || !classesList || classesList.length === 0 || !classDataMap) return 0;
+
+        let totalSubjMarks = 0;
+        let totalSubjCount = 0;
+        let totalHwMarks = 0;
+        let totalHwCount = 0;
+
+        slots.forEach(slot => {
+            const normC = slot.className.trim().toLowerCase();
+            const matchedCls = classesList.find(fc => 
+                fc.id === slot.className || 
+                String(fc.name || '').trim().toLowerCase() === normC ||
+                String(fc.name || '').trim().toLowerCase().replace(/\s+/g, '') === normC.replace(/\s+/g, '')
+            );
+            if (!matchedCls) return;
+
+            const stats = classDataMap.get(matchedCls.id);
+            if (!stats) return;
+
+            const targetSubjLower = slot.subjectName.trim().toLowerCase();
+
+            // Match subject in stats.subjects
+            if (stats.subjects && typeof stats.subjects === 'object') {
+                for (const [sKey, sData] of Object.entries(stats.subjects)) {
+                    if (String(sKey || '').trim().toLowerCase() === targetSubjLower) {
+                        totalSubjMarks += sData.total || 0;
+                        totalSubjCount += sData.count || 0;
+                        break;
+                    }
+                }
+            }
+
+            // Match subject in stats.homework
+            if (stats.homework && typeof stats.homework === 'object') {
+                for (const [hKey, hData] of Object.entries(stats.homework)) {
+                    if (String(hKey || '').trim().toLowerCase() === targetSubjLower) {
+                        totalHwMarks += hData.total || 0;
+                        totalHwCount += hData.count || 0;
+                        break;
+                    }
+                }
+            }
+        });
+
+        const avgSubj = totalSubjCount > 0 ? (totalSubjMarks / totalSubjCount) : 0;
+        const avgHw = totalHwCount > 0 ? (totalHwMarks / totalHwCount) : 0;
+
+        let finalScore = 0;
+        if (totalSubjCount > 0 && totalHwCount > 0) {
+            finalScore = Math.round((avgSubj + avgHw) / 2);
+        } else if (totalSubjCount > 0) {
+            finalScore = Math.round(avgSubj);
+        } else if (totalHwCount > 0) {
+            finalScore = Math.round(avgHw);
+        }
+
+        return Math.min(100, Math.max(0, finalScore));
+    };
+
     // Manual / On-Demand Teacher Ranking Sync
     const handleSyncTeacherRankings = async () => {
         if (!schoolId || isSyncingRankings) return;
         setIsSyncingRankings(true);
         try {
-            const syncCallable = httpsCallable(functions, 'syncSchoolTeacherRankings');
-            const res = await syncCallable({ schoolId });
-            if (res.data?.rankings) {
-                setRankingData(res.data.rankings);
+            // Priority 1: Try Cloud Function if deployed
+            try {
+                const syncCallable = httpsCallable(functions, 'syncSchoolTeacherRankings');
+                const res = await syncCallable({ schoolId });
+                if (res.data?.rankings && Array.isArray(res.data.rankings) && res.data.rankings.length > 0) {
+                    setRankingData(res.data.rankings);
+                    if (res.data?.cycle) setRankingCycle(res.data.cycle);
+                    setLastRankingSync(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+                    setIsSyncingRankings(false);
+                    return;
+                }
+            } catch (cfErr) {
+                console.info("[Dashboard] Cloud function sync not available or failed, computing live rankings client-side...", cfErr);
             }
-            if (res.data?.cycle) {
-                setRankingCycle(res.data.cycle);
-            }
-            setLastRankingSync(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-        } catch (error) {
-            console.warn("[Dashboard] Cloud function sync failed, calculating fallback ranking...", error);
-            // Client-side fallback ranking calculation
+
+            // Priority 2: Real Client-side ranking calculation (Zero-Mock, Pure Data)
             if (teachers.length > 0) {
+                const now = new Date();
                 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-                const currentMonthName = monthNames[new Date().getMonth()];
-                const cycleLabel = `${currentMonthName} ${new Date().getFullYear()} (30-Day Cycle)`;
+                const currentMonthName = monthNames[now.getMonth()];
+                const cycleLabel = `${currentMonthName} ${now.getFullYear()} (30-Day Cycle)`;
                 setRankingCycle(cycleLabel);
 
-                const calculated = teachers.map((t, idx) => {
+                const currentYear = now.getFullYear();
+                const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+                const startOfMonthStr = `${currentYear}-${currentMonth}-01`;
+                const endOfMonthStr = `${currentYear}-${currentMonth}-31`;
+
+                // 1. Gather all homework across fetched classes
+                const hwCounts = {};
+                for (const cls of fetchedClasses) {
+                    try {
+                        const hwRef = collection(db, `schools/${schoolId}/classes/${cls.id}/homework`);
+                        const hwSnap = await getDocsFast(hwRef);
+                        hwSnap.docs.forEach(d => {
+                            const data = d.data();
+                            const aDate = data.assignedDate || '';
+                            if (!aDate || aDate >= startOfMonthStr) {
+                                const tid = data.teacherId ? String(data.teacherId).trim() : null;
+                                const tname = data.teacherName ? String(data.teacherName).trim().toLowerCase() : null;
+                                if (tid) hwCounts[tid] = (hwCounts[tid] || 0) + 1;
+                                if (tname) hwCounts[tname] = (hwCounts[tname] || 0) + 1;
+                            }
+                        });
+                    } catch (_) {}
+                }
+                setTeacherHomeworkCounts(hwCounts);
+
+                // Find max homework count among all teachers as benchmark
+                let maxHwCount = 0;
+                teachers.forEach(t => {
+                    const count = Math.max(
+                        hwCounts[t.id] || 0,
+                        hwCounts[String(t.name || '').trim().toLowerCase()] || 0
+                    );
+                    if (count > maxHwCount) maxHwCount = count;
+                });
+
+                // 2. Compute individual 4-pillar scores per teacher
+                const calculated = await Promise.all(teachers.map(async (t) => {
                     const tName = String(t.name || t.id || 'Teacher');
-                    const academicScore = 80 + ((tName.charCodeAt(0) * 3) % 18);
-                    const syllabusScore = 75 + ((tName.charCodeAt(Math.max(0, tName.length - 1)) * 2) % 22);
-                    const attendanceScore = t.isPresent ? 95 : 85;
-                    const engagementScore = t.status === 'on' ? 100 : 85;
+                    const tId = t.id;
+
+                    // A. Pillar 4: Homework Activity (10%)
+                    const tHw = Math.max(
+                        hwCounts[tId] || 0,
+                        hwCounts[tName.trim().toLowerCase()] || 0
+                    );
+                    const homeworkScore = maxHwCount > 0
+                        ? Math.min(100, Math.max(0, Math.round((tHw / maxHwCount) * 100)))
+                        : (tHw > 0 ? 100 : 0);
+
+                    // B. Pillar 3: Attendance (25%) - Current Month Calendar Working Days
+                    let teacherStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                    if (t.createdAt || t.joiningDate) {
+                        const joinRaw = t.joiningDate || (t.createdAt?.toDate ? t.createdAt.toDate() : new Date(t.createdAt));
+                        const joinDate = new Date(joinRaw);
+                        if (!isNaN(joinDate.getTime()) && joinDate > teacherStartDate && joinDate <= now) {
+                            teacherStartDate = new Date(joinDate.getFullYear(), joinDate.getMonth(), joinDate.getDate());
+                        }
+                    }
+
+                    let totalWorkingDays = 0;
+                    const curDate = new Date(teacherStartDate);
+                    const todayDateOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    while (curDate <= todayDateOnly) {
+                        if (curDate.getDay() !== 0) { // Exclude Sundays
+                            totalWorkingDays++;
+                        }
+                        curDate.setDate(curDate.getDate() + 1);
+                    }
+                    if (totalWorkingDays === 0) totalWorkingDays = 1;
+
+                    let presentPoints = 0;
+                    let leavesCount = 0;
+                    let loggedDays = 0;
+
+                    try {
+                        const attRef = collection(db, `schools/${schoolId}/teachers/${tId}/attendance_logs`);
+                        const attQuery = query(attRef, where('date', '>=', startOfMonthStr), where('date', '<=', endOfMonthStr));
+                        const attSnap = await getDocsFast(attQuery);
+                        if (!attSnap.empty) {
+                            attSnap.docs.forEach(ad => {
+                                const st = ad.data().status;
+                                loggedDays++;
+                                if (st === 'Present') presentPoints += 1.0;
+                                else if (st === 'Half Day') presentPoints += 0.5;
+                                else if (st === 'Leave') leavesCount++;
+                            });
+                        }
+                    } catch (_) {}
+
+                    let presentDays = presentPoints;
+                    let absentDays = 0;
+                    let attendanceScore = 0;
+
+                    if (loggedDays > 0) {
+                        absentDays = Math.max(0, Math.round(totalWorkingDays - presentPoints - leavesCount));
+                        attendanceScore = Math.min(100, Math.max(0, Math.round((presentPoints / totalWorkingDays) * 100)));
+                    } else {
+                        const isPres = t.isPresent || (t.lastAttendanceDate === endOfMonthStr);
+                        presentDays = isPres ? 1 : 0;
+                        absentDays = Math.max(0, totalWorkingDays - presentDays);
+                        attendanceScore = Math.min(100, Math.max(0, Math.round((presentDays / totalWorkingDays) * 100)));
+                    }
+
+                    // C. Pillar 1: Academics - Timetable-based Subject & Homework performance across all taught classes
+                    const academicScore = computeTeacherAcademicScore(t, masterTimetable, fetchedClasses, allClassesData);
+
+                    // D. Pillar 2: Syllabus - Real Completed Chapters Query based on timetable slots
+                    let syllabusScore = 0;
+                    try {
+                        const slots = getTeacherTimetableSlots(t, masterTimetable);
+                        let totalChapters = 0;
+                        let completedChapters = 0;
+
+                        for (const slot of slots) {
+                            const normC = slot.className.trim().toLowerCase();
+                            const matchedCls = fetchedClasses.find(fc => 
+                                fc.id === slot.className || 
+                                String(fc.name || '').trim().toLowerCase() === normC ||
+                                String(fc.name || '').trim().toLowerCase().replace(/\s+/g, '') === normC.replace(/\s+/g, '')
+                            );
+                            if (!matchedCls) continue;
+
+                            try {
+                                const chapRef = collection(db, `schools/${schoolId}/classes/${matchedCls.id}/syllabus/${slot.subjectName}/chapters`);
+                                const snap = await getDocsFast(chapRef);
+                                if (!snap.empty) {
+                                    snap.docs.forEach(cd => {
+                                        totalChapters++;
+                                        if (cd.data().status === 'Completed') completedChapters++;
+                                    });
+                                }
+                            } catch (_) {}
+                        }
+
+                        if (totalChapters > 0) {
+                            syllabusScore = Math.min(100, Math.max(0, Math.round((completedChapters / totalChapters) * 100)));
+                        }
+                    } catch (_) {}
+
+                    // Flat Equal Average Score (25% Academics + 25% Syllabus + 25% Attendance + 25% Homework)
                     const performanceScore = Math.min(100, Math.max(0, Math.round(
-                        (academicScore * 0.35) +
-                        (syllabusScore * 0.30) +
-                        (attendanceScore * 0.25) +
-                        (engagementScore * 0.10)
+                        (academicScore + syllabusScore + attendanceScore + homeworkScore) / 4
                     )));
+
                     return {
                         ...t,
-                        rank: idx + 1,
+                        teacherId: tId,
                         performanceScore,
-                        tier: performanceScore >= 90 ? 'Star Educator' : (performanceScore >= 75 ? 'Consistent Performer' : 'On Track'),
-                        badge: performanceScore >= 90 ? '🌟' : (performanceScore >= 75 ? '🎯' : '⚡'),
-                        breakdown: { academicScore, syllabusScore, attendanceScore, engagementScore }
+                        tier: performanceScore >= 85 ? 'Top Performer' : (performanceScore >= 75 ? 'Consistent' : 'Developing'),
+                        badge: performanceScore >= 85 ? 'Top' : (performanceScore >= 75 ? 'Good' : 'Standard'),
+                        breakdown: {
+                            academicScore,
+                            syllabusScore,
+                            attendanceScore,
+                            homeworkScore,
+                            homeworkCount: tHw,
+                            attendanceInfo: {
+                                presentDays,
+                                absentDays,
+                                totalWorkingDays
+                            }
+                        }
                     };
-                }).sort((a, b) => b.performanceScore - a.performanceScore);
+                }));
+
+                // Strict Score-Based Sort (Highest to Lowest) with tie-breakers
+                calculated.sort((a, b) => {
+                    if (b.performanceScore !== a.performanceScore) {
+                        return b.performanceScore - a.performanceScore;
+                    }
+                    const hwB = b.breakdown?.homeworkScore ?? 0;
+                    const hwA = a.breakdown?.homeworkScore ?? 0;
+                    if (hwB !== hwA) return hwB - hwA;
+
+                    const attB = b.breakdown?.attendanceScore ?? 0;
+                    const attA = a.breakdown?.attendanceScore ?? 0;
+                    return attB - attA;
+                });
 
                 calculated.forEach((t, i) => { t.rank = i + 1; });
                 setRankingData(calculated);
+                setLastRankingSync(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
                 try {
                     await setDoc(doc(db, `schools/${schoolId}/metrics`, 'teacherRanking'), {
                         rankings: calculated,
                         totalTeachers: calculated.length,
                         cycle: {
                             month: currentMonthName,
-                            year: new Date().getFullYear(),
+                            year: now.getFullYear(),
                             label: cycleLabel,
                             days: 30
                         },
@@ -581,6 +903,8 @@ const Dashboard = () => {
                     console.error("[Dashboard] Error saving local ranking fallback:", e);
                 }
             }
+        } catch (error) {
+            console.error("[Dashboard] Ranking sync error:", error);
         } finally {
             setIsSyncingRankings(false);
         }
@@ -621,14 +945,239 @@ const Dashboard = () => {
         return () => unsubClasses();
     }, [schoolId]);
 
-    // 4. Consolidated Student Listener (Fees, Attendance, Performance)
-    const [allClassesData, setAllClassesData] = useState(() => {
-        if (cachedInitialData?.classStatsMap) {
-            return new Map(Object.entries(cachedInitialData.classStatsMap));
-        }
-        return new Map();
-    });
+    // Automatic Background Sync of Monthly Homework Counts per Teacher across classes
+    useEffect(() => {
+        if (!schoolId || !fetchedClasses || fetchedClasses.length === 0) return;
 
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+        const startOfMonthStr = `${currentYear}-${currentMonth}-01`;
+
+        let isMounted = true;
+        const loadHomeworkCounts = async () => {
+            const counts = {};
+            try {
+                await Promise.all(fetchedClasses.map(async (cls) => {
+                    try {
+                        const hwRef = collection(db, `schools/${schoolId}/classes/${cls.id}/homework`);
+                        const snap = await getDocsFast(hwRef);
+                        snap.docs.forEach(d => {
+                            const data = d.data();
+                            const assignDate = data.assignedDate || '';
+                            if (!assignDate || assignDate >= startOfMonthStr) {
+                                const tid = data.teacherId ? String(data.teacherId).trim() : null;
+                                const tname = data.teacherName ? String(data.teacherName).trim().toLowerCase() : null;
+                                if (tid) counts[tid] = (counts[tid] || 0) + 1;
+                                if (tname) counts[tname] = (counts[tname] || 0) + 1;
+                            }
+                        });
+                    } catch (_) {}
+                }));
+                if (isMounted) {
+                    setTeacherHomeworkCounts(counts);
+                    if (schoolId) cacheDashboardFullData(schoolId, { teacherHomeworkCounts: counts });
+                }
+            } catch (err) {
+                console.warn("[Dashboard] Error loading homework counts:", err);
+            }
+        };
+
+        loadHomeworkCounts();
+        return () => { isMounted = false; };
+    }, [schoolId, fetchedClasses]);
+
+    // Automatic Background Sync of Monthly Attendance Logs per Teacher
+    useEffect(() => {
+        if (!schoolId || !teachers || teachers.length === 0) return;
+
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+        const startOfMonthStr = `${currentYear}-${currentMonth}-01`;
+        const endOfMonthStr = `${currentYear}-${currentMonth}-31`;
+        const todayDateOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        let isMounted = true;
+        const loadTeacherAttendance = async () => {
+            const attMap = {};
+            try {
+                await Promise.all(teachers.map(async (t) => {
+                    const tId = t.id;
+                    let teacherStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                    if (t.createdAt || t.joiningDate) {
+                        const joinRaw = t.joiningDate || (t.createdAt?.toDate ? t.createdAt.toDate() : new Date(t.createdAt));
+                        const joinDate = new Date(joinRaw);
+                        if (!isNaN(joinDate.getTime()) && joinDate > teacherStartDate && joinDate <= now) {
+                            teacherStartDate = new Date(joinDate.getFullYear(), joinDate.getMonth(), joinDate.getDate());
+                        }
+                    }
+
+                    let totalWorkingDays = 0;
+                    const curDate = new Date(teacherStartDate);
+                    while (curDate <= todayDateOnly) {
+                        if (curDate.getDay() !== 0) { // Exclude Sundays
+                            totalWorkingDays++;
+                        }
+                        curDate.setDate(curDate.getDate() + 1);
+                    }
+                    if (totalWorkingDays === 0) totalWorkingDays = 1;
+
+                    let presentPoints = 0;
+                    let leavesCount = 0;
+                    let loggedDays = 0;
+
+                    try {
+                        const attRef = collection(db, `schools/${schoolId}/teachers/${tId}/attendance_logs`);
+                        const attQuery = query(attRef, where('date', '>=', startOfMonthStr), where('date', '<=', endOfMonthStr));
+                        const attSnap = await getDocsFast(attQuery);
+                        if (!attSnap.empty) {
+                            attSnap.docs.forEach(ad => {
+                                const st = ad.data().status;
+                                loggedDays++;
+                                if (st === 'Present') presentPoints += 1.0;
+                                else if (st === 'Half Day') presentPoints += 0.5;
+                                else if (st === 'Leave') leavesCount++;
+                            });
+                        }
+                    } catch (_) {}
+
+                    let presentDays = presentPoints;
+                    let absentDays = 0;
+                    let attendanceScore = 0;
+
+                    if (loggedDays > 0) {
+                        absentDays = Math.max(0, Math.round(totalWorkingDays - presentPoints - leavesCount));
+                        attendanceScore = Math.min(100, Math.max(0, Math.round((presentPoints / totalWorkingDays) * 100)));
+                    } else {
+                        const isPres = t.isPresent || (t.lastAttendanceDate === `${currentYear}-${currentMonth}-${String(now.getDate()).padStart(2, '0')}`);
+                        presentDays = isPres ? 1 : 0;
+                        absentDays = Math.max(0, totalWorkingDays - presentDays);
+                        attendanceScore = Math.min(100, Math.max(0, Math.round((presentDays / totalWorkingDays) * 100)));
+                    }
+
+                    attMap[tId] = {
+                        presentDays,
+                        absentDays,
+                        totalWorkingDays,
+                        attendanceScore
+                    };
+                }));
+
+                if (isMounted) {
+                    setTeacherMonthlyAttendance(attMap);
+                    if (schoolId) cacheDashboardFullData(schoolId, { teacherMonthlyAttendance: attMap });
+                }
+            } catch (err) {
+                console.warn("[Dashboard] Error loading teacher attendance:", err);
+            }
+        };
+
+        loadTeacherAttendance();
+        return () => { isMounted = false; };
+    }, [schoolId, teachers]);
+
+    // Automatic Background Sync of Real Syllabus Progress per Teacher from Firestore based on Timetable
+    useEffect(() => {
+        if (!schoolId || !teachers || teachers.length === 0 || !fetchedClasses || fetchedClasses.length === 0) return;
+
+        let isMounted = true;
+        const loadTeacherSyllabus = async () => {
+            const sylMap = {};
+            try {
+                await Promise.all(teachers.map(async (t) => {
+                    const tId = t.id;
+                    const slots = getTeacherTimetableSlots(t, masterTimetable);
+
+                    let totalChapters = 0;
+                    let completedChapters = 0;
+
+                    for (const slot of slots) {
+                        const normC = slot.className.trim().toLowerCase();
+                        const matchedCls = fetchedClasses.find(fc => 
+                            fc.id === slot.className || 
+                            String(fc.name || '').trim().toLowerCase() === normC ||
+                            String(fc.name || '').trim().toLowerCase().replace(/\s+/g, '') === normC.replace(/\s+/g, '')
+                        );
+                        if (!matchedCls) continue;
+
+                        try {
+                            const chapRef = collection(db, `schools/${schoolId}/classes/${matchedCls.id}/syllabus/${slot.subjectName}/chapters`);
+                            const snap = await getDocsFast(chapRef);
+                            if (!snap.empty) {
+                                snap.docs.forEach(cd => {
+                                    totalChapters++;
+                                    if (cd.data().status === 'Completed') completedChapters++;
+                                });
+                            }
+                        } catch (_) {}
+                    }
+
+                    const syllabusScore = totalChapters > 0
+                        ? Math.min(100, Math.max(0, Math.round((completedChapters / totalChapters) * 100)))
+                        : 0;
+
+                    sylMap[tId] = {
+                        totalChapters,
+                        completedChapters,
+                        syllabusScore
+                    };
+                }));
+
+                if (isMounted) {
+                    setTeacherSyllabusScores(sylMap);
+                    if (schoolId) cacheDashboardFullData(schoolId, { teacherSyllabusScores: sylMap });
+                }
+            } catch (err) {
+                console.warn("[Dashboard] Error loading teacher syllabus progress:", err);
+            }
+        };
+
+        loadTeacherSyllabus();
+        return () => { isMounted = false; };
+    }, [schoolId, teachers, fetchedClasses, masterTimetable]);
+
+    // Automatic Background Sync of Real Academic Scores per Teacher from Timetable & Class Metrics
+    useEffect(() => {
+        if (!schoolId || !teachers || teachers.length === 0 || !fetchedClasses || fetchedClasses.length === 0) return;
+
+        let isMounted = true;
+        const loadTeacherAcademics = () => {
+            const acadMap = {};
+            try {
+                teachers.forEach(t => {
+                    const tId = t.id;
+                    const academicScore = computeTeacherAcademicScore(t, masterTimetable, fetchedClasses, allClassesData);
+                    acadMap[tId] = {
+                        academicScore
+                    };
+                });
+
+                if (isMounted) {
+                    setTeacherAcademicScores(acadMap);
+                    if (schoolId) {
+                        cacheDashboardFullData(schoolId, { teacherAcademicScores: acadMap });
+                    }
+                }
+            } catch (err) {
+                console.warn("[Dashboard] Error loading teacher academics from timetable:", err);
+            }
+        };
+
+        loadTeacherAcademics();
+        return () => { isMounted = false; };
+    }, [schoolId, teachers, fetchedClasses, allClassesData, masterTimetable]);
+
+    // Auto-sync teacher rankings if cache/db schema is outdated or empty
+    useEffect(() => {
+        if (!schoolId || !teachers || teachers.length === 0 || isSyncingRankings) return;
+        const needsSync = !rankingData || rankingData.length === 0 || rankingData.some(r => r.breakdown?.homeworkScore === undefined || !r.breakdown?.attendanceInfo);
+        if (needsSync) {
+            handleSyncTeacherRankings();
+        }
+    }, [schoolId, teachers.length]);
+
+    // 4. Consolidated Student Listener (Fees, Attendance, Performance)
     useEffect(() => {
         if (!schoolId || fetchedClasses.length === 0) return;
 
@@ -834,48 +1383,103 @@ const Dashboard = () => {
     const subjectsData = currentData;
     const homeworkData = currentData;
 
-    // Derived 4-Pillar Teacher Performance Rankings
+    // Derived 4-Pillar Teacher Performance Rankings (Strictly Score-Sorted, Fully Dynamic)
     const effectiveRankings = useMemo(() => {
         if (!teachers || teachers.length === 0) return [];
 
-        if (rankingData && rankingData.length > 0) {
-            const valid = rankingData.filter(r =>
-                teachers.some(t => t.id && (t.id === r.teacherId || t.id === r.id))
-            );
-            if (valid.length > 0) {
-                return valid.map((r, i) => ({ ...r, rank: i + 1 }));
-            }
-            return [];
-        }
+        // Determine max homework count among all teachers for relative benchmarking
+        const hwCounts = teachers.map(t => Math.max(
+            teacherHomeworkCounts[t.id] || 0,
+            teacherHomeworkCounts[String(t.name || '').trim().toLowerCase()] || 0
+        ));
+        const maxHw = Math.max(...hwCounts, 0);
 
-        return teachers.map((t, idx) => {
-            const tName = String(t.name || t.id || 'Teacher');
-            const academicScore = 80 + ((tName.charCodeAt(0) * 3) % 18);
-            const syllabusScore = 75 + ((tName.charCodeAt(Math.max(0, tName.length - 1)) * 2) % 22);
-            const attendanceScore = t.isPresent ? 95 : 85;
-            const engagementScore = t.status === 'on' ? 100 : 85;
+        const list = teachers.map((t) => {
+            const tId = t.id;
+            const tName = String(t.name || tId || 'Teacher');
+            const tNameLower = tName.trim().toLowerCase();
+
+            // Match ranking document breakdown if available
+            const rMatch = (rankingData || []).find(r => r.teacherId === tId || r.id === tId);
+            const b = rMatch?.breakdown || {};
+
+            // 1. Pillar 4: Homework Activity - Strictly based on live homework
+            const liveHwCount = Math.max(
+                teacherHomeworkCounts[tId] || 0,
+                teacherHomeworkCounts[tNameLower] || 0,
+                b.homeworkCount || 0
+            );
+            const homeworkScore = maxHw > 0
+                ? Math.min(100, Math.max(0, Math.round((liveHwCount / maxHw) * 100)))
+                : (liveHwCount > 0 ? 100 : 0);
+
+            // 2. Pillar 3: Attendance - Real mobile check-in/out logs
+            const attInfo = teacherMonthlyAttendance[tId] || b.attendanceInfo || {};
+            const presentDays = attInfo.presentDays !== undefined ? attInfo.presentDays : (t.isPresent ? 1 : 0);
+            const absentDays = attInfo.absentDays !== undefined ? attInfo.absentDays : 0;
+            const totalWorkingDays = attInfo.totalWorkingDays || (presentDays + absentDays || 1);
+            const attendanceScore = attInfo.attendanceScore !== undefined
+                ? attInfo.attendanceScore
+                : (b.attendanceScore !== undefined ? b.attendanceScore : Math.min(100, Math.max(0, Math.round((presentDays / totalWorkingDays) * 100))));
+
+            // 3. Pillar 1: Academics - Timetable-based Subject & Homework performance across all taught classes
+            const liveAcademicScore = computeTeacherAcademicScore(t, masterTimetable, fetchedClasses, allClassesData);
+            const acadInfo = teacherAcademicScores[tId] || {};
+            const academicScore = acadInfo.academicScore !== undefined
+                ? acadInfo.academicScore
+                : liveAcademicScore;
+
+            // 4. Pillar 2: Syllabus Progress - Real completed chapters from teacherSyllabusScores
+            const sylInfo = teacherSyllabusScores[tId] || {};
+            const syllabusScore = sylInfo.syllabusScore !== undefined
+                ? sylInfo.syllabusScore
+                : 0;
+
+            // Flat Equal Average Score (25% Academics + 25% Syllabus + 25% Attendance + 25% Homework)
             const performanceScore = Math.min(100, Math.max(0, Math.round(
-                (academicScore * 0.35) +
-                (syllabusScore * 0.30) +
-                (attendanceScore * 0.25) +
-                (engagementScore * 0.10)
+                (academicScore + syllabusScore + attendanceScore + homeworkScore) / 4
             )));
+
             return {
                 ...t,
-                teacherId: t.id,
-                rank: idx + 1,
+                teacherId: tId,
+                name: tName,
                 performanceScore,
-                tier: performanceScore >= 90 ? 'Star Educator' : (performanceScore >= 75 ? 'Consistent Performer' : 'On Track'),
-                badge: performanceScore >= 90 ? '🌟' : (performanceScore >= 75 ? '🎯' : '⚡'),
+                tier: performanceScore >= 85 ? 'Top Performer' : (performanceScore >= 75 ? 'Consistent' : 'Developing'),
+                badge: performanceScore >= 85 ? 'Top' : (performanceScore >= 75 ? 'Good' : 'Standard'),
                 breakdown: {
                     academicScore,
                     syllabusScore,
                     attendanceScore,
-                    engagementScore
+                    homeworkScore,
+                    homeworkCount: liveHwCount,
+                    attendanceInfo: {
+                        presentDays,
+                        absentDays,
+                        totalWorkingDays
+                    }
                 }
             };
-        }).sort((a, b) => b.performanceScore - a.performanceScore).map((t, i) => ({ ...t, rank: i + 1 }));
-    }, [rankingData, teachers]);
+        });
+
+        // STRICT SCORE-BASED SORTING (HIGHEST TO LOWEST - ZERO ALPHABET BIAS)
+        list.sort((a, b) => {
+            if (b.performanceScore !== a.performanceScore) {
+                return b.performanceScore - a.performanceScore;
+            }
+            // Tie-breaker 1: Homework score
+            const hwB = b.breakdown?.homeworkScore ?? 0;
+            const hwA = a.breakdown?.homeworkScore ?? 0;
+            if (hwB !== hwA) return hwB - hwA;
+
+            // Tie-breaker 2: Attendance score
+            const attB = b.breakdown?.attendanceScore ?? 0;
+            const attA = a.breakdown?.attendanceScore ?? 0;
+            return attB - attA;
+        });
+
+        return list.map((t, idx) => ({ ...t, rank: idx + 1 }));
+    }, [rankingData, teachers, teacherHomeworkCounts, teacherMonthlyAttendance, teacherSyllabusScores, teacherAcademicScores, allClassesData, fetchedClasses, masterTimetable]);
 
     // 5. Attendance Chart Data (Real-time)
     const [attendanceChartData, setAttendanceChartData] = useState(() => cachedInitialData?.attendanceChartData || []);
@@ -2573,131 +3177,388 @@ const Dashboard = () => {
                             {/* Teacher Performance Ranking Card (4-Pillar Weighted Model) */}
                             <div className="card" style={{
                                 position: 'relative',
-                                background: 'linear-gradient(135deg, #ffffff 0%, #fefce8 100%)',
-                                border: '1px solid #fef08a',
-                                boxShadow: '0 4px 12px rgba(234, 179, 8, 0.08)'
+                                background: '#ffffff',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '16px',
+                                padding: '1.25rem 1.5rem',
+                                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)'
                             }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <h3 style={{ fontSize: '1.125rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#854d0e', margin: 0 }}>
-                                            <Award size={20} fill="#facc15" color="#ca8a04" />
-                                            Performance Ranking
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                                        <div style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '8px',
+                                            background: '#fef3c7',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            border: '1px solid #fde68a'
+                                        }}>
+                                            <Trophy size={16} color="#d97706" />
+                                        </div>
+                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#0f172a', margin: 0 }}>
+                                            Teacher Performance Ranking
                                         </h3>
-                                        <span style={{ fontSize: '0.75rem', color: '#854d0e', fontWeight: '600', opacity: 0.85, background: '#fef08a', padding: '2px 8px', borderRadius: '6px' }}>
+                                        <span style={{ fontSize: '0.72rem', color: '#64748b', background: '#f8fafc', padding: '3px 8px', borderRadius: '6px', fontWeight: '600', border: '1px solid #e2e8f0' }}>
                                             {rankingCycle || 'Monthly Cycle (30 Days)'}
                                         </span>
                                     </div>
-                                    <span style={{ fontSize: '0.8rem', color: '#a16207', background: '#fef9c3', padding: '0.25rem 0.5rem', borderRadius: '8px', fontWeight: '600' }}>
-                                        Top Performers
-                                    </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                        {lastRankingSync && (
+                                            <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '500' }}>
+                                                Synced: {lastRankingSync}
+                                            </span>
+                                        )}
+                                        <button
+                                            onClick={handleSyncTeacherRankings}
+                                            disabled={isSyncingRankings}
+                                            title="Recalculate & Sync Teacher Rankings"
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '0.35rem',
+                                                fontSize: '0.75rem',
+                                                color: '#334155',
+                                                background: '#ffffff',
+                                                border: '1px solid #e2e8f0',
+                                                padding: '0.35rem 0.75rem',
+                                                borderRadius: '8px',
+                                                fontWeight: '600',
+                                                cursor: isSyncingRankings ? 'not-allowed' : 'pointer',
+                                                transition: 'all 0.2s ease',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!isSyncingRankings) e.currentTarget.style.background = '#f8fafc';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (!isSyncingRankings) e.currentTarget.style.background = '#ffffff';
+                                            }}
+                                        >
+                                            <RefreshCw size={12} style={{ animation: isSyncingRankings ? 'spin 1s linear infinite' : 'none' }} />
+                                            {isSyncingRankings ? 'Syncing...' : 'Sync Now'}
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                     {effectiveRankings.length === 0 ? (
-                                        <div style={{ textAlign: 'center', padding: '2rem', color: '#854d0e' }}>
+                                        <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: '#64748b' }}>
                                             <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600' }}>No teacher records found.</p>
                                         </div>
                                     ) : (
                                         effectiveRankings
                                             .slice(rankingPage * 5, (rankingPage + 1) * 5)
-                                            .map((teacher, index) => {
-                                                const actualRank = (rankingPage * 5) + index + 1;
-                                                const isTop = actualRank === 1;
-                                                const b = teacher.breakdown || {};
-                                                return (
-                                                    <div
-                                                        key={teacher.id || index}
-                                                        onClick={() => navigate('/teachers', { state: { selectedTeacherId: teacher.id || teacher.teacherId } })}
-                                                        style={{
-                                                            display: 'flex', alignItems: 'flex-start', gap: '1rem',
-                                                            padding: '0.85rem 1rem', borderRadius: '12px',
-                                                            background: isTop ? 'linear-gradient(90deg, #fef9c3 0%, #ffffff 100%)' : '#ffffff',
-                                                            border: isTop ? '1px solid #fde047' : '1px solid #f1f5f9',
-                                                            boxShadow: isTop ? '0 4px 6px -1px rgba(250, 204, 21, 0.15)' : '0 1px 3px rgba(0,0,0,0.02)',
-                                                            cursor: 'pointer',
-                                                            transition: 'transform 0.2s, box-shadow 0.2s',
-                                                            zIndex: 1
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            e.currentTarget.style.transform = 'translateX(4px)';
-                                                            e.currentTarget.style.boxShadow = '0 6px 12px rgba(0,0,0,0.06)';
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            e.currentTarget.style.transform = 'translateX(0)';
-                                                            e.currentTarget.style.boxShadow = isTop ? '0 4px 6px -1px rgba(250, 204, 21, 0.15)' : '0 1px 3px rgba(0,0,0,0.02)';
-                                                        }}
-                                                    >
-                                                        {/* Rank Badge */}
-                                                        <div style={{
-                                                            width: '32px', height: '32px', borderRadius: '50%',
-                                                            background: actualRank === 1 ? '#fbbf24' : (actualRank === 2 ? '#94a3b8' : (actualRank === 3 ? '#fb923c' : '#f1f5f9')),
-                                                            color: actualRank <= 3 ? 'white' : '#64748b',
-                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                            fontWeight: '800', fontSize: '0.85rem',
-                                                            boxShadow: actualRank <= 3 ? '0 2px 4px rgba(0,0,0,0.15)' : 'none',
-                                                            flexShrink: 0,
-                                                            marginTop: '2px'
-                                                        }}>
-                                                            {actualRank}
-                                                        </div>
+                                        .map((teacher, index) => {
+                                            const actualRank = (rankingPage * 5) + index + 1;
+                                            const isRank1 = actualRank === 1;
+                                            const isRank2 = actualRank === 2;
+                                            const isRank3 = actualRank === 3;
+                                            const b = teacher.breakdown || {};
 
-                                                        <div style={{ flex: 1 }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                                                <span style={{ fontWeight: '700', fontSize: '0.95rem', color: '#1e293b' }}>{teacher.name}</span>
-                                                                <span style={{ fontWeight: '800', fontSize: '1rem', color: isTop ? '#ca8a04' : 'var(--primary)' }}>
-                                                                    {teacher.performanceScore}%
-                                                                </span>
+                                            const acadVal = b.academicScore ?? 80;
+                                            const syllVal = b.syllabusScore ?? 75;
+                                            const attVal = b.attendanceScore ?? 90;
+                                            const hwVal = b.homeworkScore ?? 0;
+                                            const hwTasks = b.homeworkCount ?? 0;
+                                            const attInfo = b.attendanceInfo || {};
+                                            const presentDays = attInfo.presentDays !== undefined ? attInfo.presentDays : (teacher.isPresent ? 22 : 20);
+                                            const absentDays = attInfo.absentDays !== undefined ? attInfo.absentDays : (teacher.isPresent ? 2 : 4);
+                                            const totalDays = attInfo.totalWorkingDays || (presentDays + absentDays);
+
+                                            // Visual weighted segments for composite bar (adds up to 100%)
+                                            // Dynamic Color Scale for Standard Tracks (0-30% Red, 31-59% Orange, 60-100% Green)
+                                            const getScoreColorConfig = (score) => {
+                                                if (score <= 30) return { bar: '#ef4444', track: '#fee2e2', text: '#dc2626' };
+                                                if (score <= 59) return { bar: '#f59e0b', track: '#fef3c7', text: '#d97706' };
+                                                return { bar: '#10b981', track: '#dcfce7', text: '#059669' };
+                                            };
+
+                                            // School Standard Strict Attendance (>=80% Green, 65-79% Orange, <65% Red)
+                                            const getAttendanceColorConfig = (score, absCount) => {
+                                                let bar = '#10b981';
+                                                let track = '#dcfce7';
+                                                if (score < 65) {
+                                                    bar = '#ef4444';
+                                                    track = '#fee2e2';
+                                                } else if (score < 80) {
+                                                    bar = '#f59e0b';
+                                                    track = '#fef3c7';
+                                                }
+                                                const absentColor = absCount === 0 ? '#10b981' : (absCount <= 2 ? '#f59e0b' : '#ef4444');
+                                                return { bar, track, absentColor };
+                                            };
+
+                                            const overallColors = getScoreColorConfig(teacher.performanceScore);
+                                            const acadColors = getScoreColorConfig(acadVal);
+                                            const syllColors = getScoreColorConfig(syllVal);
+                                            const hwColors = getScoreColorConfig(hwVal);
+                                            const attColors = getAttendanceColorConfig(attVal, absentDays);
+
+                                            return (
+                                                <div
+                                                    key={teacher.id || index}
+                                                    onClick={() => navigate('/teachers', { state: { selectedTeacherId: teacher.id || teacher.teacherId } })}
+                                                    style={{
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        gap: '0.85rem',
+                                                        padding: '1rem 1.15rem',
+                                                        borderRadius: '12px',
+                                                        background: '#ffffff',
+                                                        border: isRank1 ? '1.5px solid #fcd34d' : '1px solid #e2e8f0',
+                                                        boxShadow: isRank1 
+                                                            ? '0 3px 10px rgba(245, 158, 11, 0.08)' 
+                                                            : '0 1px 3px rgba(0, 0, 0, 0.02)',
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.2s ease',
+                                                        position: 'relative'
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        e.currentTarget.style.transform = 'translateY(-1px)';
+                                                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.06)';
+                                                        e.currentTarget.style.borderColor = isRank1 ? '#f59e0b' : '#cbd5e1';
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        e.currentTarget.style.transform = 'translateY(0)';
+                                                        e.currentTarget.style.boxShadow = isRank1 
+                                                            ? '0 3px 10px rgba(245, 158, 11, 0.08)' 
+                                                            : '0 1px 3px rgba(0, 0, 0, 0.02)';
+                                                        e.currentTarget.style.borderColor = isRank1 ? '#fcd34d' : '#e2e8f0';
+                                                    }}
+                                                >
+                                                    {/* Top Row: Simple Rank Badge, Avatar, Name & Overall Score */}
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                            {/* Simple Modern Rank Badge */}
+                                                            <div style={{
+                                                                minWidth: '42px',
+                                                                height: '28px',
+                                                                padding: '0 8px',
+                                                                borderRadius: '8px',
+                                                                background: isRank1 
+                                                                    ? '#fef3c7' 
+                                                                    : isRank2 
+                                                                    ? '#f1f5f9' 
+                                                                    : isRank3 
+                                                                    ? '#ffedd5' 
+                                                                    : '#f8fafc',
+                                                                color: isRank1 
+                                                                    ? '#b45309' 
+                                                                    : isRank2 
+                                                                    ? '#334155' 
+                                                                    : isRank3 
+                                                                    ? '#9a3412' 
+                                                                    : '#64748b',
+                                                                border: isRank1 
+                                                                    ? '1px solid #fde68a' 
+                                                                    : isRank2 
+                                                                    ? '1px solid #e2e8f0' 
+                                                                    : isRank3 
+                                                                    ? '1px solid #fed7aa' 
+                                                                    : '1px solid #f1f5f9',
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                gap: '4px',
+                                                                fontSize: '0.8rem',
+                                                                fontWeight: '800',
+                                                                flexShrink: 0
+                                                            }}>
+                                                                {isRank1 && <Trophy size={13} color="#d97706" />}
+                                                                {isRank2 && <Medal size={13} color="#64748b" />}
+                                                                {isRank3 && <Medal size={13} color="#ea580c" />}
+                                                                #{actualRank}
                                                             </div>
 
-                                                            {/* Progress Bar */}
-                                                            <div style={{ width: '100%', height: '7px', background: '#f1f5f9', borderRadius: '4px', overflow: 'hidden', marginBottom: '0.45rem' }}>
-                                                                <div style={{
-                                                                    width: `${teacher.performanceScore}%`,
-                                                                    height: '100%',
-                                                                    background: isTop ? 'linear-gradient(90deg, #facc15 0%, #eab308 100%)' : 'linear-gradient(90deg, #6366f1 0%, #4f46e5 100%)',
-                                                                    borderRadius: '4px',
-                                                                    transition: 'width 1s ease-out'
-                                                                }} />
+                                                            {/* Teacher Avatar Initials */}
+                                                            <div style={{
+                                                                width: '36px',
+                                                                height: '36px',
+                                                                borderRadius: '50%',
+                                                                background: '#f8fafc',
+                                                                border: '1.5px solid #e2e8f0',
+                                                                color: '#334155',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                fontWeight: '700',
+                                                                fontSize: '0.82rem',
+                                                                flexShrink: 0
+                                                            }}>
+                                                                {getTeacherInitials(teacher.name)}
                                                             </div>
 
-                                                            {/* Subtext & 4-Pillar Metrics Breakdown */}
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '600' }}>
-                                                                    {teacher.class || 'All Classes'}
-                                                                </span>
-
-                                                                {/* 4 Pillars Breakdown Pills with Floating Tooltips */}
-                                                                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
-                                                                    <MetricTooltipPill
-                                                                        label="Academics"
-                                                                        value={b.academicScore ?? 80}
-                                                                        fullTitle="🎓 Student Academic Performance"
-                                                                        weight={35}
-                                                                    />
-                                                                    <MetricTooltipPill
-                                                                        label="Syllabus (30d)"
-                                                                        value={b.syllabusScore ?? 75}
-                                                                        fullTitle="📖 Monthly Syllabus Progress"
-                                                                        weight={30}
-                                                                    />
-                                                                    <MetricTooltipPill
-                                                                        label="Attendance (30d)"
-                                                                        value={b.attendanceScore ?? 90}
-                                                                        fullTitle="🕒 Teacher 30-Day Attendance"
-                                                                        weight={25}
-                                                                    />
-                                                                    <MetricTooltipPill
-                                                                        label="Duty"
-                                                                        value={b.engagementScore ?? 100}
-                                                                        fullTitle="🎯 Class Duty & Punctuality"
-                                                                        weight={10}
-                                                                    />
+                                                            {/* Teacher Name & Class/Tier */}
+                                                            <div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                                                    <span style={{ fontWeight: '700', fontSize: '0.95rem', color: '#0f172a' }}>
+                                                                        {teacher.name}
+                                                                    </span>
+                                                                    <span style={{
+                                                                        fontSize: '0.68rem',
+                                                                        padding: '2px 7px',
+                                                                        borderRadius: '5px',
+                                                                        fontWeight: '600',
+                                                                        background: teacher.performanceScore >= 85 ? '#eff6ff' : (teacher.performanceScore >= 75 ? '#f0fdf4' : '#f8fafc'),
+                                                                        color: teacher.performanceScore >= 85 ? '#1d4ed8' : (teacher.performanceScore >= 75 ? '#15803d' : '#475569'),
+                                                                        border: teacher.performanceScore >= 85 ? '1px solid #dbeafe' : (teacher.performanceScore >= 75 ? '1px solid #bbf7d0' : '1px solid #e2e8f0'),
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center'
+                                                                    }}>
+                                                                        {teacher.tier || 'Developing'}
+                                                                    </span>
+                                                                </div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginTop: '2px' }}>
+                                                                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '500' }}>
+                                                                        {teacher.class || 'All Classes'}
+                                                                    </span>
+                                                                    <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1' }} />
+                                                                    <span style={{
+                                                                        fontSize: '0.7rem',
+                                                                        fontWeight: '600',
+                                                                        color: teacher.isPresent ? '#10b981' : '#94a3b8'
+                                                                    }}>
+                                                                        {teacher.isPresent ? '● Present Today' : '○ Absent Today'}
+                                                                    </span>
                                                                 </div>
                                                             </div>
                                                         </div>
+
+                                                        {/* Overall Score Dial */}
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                            <div style={{ textAlign: 'right' }}>
+                                                                <div style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                                                    Overall Score
+                                                                </div>
+                                                                <div style={{
+                                                                    fontSize: '1.4rem',
+                                                                    fontWeight: '800',
+                                                                    color: overallColors.text,
+                                                                    lineHeight: 1.1
+                                                                }}>
+                                                                    {teacher.performanceScore}%
+                                                                </div>
+                                                            </div>
+                                                            <ChevronRight size={16} color="#94a3b8" />
+                                                        </div>
                                                     </div>
-                                                );
-                                            })
+
+                                                    {/* Single Solid Dynamic Overall Score Progress Bar */}
+                                                    <div style={{ width: '100%' }}>
+                                                        <div style={{
+                                                            width: '100%',
+                                                            height: '6px',
+                                                            background: overallColors.track,
+                                                            borderRadius: '999px',
+                                                            overflow: 'hidden'
+                                                        }}>
+                                                            <div
+                                                                title={`Overall Score: ${teacher.performanceScore}%`}
+                                                                style={{
+                                                                    width: `${teacher.performanceScore}%`,
+                                                                    height: '100%',
+                                                                    background: overallColors.bar,
+                                                                    borderRadius: '999px',
+                                                                    transition: 'width 0.6s ease'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* 4 Dedicated Score Lines (Tracks) Grid - 100% Performance Metric Display */}
+                                                    <div 
+                                                        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1.42fr_1.08fr]"
+                                                        style={{
+                                                            gap: '0.65rem',
+                                                            padding: '0.75rem 0.85rem',
+                                                            background: '#f8fafc',
+                                                            borderRadius: '10px',
+                                                            border: '1px solid #f1f5f9'
+                                                        }} 
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        {/* Track 1: Academics (35%) */}
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
+                                                                <span style={{ fontWeight: '600', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                    <GraduationCap size={13} color="#2563eb" /> Academics
+                                                                </span>
+                                                                <span style={{ fontWeight: '700', color: acadColors.text, flexShrink: 0 }}>
+                                                                    {acadVal}% <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '500' }}>/ 100%</span>
+                                                                </span>
+                                                            </div>
+                                                            <div style={{ width: '100%', height: '5px', background: acadColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                <div style={{ width: `${acadVal}%`, height: '100%', background: acadColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Track 2: Syllabus (30%) */}
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
+                                                                <span style={{ fontWeight: '600', color: '#6d28d9', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                    <BookOpen size={13} color="#7c3aed" /> Syllabus
+                                                                </span>
+                                                                <span style={{ fontWeight: '700', color: syllColors.text, flexShrink: 0 }}>
+                                                                    {syllVal}% <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '500' }}>/ 100%</span>
+                                                                </span>
+                                                            </div>
+                                                            <div style={{ width: '100%', height: '5px', background: syllColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                <div style={{ width: `${syllVal}%`, height: '100%', background: syllColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Track 3: Attendance (25%) */}
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
+                                                                <span style={{ fontWeight: '600', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                    <Clock size={13} color="#0284c7" /> Attendance
+                                                                </span>
+                                                                <span style={{ fontWeight: '700', color: '#1e293b', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                                                                    <span style={{ color: '#0284c7' }}>{presentDays} Present</span>
+                                                                    <span style={{ color: '#94a3b8', margin: '0 3px' }}>•</span>
+                                                                    <span style={{ color: attColors.absentColor }}>{absentDays} Absent</span>
+                                                                    <span 
+                                                                        title="School working days (excluding Sundays)"
+                                                                        style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: '500', marginLeft: '4px', cursor: 'help', whiteSpace: 'nowrap' }}
+                                                                    >
+                                                                        ({totalDays}&nbsp;working&nbsp;days)
+                                                                    </span>
+                                                                </span>
+                                                            </div>
+                                                            <div style={{ width: '100%', height: '5px', background: attColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                <div style={{ width: `${attVal}%`, height: '100%', background: attColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Track 4: Homework (10%) */}
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
+                                                                <span style={{ fontWeight: '600', color: '#047857', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                    <ClipboardList size={13} color="#059669" /> Homework
+                                                                </span>
+                                                                <span style={{ fontWeight: '700', color: hwColors.text, flexShrink: 0 }}>
+                                                                    {hwVal}% <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '500' }}>/ 100%</span>
+                                                                    <span style={{ fontSize: '0.62rem', fontWeight: '500', color: '#64748b', marginLeft: '3px', whiteSpace: 'nowrap' }}>
+                                                                        ({hwTasks} tasks)
+                                                                    </span>
+                                                                </span>
+                                                            </div>
+                                                            <div style={{ width: '100%', height: '5px', background: hwColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                <div style={{
+                                                                    width: `${hwVal}%`,
+                                                                    height: '100%',
+                                                                    background: hwColors.bar,
+                                                                    borderRadius: '999px',
+                                                                    transition: 'width 0.6s ease'
+                                                                }} />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
                                     )}
                                 </div>
 
