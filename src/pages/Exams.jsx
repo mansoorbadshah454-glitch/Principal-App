@@ -3224,40 +3224,34 @@ export default function Exams() {
                                     const isFail = !isPass && !isPending;
 
                                     const card3dContainer = isPending
-                                        ? 'bg-gradient-to-b from-amber-50 via-amber-100/50 to-amber-100/90 border-t-2 border-t-amber-200 border-x border-x-amber-300 border-b-4 border-b-amber-400 text-slate-900 shadow-[0_12px_24px_-6px_rgba(217,119,6,0.25)] hover:shadow-[0_18px_32px_-6px_rgba(217,119,6,0.35)]'
+                                        ? 'bg-white border-t-4 border-t-amber-400 border-x border-b border-slate-200/90 text-slate-900 shadow-sm hover:shadow-md'
                                         : isPass
-                                            ? 'bg-gradient-to-b from-emerald-600 via-emerald-700 to-emerald-800 border-t-2 border-t-emerald-400 border-x border-x-emerald-500 border-b-4 border-b-emerald-950 text-white shadow-[0_12px_28px_-6px_rgba(6,78,59,0.5),0_6px_10px_-4px_rgba(6,78,59,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(6,78,59,0.65)]'
-                                            : 'bg-gradient-to-b from-rose-600 via-rose-700 to-rose-800 border-t-2 border-t-rose-400 border-x border-x-rose-500 border-b-4 border-b-rose-950 text-white shadow-[0_12px_28px_-6px_rgba(159,18,57,0.5),0_6px_10px_-4px_rgba(159,18,57,0.3)] hover:shadow-[0_20px_36px_-8px_rgba(159,18,57,0.65)]';
+                                            ? 'bg-white border-t-4 border-t-emerald-500 border-x border-b border-slate-200/90 text-slate-900 shadow-sm hover:shadow-md'
+                                            : 'bg-white border-t-4 border-t-rose-500 border-x border-b border-slate-200/90 text-slate-900 shadow-sm hover:shadow-md';
 
                                     const roll3dBg = isPending
-                                        ? 'bg-amber-200/90 text-amber-950 border-t border-t-white border-b-2 border-b-amber-400 shadow-inner'
-                                        : 'bg-black/30 text-white border-t border-t-white/30 border-b-2 border-b-black/50 shadow-inner';
+                                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                        : isPass
+                                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                            : 'bg-rose-50 text-rose-800 border border-rose-200';
 
                                     const status3dPill = isPending
-                                        ? 'bg-amber-200 text-amber-950 font-black border border-amber-300 shadow-sm'
+                                        ? 'bg-amber-50 text-amber-700 font-black border border-amber-200/80'
                                         : isPass
-                                            ? 'bg-white text-emerald-900 font-black border border-white shadow-md'
-                                            : 'bg-white text-rose-900 font-black border border-white shadow-md';
+                                            ? 'bg-emerald-50 text-emerald-700 font-black border border-emerald-200/80'
+                                            : 'bg-rose-50 text-rose-700 font-black border border-rose-200/80';
 
-                                    const statsGrid3dBg = isPending
-                                        ? 'bg-white/90 border border-amber-200/90 shadow-inner text-slate-900'
-                                        : isPass
-                                            ? 'bg-emerald-950/50 border-t border-t-white/20 border-b border-b-black/40 text-white shadow-inner'
-                                            : 'bg-rose-950/50 border-t border-t-white/20 border-b border-b-black/40 text-white shadow-inner';
+                                    const statsGrid3dBg = 'bg-slate-50/90 border border-slate-200/70 text-slate-800';
 
-                                    const labelColor = isPending
-                                        ? 'text-slate-500 font-bold'
-                                        : isPass
-                                            ? 'text-emerald-200 font-bold'
-                                            : 'text-rose-200 font-bold';
+                                    const labelColor = 'text-slate-400 font-bold';
 
-                                    const subTextColor = isPending ? 'text-slate-600 font-semibold' : isPass ? 'text-emerald-100 font-semibold' : 'text-rose-100 font-semibold';
+                                    const subTextColor = 'text-slate-500 font-medium';
 
                                     return (
                                         <div
                                             key={studentRow.studentId}
-                                            className={`rounded-3xl p-5.5 transition-all duration-300 hover:-translate-y-1.5 cursor-pointer select-none ${card3dContainer} ${
-                                                isSelected ? 'ring-4 ring-indigo-400/80 scale-[1.02]' : isEditingThisStudent ? 'ring-4 ring-amber-400 shadow-2xl scale-[1.01]' : isPreviewing ? 'ring-4 ring-slate-800 shadow-2xl scale-[1.01]' : 'opacity-100'
+                                            className={`rounded-3xl p-5.5 transition-all duration-300 hover:-translate-y-1 cursor-pointer select-none ${card3dContainer} ${
+                                                isSelected ? 'ring-3 ring-indigo-500/80 scale-[1.01]' : isEditingThisStudent ? 'ring-3 ring-amber-400 shadow-lg scale-[1.01]' : isPreviewing ? 'ring-3 ring-slate-800 shadow-lg scale-[1.01]' : 'opacity-100'
                                             }`}
                                             onClick={() => {
                                                 const next = new Set(selectedStudentIdsForBatch);
@@ -3274,7 +3268,7 @@ export default function Exams() {
                                                     </div>
                                                     <div>
                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                            <h4 className="font-black text-base sm:text-[17px] tracking-tight drop-shadow-sm leading-snug">
+                                                            <h4 className="font-black text-base sm:text-[17px] text-slate-900 tracking-tight leading-snug">
                                                                 {studentRow.name}
                                                             </h4>
                                                             <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-xl ${status3dPill}`}>
@@ -3294,35 +3288,35 @@ export default function Exams() {
                                                 />
                                             </div>
 
-                                            {/* Embossed 3D Stats Grid: Obtained, Grade, Position, Attendance */}
+                                            {/* Clean Stats Grid: Obtained, Grade, Position, Attendance */}
                                             <div className={`grid grid-cols-4 gap-2 p-3 rounded-2xl text-center mb-4 ${statsGrid3dBg}`}>
                                                 <div>
                                                     <span className={`text-[10px] sm:text-[11px] block uppercase tracking-wider mb-0.5 ${labelColor}`}>Obtained</span>
-                                                    <span className={`font-black text-sm sm:text-base tracking-tight block ${isPending ? 'text-slate-900' : 'text-white'}`}>
+                                                    <span className="font-black text-sm sm:text-base tracking-tight block text-slate-800">
                                                         {studentRow.totalObtained} / {studentRow.totalMax}
                                                     </span>
                                                 </div>
                                                 <div>
                                                     <span className={`text-[10px] sm:text-[11px] block uppercase tracking-wider mb-0.5 ${labelColor}`}>Grade</span>
-                                                    <span className={`font-black text-sm sm:text-base block ${isPending ? 'text-indigo-700 font-black' : 'text-white'}`}>
+                                                    <span className={`font-black text-sm sm:text-base block ${isPass ? 'text-emerald-700' : isFail ? 'text-rose-700' : 'text-indigo-700'}`}>
                                                         {studentRow.grade}
                                                     </span>
                                                 </div>
                                                 <div>
                                                     <span className={`text-[10px] sm:text-[11px] block uppercase tracking-wider mb-0.5 ${labelColor}`}>Position</span>
-                                                    <span className={`font-black text-sm sm:text-base block ${isPending ? 'text-emerald-700 font-black' : 'text-amber-300'}`}>
+                                                    <span className="font-black text-sm sm:text-base block text-amber-600">
                                                         {getOrdinal(studentRow.position)}
                                                     </span>
                                                 </div>
                                                 <div>
                                                     <span className={`text-[10px] sm:text-[11px] block uppercase tracking-wider mb-0.5 ${labelColor}`}>Attendance</span>
-                                                    <span className={`font-black text-xs sm:text-[13px] block truncate ${isPending ? 'text-blue-700 font-black' : 'text-sky-200'}`} title={studentRow.attendance}>
+                                                    <span className="font-black text-xs sm:text-[13px] block truncate text-slate-700" title={studentRow.attendance}>
                                                         {studentRow.attendance || '—'}
                                                     </span>
                                                 </div>
                                             </div>
 
-                                            {/* 3D Beveled Action Buttons: Unified Preview + PDF */}
+                                            {/* Action Buttons: Unified Preview + PDF */}
                                             <div className="flex items-center gap-2">
                                                 <button
                                                     onClick={(e) => {
@@ -3336,14 +3330,10 @@ export default function Exams() {
                                                             setIsEditingMarksInDmc(false);
                                                         }
                                                     }}
-                                                    className={`flex-1 py-2.5 px-3 text-center text-xs sm:text-sm font-black rounded-xl transition-all border-b-3 active:translate-y-0.5 shadow-md ${
+                                                    className={`flex-1 py-2.5 px-3 text-center text-xs sm:text-sm font-black rounded-xl transition-all shadow-sm ${
                                                         isPreviewing
-                                                            ? 'text-white bg-slate-800 hover:bg-slate-900 border-b-black ring-2 ring-slate-400'
-                                                            : isPending
-                                                                ? 'text-indigo-700 bg-white hover:bg-indigo-50 border-b-slate-300 border-x border-t border-slate-200'
-                                                                : isPass
-                                                                    ? 'bg-white text-emerald-950 hover:bg-emerald-50 border-b-emerald-900 border-x border-t border-white'
-                                                                    : 'bg-white text-rose-950 hover:bg-rose-50 border-b-rose-900 border-x border-t border-white'
+                                                            ? 'text-white bg-slate-800 hover:bg-slate-900 ring-2 ring-slate-400'
+                                                            : 'text-slate-700 bg-slate-100 hover:bg-slate-200/80 border border-slate-200/80'
                                                     }`}
                                                 >
                                                     {isPreviewing ? 'Close Preview' : 'Preview'}
@@ -3353,13 +3343,7 @@ export default function Exams() {
                                                         e.stopPropagation();
                                                         generateStudentDmcPdf(studentRow, true);
                                                     }}
-                                                    className={`inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-black rounded-xl transition-all border-b-3 active:translate-y-0.5 shadow-md ${
-                                                        isPending
-                                                            ? 'text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border-b-emerald-400'
-                                                            : isPass
-                                                                ? 'bg-emerald-900 hover:bg-emerald-950 text-white border-b-black/60 border-t border-t-emerald-700'
-                                                                : 'bg-rose-900 hover:bg-rose-950 text-white border-b-black/60 border-t border-t-rose-700'
-                                                    }`}
+                                                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-black rounded-xl transition-all shadow-sm bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80"
                                                     title="Download PDF Result Card"
                                                 >
                                                     <Download className="w-4 h-4" />
