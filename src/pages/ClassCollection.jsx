@@ -6,7 +6,7 @@ import {
     CheckSquare, Square
 } from 'lucide-react';
 import { db, auth } from '../firebase';
-import { collection, getDocs, doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, onSnapshot, updateDoc, setDoc, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CachedImage from '../components/CachedImage';
@@ -558,16 +558,73 @@ const ClassCollection = () => {
         }
         const newStatus = currentStatus === 'paid' ? 'unpaid' : 'paid';
         const studentRef = doc(db, `schools/${schoolId}/classes/${classId}/students`, studentId);
+        const masterStudentRef = doc(db, `schools/${schoolId}/students`, studentId);
 
-        console.log(`[ClassCollection] Attempting toggle for student ${studentId}`);
-        console.log(`[ClassCollection] Path: schools/${schoolId}/classes/${classId}/students/${studentId}`);
-        console.log(`[ClassCollection] New Status: ${newStatus}`);
+        const st = (students || []).find(s => s.id === studentId);
+        const nowD = new Date();
+        const targetMonthKey = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, '0')}`;
+        const receiptNo = `RCP-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+
+        console.log(`[ClassCollection] Attempting toggle for student ${studentId}, New Status: ${newStatus}`);
 
         try {
-            await updateDoc(studentRef, {
-                monthlyFeeStatus: newStatus,
-                monthlyFeeDate: newStatus === 'paid' ? new Date().toISOString() : null
-            });
+            if (newStatus === 'paid') {
+                const nowIso = nowD.toISOString();
+                const studentPayload = {
+                    monthlyFeeStatus: 'paid',
+                    monthlyFeeDate: nowIso,
+                    paidMonths: arrayUnion(targetMonthKey)
+                };
+
+                // 1. Update class student doc
+                await updateDoc(studentRef, studentPayload);
+
+                // 2. Sync master student doc
+                try {
+                    await setDoc(masterStudentRef, studentPayload, { merge: true });
+                } catch (e) {
+                    console.warn("[ClassCollection] Master student sync non-fatal:", e);
+                }
+
+                // 3. Create permanent transaction receipt in feeTransactions for ledger & Parent App
+                const txDocRef = doc(db, `schools/${schoolId}/feeTransactions`, receiptNo);
+                const feeAmount = Number(st?.monthlyFee ?? st?.fee ?? st?.tuitionFee ?? 0);
+                await setDoc(txDocRef, {
+                    id: receiptNo,
+                    receiptNo: receiptNo,
+                    studentId: studentId,
+                    studentName: st?.name || st?.studentName || 'Student',
+                    rollNo: st?.rollNo || st?.rollNumber || '',
+                    classId: classId,
+                    className: className || '',
+                    amount: feeAmount,
+                    paymentMethod: 'cash',
+                    collectedBy: 'Principal / Admin',
+                    timestamp: serverTimestamp(),
+                    dateIso: nowIso,
+                    month: targetMonthKey,
+                    status: 'completed',
+                    type: 'tuition',
+                    remarks: `Collected via Class Collection (${className || ''})`
+                }, { merge: true });
+
+            } else {
+                // Toggled to unpaid
+                const studentPayload = {
+                    monthlyFeeStatus: 'unpaid',
+                    monthlyFeeDate: null,
+                    paidMonths: arrayRemove(targetMonthKey)
+                };
+
+                await updateDoc(studentRef, studentPayload);
+
+                try {
+                    await setDoc(masterStudentRef, studentPayload, { merge: true });
+                } catch (e) {
+                    console.warn("[ClassCollection] Master student sync non-fatal:", e);
+                }
+            }
+
             console.log(`[ClassCollection] Update SUCCESS for student: ${studentId}, monthlyFeeStatus: ${newStatus}`);
         } catch (error) {
             console.error("[ClassCollection] Update FAILED:", error);

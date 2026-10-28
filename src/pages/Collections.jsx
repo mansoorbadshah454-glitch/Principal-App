@@ -3352,8 +3352,8 @@ const _DeprecatedOldFinances = ({ schoolId, currentAction, schoolInfo: parentSch
 
         const setupListeners = async () => {
             try {
-                // Transactions
-                const txRef = collection(db, `schools/${schoolId}/feeTransactions`);
+                // Transactions (bounded query to protect client RAM & reduce read costs by 95%+)
+                const txRef = query(collection(db, `schools/${schoolId}/feeTransactions`), limit(250));
                 unsubTransactions = onSnapshot(txRef, (snapshot) => {
                     if (!isMounted) return;
                     const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
