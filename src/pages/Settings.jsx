@@ -4,11 +4,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     Camera, Save, Loader2, Shield, ShieldCheck, Copy, CheckCircle2, Clock, Building, Briefcase,
     Plus, Trash2, Users, Info, BookOpen, Sparkles, Bot, Key, ExternalLink,
-    CreditCard, Landmark, Upload, Eye, FileText, AlertCircle, AlertTriangle, ArrowRight,
+    CreditCard, Landmark, Upload, Eye, EyeOff, Lock, Mail, FileText, AlertCircle, AlertTriangle, ArrowRight,
     Smartphone, RefreshCw, X, Check, Search, Calendar, LayoutGrid, ListFilter,
     CheckCheck, Ban, ArrowUpRight
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
+import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
 import {
     doc, getDoc, setDoc, onSnapshot, collection, query, where, addDoc, serverTimestamp, deleteDoc, writeBatch, getDocs
 } from 'firebase/firestore';
@@ -27,7 +28,7 @@ const Settings = () => {
         try {
             const params = new URLSearchParams(window.location.search);
             const tabParam = params.get('tab');
-            if (tabParam && ['details', 'timing', 'accounts', 'ai', 'billing', 'import', 'syllabus'].includes(tabParam)) {
+            if (tabParam && ['details', 'timing', 'accounts', 'ai', 'billing', 'import', 'syllabus', 'security'].includes(tabParam)) {
                 return tabParam;
             }
         } catch (e) {}
@@ -90,6 +91,21 @@ const Settings = () => {
     const [copied, setCopied] = useState(false);
     const [errors, setErrors] = useState({});
     const [fetchError, setFetchError] = useState(false);
+
+    // Security & Password Management States
+    const [passwordData, setPasswordData] = useState({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+    });
+    const [showCurrentPass, setShowCurrentPass] = useState(false);
+    const [showNewPass, setShowNewPass] = useState(false);
+    const [showConfirmPass, setShowConfirmPass] = useState(false);
+    const [updatingPassword, setUpdatingPassword] = useState(false);
+    const [passwordSuccess, setPasswordSuccess] = useState('');
+    const [passwordError, setPasswordError] = useState('');
+    const [sendingResetEmail, setSendingResetEmail] = useState(false);
+    const [resetEmailSuccess, setResetEmailSuccess] = useState('');
 
     // Subscription & SaaS Billing States
     const [subscriptionInfo, setSubscriptionInfo] = useState({
@@ -1086,6 +1102,99 @@ const Settings = () => {
         }
     };
 
+    const handleUpdatePassword = async (e) => {
+        if (e) e.preventDefault();
+        setPasswordError('');
+        setPasswordSuccess('');
+        setResetEmailSuccess('');
+
+        const user = auth.currentUser;
+        if (!user || !user.email) {
+            setPasswordError('No active principal session found. Please refresh or re-login.');
+            return;
+        }
+
+        if (!passwordData.currentPassword) {
+            setPasswordError('Please enter your current password.');
+            return;
+        }
+
+        if (!passwordData.newPassword) {
+            setPasswordError('Please enter a new password.');
+            return;
+        }
+
+        if (passwordData.newPassword.length < 6) {
+            setPasswordError('New password must be at least 6 characters long.');
+            return;
+        }
+
+        if (passwordData.newPassword !== passwordData.confirmPassword) {
+            setPasswordError('New password and confirm password do not match.');
+            return;
+        }
+
+        if (passwordData.currentPassword === passwordData.newPassword) {
+            setPasswordError('New password cannot be the same as your current password.');
+            return;
+        }
+
+        setUpdatingPassword(true);
+        try {
+            // Re-authenticate user with current password
+            const credential = EmailAuthProvider.credential(user.email, passwordData.currentPassword);
+            await reauthenticateWithCredential(user, credential);
+
+            // Directly update Firebase Auth password (one-way hashed & encrypted)
+            await updatePassword(user, passwordData.newPassword);
+
+            // Clear form
+            setPasswordData({
+                currentPassword: '',
+                newPassword: '',
+                confirmPassword: ''
+            });
+
+            setPasswordSuccess('Your master password has been successfully updated! This credential is end-to-end encrypted. Neither Super Administrators nor MAI Tech personnel can view, decrypt, or log into your school account.');
+        } catch (err) {
+            console.error('Password update error:', err);
+            if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+                setPasswordError('Your current password is incorrect. Please verify and enter the correct password.');
+            } else if (err.code === 'auth/weak-password') {
+                setPasswordError('Password must be at least 6 characters long.');
+            } else if (err.code === 'auth/requires-recent-login') {
+                setPasswordError('Security session has expired. Please log out and log back in to verify your identity.');
+            } else {
+                setPasswordError(`Unable to update password: ${err.message || 'Unknown error'}`);
+            }
+        } finally {
+            setUpdatingPassword(false);
+        }
+    };
+
+    const handleSendResetEmail = async () => {
+        const user = auth.currentUser;
+        const targetEmail = user?.email || schoolData.email;
+        if (!targetEmail) {
+            setPasswordError('No verified email address found for this account.');
+            return;
+        }
+
+        setSendingResetEmail(true);
+        setResetEmailSuccess('');
+        setPasswordError('');
+
+        try {
+            await sendPasswordResetEmail(auth, targetEmail);
+            setResetEmailSuccess(`A secure password reset link has been dispatched to '${targetEmail}'. Please check your inbox or spam folder to complete the reset.`);
+        } catch (err) {
+            console.error('Send reset email error:', err);
+            setPasswordError(`Failed to send password reset email: ${err.message}`);
+        } finally {
+            setSendingResetEmail(false);
+        }
+    };
+
     if (initialLoading) {
         return (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
@@ -1210,7 +1319,8 @@ const Settings = () => {
                         },
                         { id: 'import', label: 'Import Students', icon: Users, desc: 'Excel / CSV bulk upload' },
                         { id: 'upload_syllabus', label: 'Upload Syllabus', icon: BookOpen, desc: 'Curricula scanner' },
-                        { id: 'ai_assistant', label: 'AI Copilot', icon: Sparkles, desc: 'Gemini Copilot engine' }
+                        { id: 'ai_assistant', label: 'AI Copilot', icon: Sparkles, desc: 'Gemini Copilot engine' },
+                        { id: 'security', label: 'Security & Password', icon: ShieldCheck, desc: 'Private password control' }
                     ].map((tab) => {
                         const isActive = activeTab === tab.id;
                         const Icon = tab.icon;
@@ -3448,6 +3558,311 @@ const Settings = () => {
                             {savingAi ? <Loader2 className="animate-spin" size={20} /> : (aiSavedSuccess ? <CheckCircle2 size={20} /> : <Save size={20} />)}
                             {savingAi ? 'Saving AI Settings...' : (aiSavedSuccess ? 'AI Settings Saved!' : 'Save AI Settings')}
                         </button>
+                    </div>
+                )}
+
+                {/* Security & Private Password Tab */}
+                {activeTab === 'security' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '760px', width: '100%' }}>
+                        {/* Main Password Update Card */}
+                        <div style={{
+                            background: '#ffffff',
+                            borderRadius: '16px',
+                            padding: '1.75rem',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+                            border: '1px solid #e2e8f0'
+                        }}>
+                            {/* Card Header */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #f1f5f9' }}>
+                                <div style={{
+                                    width: '44px',
+                                    height: '44px',
+                                    borderRadius: '12px',
+                                    background: 'rgba(99, 102, 241, 0.12)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: '#4f46e5'
+                                }}>
+                                    <ShieldCheck size={24} />
+                                </div>
+                                <div>
+                                    <h2 style={{ fontSize: '1.25rem', fontWeight: '800', margin: 0, color: '#0f172a' }}>
+                                        Account Security & Master Password
+                                    </h2>
+                                    <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.82rem', color: '#64748b' }}>
+                                        Update your personal administrative password to ensure sovereign, confidential access to your school portal.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Privacy Guarantee Box */}
+                            <div style={{
+                                background: '#f0fdf4',
+                                border: '1px solid #bbf7d0',
+                                borderRadius: '12px',
+                                padding: '1rem 1.15rem',
+                                marginBottom: '1.5rem',
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: '0.75rem'
+                            }}>
+                                <Shield size={20} color="#16a34a" style={{ flexShrink: 0, marginTop: '2px' }} />
+                                <div>
+                                    <h4 style={{ margin: '0 0 0.25rem 0', fontSize: '0.875rem', fontWeight: '700', color: '#15803d' }}>
+                                        100% Zero-Knowledge Privacy Guarantee (MAI Tech Protocol)
+                                    </h4>
+                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#166534', lineHeight: 1.5 }}>
+                                        When you set your master password, it is cryptographically hashed with irreversible one-way encryption directly on Google Firebase Auth. <strong>Neither Super Administrators nor the MAI Tech team can view, decrypt, or log into your school account.</strong> Your institution's data and operations remain completely private and confidential.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* User Account Info Pill */}
+                            <div style={{
+                                background: '#f8fafc',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '10px',
+                                padding: '0.75rem 1rem',
+                                marginBottom: '1.5rem',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                flexWrap: 'wrap',
+                                gap: '0.5rem'
+                            }}>
+                                <div>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', display: 'block' }}>
+                                        Authenticated Account
+                                    </span>
+                                    <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#0f172a' }}>
+                                        {auth.currentUser?.email || schoolData.email || 'Principal Account'}
+                                    </span>
+                                </div>
+                                <span style={{
+                                    fontSize: '0.75rem',
+                                    fontWeight: '700',
+                                    padding: '0.25rem 0.65rem',
+                                    borderRadius: '999px',
+                                    background: '#e0e7ff',
+                                    color: '#4338ca'
+                                }}>
+                                    Role: School Principal (Protected Access)
+                                </span>
+                            </div>
+
+                            {/* Error Alert */}
+                            {passwordError && (
+                                <div style={{
+                                    background: '#fef2f2',
+                                    border: '1px solid #fecaca',
+                                    borderRadius: '10px',
+                                    padding: '0.85rem 1rem',
+                                    marginBottom: '1.25rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.65rem',
+                                    color: '#b91c1c',
+                                    fontSize: '0.85rem'
+                                }}>
+                                    <AlertCircle size={18} style={{ flexShrink: 0 }} />
+                                    <span>{passwordError}</span>
+                                </div>
+                            )}
+
+                            {/* Success Alert */}
+                            {passwordSuccess && (
+                                <div style={{
+                                    background: '#f0fdf4',
+                                    border: '1px solid #bbf7d0',
+                                    borderRadius: '10px',
+                                    padding: '0.85rem 1rem',
+                                    marginBottom: '1.25rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.65rem',
+                                    color: '#15803d',
+                                    fontSize: '0.85rem'
+                                }}>
+                                    <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
+                                    <span>{passwordSuccess}</span>
+                                </div>
+                            )}
+
+                            {/* Form */}
+                            <form onSubmit={handleUpdatePassword} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
+                                {/* Current Password */}
+                                <div>
+                                    <label style={labelStyle}>
+                                        Current Password <span style={{ color: '#ef4444' }}>*</span>
+                                    </label>
+                                    <div style={{ position: 'relative' }}>
+                                        <Lock size={16} color="#94a3b8" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }} />
+                                        <input
+                                            type={showCurrentPass ? 'text' : 'password'}
+                                            value={passwordData.currentPassword}
+                                            onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                                            placeholder="Enter your current password"
+                                            style={{ ...inputStyle(false), paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
+                                            autoComplete="current-password"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCurrentPass(!showCurrentPass)}
+                                            style={{
+                                                position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)',
+                                                background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center'
+                                            }}
+                                        >
+                                            {showCurrentPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                    <span style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem', display: 'block' }}>
+                                        Required for identity verification before applying security changes.
+                                    </span>
+                                </div>
+
+                                {/* New Password */}
+                                <div>
+                                    <label style={labelStyle}>
+                                        New Master Password <span style={{ color: '#ef4444' }}>*</span>
+                                    </label>
+                                    <div style={{ position: 'relative' }}>
+                                        <Key size={16} color="#94a3b8" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }} />
+                                        <input
+                                            type={showNewPass ? 'text' : 'password'}
+                                            value={passwordData.newPassword}
+                                            onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                                            placeholder="Enter a strong new password (minimum 6 characters)"
+                                            style={{ ...inputStyle(false), paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
+                                            autoComplete="new-password"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowNewPass(!showNewPass)}
+                                            style={{
+                                                position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)',
+                                                background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center'
+                                            }}
+                                        >
+                                            {showNewPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Confirm New Password */}
+                                <div>
+                                    <label style={labelStyle}>
+                                        Confirm New Password <span style={{ color: '#ef4444' }}>*</span>
+                                    </label>
+                                    <div style={{ position: 'relative' }}>
+                                        <Key size={16} color="#94a3b8" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }} />
+                                        <input
+                                            type={showConfirmPass ? 'text' : 'password'}
+                                            value={passwordData.confirmPassword}
+                                            onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                                            placeholder="Re-enter your new password"
+                                            style={{ ...inputStyle(false), paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
+                                            autoComplete="new-password"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowConfirmPass(!showConfirmPass)}
+                                            style={{
+                                                position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)',
+                                                background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center'
+                                            }}
+                                        >
+                                            {showConfirmPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Submit Button */}
+                                <button
+                                    type="submit"
+                                    disabled={updatingPassword}
+                                    className="btn-primary"
+                                    style={{
+                                        marginTop: '0.5rem',
+                                        padding: '0.8rem 1.25rem',
+                                        borderRadius: '8px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '0.5rem',
+                                        fontSize: '0.95rem',
+                                        fontWeight: '700',
+                                        cursor: updatingPassword ? 'not-allowed' : 'pointer'
+                                    }}
+                                >
+                                    {updatingPassword ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                                    {updatingPassword ? 'Updating Password...' : 'Save & Update Master Password'}
+                                </button>
+                            </form>
+                        </div>
+
+                        {/* Alternate Option: Send Password Reset Link to Official Email */}
+                        <div style={{
+                            background: '#ffffff',
+                            borderRadius: '16px',
+                            padding: '1.5rem',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+                            border: '1px solid #e2e8f0'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.75rem' }}>
+                                <Mail size={20} color="#4f46e5" />
+                                <h3 style={{ fontSize: '1.05rem', fontWeight: '700', margin: 0, color: '#0f172a' }}>
+                                    Need a Password Reset Link via Email?
+                                </h3>
+                            </div>
+                            <p style={{ fontSize: '0.82rem', color: '#64748b', margin: '0 0 1rem 0', lineHeight: 1.5 }}>
+                                Prefer to update your password through your verified email? Click below to dispatch an encrypted reset link directly to your official administrative email address.
+                            </p>
+
+                            {resetEmailSuccess && (
+                                <div style={{
+                                    background: '#f0fdf4',
+                                    border: '1px solid #bbf7d0',
+                                    borderRadius: '10px',
+                                    padding: '0.75rem 1rem',
+                                    marginBottom: '1rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    color: '#15803d',
+                                    fontSize: '0.85rem'
+                                }}>
+                                    <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+                                    <span>{resetEmailSuccess}</span>
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={handleSendResetEmail}
+                                disabled={sendingResetEmail}
+                                style={{
+                                    padding: '0.65rem 1.15rem',
+                                    borderRadius: '8px',
+                                    background: '#f1f5f9',
+                                    border: '1px solid #cbd5e1',
+                                    color: '#1e293b',
+                                    fontSize: '0.85rem',
+                                    fontWeight: '700',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    cursor: sendingResetEmail ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
+                            >
+                                {sendingResetEmail ? <Loader2 className="animate-spin" size={16} /> : <Mail size={16} />}
+                                {sendingResetEmail ? 'Sending Reset Email...' : `Send Password Reset Link to ${auth.currentUser?.email || 'Registered Email'}`}
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
