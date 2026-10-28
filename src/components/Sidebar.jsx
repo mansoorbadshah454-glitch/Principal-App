@@ -6,7 +6,7 @@ import {
     FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Lock, DoorOpen, BookOpen
 } from 'lucide-react';
 import { auth, db } from '../firebase';
-import { collection, onSnapshot, query } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import GalaxyBackground from './GalaxyBackground';
 import appIcon from '../assets/app_icon_blue.png';
@@ -68,6 +68,7 @@ const Sidebar = () => {
     const location = useLocation();
     const { schoolId, hasAccess, isPrincipal, hasModule } = useAuthPermissions();
     const [pendingOnlineCount, setPendingOnlineCount] = useState(0);
+    const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
 
     const [openGroups, setOpenGroups] = useState({
         overview: true,
@@ -98,6 +99,36 @@ const Sidebar = () => {
                 }
             });
             setPendingOnlineCount(pending);
+        }, () => {});
+        return () => unsub();
+    }, [schoolId]);
+
+    // Live listener for unread teacher messages
+    useEffect(() => {
+        if (!schoolId) return;
+        const session = localStorage.getItem('manual_session');
+        let myId = 'principal';
+        if (session) {
+            try {
+                const parsed = JSON.parse(session);
+                if (parsed.role && parsed.role !== 'principal' && parsed.uid) {
+                    myId = parsed.uid;
+                }
+            } catch (e) {}
+        }
+
+        const msgsRef = collection(db, `schools/${schoolId}/messages`);
+        const qMsgs = query(msgsRef, where('participants', 'array-contains', myId));
+        const unsub = onSnapshot(qMsgs, (snapshot) => {
+            let unread = 0;
+            snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                const isFromMe = (data.fromId === myId || data.from === myId);
+                if (!isFromMe && data.read === false) {
+                    unread++;
+                }
+            });
+            setUnreadMessagesCount(unread);
         }, () => {});
         return () => unsub();
     }, [schoolId]);
@@ -337,6 +368,20 @@ const Sidebar = () => {
                                                         animation: 'pulse 2s infinite'
                                                     }}>
                                                         {pendingOnlineCount}
+                                                    </span>
+                                                ) : (item.path === '/inbox' && unreadMessagesCount > 0) ? (
+                                                    <span style={{
+                                                        fontSize: '0.7rem',
+                                                        padding: '0.15rem 0.5rem',
+                                                        borderRadius: '9999px',
+                                                        background: '#6366f1',
+                                                        color: 'white',
+                                                        fontWeight: '800',
+                                                        letterSpacing: '0.02em',
+                                                        boxShadow: '0 0 10px rgba(99, 102, 241, 0.6)',
+                                                        animation: 'pulse 2s infinite'
+                                                    }}>
+                                                        {unreadMessagesCount}
                                                     </span>
                                                 ) : item.isNew && (
                                                     <span style={{

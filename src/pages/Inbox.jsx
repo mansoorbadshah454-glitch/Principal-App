@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { db, auth, storage } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
@@ -14,6 +15,7 @@ import CachedImage from '../components/CachedImage';
 import { compressImage } from '../utils/imageCompressor';
 
 const Inbox = () => {
+    const location = useLocation();
     const [schoolId, setSchoolId] = useState(null);
     const [currentUserId, setCurrentUserId] = useState('principal');
     const [currentUserRole, setCurrentUserRole] = useState('principal');
@@ -148,6 +150,16 @@ const Inbox = () => {
 
         return () => unsubscribe();
     }, [schoolId]);
+
+    // Auto-select teacher when navigating from global incoming message toast
+    useEffect(() => {
+        if (location.state?.selectedTeacherId && teachers.length > 0) {
+            const found = teachers.find(t => t.id === location.state.selectedTeacherId);
+            if (found) {
+                setSelectedTeacher(found);
+            }
+        }
+    }, [location.state, teachers]);
 
     // 2.2 Fetch Admins (If logged in as Principal or Admin)
     useEffect(() => {

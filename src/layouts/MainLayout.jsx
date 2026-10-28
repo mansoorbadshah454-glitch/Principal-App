@@ -3,21 +3,22 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Sidebar from '../components/Sidebar';
 import { db, auth, messaging } from '../firebase';
-import { doc, collection, query, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, collection, query, onSnapshot, updateDoc, arrayUnion, where } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
-import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info, CreditCard, Sparkles } from 'lucide-react';
+import { LogOut, ShieldAlert, X, Bell, AlertTriangle, CheckCircle, Info, CreditCard, Sparkles, MessageSquare } from 'lucide-react';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import PrincipalAiAssistant from '../components/PrincipalAiAssistant/PrincipalAiAssistant';
-import { playShopifyChachingSound } from '../utils/audioAlerts';
+import { playShopifyChachingSound, playNewMessageChime } from '../utils/audioAlerts';
 
 const MainLayout = () => {
-    const { isPrincipal, hasAccess } = useAuthPermissions();
+    const { isPrincipal, hasAccess, uid: permUid } = useAuthPermissions();
     const canUseAi = isPrincipal || hasAccess('canUseAiAssistant');
     const [isSuspended, setIsSuspended] = useState(false);
     const [loading, setLoading] = useState(true);
     const [announcement, setAnnouncement] = useState(null);
     const [schoolId, setSchoolId] = useState('');
     const [globalPaymentToast, setGlobalPaymentToast] = useState(null);
+    const [globalMessageToast, setGlobalMessageToast] = useState(null);
     const prevGlobalPendingCountRef = useRef(null);
     const location = useLocation();
     const navigate = useNavigate();
@@ -125,8 +126,15 @@ const MainLayout = () => {
     useEffect(() => {
         const session = localStorage.getItem('manual_session');
         let currentSchoolId = '';
+        let currentUid = '';
+        let currentRole = 'principal';
         if (session) {
-            currentSchoolId = JSON.parse(session).schoolId;
+            try {
+                const parsed = JSON.parse(session);
+                currentSchoolId = parsed.schoolId;
+                currentUid = parsed.uid || '';
+                currentRole = parsed.role || 'principal';
+            } catch (e) {}
             setSchoolId(currentSchoolId);
         }
 
@@ -232,10 +240,51 @@ const MainLayout = () => {
                 console.warn("Global payment submissions listener notice:", err);
             });
 
+            // Global Real-time Listener for Incoming Teacher Messages (Chime + Interactive Toast across all tabs)
+            const myMsgId = (currentRole === 'principal' || !currentUid) ? 'principal' : currentUid;
+            const msgsRef = collection(db, `schools/${currentSchoolId}/messages`);
+            const qMsgs = query(msgsRef, where('participants', 'array-contains', myMsgId));
+            let isInitialMsgLoad = true;
+            const initialMsgDocIds = new Set();
+
+            const unsubMessages = onSnapshot(qMsgs, (snapshot) => {
+                if (isInitialMsgLoad) {
+                    snapshot.forEach(docSnap => {
+                        initialMsgDocIds.add(docSnap.id);
+                    });
+                    isInitialMsgLoad = false;
+                    return;
+                }
+
+                snapshot.docChanges().forEach(change => {
+                    if (change.type === 'added' && !initialMsgDocIds.has(change.doc.id)) {
+                        initialMsgDocIds.add(change.doc.id);
+                        const data = change.doc.data();
+                        const isFromMe = (data.fromId === myMsgId || data.from === myMsgId || (currentUid && data.fromId === currentUid));
+                        if (!isFromMe && data.read === false) {
+                            // 1. Play sweet two-tone message chime (Web Audio API)
+                            playNewMessageChime();
+
+                            // 2. Set interactive in-app message toast banner
+                            setGlobalMessageToast({
+                                id: change.doc.id,
+                                fromName: data.fromName || (data.fromRole === 'teacher' ? 'Teacher' : 'New Message'),
+                                fromId: data.fromId,
+                                text: data.text || (data.attachment ? `📎 ${data.attachment.name || 'Attachment'}` : 'New message received'),
+                                ...data
+                            });
+                        }
+                    }
+                });
+            }, (err) => {
+                console.warn("Global message listener notice:", err);
+            });
+
             return () => {
                 unsubStatus();
                 unsubAnnounce();
                 unsubSubmissions();
+                unsubMessages();
             };
         } else {
             setLoading(false);
@@ -250,6 +299,15 @@ const MainLayout = () => {
         }, 8000);
         return () => clearTimeout(timer);
     }, [globalPaymentToast]);
+
+    // Auto dismiss global message toast after 8 seconds
+    useEffect(() => {
+        if (!globalMessageToast) return;
+        const timer = setTimeout(() => {
+            setGlobalMessageToast(null);
+        }, 8000);
+        return () => clearTimeout(timer);
+    }, [globalMessageToast]);
 
     const dismissAnnouncement = async () => {
         if (!announcement || !schoolId) return;
@@ -462,6 +520,88 @@ const MainLayout = () => {
                         onClick={(e) => {
                             e.stopPropagation();
                             setGlobalPaymentToast(null);
+                        }}
+                        style={{
+                            background: 'rgba(255,255,255,0.15)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            color: '#ffffff',
+                            padding: '0.45rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                        }}
+                        title="Dismiss"
+                    >
+                        <X size={15} />
+                    </button>
+                </div>
+            )}
+
+            {/* Global Real-time Teacher Incoming Message Audio Alert & Toast */}
+            {globalMessageToast && (
+                <div
+                    onClick={() => {
+                        navigate('/inbox', { state: { selectedTeacherId: globalMessageToast.fromId } });
+                        setGlobalMessageToast(null);
+                    }}
+                    style={{
+                        position: 'fixed',
+                        top: globalPaymentToast ? '110px' : '24px',
+                        right: '24px',
+                        zIndex: 10001,
+                        background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%)',
+                        color: 'white',
+                        padding: '1rem 1.25rem',
+                        borderRadius: '18px',
+                        boxShadow: '0 20px 30px -8px rgba(49, 46, 129, 0.5), 0 8px 10px -4px rgba(0,0,0,0.2)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '1rem',
+                        maxWidth: '420px',
+                        border: '1.5px solid rgba(165, 180, 252, 0.45)',
+                        cursor: 'pointer',
+                        animation: 'slideInRightToast 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+                        backdropFilter: 'blur(8px)',
+                        transition: 'top 0.3s ease'
+                    }}
+                >
+                    <div style={{
+                        width: '46px',
+                        height: '46px',
+                        borderRadius: '14px',
+                        background: 'rgba(255,255,255,0.18)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: '1px solid rgba(255,255,255,0.25)',
+                        flexShrink: 0
+                    }}>
+                        <MessageSquare size={24} color="#a5b4fc" />
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: '800', color: '#c7d2fe', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <Sparkles size={12} /> New Message From Teacher
+                        </div>
+                        <div style={{ fontSize: '0.98rem', fontWeight: '800', color: '#ffffff', marginTop: '0.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {globalMessageToast.fromName}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: '#e0e7ff', marginTop: '0.1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            "{globalMessageToast.text}"
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#a5b4fc', marginTop: '0.15rem', textDecoration: 'underline', fontWeight: '600' }}>
+                            Click to reply in Inbox →
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setGlobalMessageToast(null);
                         }}
                         style={{
                             background: 'rgba(255,255,255,0.15)',

@@ -1082,7 +1082,14 @@ const Admission = () => {
   };
 
   const handleStudentChange = (index, e) => {
-    const { name, value } = e.target;
+    let { name, value } = e.target;
+    if (name === "dob" && value) {
+      const parts = value.split("-");
+      if (parts[0] && parts[0].length > 4) {
+        parts[0] = parts[0].slice(0, 4);
+        value = parts.join("-");
+      }
+    }
     const newStudents = [...students];
     newStudents[index] = {
       ...newStudents[index],
@@ -2190,7 +2197,9 @@ const Admission = () => {
               <>
                 <div className="form-grid">
                   <div className="input-group">
-                    <label className="input-label">Father's Name</label>
+                    <label className="input-label">
+                      Father's Name <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
+                    </label>
                     <div className="input-wrapper">
                       <input
                         type="text"
@@ -2206,7 +2215,9 @@ const Admission = () => {
                   </div>
 
                   <div className="input-group">
-                    <label className="input-label">Parent's Occupation</label>
+                    <label className="input-label">
+                      Parent's Occupation <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
+                    </label>
                     <div className="input-wrapper">
                       <input
                         type="text"
@@ -2222,7 +2233,9 @@ const Admission = () => {
                   </div>
 
                   <div className="input-group">
-                    <label className="input-label">Primary Phone</label>
+                    <label className="input-label">
+                      Primary Phone <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
+                    </label>
                     <div className="input-wrapper">
                       <input
                         type="tel"
@@ -2255,7 +2268,9 @@ const Admission = () => {
                   </div>
 
                   <div className="input-group" style={{ gridColumn: "1 / -1" }}>
-                    <label className="input-label">Residential Address</label>
+                    <label className="input-label">
+                      Residential Address <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
+                    </label>
                     <div className="input-wrapper">
                       <textarea
                         name="address"
@@ -2401,7 +2416,9 @@ const Admission = () => {
                   <>
                     <div className="form-grid" style={{ marginTop: "1.5rem" }}>
                       <div className="input-group">
-                        <label className="input-label">Login Email</label>
+                        <label className="input-label">
+                          Login Email <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
+                        </label>
                         <div className="input-wrapper">
                           <input
                             type="email"
@@ -2415,7 +2432,9 @@ const Admission = () => {
                         </div>
                       </div>
                       <div className="input-group">
-                        <label className="input-label">Create Password</label>
+                        <label className="input-label">
+                          Create Password <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
+                        </label>
                         <div className="input-wrapper">
                           <input
                             type="text"
@@ -2780,7 +2799,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              First Name
+                              First Name <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
                             </label>
                             <div className="input-wrapper">
                               <input
@@ -2799,7 +2818,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Last Name
+                              Last Name <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
                             </label>
                             <div className="input-wrapper">
                               <input
@@ -2818,7 +2837,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Admission No
+                              Admission No <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.5)" }}>(Optional)</span>
                             </label>
                             <div className="input-wrapper">
                               <input
@@ -2837,7 +2856,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Roll Number
+                              Roll Number <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
                             </label>
                             <div className="input-wrapper">
                               <input
@@ -2857,7 +2876,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Date of Birth
+                              Date of Birth <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
                             </label>
                             <div className="input-wrapper">
                               <input
@@ -2865,6 +2884,17 @@ const Admission = () => {
                                 name="dob"
                                 value={student.dob}
                                 onChange={(e) => handleStudentChange(index, e)}
+                                onInput={(e) => {
+                                  if (e.target.value) {
+                                    const parts = e.target.value.split("-");
+                                    if (parts[0] && parts[0].length > 4) {
+                                      parts[0] = parts[0].slice(0, 4);
+                                      e.target.value = parts.join("-");
+                                    }
+                                  }
+                                }}
+                                min="1900-01-01"
+                                max="2099-12-31"
                                 className="modern-input"
                                 required
                               />
@@ -2881,7 +2911,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Gender
+                              Gender <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
                             </label>
                             <div className="input-wrapper">
                               <select
@@ -2889,6 +2919,7 @@ const Admission = () => {
                                 value={student.gender}
                                 onChange={(e) => handleStudentChange(index, e)}
                                 className="modern-input modern-select"
+                                required
                               >
                                 <option value="select" disabled>
                                   Select Gender
@@ -2905,7 +2936,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Admission Class
+                              Admission Class <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
                             </label>
                             <div className="input-wrapper">
                               <select
@@ -2938,7 +2969,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Previous School
+                              Previous School <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.5)" }}>(Optional)</span>
                             </label>
                             <div className="input-wrapper">
                               <input
@@ -2960,7 +2991,7 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Student Photo
+                              Student Photo <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.5)" }}>(Optional)</span>
                             </label>
                             <div
                               style={{

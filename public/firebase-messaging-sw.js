@@ -14,6 +14,10 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
     console.log('[firebase-messaging-sw.js] Received background message ', payload);
+    // Suppress external Chrome OS notification for chat messages (handled in-app with tune & toast)
+    if (payload.data?.type === 'new_message' || payload.notification?.title?.toLowerCase().includes('message')) {
+        return;
+    }
     const notificationTitle = payload.notification?.title || 'School Notification';
     const notificationOptions = {
         body: payload.notification?.body || '',
