@@ -1148,6 +1148,44 @@ const Settings = () => {
             // Directly update Firebase Auth password (one-way hashed & encrypted)
             await updatePassword(user, passwordData.newPassword);
 
+            // Real-Time Multi-Device Session Invalidation Protocol:
+            // Generate a fresh session version to terminate all other active devices immediately
+            const currentSchoolId = schoolId || JSON.parse(localStorage.getItem('manual_session') || '{}')?.schoolId;
+            const newSessionVersion = Date.now().toString();
+
+            // 1. Maintain active status for THIS device
+            localStorage.setItem('session_password_version', newSessionVersion);
+
+            // 2. Update local saved credentials if stored
+            try {
+                const saved = localStorage.getItem('principal_saved_credentials');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    parsed.password = passwordData.newPassword;
+                    localStorage.setItem('principal_saved_credentials', JSON.stringify(parsed));
+                }
+            } catch (_) {}
+
+            // 3. Broadcast new sessionVersion to Firestore (triggers immediate logout on all other devices)
+            if (currentSchoolId) {
+                try {
+                    await setDoc(doc(db, `schools/${currentSchoolId}/users`, user.uid), {
+                        sessionVersion: newSessionVersion,
+                        passwordLastReset: serverTimestamp()
+                    }, { merge: true });
+                } catch (sErr) {
+                    console.warn("Could not update school user sessionVersion", sErr);
+                }
+            }
+            try {
+                await setDoc(doc(db, 'global_users', user.uid), {
+                    sessionVersion: newSessionVersion,
+                    passwordLastReset: serverTimestamp()
+                }, { merge: true });
+            } catch (gErr) {
+                console.warn("Could not update global_users sessionVersion", gErr);
+            }
+
             // Clear form
             setPasswordData({
                 currentPassword: '',
@@ -1155,7 +1193,7 @@ const Settings = () => {
                 confirmPassword: ''
             });
 
-            setPasswordSuccess('Your master password has been successfully updated! This credential is end-to-end encrypted. Neither Super Administrators nor MAI Tech personnel can view, decrypt, or log into your school account.');
+            setPasswordSuccess('Your master password has been successfully updated! All other open sessions and devices have been logged out immediately.');
         } catch (err) {
             console.error('Password update error:', err);
             if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {

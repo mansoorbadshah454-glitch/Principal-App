@@ -108,6 +108,47 @@ export const AuthPermissionsProvider = ({ children }) => {
         return () => unsub();
     }, [schoolId]);
 
+    // Real-Time Multi-Device Session Guard:
+    // Listens for sessionVersion updates triggered when a password is changed on any device.
+    // Immediately logs out this device if its sessionVersion does not match the latest one.
+    useEffect(() => {
+        if (!uid || !schoolId) return;
+
+        const userDocRef = doc(db, `schools/${schoolId}/users`, uid);
+        const unsub = onSnapshot(userDocRef, (snap) => {
+            if (snap.exists()) {
+                const data = snap.data();
+                const remoteVersion = data.sessionVersion;
+                if (remoteVersion) {
+                    const localVersion = localStorage.getItem('session_password_version');
+                    if (!localVersion) {
+                        // First-time adoption: initialize local version with remote version
+                        localStorage.setItem('session_password_version', String(remoteVersion));
+                    } else if (String(remoteVersion) !== String(localVersion)) {
+                        console.warn("🚨 Multi-device logout: password was updated on another device.");
+                        
+                        // Clear all active session storage
+                        localStorage.removeItem('manual_session');
+                        localStorage.removeItem('cached_user_profile');
+                        localStorage.removeItem('cached_admin_perms');
+                        localStorage.removeItem('cached_school_data');
+                        localStorage.removeItem('session_password_version');
+                        localStorage.removeItem('principal_saved_credentials');
+                        
+                        auth.signOut().finally(() => {
+                            alert("Security Notice: Your password was recently updated on another device. For your account security, all other active sessions have been terminated. Please log in with your new password.");
+                            window.location.href = '/login';
+                        });
+                    }
+                }
+            }
+        }, (err) => {
+            console.warn("Session guard listener notice (safe offline):", err);
+        });
+
+        return () => unsub();
+    }, [uid, schoolId]);
+
     useEffect(() => {
         if (!schoolId || !uid) {
             setPermissions({});

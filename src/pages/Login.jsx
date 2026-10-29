@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { Mail, Lock, ArrowRight, Loader2, Layout, UserCheck, Users, Zap, Award, Building, Eye, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { functions } from '../firebase';
@@ -157,6 +157,21 @@ const Login = () => {
                 }
 
                 const finalSchoolId = schoolId || normalizedSchoolId;
+
+                // Sync latest sessionVersion so this newly authenticated login is recognized as valid
+                let currentSessionVersion = Date.now().toString();
+                try {
+                    const uRef = doc(db, `schools/${finalSchoolId}/users`, user.uid);
+                    const uSnap = await getDoc(uRef);
+                    if (uSnap.exists() && uSnap.data().sessionVersion) {
+                        currentSessionVersion = String(uSnap.data().sessionVersion);
+                    } else {
+                        await setDoc(uRef, { sessionVersion: currentSessionVersion }, { merge: true });
+                    }
+                } catch (e) {
+                    console.warn("Session version sync notice:", e);
+                }
+                localStorage.setItem('session_password_version', currentSessionVersion);
 
                 localStorage.setItem('manual_session', JSON.stringify({
                     uid: user.uid,
