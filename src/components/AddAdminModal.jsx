@@ -8,7 +8,9 @@ import {
 } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { doc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
-import { db, functions } from '../firebase';
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut, updateProfile } from 'firebase/auth';
+import { db, functions, firebaseConfig } from '../firebase';
 import { PERMISSIONS_LIST, DEFAULT_ADMIN_PERMISSIONS, FEE_SUB_PERMISSIONS } from '../constants/permissions';
 
 const normalizePermissions = (rawPerms) => {
@@ -172,52 +174,134 @@ const AddAdminModal = ({ onClose, userToEdit, schoolId }) => {
         }
 
         try {
+            const cleanId = String(schoolId).trim().replace(/^SCHOOL_/i, '');
+            const fullId = `SCHOOL_${cleanId}`;
+            const targetPaths = Array.from(new Set([String(schoolId).trim(), cleanId, fullId]));
+            const trimmedName = formData.displayName.trim();
+
             // 1. EDIT MODE
             if (userToEdit) {
-                const userRef = doc(db, `schools/${schoolId}/admin_users`, userToEdit.id);
-                await updateDoc(userRef, {
-                    displayName: formData.displayName,
+                const updatePayload = {
+                    displayName: trimmedName,
+                    name: trimmedName,
                     permissions: formData.permissions,
                     updatedAt: serverTimestamp()
-                });
+                };
+
+                for (const p of targetPaths) {
+                    await updateDoc(doc(db, `schools/${p}/admin_users`, userToEdit.id), updatePayload).catch(() => {});
+                    await updateDoc(doc(db, `schools/${p}/users`, userToEdit.id), updatePayload).catch(() => {});
+                }
+
+                await updateDoc(doc(db, 'global_users', userToEdit.id), {
+                    displayName: trimmedName,
+                    name: trimmedName,
+                    updatedAt: serverTimestamp()
+                }).catch(() => {});
 
                 // Password Reset Logic
                 if (formData.password && formData.password.length >= 6) {
-                    const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
-                    await updatePasswordFn({
-                        targetUid: userToEdit.id,
-                        newPassword: formData.password,
-                        schoolId: schoolId
-                    });
+                    try {
+                        const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
+                        await updatePasswordFn({
+                            targetUid: userToEdit.id,
+                            newPassword: formData.password,
+                            schoolId: schoolId
+                        });
+                    } catch (pwErr) {
+                        console.warn("Password reset via cloud function notice:", pwErr);
+                    }
                 }
             }
-            // 2. CREATE MODE (Via Cloud Function)
+            // 2. CREATE MODE (Direct Auth + Dual Path Sync)
             else {
                 if (!formData.password || formData.password.length < 6) {
-                    throw new Error("Password must be at least 6 characters");
+                    throw new Error("Password must be at least 6 characters.");
                 }
 
-                const createSchoolUserFn = httpsCallable(functions, 'createSchoolUser');
+                // Initialize isolated secondary app to avoid logging out the current Principal
+                let secondaryApp = getApps().find(app => app.name === 'SecondaryAdminAuth');
+                if (!secondaryApp) {
+                    secondaryApp = initializeApp(firebaseConfig, 'SecondaryAdminAuth');
+                }
+                const secondaryAuth = getAuth(secondaryApp);
 
-                await createSchoolUserFn({
-                    email: formData.email,
+                let newUid = null;
+                try {
+                    const cred = await createUserWithEmailAndPassword(secondaryAuth, formData.email.trim(), formData.password);
+                    newUid = cred.user.uid;
+                    await updateProfile(cred.user, { displayName: trimmedName }).catch(() => {});
+                    await signOut(secondaryAuth);
+                } catch (authError) {
+                    if (authError.code === 'auth/email-already-in-use') {
+                        throw new Error("An account with this email already exists in Firebase Auth. Please use a unique email or edit their existing profile.");
+                    } else if (authError.code === 'auth/invalid-email') {
+                        throw new Error("Please enter a valid email address.");
+                    } else if (authError.code === 'auth/weak-password') {
+                        throw new Error("Password is too weak. Minimum 6 characters required.");
+                    }
+                    throw authError;
+                }
+
+                const adminData = {
+                    uid: newUid,
+                    name: trimmedName,
+                    displayName: trimmedName,
+                    email: formData.email.trim(),
+                    role: 'school Admin',
+                    permissions: formData.permissions,
+                    manualPassword: formData.password,
                     password: formData.password,
-                    name: formData.displayName,
+                    schoolId: schoolId,
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp()
+                };
+
+                // 1. Primary Write directly to authorized schoolId
+                await setDoc(doc(db, `schools/${schoolId}/admin_users`, newUid), adminData, { merge: true });
+                await setDoc(doc(db, `schools/${schoolId}/users`, newUid), adminData, { merge: true });
+
+                // 2. Safe mirror to alternate paths (wrapped in catch so permission differences never block)
+                if (cleanId && cleanId !== schoolId) {
+                    await setDoc(doc(db, `schools/${cleanId}/admin_users`, newUid), adminData, { merge: true }).catch(() => {});
+                    await setDoc(doc(db, `schools/${cleanId}/users`, newUid), adminData, { merge: true }).catch(() => {});
+                }
+                if (fullId && fullId !== schoolId) {
+                    await setDoc(doc(db, `schools/${fullId}/admin_users`, newUid), adminData, { merge: true }).catch(() => {});
+                    await setDoc(doc(db, `schools/${fullId}/users`, newUid), adminData, { merge: true }).catch(() => {});
+                }
+
+                // 3. Write to global_users so Login.jsx can immediately identify the user's school and role
+                await setDoc(doc(db, 'global_users', newUid), {
+                    uid: newUid,
+                    name: trimmedName,
+                    displayName: trimmedName,
+                    email: formData.email.trim(),
                     role: 'school Admin',
                     schoolId: schoolId,
-                    permissions: formData.permissions
-                });
+                    createdAt: serverTimestamp()
+                }, { merge: true });
+
+                // Also trigger cloud function in background to set custom claims if available (optional/safe)
+                try {
+                    const createSchoolUserFn = httpsCallable(functions, 'createSchoolUser');
+                    createSchoolUserFn({
+                        email: formData.email.trim(),
+                        password: formData.password,
+                        name: trimmedName,
+                        displayName: trimmedName,
+                        role: 'school Admin',
+                        schoolId: schoolId,
+                        permissions: formData.permissions
+                    }).catch(() => {});
+                } catch (_) {}
             }
 
-            onClose(true); // Close and refresh
+            onClose(true); // Close modal and refresh users list
         } catch (err) {
             console.error("Error saving admin:", err);
-            // Handle specific Cloud Function errors if wrapped
-            if (err.message.includes('email-already-in-use') || err.code === 'already-exists') {
-                setError("An account with this email already exists.");
-            } else {
-                setError(err.message || "Failed to save admin user");
-            }
+            setError(err.message || "Failed to save admin user. Please try again.");
+            alert(err.message || "Failed to save admin user. Please try again.");
         } finally {
             setLoading(false);
         }

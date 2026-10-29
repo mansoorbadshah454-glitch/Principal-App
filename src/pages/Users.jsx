@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Shield } from 'lucide-react';
-import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { Plus, Search, Shield, RotateCw } from 'lucide-react';
+import { collection, getDocs, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
 import { getDocsFast } from '../utils/cacheUtils';
 import { db } from '../firebase';
 import UserCard from '../components/UserCard';
@@ -14,22 +14,40 @@ const Users = () => {
     const [editingUser, setEditingUser] = useState(null);
     const [currentUserRole, setCurrentUserRole] = useState('principal');
 
-    const fetchUsers = async () => {
+    const fetchUsers = async (forceServer = false) => {
         setLoading(true);
         try {
             const session = localStorage.getItem('manual_session');
             if (session) {
                 const { schoolId, role } = JSON.parse(session);
                 setCurrentUserRole(role || 'principal');
-                // Fetch from school-specific collection
-                const querySnapshot = await getDocsFast(collection(db, `schools/${schoolId}/admin_users`));
-                const usersList = querySnapshot.docs
-                    .map(doc => ({
-                        id: doc.id,
-                        ...doc.data()
-                    }))
-                    .filter(user => user.role === 'school Admin');
-                setUsers(usersList);
+
+                // Support both numeric (6257) and prefixed (SCHOOL_6257) paths
+                const cleanId = String(schoolId).trim().replace(/^SCHOOL_/i, '');
+                const fullId = `SCHOOL_${cleanId}`;
+                const searchPaths = Array.from(new Set([String(schoolId).trim(), cleanId, fullId]));
+
+                const userMap = new Map();
+                for (const p of searchPaths) {
+                    try {
+                        const colRef = collection(db, `schools/${p}/admin_users`);
+                        const querySnapshot = forceServer ? await getDocs(colRef) : await getDocsFast(colRef);
+                        querySnapshot.docs.forEach(docSnap => {
+                            const data = docSnap.data();
+                            const r = (data.role || '').toLowerCase().trim();
+                            if (r === 'school admin' || r === 'school_admin' || r === 'admin') {
+                                userMap.set(docSnap.id, {
+                                    id: docSnap.id,
+                                    ...data
+                                });
+                            }
+                        });
+                    } catch (e) {
+                        console.warn(`Path scan notice for ${p}:`, e.message);
+                    }
+                }
+
+                setUsers(Array.from(userMap.values()));
             }
         } catch (error) {
             console.error("Error fetching admin users:", error);
@@ -39,7 +57,56 @@ const Users = () => {
     };
 
     useEffect(() => {
-        fetchUsers();
+        const session = localStorage.getItem('manual_session');
+        if (!session) {
+            setLoading(false);
+            return;
+        }
+
+        const { schoolId, role } = JSON.parse(session);
+        setCurrentUserRole(role || 'principal');
+
+        const cleanId = String(schoolId).trim().replace(/^SCHOOL_/i, '');
+        const fullId = `SCHOOL_${cleanId}`;
+        const searchPaths = Array.from(new Set([String(schoolId).trim(), cleanId, fullId]));
+
+        setLoading(true);
+        const pathData = new Map();
+
+        const updateCombinedUsers = () => {
+            const combinedMap = new Map();
+            pathData.forEach(docsList => {
+                docsList.forEach(user => {
+                    combinedMap.set(user.id, user);
+                });
+            });
+            setUsers(Array.from(combinedMap.values()));
+            setLoading(false);
+        };
+
+        const unsubs = searchPaths.map(p => {
+            return onSnapshot(collection(db, `schools/${p}/admin_users`), (snapshot) => {
+                const list = snapshot.docs
+                    .map(docSnap => ({
+                        id: docSnap.id,
+                        ...docSnap.data()
+                    }))
+                    .filter(u => {
+                        const r = (u.role || '').toLowerCase().trim();
+                        return r === 'school admin' || r === 'school_admin' || r === 'admin';
+                    });
+                pathData.set(p, list);
+                updateCombinedUsers();
+            }, (err) => {
+                console.warn(`Snapshot notice on ${p}:`, err.message);
+                pathData.set(p, []);
+                updateCombinedUsers();
+            });
+        });
+
+        return () => {
+            unsubs.forEach(unsub => unsub());
+        };
     }, []);
 
     const handleDelete = async (userId) => {
@@ -48,8 +115,18 @@ const Users = () => {
                 const session = localStorage.getItem('manual_session');
                 if (session) {
                     const { schoolId } = JSON.parse(session);
-                    await deleteDoc(doc(db, `schools/${schoolId}/admin_users`, userId));
-                    setUsers(users.filter(user => user.id !== userId));
+                    const cleanId = String(schoolId).trim().replace(/^SCHOOL_/i, '');
+                    const fullId = `SCHOOL_${cleanId}`;
+                    const targetPaths = Array.from(new Set([String(schoolId).trim(), cleanId, fullId]));
+
+                    // Remove from all variant paths so user never reappears
+                    for (const p of targetPaths) {
+                        await deleteDoc(doc(db, `schools/${p}/admin_users`, userId)).catch(() => {});
+                        await deleteDoc(doc(db, `schools/${p}/users`, userId)).catch(() => {});
+                    }
+                    await deleteDoc(doc(db, 'global_users', userId)).catch(() => {});
+
+                    setUsers(prev => prev.filter(user => user.id !== userId));
                     alert("Admin removed successfully.");
                 }
             } catch (error) {
@@ -73,14 +150,16 @@ const Users = () => {
         setShowModal(false);
         setEditingUser(null);
         if (shouldRefresh) {
-            fetchUsers();
+            fetchUsers(true);
         }
     };
 
-    const filteredUsers = users.filter(user =>
-        user.displayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.email?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredUsers = users.filter(user => {
+        const nameToSearch = (user.displayName || user.name || '').toLowerCase();
+        const emailToSearch = (user.email || '').toLowerCase();
+        const term = searchTerm.toLowerCase().trim();
+        return nameToSearch.includes(term) || emailToSearch.includes(term);
+    });
 
     return (
         <>
@@ -94,15 +173,25 @@ const Users = () => {
                         <p className="text-slate-500 mt-1">Manage system access and permissions for administrative staff.</p>
                     </div>
 
-                    {currentUserRole !== 'school Admin' && (
+                    <div className="flex items-center gap-3">
                         <button
-                            onClick={handleAddUser}
-                            className="btn btn-primary"
+                            onClick={() => fetchUsers(true)}
+                            disabled={loading}
+                            title="Refresh from server"
+                            className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50/50 transition-all shadow-xs disabled:opacity-50"
                         >
-                            <Plus size={20} />
-                            Add New Admin
+                            <RotateCw size={18} className={loading ? 'animate-spin text-indigo-600' : ''} />
                         </button>
-                    )}
+                        {currentUserRole !== 'school Admin' && (
+                            <button
+                                onClick={handleAddUser}
+                                className="btn btn-primary"
+                            >
+                                <Plus size={20} />
+                                Add New Admin
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Search and Filter Bar */}
