@@ -683,95 +683,6 @@ const BoardTOSStudio = () => {
                 </div>
             </div>
 
-            {/* UNIVERSAL MASTER DECODER SPOTLIGHT BANNER */}
-            <div style={{
-                background: 'linear-gradient(135deg, #fffbeb 0%, #ffffff 50%, #fef3c7 100%)',
-                border: '1px solid #fde68a',
-                borderRadius: '16px',
-                padding: '18px 22px',
-                marginBottom: '22px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '14px',
-                boxShadow: '0 4px 15px rgba(245, 158, 11, 0.08)'
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                    <div style={{
-                        width: '44px',
-                        height: '44px',
-                        borderRadius: '12px',
-                        background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                        color: '#ffffff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)',
-                        flexShrink: 0
-                    }}>
-                        <Compass size={24} />
-                    </div>
-                    <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                            <span style={{ fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', color: '#b45309', letterSpacing: '0.5px' }}>
-                                UNIVERSAL MASTER COMPASS (APPLIES TO ALL SUBJECTS)
-                            </span>
-                            <span style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontSize: '10px', padding: '1px 8px', borderRadius: '12px', fontWeight: '700' }}>
-                                {universalGuide.version || 'Master Framework'}
-                            </span>
-                        </div>
-                        <h2 style={{ fontSize: '16px', fontWeight: '800', margin: 0, color: '#78350f' }}>
-                            {universalGuide.title || 'Universal BISE Blueprint & SLO Decoding Guide'}
-                        </h2>
-                        <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: '#92400e', maxWidth: '680px', lineHeight: '1.4' }}>
-                            {universalGuide.instructions || 'Essential master guidelines explaining how to read TOS cognitive weightages, section divisions, and examiner marking rubrics.'}
-                        </p>
-                    </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                    <button
-                        onClick={() => openPreview('Universal Blueprint & SLO Decoding Guide', 'Master Pedagogical Framework', universalGuide.pdfUrl, 'universal')}
-                        style={{
-                            background: '#ffffff',
-                            border: '1px solid #cbd5e1',
-                            color: '#334155',
-                            padding: '9px 16px',
-                            borderRadius: '10px',
-                            fontSize: '12px',
-                            fontWeight: '700',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
-                        }}
-                    >
-                        <Eye size={15} /> Quick Preview Guide
-                    </button>
-                    <button
-                        onClick={() => handleDownload(universalGuide.pdfUrl, 'Universal_BISE_Decoder_Guide.pdf')}
-                        style={{
-                            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                            border: 'none',
-                            color: '#ffffff',
-                            padding: '9px 16px',
-                            borderRadius: '10px',
-                            fontSize: '12px',
-                            fontWeight: '700',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            boxShadow: '0 4px 12px rgba(245, 158, 11, 0.25)'
-                        }}
-                    >
-                        <Download size={15} /> Download Universal Guide
-                    </button>
-                </div>
-            </div>
-
             {/* STUDIO CONTROLS: CLASS SELECTION & SUBJECT DROPDOWN */}
             <div style={{
                 background: '#ffffff',
@@ -781,7 +692,7 @@ const BoardTOSStudio = () => {
                 marginBottom: '22px',
                 boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)'
             }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
                     {/* Step 1: Select Class */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '13px', fontWeight: '800', color: '#475569', marginRight: '4px' }}>
@@ -841,38 +752,6 @@ const BoardTOSStudio = () => {
                             <ChevronDown size={16} color="#4f46e5" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
                         </div>
                     </div>
-                </div>
-
-                {/* Quick Subject Tabs / Pills */}
-                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
-                    {SUBJECT_LIST.map(subj => {
-                        const isSelected = selectedSubject.toLowerCase() === subj.name.toLowerCase();
-                        return (
-                            <button
-                                key={subj.name}
-                                onClick={() => setSelectedSubject(subj.name)}
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    padding: '8px 14px',
-                                    borderRadius: '10px',
-                                    border: isSelected ? '1px solid #c7d2fe' : '1px solid #e2e8f0',
-                                    background: isSelected ? '#e0e7ff' : '#f8fafc',
-                                    color: isSelected ? '#3730a3' : '#475569',
-                                    cursor: 'pointer',
-                                    fontWeight: '700',
-                                    fontSize: '12px',
-                                    whiteSpace: 'nowrap',
-                                    transition: 'all 0.2s',
-                                    boxShadow: isSelected ? '0 2px 8px rgba(79, 70, 229, 0.15)' : 'none'
-                                }}
-                            >
-                                <span>{subj.icon}</span>
-                                <span>{subj.name}</span>
-                            </button>
-                        );
-                    })}
                 </div>
             </div>
 

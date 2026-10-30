@@ -35,7 +35,7 @@ import {
   GraduationCap,
   FileText,
 } from "lucide-react";
-import { db, storage } from "../firebase";
+import { db, storage, functions } from "../firebase";
 import AdmissionHistory from "./AdmissionHistory";
 import {
   collection,
@@ -55,7 +55,7 @@ import {
 } from "firebase/firestore";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { getDocsFast } from "../utils/cacheUtils";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "firebase/functions";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 
@@ -879,11 +879,10 @@ const Admission = () => {
         // If parent was created offline, provision Firebase Auth account
         if (adm.parentIsOffline && adm.parentEmail && adm.parentPassword) {
           try {
-            const functions = getFunctions();
             const createSchoolUserFn = httpsCallable(functions, "createSchoolUser");
             const result = await createSchoolUserFn({
-              email: adm.parentEmail.trim(),
-              password: adm.parentPassword,
+              email: adm.parentEmail.trim().toLowerCase(),
+              password: adm.parentPassword.trim(),
               name: adm.parentName.trim(),
               role: "parent",
               schoolId: activeSchoolId,
@@ -1309,12 +1308,21 @@ const Admission = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!existingParent && (!parentDetails.email || !parentDetails.password)) {
-      alert(
-        "Please complete Account Setup (Login Email and Password) before submitting.",
-      );
-      setParentInputStep(2);
-      return;
+    if (!existingParent) {
+      if (!parentDetails.email || !parentDetails.password) {
+        alert(
+          "Please complete Account Setup (Login Email and Password) before submitting.",
+        );
+        setParentInputStep(2);
+        return;
+      }
+      if (parentDetails.password.trim().length < 6) {
+        alert(
+          "Password must be at least 6 characters long for Parent Mobile App login.",
+        );
+        setParentInputStep(2);
+        return;
+      }
     }
 
     // Manual Validation since hidden inputs don't trigger HTML5 required
@@ -1338,17 +1346,18 @@ const Admission = () => {
       const queueId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       let finalParentId = existingParent ? existingParent.id : null;
       let parentIsOffline = false;
+      const cleanParentEmail = parentDetails.email ? parentDetails.email.trim().toLowerCase() : "";
+      const cleanParentPassword = parentDetails.password ? parentDetails.password.trim() : "";
 
       // STEP 1: Handle Parent Account
       if (!finalParentId) {
         if (navigator.onLine) {
           try {
-            const functions = getFunctions();
             const createSchoolUserFn = httpsCallable(functions, "createSchoolUser");
 
             const result = await createSchoolUserFn({
-              email: parentDetails.email ? parentDetails.email.trim() : "",
-              password: parentDetails.password,
+              email: cleanParentEmail,
+              password: cleanParentPassword,
               name: parentDetails.fatherName.trim(),
               role: "parent",
               schoolId: activeSchoolId,
@@ -1361,14 +1370,34 @@ const Admission = () => {
               linkedStudents: [],
             });
 
-            finalParentId = result.data.uid;
-          } catch (authError) {
-            console.warn("Cloud function createSchoolUser offline fallback:", authError);
-          }
-        }
+            finalParentId = result?.data?.uid;
 
-        // Fallback for offline parent creation: generate local ID and write to IndexedDB
-        if (!finalParentId) {
+            if (finalParentId) {
+              await updateDoc(doc(db, `schools/${activeSchoolId}/parents`, finalParentId), {
+                password: cleanParentPassword,
+                manualPassword: cleanParentPassword,
+                email: cleanParentEmail
+              }).catch(() => {});
+            }
+          } catch (authError) {
+            console.error("Cloud function createSchoolUser failed:", authError);
+            const rawMsg = authError?.message || authError?.code || "Failed to create Parent account.";
+            let userFriendlyMsg = rawMsg;
+            if (rawMsg.includes("email-already-exists") || rawMsg.includes("already in use")) {
+              userFriendlyMsg = "This email is already in use by another account. Please use a different email or search for this parent.";
+            } else if (rawMsg.includes("weak-password") || rawMsg.includes("Password should be at least")) {
+              userFriendlyMsg = "Password must be at least 6 characters long.";
+            } else if (rawMsg.includes("unauthenticated") || rawMsg.includes("must be logged in")) {
+              userFriendlyMsg = "Session expired or not authorized. Please refresh or re-login as Principal.";
+            }
+
+            alert(`Parent Account Creation Error:\n${userFriendlyMsg}`);
+            setIsLoading(false);
+            setParentInputStep(2);
+            return;
+          }
+        } else {
+          // Genuinely offline: generate local ID and write to IndexedDB
           parentIsOffline = true;
           const parentDocRef = doc(collection(db, `schools/${activeSchoolId}/parents`));
           finalParentId = parentDocRef.id;
@@ -1379,10 +1408,12 @@ const Admission = () => {
             schoolId: activeSchoolId,
             phone: parentDetails.phone.trim(),
             emergencyPhone: parentDetails.emergencyPhone ? parentDetails.emergencyPhone.trim() : "",
-            email: parentDetails.email ? parentDetails.email.trim() : "",
+            email: cleanParentEmail,
             address: parentDetails.address || "",
             occupation: parentDetails.occupation || "",
-            temporaryPassword: parentDetails.password || "",
+            temporaryPassword: cleanParentPassword,
+            password: cleanParentPassword,
+            manualPassword: cleanParentPassword,
             offlineCreated: true,
             linkedStudents: [],
             createdAt: serverTimestamp()
@@ -2442,10 +2473,14 @@ const Admission = () => {
                             value={parentDetails.password}
                             onChange={handleParentChange}
                             className="modern-input"
-                            placeholder="Set secure password"
+                            placeholder="Set secure password (min 6 chars)"
+                            minLength={6}
                             required={!existingParent}
                           />
                         </div>
+                        <small style={{ color: "#64748b", fontSize: "0.75rem", marginTop: "4px", display: "block" }}>
+                          Min 6 characters required for Parent App login
+                        </small>
                       </div>
                     </div>
                   </>
