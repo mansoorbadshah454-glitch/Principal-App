@@ -56,6 +56,12 @@ import {
 } from "firebase/firestore";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { getDocsFast } from "../utils/cacheUtils";
+import {
+  getNextAdmissionNumber,
+  getNextRollNumberForClass,
+  updateAdmissionCounter,
+  parseAndIncrementSequence
+} from "../utils/studentSequenceHelper";
 import { httpsCallable } from "firebase/functions";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -1079,6 +1085,21 @@ const Admission = () => {
           });
 
           setAvailableClasses(classesList);
+
+          // 3. Auto-fetch the next global Admission Number
+          try {
+            const nextAdm = await getNextAdmissionNumber(userData.schoolId, db);
+            setStudents((prev) => {
+              if (prev.length > 0 && !prev[0].admissionNo) {
+                const updated = [...prev];
+                updated[0] = { ...updated[0], admissionNo: nextAdm };
+                return updated;
+              }
+              return prev;
+            });
+          } catch (admErr) {
+            console.warn("Could not auto-fetch admission number:", admErr);
+          }
         } catch (error) {
           console.error("Error fetching school and classes:", error);
         }
@@ -1115,7 +1136,7 @@ const Admission = () => {
     }));
   };
 
-  const handleStudentChange = (index, e) => {
+  const handleStudentChange = async (index, e) => {
     let { name, value } = e.target;
     if (name === "dob" && value) {
       const parts = value.split("-");
@@ -1129,7 +1150,86 @@ const Admission = () => {
       ...newStudents[index],
       [name]: value,
     };
+
+    if (name === "admissionClass" && value && schoolId) {
+      setStudents(newStudents);
+      try {
+        const nextRoll = await getNextRollNumberForClass(
+          schoolId,
+          value,
+          db,
+          newStudents,
+          index
+        );
+        setStudents((prev) => {
+          const updated = [...prev];
+          if (updated[index]) {
+            updated[index] = {
+              ...updated[index],
+              rollNo: nextRoll,
+              _autoRollCalculated: true,
+            };
+          }
+          return updated;
+        });
+      } catch (rollErr) {
+        console.warn("Could not calculate next roll number:", rollErr);
+      }
+      return;
+    }
+
     setStudents(newStudents);
+  };
+
+  const handleRefreshAdmissionNo = async (index) => {
+    if (!schoolId) return;
+    try {
+      const nextAdm = await getNextAdmissionNumber(schoolId, db);
+      setStudents((prev) => {
+        const updated = [...prev];
+        if (updated[index]) {
+          let val = nextAdm;
+          if (index > 0 && updated[0].admissionNo) {
+            let curr = updated[0].admissionNo;
+            for (let i = 0; i < index; i++) {
+              curr = parseAndIncrementSequence(curr);
+            }
+            val = curr;
+          }
+          updated[index] = { ...updated[index], admissionNo: val };
+        }
+        return updated;
+      });
+    } catch (e) {
+      console.warn("Refresh admission failed:", e);
+    }
+  };
+
+  const handleRefreshRollNo = async (index) => {
+    const classId = students[index]?.admissionClass;
+    if (!schoolId || !classId) return;
+    try {
+      const nextRoll = await getNextRollNumberForClass(
+        schoolId,
+        classId,
+        db,
+        students,
+        index
+      );
+      setStudents((prev) => {
+        const updated = [...prev];
+        if (updated[index]) {
+          updated[index] = {
+            ...updated[index],
+            rollNo: nextRoll,
+            _autoRollCalculated: true,
+          };
+        }
+        return updated;
+      });
+    } catch (e) {
+      console.warn("Refresh roll failed:", e);
+    }
   };
 
   // Fast Client-Side Passport Photo Compressor (converts 5MB -> 30-50KB in milliseconds)
@@ -1294,6 +1394,11 @@ const Admission = () => {
   };
 
   const addStudent = () => {
+    const lastStudent = students[students.length - 1];
+    const nextAdmission = lastStudent?.admissionNo
+      ? parseAndIncrementSequence(lastStudent.admissionNo)
+      : "";
+
     setStudents([
       ...students,
       {
@@ -1304,7 +1409,7 @@ const Admission = () => {
         admissionClass: "",
         previousSchool: "",
         rollNo: "",
-        admissionNo: "",
+        admissionNo: nextAdmission,
         feeStructure: [],
         individualActions: [],
         newFeeCategory: RECURRING_CATEGORIES[0],
@@ -1746,6 +1851,17 @@ const Admission = () => {
       // Fast atomic commit across Firestore
       await batch.commit();
 
+      // Sync Admission Sequence Counter with the latest admitted student
+      try {
+        const admittedNums = students.map((s) => s.admissionNo).filter(Boolean);
+        if (admittedNums.length > 0) {
+          const lastNum = admittedNums[admittedNums.length - 1];
+          await updateAdmissionCounter(activeSchoolId, lastNum, db);
+        }
+      } catch (cntErr) {
+        console.warn("Could not sync counter on submit:", cntErr);
+      }
+
       // STEP 4: Persistent Offline Queue Item (Zero Loss Guarantee)
       const queuedAdmission = {
         queueId,
@@ -1830,6 +1946,12 @@ const Admission = () => {
         address: "",
         password: "",
       });
+
+      let nextFreshAdm = "";
+      try {
+        nextFreshAdm = await getNextAdmissionNumber(activeSchoolId, db);
+      } catch (e) {}
+
       setStudents([
         {
           firstName: "",
@@ -1839,7 +1961,7 @@ const Admission = () => {
           admissionClass: "",
           previousSchool: "",
           rollNo: "",
-          admissionNo: "",
+          admissionNo: nextFreshAdm || "",
           feeStructure: [],
           individualActions: [],
           newFeeCategory: RECURRING_CATEGORIES[0],
@@ -2961,37 +3083,152 @@ const Admission = () => {
                               className="input-label"
                               style={{ color: "rgba(255,255,255,0.8)" }}
                             >
-                              Admission No <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.5)" }}>(Optional)</span>
+                              Admission Class <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
                             </label>
                             <div className="input-wrapper">
-                              <input
-                                type="text"
-                                name="admissionNo"
-                                value={student.admissionNo}
+                              <select
+                                name="admissionClass"
+                                value={student.admissionClass}
                                 onChange={(e) => handleStudentChange(index, e)}
-                                className="modern-input"
-                                placeholder="e.g. ADM-001"
-                              />
+                                className="modern-input modern-select"
+                                required
+                              >
+                                <option value="" disabled>
+                                  Select Class
+                                </option>
+                                {availableClasses.length > 0 ? (
+                                  availableClasses.map((cls) => (
+                                    <option key={cls.id} value={cls.id}>
+                                      {cls.name}
+                                    </option>
+                                  ))
+                                ) : (
+                                  <option value="" disabled>
+                                    Loading classes...
+                                  </option>
+                                )}
+                              </select>
                             </div>
                           </div>
 
                           <div className="input-group">
-                            <label
-                              className="input-label"
-                              style={{ color: "rgba(255,255,255,0.8)" }}
-                            >
-                              Roll Number <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
-                            </label>
-                            <div className="input-wrapper">
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                              <label
+                                className="input-label"
+                                style={{ color: "rgba(255,255,255,0.8)", margin: 0 }}
+                              >
+                                Roll Number <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
+                              </label>
+                              {student.admissionClass ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRefreshRollNo(index)}
+                                  title="Recalculate next available roll number in this class"
+                                  style={{
+                                    background: "rgba(255,255,255,0.08)",
+                                    border: "1px solid rgba(255,255,255,0.15)",
+                                    borderRadius: "6px",
+                                    padding: "2px 6px",
+                                    color: "#60a5fa",
+                                    fontSize: "0.7rem",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "3px",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  <RotateCcw size={11} /> Auto Next
+                                </button>
+                              ) : null}
+                            </div>
+                            <div className="input-wrapper" style={{ position: "relative" }}>
                               <input
                                 type="text"
                                 name="rollNo"
-                                value={student.rollNo}
+                                value={student.rollNo || ""}
                                 onChange={(e) => handleStudentChange(index, e)}
                                 className="modern-input"
-                                placeholder="e.g. 101"
+                                placeholder={student.admissionClass ? "e.g. 101" : "Select class first"}
                                 required
+                                style={{ paddingRight: "4.5rem" }}
                               />
+                              <span
+                                style={{
+                                  position: "absolute",
+                                  right: "10px",
+                                  top: "50%",
+                                  transform: "translateY(-50%)",
+                                  fontSize: "0.68rem",
+                                  background: student.rollNo ? "rgba(59, 130, 246, 0.2)" : "rgba(255, 255, 255, 0.05)",
+                                  color: student.rollNo ? "#93c5fd" : "rgba(255,255,255,0.4)",
+                                  border: student.rollNo ? "1px solid rgba(59, 130, 246, 0.4)" : "1px solid rgba(255,255,255,0.1)",
+                                  borderRadius: "4px",
+                                  padding: "2px 6px",
+                                  pointerEvents: "none",
+                                  fontWeight: "600",
+                                }}
+                              >
+                                {student.rollNo ? "Class Auto" : "Pending"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="input-group">
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                              <label
+                                className="input-label"
+                                style={{ color: "rgba(255,255,255,0.8)", margin: 0 }}
+                              >
+                                Admission No <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.5)" }}>(Auto Sequence)</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => handleRefreshAdmissionNo(index)}
+                                title="Recalculate next sequential Admission Number"
+                                style={{
+                                  background: "rgba(255,255,255,0.08)",
+                                  border: "1px solid rgba(255,255,255,0.15)",
+                                  borderRadius: "6px",
+                                  padding: "2px 6px",
+                                  color: "#34d399",
+                                  fontSize: "0.7rem",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "3px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <RotateCcw size={11} /> Auto Next
+                              </button>
+                            </div>
+                            <div className="input-wrapper" style={{ position: "relative" }}>
+                              <input
+                                type="text"
+                                name="admissionNo"
+                                value={student.admissionNo || ""}
+                                onChange={(e) => handleStudentChange(index, e)}
+                                className="modern-input"
+                                placeholder="e.g. ADM-001"
+                                style={{ paddingRight: "3.5rem" }}
+                              />
+                              <span
+                                style={{
+                                  position: "absolute",
+                                  right: "10px",
+                                  top: "50%",
+                                  transform: "translateY(-50%)",
+                                  fontSize: "0.68rem",
+                                  background: "rgba(16, 185, 129, 0.2)",
+                                  color: "#6ee7b7",
+                                  border: "1px solid rgba(16, 185, 129, 0.4)",
+                                  borderRadius: "4px",
+                                  padding: "2px 6px",
+                                  pointerEvents: "none",
+                                  fontWeight: "600",
+                                }}
+                              >
+                                Seq Auto
+                              </span>
                             </div>
                           </div>
 
@@ -3051,39 +3288,6 @@ const Admission = () => {
                                 <option value="Male">Male</option>
                                 <option value="Female">Female</option>
                                 <option value="Other">Other</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          <div className="input-group">
-                            <label
-                              className="input-label"
-                              style={{ color: "rgba(255,255,255,0.8)" }}
-                            >
-                              Admission Class <span style={{ color: "#f87171", fontWeight: "bold" }}>*</span>
-                            </label>
-                            <div className="input-wrapper">
-                              <select
-                                name="admissionClass"
-                                value={student.admissionClass}
-                                onChange={(e) => handleStudentChange(index, e)}
-                                className="modern-input modern-select"
-                                required
-                              >
-                                <option value="" disabled>
-                                  Select Class
-                                </option>
-                                {availableClasses.length > 0 ? (
-                                  availableClasses.map((cls) => (
-                                    <option key={cls.id} value={cls.id}>
-                                      {cls.name}
-                                    </option>
-                                  ))
-                                ) : (
-                                  <option value="" disabled>
-                                    Loading classes...
-                                  </option>
-                                )}
                               </select>
                             </div>
                           </div>

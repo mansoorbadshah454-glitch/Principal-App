@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, getDocs, writeBatch, doc, serverTimestamp, increment } from 'firebase/firestore';
+import { syncCountersFromBulkUpload } from '../utils/studentSequenceHelper';
 import { 
     Upload, FileUp, FileDown, CheckCircle, AlertCircle, Loader2, Users, 
     CheckCircle2, AlertTriangle, Sparkles, RefreshCw 
@@ -408,6 +409,13 @@ const BulkUploadCard = ({ schoolId }) => {
             // Final batch commit if remaining
             if (opCount > 0) {
                 await currentBatch.commit();
+            }
+
+            // Sync school sequence counters with imported file like magic
+            try {
+                await syncCountersFromBulkUpload(schoolId, previewData, db);
+            } catch (syncErr) {
+                console.warn("Could not sync counters from bulk upload:", syncErr);
             }
 
             const totalUploaded = addedStudents.length;
