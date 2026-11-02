@@ -74,6 +74,11 @@ self.addEventListener('fetch', (event) => {
     const { request } = event;
     const url = new URL(request.url);
 
+    // On localhost, bypass cache to prevent Vite HMR / React instance duplication
+    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        return;
+    }
+
     // 1. Only handle GET requests
     if (request.method !== 'GET') return;
 

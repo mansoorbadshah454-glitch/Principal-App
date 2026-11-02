@@ -30,11 +30,26 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   </ErrorBoundary>,
 );
 
-// Register Offline Service Worker for 0ms offline capability
+// Register Offline Service Worker for 0ms offline capability (Production only)
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/firebase-messaging-sw.js')
-      .then((reg) => console.log('🚀 [PWA] Offline Service Worker registered:', reg.scope))
-      .catch((err) => console.warn('⚠️ [PWA] Service Worker registration failed:', err));
-  });
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    // Clean dev environment: unregister SW and purge CacheStorage on localhost
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      for (let reg of registrations) {
+        reg.unregister();
+        console.log('🧹 [Dev] Unregistered service worker on localhost');
+      }
+    });
+    if ('caches' in window) {
+      caches.keys().then((names) => {
+        for (let name of names) caches.delete(name);
+      });
+    }
+  } else {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/firebase-messaging-sw.js')
+        .then((reg) => console.log('🚀 [PWA] Offline Service Worker registered:', reg.scope))
+        .catch((err) => console.warn('⚠️ [PWA] Service Worker registration failed:', err));
+    });
+  }
 }

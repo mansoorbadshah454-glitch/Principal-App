@@ -6,7 +6,7 @@ import {
     Plus, Trash2, Users, Info, BookOpen, Sparkles, Bot, Key, ExternalLink,
     CreditCard, Landmark, Upload, Eye, EyeOff, Lock, Mail, FileText, AlertCircle, AlertTriangle, ArrowRight,
     Smartphone, RefreshCw, X, Check, Search, Calendar, LayoutGrid, ListFilter,
-    CheckCheck, Ban, ArrowUpRight
+    CheckCheck, Ban, ArrowUpRight, DollarSign
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
@@ -16,6 +16,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
 import UploadSyllabusTab from '../components/UploadSyllabusTab';
+import FeeMigrationStudio from '../components/FeeMigrationStudio';
 import CachedImage from '../components/CachedImage';
 import { compressImage } from '../utils/imageCompressor';
 import PaymentMethodLogo, { getPaymentMethodTheme } from '../components/PaymentLogos';
@@ -1356,6 +1357,7 @@ const Settings = () => {
                             badgeColor: subscriptionInfo.paymentStatus === 'paid' ? '#10b981' : (subscriptionInfo.paymentStatus === 'pending_verification' ? '#f59e0b' : '#ef4444')
                         },
                         { id: 'import', label: 'Import Students', icon: Users, desc: 'Excel / CSV bulk upload' },
+                        { id: 'fee_migration', label: 'Fee Migration & Baseline', icon: DollarSign, desc: 'CSV fee & backlog setup' },
                         { id: 'upload_syllabus', label: 'Upload Syllabus', icon: BookOpen, desc: 'Curricula scanner' },
                         { id: 'ai_assistant', label: 'AI Copilot', icon: Sparkles, desc: 'Gemini Copilot engine' },
                         { id: 'security', label: 'Security & Password', icon: ShieldCheck, desc: 'Private password control' }
@@ -1573,185 +1575,56 @@ const Settings = () => {
                                 </div>
                             )}
 
-                            {/* One-Time Historical Baseline Setup Component */}
-                            {feeSettings.historicalBaselineCompleted ? (
-                                <div style={{
-                                    marginTop: '1.25rem',
-                                    padding: '1.25rem 1.5rem',
-                                    background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
-                                    border: '1.5px solid #a7f3d0',
-                                    borderRadius: '16px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    gap: '1rem',
-                                    boxShadow: '0 2px 6px rgba(16, 185, 129, 0.08)'
-                                }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                        <div style={{ background: '#10b981', color: 'white', borderRadius: '12px', padding: '0.6rem', display: 'flex' }}>
-                                            <ShieldCheck size={24} />
-                                        </div>
-                                        <div>
-                                            <div style={{ fontSize: '0.95rem', fontWeight: '800', color: '#065f46' }}>
-                                                Initial Historical Fee Baseline Configured (Permanently Locked)
-                                            </div>
-                                            <div style={{ fontSize: '0.8rem', color: '#047857', marginTop: '2px' }}>
-                                                All historical months prior to <strong>{feeSettings.historicalBaselinePaidUpToName || feeSettings.historicalBaselinePaidUpTo}</strong> were marked settled on school onboarding. Parents' mobile apps are synchronized.
-                                            </div>
-                                        </div>
+                            {/* Fee Baseline & Migration Studio Link Card */}
+                            <div style={{
+                                marginTop: '1.25rem',
+                                padding: '1.25rem 1.5rem',
+                                background: 'linear-gradient(135deg, #f8faff 0%, #eef2ff 100%)',
+                                border: '1.5px solid #c7d2fe',
+                                borderRadius: '16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                flexWrap: 'wrap',
+                                gap: '1rem',
+                                boxShadow: '0 2px 8px rgba(79, 70, 229, 0.06)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                    <div style={{ background: '#4f46e5', color: 'white', borderRadius: '12px', padding: '0.65rem', display: 'flex' }}>
+                                        <DollarSign size={24} />
                                     </div>
-                                    <span style={{ fontSize: '0.75rem', padding: '6px 12px', background: '#d1fae5', color: '#065f46', borderRadius: '8px', fontWeight: '800', letterSpacing: '0.5px' }}>
-                                        LOCKED 🔒
-                                    </span>
-                                </div>
-                            ) : (
-                                <div style={{
-                                    marginTop: '1.5rem',
-                                    padding: '1.5rem',
-                                    background: '#f8fafc',
-                                    border: '2px dashed #cbd5e1',
-                                    borderRadius: '16px'
-                                }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                            <div style={{ background: '#e0e7ff', color: '#4f46e5', padding: '0.5rem', borderRadius: '10px' }}>
-                                                <Sparkles size={20} />
-                                            </div>
-                                            <div>
-                                                <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>
-                                                    Initial Historical Fee Baseline Setup (One-Time Onboarding)
-                                                </h4>
-                                                <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
-                                                    Mark past months as Paid so only your desired backlog (e.g. 2 months arrears) and current month are due for parents.
-                                                </p>
-                                            </div>
+                                    <div>
+                                        <div style={{ fontSize: '1rem', fontWeight: '800', color: '#1e1b4b' }}>
+                                            Fee Migration & Backlog Setup Studio
                                         </div>
-                                        <span style={{ fontSize: '0.7rem', padding: '4px 10px', background: '#fef3c7', color: '#92400e', borderRadius: '6px', fontWeight: '800' }}>
-                                            ONE-TIME USE ⚠️
-                                        </span>
-                                    </div>
-
-                                    {/* Selection Controls Grid */}
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem', marginTop: '1rem', marginBottom: '1.25rem' }}>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                                Mark All Past Months As PAID Up To:
-                                            </label>
-                                            <select
-                                                value={historicalCutoffMonthIdx}
-                                                onChange={(e) => setHistoricalCutoffMonthIdx(Number(e.target.value))}
-                                                style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1.5px solid #cbd5e1', background: 'white', fontWeight: '700', color: '#1e293b' }}
-                                            >
-                                                {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((m, idx) => (
-                                                    <option key={m} value={idx}>
-                                                        {m} {historicalCutoffYear}
-                                                    </option>
-                                                ))}
-                                            </select>
+                                        <div style={{ fontSize: '0.8rem', color: '#4338ca', marginTop: '3px' }}>
+                                            {feeSettings.historicalBaselineCompleted 
+                                                ? `Fee Baseline Active: Synced with Firestore. You can upload new class CSVs or update backlog records anytime.`
+                                                : `Migrate your school's previous fee records, tuition amounts, and backlog arrears class-wise via CSV with live preview.`}
                                         </div>
-
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                                Target Scope:
-                                            </label>
-                                            <select
-                                                value={historicalTargetScope}
-                                                onChange={(e) => setHistoricalTargetScope(e.target.value)}
-                                                style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1.5px solid #cbd5e1', background: 'white', fontWeight: '700', color: '#1e293b' }}
-                                            >
-                                                <option value="all">Whole School (All Classes)</option>
-                                                <option value="specific">Specific Class Only</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    {historicalTargetScope === 'specific' && (
-                                        <div style={{ marginBottom: '1.25rem' }}>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#475569', marginBottom: '0.35rem' }}>
-                                                Select Specific Class:
-                                            </label>
-                                            <select
-                                                value={historicalTargetClassId}
-                                                onChange={(e) => setHistoricalTargetClassId(e.target.value)}
-                                                style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '10px', border: '1.5px solid #cbd5e1', background: 'white', fontWeight: '700', color: '#1e293b' }}
-                                            >
-                                                <option value="">-- Choose Class --</option>
-                                                {classesList.map(c => (
-                                                    <option key={c.id} value={c.id}>{c.name}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                    )}
-
-                                    {/* Real-time Dynamic Breakdown Preview */}
-                                    {(() => {
-                                        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                                        const curMonth = new Date().getMonth();
-                                        const settledList = MONTHS.slice(0, historicalCutoffMonthIdx + 1);
-                                        const arrearList = MONTHS.slice(historicalCutoffMonthIdx + 1, curMonth);
-                                        const activeMonth = MONTHS[curMonth] || '';
-
-                                        return (
-                                            <div style={{ background: 'white', padding: '1rem 1.25rem', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '1.25rem' }}>
-                                                <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.75rem' }}>
-                                                    Live Visual Breakdown Preview
-                                                </div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
-                                                    <div style={{ padding: '0.75rem', background: '#ecfdf5', borderRadius: '10px', border: '1px solid #a7f3d0' }}>
-                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#047857' }}>🟢 Settled / Paid Months</div>
-                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#065f46', marginTop: '3px' }}>
-                                                            {settledList.length > 0 ? settledList.join(', ') : 'None'}
-                                                        </div>
-                                                        <div style={{ fontSize: '0.7rem', color: '#059669', marginTop: '2px' }}>({settledList.length} months marked Green/Paid)</div>
-                                                    </div>
-
-                                                    <div style={{ padding: '0.75rem', background: '#fef2f2', borderRadius: '10px', border: '1px solid #fecaca' }}>
-                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#b91c1c' }}>🔴 Pending Arrears</div>
-                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#991b1b', marginTop: '3px' }}>
-                                                            {arrearList.length > 0 ? arrearList.join(', ') : 'None (0 Arrears)'}
-                                                        </div>
-                                                        <div style={{ fontSize: '0.7rem', color: '#dc2626', marginTop: '2px' }}>({arrearList.length} months left as overdue)</div>
-                                                    </div>
-
-                                                    <div style={{ padding: '0.75rem', background: '#eff6ff', borderRadius: '10px', border: '1px solid #bfdbfe' }}>
-                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#1d4ed8' }}>🔵 Active Billing Month</div>
-                                                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e40af', marginTop: '3px' }}>
-                                                            {activeMonth} {historicalCutoffYear}
-                                                        </div>
-                                                        <div style={{ fontSize: '0.7rem', color: '#2563eb', marginTop: '2px' }}>(Current open billing cycle)</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
-
-                                    {/* Apply Button */}
-                                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowBaselineConfirmModal(true)}
-                                            style={{
-                                                padding: '0.75rem 1.5rem',
-                                                borderRadius: '10px',
-                                                border: 'none',
-                                                background: '#4f46e5',
-                                                color: 'white',
-                                                fontWeight: '800',
-                                                fontSize: '0.85rem',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.5rem',
-                                                boxShadow: '0 4px 10px rgba(79, 70, 229, 0.3)',
-                                                transition: 'all 0.2s'
-                                            }}
-                                            className="hover:scale-105 active:scale-95"
-                                        >
-                                            <Sparkles size={16} /> Settle & Lock Historical Baseline
-                                        </button>
                                     </div>
                                 </div>
-                            )}
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab('fee_migration')}
+                                    style={{
+                                        padding: '0.65rem 1.25rem',
+                                        background: '#4f46e5',
+                                        color: 'white',
+                                        borderRadius: '10px',
+                                        border: 'none',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '800',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.45rem',
+                                        boxShadow: '0 4px 10px rgba(79, 70, 229, 0.25)'
+                                    }}
+                                >
+                                    Open Fee Migration Studio <ArrowRight size={15} />
+                                </button>
+                            </div>
                         </div>
 
                         {/* Banking Section */}
@@ -3473,6 +3346,23 @@ const Settings = () => {
                 {activeTab === 'import' && (
                     <div style={{ animation: 'fadeIn 0.3s ease-out' }}>
                         {schoolId ? <BulkUploadCard schoolId={schoolId} /> : <div>Generating School ID...</div>}
+                    </div>
+                )}
+
+                {activeTab === 'fee_migration' && (
+                    <div style={{ animation: 'fadeIn 0.3s ease-out' }}>
+                        {schoolId ? (
+                            <FeeMigrationStudio
+                                schoolId={schoolId}
+                                classes={classesList}
+                                feeSettings={feeSettings}
+                                onSettingsUpdated={() => {
+                                    setFeeSettings(prev => ({ ...prev, historicalBaselineCompleted: true }));
+                                }}
+                            />
+                        ) : (
+                            <div>Generating School ID...</div>
+                        )}
                     </div>
                 )}
 
