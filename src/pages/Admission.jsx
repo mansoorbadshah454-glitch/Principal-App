@@ -52,6 +52,7 @@ import {
   where,
   limit,
   arrayUnion,
+  writeBatch,
 } from "firebase/firestore";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { getDocsFast } from "../utils/cacheUtils";
@@ -377,9 +378,9 @@ const Admission = () => {
     const schoolAddress = currentSchool.address || localStorage.getItem("schoolAddress") || "";
     const schoolEmail = currentSchool.email || "";
 
-    let logoBase64 = rawLogo;
-    if (rawLogo && typeof rawLogo === "string" && !rawLogo.startsWith("data:image/")) {
-      const b64 = await fetchBase64ImageSafe(rawLogo);
+    let logoBase64 = cachedLogoBase64 || rawLogo;
+    if (logoBase64 && typeof logoBase64 === "string" && !logoBase64.startsWith("data:image/")) {
+      const b64 = await fetchBase64ImageSafe(logoBase64);
       if (b64 && b64.startsWith("data:image/")) {
         logoBase64 = b64;
         if (activeSchoolId) {
@@ -827,6 +828,9 @@ const Admission = () => {
     profileImage: localStorage.getItem("schoolLogo") || "",
     email: "",
   });
+  const [cachedLogoBase64, setCachedLogoBase64] = useState(
+    () => localStorage.getItem("cachedSchoolLogoBase64") || ""
+  );
 
   // Offline Resilience & Auto-Sync Engine States
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -1037,8 +1041,20 @@ const Admission = () => {
           if (fetchedSchool.name) localStorage.setItem("schoolName", fetchedSchool.name);
           if (fetchedSchool.phone) localStorage.setItem("schoolPhone", fetchedSchool.phone);
           if (fetchedSchool.emergencyContact) localStorage.setItem("schoolEmergencyPhone", fetchedSchool.emergencyContact);
-          if (fetchedSchool.address) localStorage.setItem("schoolAddress", fetchedSchool.address);
-          if (fetchedSchool.profileImage) localStorage.setItem("schoolLogo", fetchedSchool.profileImage);
+          if (fetchedSchool.profileImage) {
+            localStorage.setItem("schoolLogo", fetchedSchool.profileImage);
+            if (fetchedSchool.profileImage.startsWith("data:image/")) {
+              setCachedLogoBase64(fetchedSchool.profileImage);
+              try { localStorage.setItem("cachedSchoolLogoBase64", fetchedSchool.profileImage); } catch (e) {}
+            } else {
+              fetchBase64ImageSafe(fetchedSchool.profileImage).then((b64) => {
+                if (b64 && b64.startsWith("data:image/")) {
+                  setCachedLogoBase64(b64);
+                  try { localStorage.setItem("cachedSchoolLogoBase64", b64); } catch (e) {}
+                }
+              }).catch(() => {});
+            }
+          }
 
           // 2. Fetch Classes
           const q = query(
@@ -1072,6 +1088,25 @@ const Admission = () => {
     fetchSchoolAndClasses();
   }, []);
 
+  // Background logo pre-cache on mount from localStorage if available
+  useEffect(() => {
+    if (!cachedLogoBase64) {
+      const storedLogo = localStorage.getItem("schoolLogo") || schoolProfile.profileImage;
+      if (storedLogo) {
+        if (storedLogo.startsWith("data:image/")) {
+          setCachedLogoBase64(storedLogo);
+        } else {
+          fetchBase64ImageSafe(storedLogo).then((b64) => {
+            if (b64 && b64.startsWith("data:image/")) {
+              setCachedLogoBase64(b64);
+              try { localStorage.setItem("cachedSchoolLogoBase64", b64); } catch (e) {}
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+  }, [cachedLogoBase64, schoolProfile.profileImage]);
+
   const handleParentChange = (e) => {
     const { name, value } = e.target;
     setParentDetails((prev) => ({
@@ -1097,19 +1132,65 @@ const Admission = () => {
     setStudents(newStudents);
   };
 
-  const handleImageUpload = (index, e) => {
+  // Fast Client-Side Passport Photo Compressor (converts 5MB -> 30-50KB in milliseconds)
+  const compressImage = (file, maxWidth = 400, quality = 0.75) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const elem = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+          if (width > maxWidth || height > maxWidth) {
+            if (width > height) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            } else {
+              width = Math.round((width * maxWidth) / height);
+              height = maxWidth;
+            }
+          }
+          elem.width = width;
+          elem.height = height;
+          const ctx = elem.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(elem.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = () => resolve(event.target.result);
+      };
+      reader.onerror = () => resolve(null);
+    });
+  };
+
+  const handleImageUpload = async (index, e) => {
     const file = e.target.files[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const newStudents = [...students];
-        newStudents[index] = {
-          ...newStudents[index],
-          profilePic: reader.result, // Store base64 string
+      try {
+        const compressedDataUrl = await compressImage(file, 400, 0.75);
+        if (compressedDataUrl) {
+          const newStudents = [...students];
+          newStudents[index] = {
+            ...newStudents[index],
+            profilePic: compressedDataUrl, // Store lightweight optimized base64 string
+          };
+          setStudents(newStudents);
+        }
+      } catch (imgErr) {
+        console.warn("Image compression fallback:", imgErr);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const newStudents = [...students];
+          newStudents[index] = {
+            ...newStudents[index],
+            profilePic: reader.result,
+          };
+          setStudents(newStudents);
         };
-        setStudents(newStudents);
-      };
-      reader.readAsDataURL(file);
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -1430,6 +1511,7 @@ const Admission = () => {
       // STEP 2: Process New Students
       const newStudentLinks = [];
       const queuedStudents = [];
+      const batch = writeBatch(db);
 
       const admissionPromises = students.map(async (student) => {
         if (!student.admissionClass) return;
@@ -1447,16 +1529,20 @@ const Admission = () => {
         );
         const studentId = studentRef.id;
 
-        // Upload Profile Pic if online, else store base64 string
+        // Upload Profile Pic if online (with 2.5s fast timeout guard, else use compressed local base64)
         let profilePicUrl = student.profilePic || null;
         if (student.profilePic && navigator.onLine) {
           try {
             const storagePath = `schools/${activeSchoolId}/students/${studentId}/profile.jpg`;
             const imageRef = ref(storage, storagePath);
-            await uploadString(imageRef, student.profilePic, 'data_url');
-            profilePicUrl = await getDownloadURL(imageRef);
+            await Promise.race([
+              uploadString(imageRef, student.profilePic, 'data_url')
+                .then(() => getDownloadURL(imageRef))
+                .then((url) => { profilePicUrl = url; }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("Storage timeout")), 2500))
+            ]);
           } catch (err) {
-            console.error("Error uploading profile pic:", err);
+            console.warn("Storage upload fallback to optimized base64:", err);
           }
         }
 
@@ -1529,7 +1615,7 @@ const Admission = () => {
           transportFee: derivedTransport,
           monthlyFee: recurringTotal,
           fee: recurringTotal,
-          baseFee: recurringTotal,
+          baseFee: derivedTuition,
           monthlyFeeStatus: isPaidNow ? "paid" : "unpaid",
           ...(isPaidNow
             ? {
@@ -1549,24 +1635,24 @@ const Admission = () => {
         };
 
         try {
-          // 1. Save to Class Sub-collection
-          await setDoc(studentRef, studentData);
+          // 1. Batch Save to Class Sub-collection
+          batch.set(studentRef, studentData);
 
-          // 2. Save to Master Students Collection
+          // 2. Batch Save to Master Students Collection
           const masterStudentRef = doc(db, `schools/${activeSchoolId}/students`, studentId);
-          await setDoc(masterStudentRef, studentData);
+          batch.set(masterStudentRef, studentData);
 
-          // 3. Update Class Count
+          // 3. Batch Update Class Count
           const classRef = doc(
             db,
             `schools/${activeSchoolId}/classes`,
             student.admissionClass,
           );
-          await updateDoc(classRef, {
+          batch.update(classRef, {
             students: increment(1),
           });
 
-          // 4. Record Fee Transaction for SSOT Ledger & Financial Integrity
+          // 4. Batch Record Fee Transaction for SSOT Ledger & Financial Integrity
           if (isPaidNow && (recurringTotal + actionsTotal) > 0) {
             const items = [
               ...(student.feeStructure || []).map((f) => ({
@@ -1620,7 +1706,7 @@ const Admission = () => {
               transactionType: "admission_collection",
             };
 
-            await setDoc(txDocRef, txPayload, { merge: true });
+            batch.set(txDocRef, txPayload, { merge: true });
           }
         } catch (stErr) {
           console.warn("Buffered offline student write:", stErr);
@@ -1646,16 +1732,19 @@ const Admission = () => {
       // STEP 3: Link Students (New + Sibling) to Parent Account
       const allLinks = [...newStudentLinks, ...linkedSiblings];
 
-      if (allLinks.length > 0) {
+      if (allLinks.length > 0 && finalParentId) {
         try {
           const parentRef = doc(db, `schools/${activeSchoolId}/parents`, finalParentId);
-          await updateDoc(parentRef, {
+          batch.update(parentRef, {
             linkedStudents: arrayUnion(...allLinks),
           });
         } catch (pErr) {
           console.warn("Parent link update buffered:", pErr);
         }
       }
+
+      // Fast atomic commit across Firestore
+      await batch.commit();
 
       // STEP 4: Persistent Offline Queue Item (Zero Loss Guarantee)
       const queuedAdmission = {
@@ -1682,8 +1771,8 @@ const Admission = () => {
         savePendingAdmissionQueue(cleaned, activeSchoolId);
       }
 
-      // Set Receipt Data before clearing form
-      const logoBase64 = await fetchBase64ImageSafe(schoolProfile.profileImage || localStorage.getItem("schoolLogo") || "");
+      // Set Receipt Data before clearing form (using pre-cached base64 logo for 0ms delay)
+      const logoBase64 = cachedLogoBase64 || schoolProfile.profileImage || localStorage.getItem("schoolLogo") || "";
       setReceiptData({
         schoolName: schoolProfile.name || localStorage.getItem("schoolName") || "Our School",
         schoolPhone: schoolProfile.phone || localStorage.getItem("schoolPhone") || "",
@@ -1816,7 +1905,7 @@ const Admission = () => {
         ? [students[targetIndex]]
         : students;
 
-    const logoBase64 = await fetchBase64ImageSafe(currentSchool.profileImage || localStorage.getItem("schoolLogo") || "");
+    const logoBase64 = cachedLogoBase64 || (await fetchBase64ImageSafe(currentSchool.profileImage || localStorage.getItem("schoolLogo") || ""));
 
     setReceiptData({
       schoolName: currentSchool.name || localStorage.getItem("schoolName") || "Our School",
