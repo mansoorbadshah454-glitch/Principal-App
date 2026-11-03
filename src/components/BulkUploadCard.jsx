@@ -330,12 +330,90 @@ const BulkUploadCard = ({ schoolId }) => {
                 studentsByClass[st.classId].push(st);
             });
 
+            // =========================================================================
+            // ZERO-DUPLICATE SHIELD: Pre-Fetch Existing Students to Enforce Mode A (Safe Skip)
+            // =========================================================================
+            const existingAdmissionNos = new Set();
+            const existingClassRolls = new Set(); // key: `${classId}_${cleanRoll}`
+            const existingClassNames = new Set(); // key: `${classId}_${cleanName}_${cleanFather}`
+
+            // 1. Fetch from Master students collection
+            try {
+                const masterSnap = await getDocs(collection(db, 'schools', schoolId, 'students'));
+                masterSnap.forEach(d => {
+                    const data = d.data();
+                    const adm = (data.admissionNo || data.registrationNo || '').trim().toLowerCase();
+                    const roll = (data.rollNo || data.rollNumber || '').trim().toLowerCase();
+                    const cid = (data.classId || '').trim();
+                    const name = (data.name || data.fullName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const father = (data.fatherName || data.parentDetails?.fatherName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+                    if (adm) existingAdmissionNos.add(adm);
+                    if (cid && roll) existingClassRolls.add(`${cid}_${roll}`);
+                    if (cid && name) existingClassNames.add(`${cid}_${name}_${father}`);
+                });
+            } catch (err) {
+                console.warn("Could not pre-fetch master students, proceeding with class-level check:", err);
+            }
+
+            // 2. Fetch from Class subcollections for each targeted class
+            for (const clsId of Object.keys(studentsByClass)) {
+                try {
+                    const classSnap = await getDocs(collection(db, 'schools', schoolId, 'classes', clsId, 'students'));
+                    classSnap.forEach(d => {
+                        const data = d.data();
+                        const adm = (data.admissionNo || data.registrationNo || '').trim().toLowerCase();
+                        const roll = (data.rollNo || data.rollNumber || '').trim().toLowerCase();
+                        const name = (data.name || data.fullName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                        const father = (data.fatherName || data.parentDetails?.fatherName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+                        if (adm) existingAdmissionNos.add(adm);
+                        if (roll) existingClassRolls.add(`${clsId}_${roll}`);
+                        if (name) existingClassNames.add(`${clsId}_${name}_${father}`);
+                    });
+                } catch (_) {}
+            }
+
             const addedStudents = [];
+            const skippedDuplicates = [];
+            const actualStudentsByClass = {};
             const BATCH_SIZE = 200; // Defensively stay well below Firestore's 500-write limit
             let currentBatch = writeBatch(db);
             let opCount = 0;
 
             for (const student of previewData) {
+                const admClean = (student.admissionNo || '').trim().toLowerCase();
+                const rollClean = (student.rollNo || '').trim().toLowerCase();
+                const cidClean = (student.classId || '').trim();
+                const nameClean = (student.fullName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                const fatherClean = (student.fatherName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+                const rollKey = `${cidClean}_${rollClean}`;
+                const nameKey = `${cidClean}_${nameClean}_${fatherClean}`;
+
+                // --- MODE A: SAFE SKIP CHECK ---
+                let duplicateReason = null;
+                if (admClean && existingAdmissionNos.has(admClean)) {
+                    duplicateReason = `Admission No "${student.admissionNo}" already exists`;
+                } else if (rollClean && existingClassRolls.has(rollKey)) {
+                    duplicateReason = `Roll No "${student.rollNo}" already exists in ${student.className}`;
+                } else if (nameClean && existingClassNames.has(nameKey)) {
+                    duplicateReason = `Student "${student.fullName}" already exists in ${student.className}`;
+                }
+
+                if (duplicateReason) {
+                    skippedDuplicates.push({
+                        student,
+                        reason: duplicateReason
+                    });
+                    continue; // Skip this duplicate row!
+                }
+
+                // Register keys in memory so identical rows later in this same CSV file also get skipped
+                if (admClean) existingAdmissionNos.add(admClean);
+                if (rollClean) existingClassRolls.add(rollKey);
+                if (nameClean) existingClassNames.add(nameKey);
+
                 const classStudentRef = doc(collection(db, 'schools', schoolId, 'classes', student.classId, 'students'));
                 const studentId = classStudentRef.id;
 
@@ -384,6 +462,11 @@ const BulkUploadCard = ({ schoolId }) => {
 
                 addedStudents.push(studentData);
 
+                if (!actualStudentsByClass[student.classId]) {
+                    actualStudentsByClass[student.classId] = [];
+                }
+                actualStudentsByClass[student.classId].push(student);
+
                 if (opCount >= BATCH_SIZE) {
                     await currentBatch.commit();
                     currentBatch = writeBatch(db);
@@ -391,18 +474,20 @@ const BulkUploadCard = ({ schoolId }) => {
                 }
             }
 
-            // 3. Update student count on each affected class
-            for (const [clsId, list] of Object.entries(studentsByClass)) {
-                const classRef = doc(db, 'schools', schoolId, 'classes', clsId);
-                currentBatch.update(classRef, {
-                    students: increment(list.length)
-                });
-                opCount++;
+            // 3. Update student count on each affected class ONLY for newly inserted records
+            for (const [clsId, list] of Object.entries(actualStudentsByClass)) {
+                if (list.length > 0) {
+                    const classRef = doc(db, 'schools', schoolId, 'classes', clsId);
+                    currentBatch.update(classRef, {
+                        students: increment(list.length)
+                    });
+                    opCount++;
 
-                if (opCount >= BATCH_SIZE) {
-                    await currentBatch.commit();
-                    currentBatch = writeBatch(db);
-                    opCount = 0;
+                    if (opCount >= BATCH_SIZE) {
+                        await currentBatch.commit();
+                        currentBatch = writeBatch(db);
+                        opCount = 0;
+                    }
                 }
             }
 
@@ -413,24 +498,33 @@ const BulkUploadCard = ({ schoolId }) => {
 
             // Sync school sequence counters with imported file like magic
             try {
-                await syncCountersFromBulkUpload(schoolId, previewData, db);
+                if (addedStudents.length > 0) {
+                    await syncCountersFromBulkUpload(schoolId, addedStudents, db);
+                }
             } catch (syncErr) {
                 console.warn("Could not sync counters from bulk upload:", syncErr);
             }
 
             const totalUploaded = addedStudents.length;
-            const classCount = Object.keys(studentsByClass).length;
+            const skippedCount = skippedDuplicates.length;
+            const classCount = Object.keys(actualStudentsByClass).length;
             
             setCompletedSummary({
                 total: totalUploaded,
+                skippedCount: skippedCount,
                 classCount: classCount,
-                breakdown: Object.entries(studentsByClass).map(([cid, list]) => ({
+                breakdown: Object.entries(actualStudentsByClass).map(([cid, list]) => ({
                     className: list[0]?.className || 'Class',
                     count: list.length
                 }))
             });
             setImportCompleted(true);
-            setSuccess(`Successfully imported ${totalUploaded} student${totalUploaded !== 1 ? 's' : ''} across ${classCount} class${classCount !== 1 ? 'es' : ''}!`);
+
+            let successNotice = `Successfully imported ${totalUploaded} new student${totalUploaded !== 1 ? 's' : ''}!`;
+            if (skippedCount > 0) {
+                successNotice += ` 🛡️ (Skipped ${skippedCount} duplicate record${skippedCount !== 1 ? 's' : ''} already in database).`;
+            }
+            setSuccess(successNotice);
             setFile(null);
             setPreviewData([]);
             setSkippedRows([]);

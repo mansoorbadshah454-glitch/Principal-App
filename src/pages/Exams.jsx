@@ -48,7 +48,8 @@ import {
     UploadCloud,
     Send,
     Sparkles,
-    Scale
+    Scale,
+    RefreshCw
 } from 'lucide-react';
 
 const STANDARD_EXAM_PRESETS = [
@@ -167,6 +168,69 @@ async function fetchImageAsBase64(url) {
     return null;
 }
 
+// Robust Subject Normalization & Synonyms Matcher (Unifies Teacher Mobile App & Principal WebApp)
+const normalizeSubj = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const isSameSubject = (subA, subB) => {
+    if (!subA || !subB) return false;
+    const cleanA = normalizeSubj(subA);
+    const cleanB = normalizeSubj(subB);
+    if (!cleanA || !cleanB) return false;
+    if (cleanA === cleanB) return true;
+
+    // Check if one has distinct paper/section markers that differ from the other (e.g. English-A vs English-B)
+    const distinctSuffixes = ['a', 'b', 'c', '1', '2', 'paper1', 'paper2', 'oral', 'written', 'practical', 'theory', 'adv', 'advanced'];
+    for (const suffix of distinctSuffixes) {
+        const hasA = cleanA.endsWith(suffix) || cleanA.includes(`_${suffix}`) || cleanA.includes(`-${suffix}`);
+        const hasB = cleanB.endsWith(suffix) || cleanB.includes(`_${suffix}`) || cleanB.includes(`-${suffix}`);
+        if (hasA !== hasB) {
+            // Distinct paper/sections must not collapse together
+            if (suffix === 'b' || suffix === '2' || suffix === 'c' || suffix === 'paper2' || suffix === 'oral' || suffix === 'practical') {
+                return false;
+            }
+        }
+    }
+
+    // Common Pakistan School Subject Aliases (Canonical & Normalized)
+    const aliasGroups = [
+        ['math', 'maths', 'mathematics', 'generalmath', 'riazi', 'mathcompulsory'],
+        ['sci', 'science', 'generalscience', 'genscience', 'gscience', 'gensci'],
+        ['isl', 'islamiyat', 'islamiat', 'islamicstudies', 'deeniyat', 'islamicstudy'],
+        ['quran', 'mutaliaquran', 'tarjumatulquran', 'tarjuma', 'nazra', 'nazraquran', 'tajweed', 'hifz'],
+        ['eng', 'english', 'englishcompulsory', 'englit', 'englishliterature'],
+        ['urdu', 'urducompulsory', 'urduadab', 'urduinsha'],
+        ['pst', 'pakstudies', 'pakistanstudies', 'mutalaepakistan', 'pakstudy'],
+        ['comp', 'computer', 'computerscience', 'it', 'informationtechnology', 'ict', 'cs'],
+        ['gk', 'generalknowledge', 'generalawareness', 'generalknow'],
+        ['bio', 'biology'],
+        ['chem', 'chemistry'],
+        ['phy', 'physics'],
+        ['art', 'arts', 'drawing', 'finearts'],
+        ['soc', 'socialstudies', 'sstudies', 'socialstudy', 'historygeography', 'history', 'geography'],
+        ['arabic', 'arbi'],
+        ['sindhi'],
+        ['pashto'],
+        ['ethics', 'moralscience']
+    ];
+
+    if (aliasGroups.some(group => group.includes(cleanA) && group.includes(cleanB))) {
+        return true;
+    }
+
+    // Safe prefix match: only if both words are long enough (> 4 chars) and don't end in different letters (like A vs B)
+    if (cleanA.length >= 5 && cleanB.length >= 5) {
+        if (cleanA.startsWith(cleanB) || cleanB.startsWith(cleanA)) {
+            const lastA = cleanA.slice(-1);
+            const lastB = cleanB.slice(-1);
+            if ((lastA === 'a' && lastB === 'b') || (lastA === 'b' && lastB === 'a')) {
+                return false;
+            }
+            return true;
+        }
+    }
+
+    return false;
+};
+
 export default function Exams() {
     // --- State Management ---
     const [activeTab, setActiveTab] = useState(() => localStorage.getItem('exams_active_tab') || 'setup'); // 'setup' | 'gazette' | 'dmc'
@@ -189,6 +253,7 @@ export default function Exams() {
     const [students, setStudents] = useState([]);
     const [classMarksDocs, setClassMarksDocs] = useState([]);
     const [loadingData, setLoadingData] = useState(false);
+    const [isSyncingMarks, setIsSyncingMarks] = useState(false);
     
     // Filters & Sorting
     const [searchQuery, setSearchQuery] = useState('');
@@ -208,13 +273,8 @@ export default function Exams() {
         return sId === '6257' || pId === '6257' || sId.includes('6257') || pId.includes('6257');
     }, [schoolId, schoolProfile]);
 
-    const [isDemoMode, setIsDemoMode] = useState(() => {
-        try {
-            return (String(schoolId || '').trim() === '6257' || String(schoolId || '').includes('6257')) && localStorage.getItem('exams_demo_mode_active') === 'true';
-        } catch (_) {
-            return false;
-        }
-    });
+    // Live database is ALWAYS default. Demo mode is an optional visual presentation toggle for School 6257.
+    const [isDemoMode, setIsDemoMode] = useState(false);
 
     useEffect(() => {
         if (!isDemoAccount && isDemoMode) {
@@ -323,7 +383,9 @@ export default function Exams() {
                 // Listen to Classes List
                 const classesRef = collection(db, `schools/${id}/classes`);
                 const unsubClasses = onSnapshot(classesRef, (snap) => {
-                    const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    const list = snap.docs
+                        .filter(d => d.id !== 'action_metadata')
+                        .map(d => ({ id: d.id, ...d.data() }));
                     list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                     setClasses(list);
 
@@ -359,23 +421,38 @@ export default function Exams() {
         // Fetch students of this class
         const studentsRef = collection(db, `schools/${schoolId}/classes/${selectedClassId}/students`);
         const unsubStudents = onSnapshot(studentsRef, (snap) => {
-            const list = snap.docs.map(d => {
+            const list = snap.docs
+                .filter(d => {
+                    const data = d.data();
+                    if (data.isDeleted === true || data.deleted === true) return false;
+                    const st = (data.status || '').toLowerCase().trim();
+                    if (st === 'withdrawn' || st === 'left' || st === 'inactive' || st === 'struck_off' || st === 'slc_issued') return false;
+                    return true;
+                })
+                .map(d => {
                 const data = d.data();
+                const studentRoll = (data.rollNo !== undefined && data.rollNo !== null && String(data.rollNo).trim() !== '')
+                    ? String(data.rollNo).trim()
+                    : (data.rollNumber !== undefined && data.rollNumber !== null && String(data.rollNumber).trim() !== '')
+                        ? String(data.rollNumber).trim()
+                        : '';
+                const studentName = data.fullName || data.name || ((data.firstName || '') + ' ' + (data.lastName || '')).trim() || 'Student';
                 return {
                     id: d.id,
-                    name: data.fullName || data.name || ((data.firstName || '') + ' ' + (data.lastName || '')).trim() || 'Student',
-                    rollNumber: data.rollNumber || data.rollNo || '',
-                    fatherName: data.fatherName || data.guardianName || '',
+                    name: studentName,
+                    rollNo: studentRoll,
+                    rollNumber: studentRoll,
+                    fatherName: data.fatherName || data.guardianName || data.parentDetails?.fatherName || '',
                     photoUrl: data.photoUrl || data.photo || data.profileImage || data.studentPhoto || data.profilePic || data.avatar || data.image || data.imageUrl || '',
                     ...data
                 };
             });
-            // Sort students by Roll Number numerically / alphabetically
+            // Sort students by Roll Number numerically / naturally (e.g. 1, 2, 10 or TPP-1, TPP-2)
             list.sort((a, b) => {
-                const rollA = parseInt(a.rollNumber) || 999999;
-                const rollB = parseInt(b.rollNumber) || 999999;
-                if (rollA !== rollB) return rollA - rollB;
-                return a.name.localeCompare(b.name);
+                const numA = parseInt(String(a.rollNumber).replace(/\D/g, '')) || 999999;
+                const numB = parseInt(String(b.rollNumber).replace(/\D/g, '')) || 999999;
+                if (numA !== numB) return numA - numB;
+                return (a.rollNumber || '').localeCompare(b.rollNumber || '', undefined, { numeric: true }) || a.name.localeCompare(b.name);
             });
             setStudents(list);
             // Default: All deselected for batch actions
@@ -430,6 +507,41 @@ export default function Exams() {
             subjects: []
         };
     }, [classes, selectedClassId]);
+
+    // Manual Force Real-time Pull for Exam Marks directly from cloud
+    const handleManualSyncMarks = async () => {
+        if (!schoolId || !selectedClassId) return;
+        setIsSyncingMarks(true);
+        try {
+            const marksRef = collection(db, `schools/${schoolId}/classes/${selectedClassId}/exam_marks`);
+            const snap = await getDocs(marksRef);
+            let list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            // Also check if any duplicate class doc shares the exact clean name
+            if (currentClass?.name) {
+                const targetClean = currentClass.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                const alternateClasses = classes.filter(c => c.id !== selectedClassId && (c.name || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === targetClean);
+                for (const altCls of alternateClasses) {
+                    try {
+                        const altSnap = await getDocs(collection(db, `schools/${schoolId}/classes/${altCls.id}/exam_marks`));
+                        if (!altSnap.empty) {
+                            const altDocs = altSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                            list = [...list, ...altDocs];
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            setClassMarksDocs(list);
+            setUploadSuccessMessage(`✅ Synchronized ${list.length} subject marksheet(s) live from cloud!`);
+            setTimeout(() => setUploadSuccessMessage(null), 4000);
+        } catch (err) {
+            console.error("Manual marks sync error:", err);
+            alert("Marks sync notice: " + (err.message || err));
+        } finally {
+            setIsSyncingMarks(false);
+        }
+    };
 
     // --- 3. Compute Consolidated Tabulation Matrix ---
     const tabulationData = useMemo(() => {
@@ -1003,42 +1115,130 @@ export default function Exams() {
             return false;
         });
 
-        // 2. Discover all subjects for this class (teacher entered + class registered)
-        const subjectsSet = new Set();
-        const subjectConfigs = {}; // subject -> { totalMarks, passingMarks }
-
-        relevantMarksDocs.forEach(doc => {
-            const subjName = (doc.subject || '').trim();
-            if (subjName) {
-                subjectsSet.add(subjName);
-                const teacherTotal = typeof doc.totalMarks === 'number' && doc.totalMarks > 0 ? doc.totalMarks : 100;
-                const teacherPass = typeof doc.passingMarks === 'number' && doc.passingMarks > 0 ? doc.passingMarks : 33;
-                subjectConfigs[subjName] = {
-                    totalMarks: teacherTotal,
-                    passingMarks: teacherPass,
-                };
-            }
+        // CRITICAL: Sort relevantMarksDocs by updatedAt descending (NEWEST FIRST)
+        // Ensures teacher's latest updates from mobile app always take precedence over older documents!
+        relevantMarksDocs.sort((a, b) => {
+            const getDocTime = (doc) => {
+                if (!doc) return 0;
+                if (doc.updatedAt?.toMillis) return doc.updatedAt.toMillis();
+                if (doc.updatedAt?.seconds) return doc.updatedAt.seconds * 1000;
+                if (doc.updatedAt instanceof Date) return doc.updatedAt.getTime();
+                if (typeof doc.updatedAt === 'number') return doc.updatedAt;
+                if (typeof doc.updatedAt === 'string') {
+                    const parsed = Date.parse(doc.updatedAt);
+                    if (!isNaN(parsed)) return parsed;
+                }
+                return 0;
+            };
+            return getDocTime(b) - getDocTime(a);
         });
 
-        // Also include registered class subjects
+        // 2. Discover all subjects for this class (teacher entered + class registered)
+        // Harmonize subjects to avoid duplicates (e.g. Maths vs Mathematics) using isSameSubject
+        const subjectConfigs = {}; // canonicalSubject -> { totalMarks, passingMarks }
+        const canonicalSubjects = [];
+
+        const addCanonicalSubject = (name, total, pass) => {
+            const clean = (name || '').trim();
+            if (!clean) return;
+            const existing = canonicalSubjects.find(s => isSameSubject(s, clean));
+            if (existing) {
+                if (typeof total === 'number' && total > 0) subjectConfigs[existing].totalMarks = total;
+                if (typeof pass === 'number' && pass > 0) subjectConfigs[existing].passingMarks = pass;
+            } else {
+                canonicalSubjects.push(clean);
+                subjectConfigs[clean] = {
+                    totalMarks: typeof total === 'number' && total > 0 ? total : 100,
+                    passingMarks: typeof pass === 'number' && pass > 0 ? pass : 33
+                };
+            }
+        };
+
+        // First register class predefined subjects
         const classSubjs = Array.isArray(currentClass.subjects) ? currentClass.subjects : [];
         classSubjs.forEach(s => {
             const clean = typeof s === 'string' ? s.trim() : (s?.name || '').trim();
             if (clean) {
-                subjectsSet.add(clean);
-                if (!subjectConfigs[clean]) {
-                    subjectConfigs[clean] = {
-                        totalMarks: 100,
-                        passingMarks: 33
-                    };
-                }
+                addCanonicalSubject(clean, 100, 33);
             }
         });
 
-        const subjectList = Array.from(subjectsSet).sort();
+        // Next register subjects from marks submitted by teachers (newest first)
+        relevantMarksDocs.forEach(doc => {
+            const subjName = (doc.subject || '').trim();
+            if (subjName) {
+                const teacherTotal = typeof doc.totalMarks === 'number' && doc.totalMarks > 0 ? doc.totalMarks : 100;
+                const teacherPass = typeof doc.passingMarks === 'number' && doc.passingMarks > 0 ? doc.passingMarks : 33;
+                addCanonicalSubject(subjName, teacherTotal, teacherPass);
+            }
+        });
+
+        const subjectList = [...canonicalSubjects].sort((a, b) => a.localeCompare(b));
+
+        // 2b. Deduplicate students if duplicate documents exist in database for the same student
+        const studentGroupMap = new Map();
+        students.forEach(student => {
+            const roll = String(student.rollNumber || student.rollNo || '').trim().toLowerCase();
+            const adm = String(student.admissionNo || student.admissionNumber || '').trim().toLowerCase();
+            const name = String(student.name || student.studentName || '').trim().toLowerCase();
+            const father = String(student.fatherName || '').trim().toLowerCase();
+
+            // Build a deduplication key (prioritizing roll+name or roll)
+            let dedupKey = '';
+            if (roll && name) {
+                dedupKey = `roll_${roll}_name_${name}`;
+            } else if (roll) {
+                dedupKey = `roll_${roll}`;
+            } else if (adm) {
+                dedupKey = `adm_${adm}`;
+            } else if (name && father) {
+                dedupKey = `name_${name}_father_${father}`;
+            } else {
+                dedupKey = `id_${student.id}`;
+            }
+
+            if (!studentGroupMap.has(dedupKey)) {
+                studentGroupMap.set(dedupKey, []);
+            }
+            studentGroupMap.get(dedupKey).push(student);
+        });
+
+        const deduplicatedStudents = [];
+        studentGroupMap.forEach((group) => {
+            if (group.length === 1) {
+                deduplicatedStudents.push({ ...group[0], _allIds: [group[0].id] });
+            } else {
+                // If multiple records exist for this student (e.g. duplicate created by accidental re-admission/import):
+                // Find if any record has marks entered in relevantMarksDocs
+                const allIds = group.map(s => s.id);
+                let bestStudent = group[0];
+                let maxMarksFound = -1;
+
+                group.forEach(cand => {
+                    let marksCount = 0;
+                    relevantMarksDocs.forEach(d => {
+                        if (d && d.marks && d.marks[cand.id]) {
+                            const entry = d.marks[cand.id];
+                            if (typeof entry.obtainedMarks === 'number' || entry.isAbsent) {
+                                marksCount++;
+                            }
+                        }
+                    });
+                    if (marksCount > maxMarksFound) {
+                        maxMarksFound = marksCount;
+                        bestStudent = cand;
+                    }
+                });
+
+                deduplicatedStudents.push({
+                    ...bestStudent,
+                    _allIds: allIds
+                });
+            }
+        });
 
         // 3. Build Student Rows
-        const studentRows = students.map(student => {
+        const studentRows = deduplicatedStudents.map(student => {
             const subjectMarks = {};
             let totalObtained = 0;
             let totalMax = 0;
@@ -1046,13 +1246,48 @@ export default function Exams() {
             let failedSubjectsCount = 0;
             let hasAnyAbsent = false;
 
+            const targetIds = student._allIds || [student.id];
+            const targetRoll = String(student.rollNumber || student.rollNo || '').trim();
+
             subjectList.forEach(subject => {
                 const sConf = subjectConfigs[subject] || { totalMarks: 100, passingMarks: 33 };
-                const marksDoc = relevantMarksDocs.find(d => (d.subject || '').trim().toLowerCase() === subject.toLowerCase());
+                
+                // Find all docs matching this subject (already sorted newest first)
+                const matchingDocs = relevantMarksDocs.filter(d => 
+                    isSameSubject(d.subject, subject) || 
+                    (d.subject || '').trim().toLowerCase() === subject.toLowerCase()
+                );
                 
                 let entryData = null;
-                if (marksDoc && marksDoc.marks && marksDoc.marks[student.id]) {
-                    entryData = marksDoc.marks[student.id];
+                // Check newest document first so teacher's latest update wins
+                for (const marksDoc of matchingDocs) {
+                    if (marksDoc && marksDoc.marks && typeof marksDoc.marks === 'object') {
+                        // Check direct match across any alias ID
+                        for (const sId of targetIds) {
+                            if (marksDoc.marks[sId]) {
+                                entryData = marksDoc.marks[sId];
+                                break;
+                            }
+                        }
+                        if (entryData) break;
+
+                        // Fallback lookup: match by studentId, rollNumber, or rollNo
+                        const entries = Object.entries(marksDoc.marks);
+                        const match = entries.find(([k, v]) => {
+                            if (targetIds.includes(k)) return true;
+                            if (v && typeof v === 'object') {
+                                const sId = String(v.studentId || '').trim();
+                                const rNum = String(v.rollNumber || v.rollNo || '').trim();
+                                if (sId && (targetIds.includes(sId) || (targetRoll && sId === targetRoll))) return true;
+                                if (rNum && targetRoll && rNum === targetRoll) return true;
+                            }
+                            return false;
+                        });
+                        if (match) {
+                            entryData = match[1];
+                            break;
+                        }
+                    }
                 }
 
                 if (entryData) {
@@ -1099,7 +1334,13 @@ export default function Exams() {
 
             if (!studentModerationOverride) {
                 relevantMarksDocs.forEach(d => {
-                    const entry = d.marks?.[student.id];
+                    const targetRoll = String(student.rollNumber || student.rollNo || '').trim();
+                    const entry = d.marks?.[student.id] || Object.values(d.marks || {}).find(v => {
+                        if (!v || typeof v !== 'object') return false;
+                        if (v.studentId && (v.studentId === student.id || (targetRoll && v.studentId === targetRoll))) return true;
+                        if (targetRoll && (v.rollNumber === targetRoll || v.rollNo === targetRoll)) return true;
+                        return false;
+                    });
                     if (entry?.moderationOverride) {
                         studentModerationOverride = entry.moderationOverride;
                     }
@@ -1238,7 +1479,7 @@ export default function Exams() {
             subjectConfigs,
             rows: finalizedRows,
             stats: {
-                totalStudents: students.length,
+                totalStudents: deduplicatedStudents.length,
                 evaluatedCount: evaluatedStudents.length,
                 passedCount,
                 failedCount,
@@ -1300,9 +1541,15 @@ export default function Exams() {
                 return b.percentage - a.percentage;
             }
             if (sortBy === 'roll') {
-                const rollA = parseInt(a.rollNumber) || 999999;
-                const rollB = parseInt(b.rollNumber) || 999999;
-                if (rollA !== rollB) return sortOrder === 'asc' ? rollA - rollB : rollB - rollA;
+                const cleanA = String(a.rollNumber || '').replace(/\D/g, '');
+                const cleanB = String(b.rollNumber || '').replace(/\D/g, '');
+                const numA = cleanA !== '' ? parseInt(cleanA, 10) : null;
+                const numB = cleanB !== '' ? parseInt(cleanB, 10) : null;
+                if (numA !== null && numB !== null && numA !== numB) {
+                    return sortOrder === 'asc' ? numA - numB : numB - numA;
+                }
+                const cmp = String(a.rollNumber || '').localeCompare(String(b.rollNumber || ''), undefined, { numeric: true });
+                if (cmp !== 0) return sortOrder === 'asc' ? cmp : -cmp;
                 return a.name.localeCompare(b.name);
             }
             if (sortBy === 'obtained') {
@@ -2705,6 +2952,15 @@ export default function Exams() {
                                     </div>
                                 )}
                                 <button
+                                    onClick={handleManualSyncMarks}
+                                    disabled={isSyncingMarks || !selectedClassId}
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                                    title="Force real-time live synchronization of marks directly from database"
+                                >
+                                    <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncingMarks ? 'animate-spin' : ''}`} />
+                                    <span>{isSyncingMarks ? 'Syncing...' : 'Sync Live Marks'}</span>
+                                </button>
+                                <button
                                     onClick={handleExportCSV}
                                     disabled={tabulationData.rows.length === 0}
                                     className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors disabled:opacity-50"
@@ -3024,7 +3280,7 @@ export default function Exams() {
                                 onClick={() => {
                                     const allIds = isDemoMode 
                                         ? ['demo_1', 'demo_2', 'demo_3', 'demo_4', 'demo_5', 'demo_6', 'demo_7', 'demo_8', 'demo_9', 'demo_10', 'demo_11', 'demo_12', 'demo_13', 'demo_14', 'demo_15'] 
-                                        : students.map(s => s.id);
+                                        : (tabulationData?.rows || students).map(s => s.studentId || s.id);
                                     if (selectedStudentIdsForBatch.size > 0) {
                                         setSelectedStudentIdsForBatch(new Set());
                                     } else {
@@ -3033,7 +3289,7 @@ export default function Exams() {
                                 }}
                                 className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-black rounded-xl transition-colors border border-slate-200"
                             >
-                                {selectedStudentIdsForBatch.size > 0 ? `Deselect All (${selectedStudentIdsForBatch.size})` : `Select All (${isDemoMode ? 15 : students.length})`}
+                                {selectedStudentIdsForBatch.size > 0 ? `Deselect All (${selectedStudentIdsForBatch.size})` : `Select All (${isDemoMode ? 15 : (tabulationData?.rows?.length ?? students.length)})`}
                             </button>
                             <button
                                 onClick={() => setShowUploadToParentsModal(true)}
@@ -3144,8 +3400,12 @@ export default function Exams() {
                                 </div>
                             </div>
                             <button
-                                onClick={() => setIsDemoMode(false)}
-                                className="px-4 py-2 bg-white text-amber-900 font-black text-xs rounded-xl shadow-sm hover:bg-amber-50 transition-colors flex-shrink-0"
+                                onClick={() => {
+                                    setIsDemoMode(false);
+                                    try { localStorage.removeItem('exams_demo_mode_active'); } catch (_) {}
+                                    setSelectedStudentIdsForBatch(new Set());
+                                }}
+                                className="px-4 py-2 bg-white text-amber-900 font-black text-xs rounded-xl shadow-sm hover:bg-amber-50 transition-colors flex-shrink-0 cursor-pointer"
                             >
                                 Switch to Live Data
                             </button>

@@ -249,13 +249,14 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
                         <>
                             <div style={{ background: 'white', padding: '1.25rem', borderRadius: '16px', border: '1px solid #ddd6fe' }}>
                                 <div style={{ marginBottom: '1.25rem' }}>
-                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Username</label>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Login Email</label>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
-                                        <User size={16} color={purpleAccent} />
+                                        <Mail size={16} color={purpleAccent} />
                                         <input
-                                            type="text"
-                                            value={editedTeacher.username || ''}
-                                            onChange={(e) => setEditedTeacher({ ...editedTeacher, username: e.target.value })}
+                                            type="email"
+                                            value={editedTeacher.email || ''}
+                                            onChange={(e) => setEditedTeacher({ ...editedTeacher, email: e.target.value.trim() })}
+                                            placeholder="teacher@example.com"
                                             style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', fontWeight: '600', width: '100%' }}
                                         />
                                     </div>
@@ -974,10 +975,10 @@ const TeacherEditModal = ({ teacher, dbClasses, onCancel, onSave }) => {
                         <>
                             <div style={{ background: '#fcfaff', padding: '1.25rem', borderRadius: '16px', border: '1px solid #ddd6fe' }}>
                                 <div style={{ marginBottom: '1.25rem' }}>
-                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Username</label>
+                                    <label style={{ fontSize: '0.7rem', fontWeight: '800', color: purpleHeader, display: 'block', marginBottom: '0.4rem', textTransform: 'uppercase' }}>Login Email</label>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f5f3ff', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
-                                        <User size={16} color={purpleAccent} />
-                                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: purpleHeader }}>{teacher.username}</span>
+                                        <Mail size={16} color={purpleAccent} />
+                                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: purpleHeader }}>{teacher.email || teacher.username || 'No email set'}</span>
                                     </div>
                                 </div>
 
@@ -1881,20 +1882,26 @@ const Teachers = () => {
             const oldTeacher = teachers.find(t => t.id === id);
 
             const isPasswordChanged = updateData.password && updateData.password.trim() !== '';
-            const newAuthEmail = (updateData.username && updateData.username.trim()) || (updateData.email && updateData.email.trim());
-            const oldAuthEmail = oldTeacher?.username || oldTeacher?.email;
-            const isEmailChanged = newAuthEmail !== oldAuthEmail;
+            const targetEmail = (updateData.email && updateData.email.trim()) || (oldTeacher?.email && oldTeacher?.email.trim()) || (updateData.username && updateData.username.trim()) || (oldTeacher?.username && oldTeacher?.username.trim()) || '';
+            const oldAuthEmail = (oldTeacher?.email && oldTeacher?.email.trim()) || (oldTeacher?.username && oldTeacher?.username.trim()) || '';
+            const isEmailChanged = targetEmail !== '' && targetEmail.toLowerCase() !== oldAuthEmail.toLowerCase();
 
             // 1. If password or email changed, update Firebase Auth via Cloud Function
-            if (isPasswordChanged || (newAuthEmail && isEmailChanged)) {
-                console.log("Updating credentials for teacher:", id);
+            if (isPasswordChanged || isEmailChanged) {
+                console.log("Updating credentials for teacher:", id, "with email:", targetEmail);
                 const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
-                const authPayload = { targetUid: id, schoolId: schoolId };
+                const authPayload = { 
+                    targetUid: id, 
+                    schoolId: schoolId,
+                    newEmail: targetEmail,
+                    email: targetEmail,
+                    role: 'teacher',
+                    name: updateData.name || oldTeacher?.name || 'Teacher'
+                };
                 if (isPasswordChanged) authPayload.newPassword = updateData.password.trim();
-                if (isEmailChanged) authPayload.newEmail = newAuthEmail;
                 
-                await updatePasswordFn(authPayload);
-                console.log("Auth credentials updated successfully");
+                const authResult = await updatePasswordFn(authPayload);
+                console.log("Auth credentials updated successfully in Firebase Auth:", authResult.data);
             }
 
             if (isPasswordChanged) {
@@ -1996,20 +2003,26 @@ const Teachers = () => {
                 const oldTeacher = teachers.find(t => t.id === editingId);
 
                 const isPasswordChanged = updateData.password && updateData.password.trim() !== '';
-                const newAuthEmail = (updateData.username && updateData.username.trim()) || (updateData.email && updateData.email.trim());
-                const oldAuthEmail = oldTeacher?.username || oldTeacher?.email;
-                const isEmailChanged = newAuthEmail !== oldAuthEmail;
+                const targetEmail = (updateData.email && updateData.email.trim()) || (oldTeacher?.email && oldTeacher?.email.trim()) || (updateData.username && updateData.username.trim()) || (oldTeacher?.username && oldTeacher?.username.trim()) || '';
+                const oldAuthEmail = (oldTeacher?.email && oldTeacher?.email.trim()) || (oldTeacher?.username && oldTeacher?.username.trim()) || '';
+                const isEmailChanged = targetEmail !== '' && targetEmail.toLowerCase() !== oldAuthEmail.toLowerCase();
 
                 // 1. If password or email changed, update Firebase Auth via Cloud Function
-                if (isPasswordChanged || (newAuthEmail && isEmailChanged)) {
-                    console.log("Updating credentials for teacher during edit:", editingId);
+                if (isPasswordChanged || isEmailChanged) {
+                    console.log("Updating credentials for teacher during edit:", editingId, "with email:", targetEmail);
                     const updatePasswordFn = httpsCallable(functions, 'updateSchoolUserPassword');
-                    const authPayload = { targetUid: editingId, schoolId: schoolId };
+                    const authPayload = { 
+                        targetUid: editingId, 
+                        schoolId: schoolId,
+                        newEmail: targetEmail,
+                        email: targetEmail,
+                        role: 'teacher',
+                        name: updateData.name || oldTeacher?.name || 'Teacher'
+                    };
                     if (isPasswordChanged) authPayload.newPassword = updateData.password.trim();
-                    if (isEmailChanged) authPayload.newEmail = newAuthEmail;
 
-                    await updatePasswordFn(authPayload);
-                    console.log("Auth credentials updated successfully");
+                    const authResult = await updatePasswordFn(authPayload);
+                    console.log("Auth credentials updated successfully in Firebase Auth:", authResult.data);
                 }
 
                 if (!updateData.password) delete updateData.password; // Don't overwrite if empty

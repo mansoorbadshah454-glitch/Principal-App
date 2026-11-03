@@ -1528,6 +1528,122 @@ const Admission = () => {
 
     setIsLoading(true);
 
+    // ==========================================
+    // ZERO-DUPLICATE SHIELD: Pre-Flight Uniqueness Validation
+    // ==========================================
+    try {
+      // 1. Internal check among sibling entries in this same form submission
+      const submittedAdmNos = new Set();
+      const submittedClassRolls = new Set();
+
+      for (const st of students) {
+        if (!st.admissionClass) continue;
+        const admNoClean = (st.admissionNo || '').trim().toLowerCase();
+        const rollNoClean = (st.rollNo || '').trim().toLowerCase();
+        const classIdClean = (st.admissionClass || '').trim();
+
+        if (admNoClean) {
+          if (submittedAdmNos.has(admNoClean)) {
+            alert(`⛔ Duplicate Form Error: Admission Number "${st.admissionNo}" is entered more than once in this form. Every student must have a unique Admission Number.`);
+            setIsLoading(false);
+            return;
+          }
+          submittedAdmNos.add(admNoClean);
+        }
+
+        if (rollNoClean) {
+          const key = `${classIdClean}_${rollNoClean}`;
+          if (submittedClassRolls.has(key)) {
+            const clsObj = availableClasses.find(c => c.id === st.admissionClass);
+            alert(`⛔ Duplicate Form Error: Roll Number "${st.rollNo}" is entered more than once for class "${clsObj?.name || 'Selected Class'}". Roll numbers must be unique within a class.`);
+            setIsLoading(false);
+            return;
+          }
+          submittedClassRolls.add(key);
+        }
+      }
+
+      // 2. Database check against existing students in school and classes
+      for (const st of students) {
+        if (!st.admissionClass) continue;
+        const clsObj = availableClasses.find(c => c.id === st.admissionClass);
+        const className = clsObj ? clsObj.name : "Class";
+        const admNoClean = (st.admissionNo || '').trim();
+        const rollNoClean = (st.rollNo || '').trim();
+        const studentFullName = `${st.firstName || ''} ${st.lastName || ''}`.trim();
+
+        // A. School-wide Admission Number uniqueness check
+        if (admNoClean) {
+          const admQuery = query(
+            collection(db, `schools/${activeSchoolId}/students`),
+            where('admissionNo', '==', admNoClean),
+            limit(1)
+          );
+          const admSnap = await getDocs(admQuery);
+          if (!admSnap.empty) {
+            const existing = admSnap.docs[0].data();
+            alert(`⛔ Duplicate Admission Number Blocked:\nAdmission No "${admNoClean}" is ALREADY assigned to student "${existing.name || existing.fullName || 'Existing Student'}" (${existing.className || 'Unknown Class'}).\n\nAdmission numbers must be strictly unique across the school.`);
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // B. Class-wide Roll Number uniqueness check
+        if (rollNoClean) {
+          const rollQuery1 = query(
+            collection(db, `schools/${activeSchoolId}/classes/${st.admissionClass}/students`),
+            where('rollNo', '==', rollNoClean),
+            limit(1)
+          );
+          const rollSnap1 = await getDocs(rollQuery1);
+          if (!rollSnap1.empty) {
+            const existing = rollSnap1.docs[0].data();
+            alert(`⛔ Duplicate Roll Number Blocked:\nRoll No "${rollNoClean}" is ALREADY assigned to student "${existing.name || existing.fullName || 'Student'}" in ${className}.\n\nEach student in a class must have a unique Roll Number.`);
+            setIsLoading(false);
+            return;
+          }
+
+          const rollQuery2 = query(
+            collection(db, `schools/${activeSchoolId}/classes/${st.admissionClass}/students`),
+            where('rollNumber', '==', rollNoClean),
+            limit(1)
+          );
+          const rollSnap2 = await getDocs(rollQuery2);
+          if (!rollSnap2.empty) {
+            const existing = rollSnap2.docs[0].data();
+            alert(`⛔ Duplicate Roll Number Blocked:\nRoll No "${rollNoClean}" is ALREADY assigned to student "${existing.name || existing.fullName || 'Student'}" in ${className}.\n\nEach student in a class must have a unique Roll Number.`);
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // C. Same Full Name + Same Class identity check (prevents double submissions)
+        if (studentFullName) {
+          const classStudentsSnap = await getDocs(
+            collection(db, `schools/${activeSchoolId}/classes/${st.admissionClass}/students`)
+          );
+          const cleanNewName = studentFullName.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const cleanFather = (parentDetails.fatherName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+          const duplicateMatch = classStudentsSnap.docs.find(d => {
+            const dData = d.data();
+            const dName = (dData.name || dData.fullName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const dFather = (dData.fatherName || dData.parentDetails?.fatherName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            return dName === cleanNewName && (!cleanFather || !dFather || dFather === cleanFather);
+          });
+
+          if (duplicateMatch) {
+            const existing = duplicateMatch.data();
+            alert(`⛔ Duplicate Student Blocked:\nA student named "${studentFullName}" (Roll No: ${existing.rollNo || existing.rollNumber || 'N/A'}) is ALREADY enrolled in ${className}.\n\nIf you need to update this student, please edit their profile instead of creating a duplicate admission.`);
+            setIsLoading(false);
+            return;
+          }
+        }
+      }
+    } catch (valErr) {
+      console.warn("Uniqueness validation check notice:", valErr);
+    }
+
     try {
       const queueId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       let finalParentId = existingParent ? existingParent.id : null;

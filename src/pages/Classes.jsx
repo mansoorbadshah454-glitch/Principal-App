@@ -1222,12 +1222,18 @@ const Classes = () => {
         if (!schoolId) return;
 
         try {
+            const cleanSubjects = Array.from(new Set(
+                (newClass.subjects || [])
+                    .map(s => (typeof s === 'string' ? s.trim() : s?.name ? s.name.trim() : ''))
+                    .filter(Boolean)
+            ));
+
             await addDoc(collection(db, `schools/${schoolId}/classes`), {
-                name: newClass.name,
+                name: (newClass.name || '').trim(),
                 teacher: newClass.teacher,
                 teacherId: newClass.teacherId || null,
                 students: 0, // Default 0 for new class
-                subjects: newClass.subjects,
+                subjects: cleanSubjects,
                 createdAt: new Date()
             });
             setShowAddClass(false);
@@ -1335,11 +1341,17 @@ const Classes = () => {
         if (!schoolId) return;
 
         try {
+            const cleanSubjects = Array.from(new Set(
+                (updatedData.subjects || [])
+                    .map(s => (typeof s === 'string' ? s.trim() : s?.name ? s.name.trim() : ''))
+                    .filter(Boolean)
+            ));
+
             const classRef = doc(db, `schools/${schoolId}/classes`, id);
             await updateDoc(classRef, {
                 teacher: updatedData.teacher,
                 teacherId: updatedData.teacherId || null,
-                subjects: updatedData.subjects
+                subjects: cleanSubjects
             });
             setEditingClassId(null);
             if (typeof toast !== 'undefined') {
