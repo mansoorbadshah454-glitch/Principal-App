@@ -386,7 +386,7 @@ export default function SLCOverviewDashboard({
                             <span>Overview & Growth Analytics</span>
                         </h2>
                         <p className="text-blue-100 text-xs sm:text-sm font-medium mt-1 max-w-2xl leading-relaxed">
-                            Complete visibility on student turnover, Admissions vs. SLC Leavings comparison, 50-Year Almari vault census, and class-wise exit patterns.
+                            Complete visibility on student turnover, Admissions vs. SLC Leavings comparison, 50-Year Vault census, and class-wise exit patterns.
                         </p>
                     </div>
 
@@ -739,7 +739,7 @@ export default function SLCOverviewDashboard({
                         background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
                         boxShadow: '0 10px 20px -3px rgba(217, 119, 6, 0.35)'
                     }}
-                    title="Click to open 50-Year Almari Vault"
+                    title="Click to open 50-Year Vault"
                 >
                     {/* Glass Geometric Shine Pattern */}
                     <div className="absolute -top-6 -right-6 w-24 h-24 bg-white/15 rounded-xl rotate-12 backdrop-blur-xs pointer-events-none group-hover:scale-110 transition-transform" />
@@ -749,7 +749,7 @@ export default function SLCOverviewDashboard({
                         <div className="flex items-center justify-between">
                             <span className="text-white font-black text-[11px] sm:text-xs uppercase tracking-wider drop-shadow-xs opacity-95 flex items-center gap-1.5">
                                 <Archive size={14} className="text-amber-200" />
-                                <span>Almari Records</span>
+                                <span>Vault Records</span>
                             </span>
                             <div className="w-8 h-8 rounded-lg bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center text-white shadow-xs group-hover:bg-white/30 transition-all">
                                 <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
@@ -957,7 +957,7 @@ export default function SLCOverviewDashboard({
                                 <div className="p-1.5 rounded-lg bg-white/20 backdrop-blur-md border border-white/30 text-white shadow-xs">
                                     <Archive size={16} />
                                 </div>
-                                <span>50-Year Interactive Digital Cupboard (Almari)</span>
+                                <span>50-Year Interactive Digital Vault</span>
                             </span>
                             <span className="text-[10px] font-black px-3 py-1 bg-white/20 text-white rounded-full border border-white/30 shadow-xs backdrop-blur-md">
                                 Permanent Vault
@@ -969,7 +969,7 @@ export default function SLCOverviewDashboard({
                                 {analytics.totalAlmariRecords.toLocaleString()}
                             </div>
                             <div className="text-xs font-extrabold text-amber-100 drop-shadow-2xs">
-                                Total Certificates Preserved in Almari
+                                Total Certificates Preserved in Vault
                             </div>
                         </div>
 
@@ -1000,7 +1000,7 @@ export default function SLCOverviewDashboard({
                             onClick={onNavigateToCupboard}
                             className="px-4 py-2 bg-white text-amber-900 hover:bg-amber-50 font-black text-xs rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1.5"
                         >
-                            <span>Open 50-Year Almari</span>
+                            <span>Open 50-Year Vault</span>
                             <ChevronRight size={14} />
                         </button>
                     </div>

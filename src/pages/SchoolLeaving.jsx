@@ -2993,7 +2993,7 @@ export default function SchoolLeaving() {
 
             setSlcHistory(prev => [newLegacyRec, ...prev]);
             setShowDigitizeModal(false);
-            alert(`✅ Legacy record of ${newLegacyRec.studentName} (${yr}) saved to 50-Year Cupboard!`);
+            alert(`✅ Legacy record of ${newLegacyRec.studentName} (${yr}) saved to 50-Year Vault!`);
         } catch (err) {
             alert("Failed to save legacy record: " + err.message);
         } finally {
@@ -3068,7 +3068,7 @@ export default function SchoolLeaving() {
                         <span>School Leaving (SLC)</span>
                     </h1>
                     <p className="text-slate-500 text-xs sm:text-sm font-medium mt-1">
-                        Paper Generator-grade Live Canvas Studio with 360° Clearance Radar & 50-Year Interactive Digital Cupboard (Almari).
+                        Paper Generator-grade Live Canvas Studio with 360° Clearance Radar & 50-Year Interactive Digital Vault.
                     </p>
                 </div>
 
@@ -3120,7 +3120,7 @@ export default function SchoolLeaving() {
                         }`}
                     >
                         <Archive size={18} />
-                        <span>50-Year Visual Cupboard</span>
+                        <span>Vault</span>
                         <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
                             pageTab === 'cupboard' ? 'bg-indigo-700/60 text-indigo-100' : 'bg-slate-200 text-slate-700'
                         }`}>
@@ -3217,50 +3217,6 @@ export default function SchoolLeaving() {
                 />
             )}
 
-            {/* 5 KPI Metric Widgets (Day Mode - Studio View) */}
-            {pageTab === 'studio' && (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
-                    <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 hover:shadow-md transition-all">
-                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">Active Session SLCs</span>
-                        <div className="text-2xl font-black text-slate-900 mt-1 flex items-baseline gap-1.5">
-                            <span>{stats.thisSession}</span>
-                            <span className="text-xs font-bold text-slate-400">Students</span>
-                        </div>
-                    </div>
-
-                    <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all">
-                        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wider block">50-Year Digital Vault</span>
-                        <div className="text-2xl font-black text-indigo-900 mt-1 flex items-baseline gap-1.5">
-                            <span>{stats.totalIssued}</span>
-                            <span className="text-xs font-bold text-indigo-600">Total Issued</span>
-                        </div>
-                    </div>
-
-                    <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200/80 shadow-xs hover:border-emerald-300 hover:shadow-md transition-all">
-                        <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wider block">100% Dues Cleared</span>
-                        <div className="text-2xl font-black text-emerald-900 mt-1 flex items-baseline gap-1.5">
-                            <span>{stats.duesCleared}</span>
-                            <span className="text-xs font-bold text-emerald-600">Verified</span>
-                        </div>
-                    </div>
-
-                    <div className="p-4 bg-amber-50/50 rounded-2xl border border-amber-200/80 shadow-xs hover:border-amber-300 hover:shadow-md transition-all">
-                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-wider block">Matric 10th Passed</span>
-                        <div className="text-2xl font-black text-amber-900 mt-1 flex items-baseline gap-1.5">
-                            <span>{stats.matricPass}</span>
-                            <span className="text-xs font-bold text-amber-600">Graduates</span>
-                        </div>
-                    </div>
-
-                    <div className="p-4 bg-rose-50/50 rounded-2xl border border-rose-200/80 shadow-xs hover:border-rose-300 hover:shadow-md transition-all col-span-2 md:col-span-1">
-                        <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Transfers & Migration</span>
-                        <div className="text-2xl font-black text-rose-900 mt-1 flex items-baseline gap-1.5">
-                            <span>{stats.migrations}</span>
-                            <span className="text-xs font-bold text-rose-600">Certificates</span>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* ======================================================== */}
             {/* TAB 1: LIVE SLC ISSUANCE STUDIO (DAY MODE CANVAS STYLE)   */}
@@ -4923,7 +4879,7 @@ export default function SchoolLeaving() {
                         {/* DECADE SHELVES (Almari Wooden / Steel Racks) */}
                         <div className="space-y-2">
                             <span className="text-[11px] font-black uppercase tracking-wider text-amber-900 block">
-                                🗄️ Step 1: Select Decade Shelf (Almari Section)
+                                🗄️ Step 1: Select Decade Shelf (Vault Section)
                             </span>
 
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -5121,7 +5077,7 @@ export default function SchoolLeaving() {
                                     <span>Digitize Old Manual Register Record</span>
                                 </h3>
                                 <p className="text-xs text-slate-500 font-medium">
-                                    Enter 10, 20, or 35-year-old student details from physical school registers to save in 50-Year Cupboard.
+                                    Enter 10, 20, or 35-year-old student details from physical school registers to save in 50-Year Vault.
                                 </p>
                             </div>
                             <button
@@ -5240,7 +5196,7 @@ export default function SchoolLeaving() {
                                     disabled={isSavingLegacy}
                                     className="px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs font-black cursor-pointer shadow-md transition-all"
                                 >
-                                    {isSavingLegacy ? 'Saving to Vault...' : 'Save to 50-Year Cupboard 💾'}
+                                    {isSavingLegacy ? 'Saving to Vault...' : 'Save to 50-Year Vault 💾'}
                                 </button>
                             </div>
                         </form>
