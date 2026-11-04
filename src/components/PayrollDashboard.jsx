@@ -1693,49 +1693,212 @@ const PayrollDashboard = ({ schoolId, schoolInfo }) => {
             {selectedTeacherModal && activeModalPayroll && (
                 <div style={{
                     position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+                    width: '100vw', height: '100vh',
+                    background: 'transparent',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    zIndex: 9999, padding: '1rem'
+                    zIndex: 99999, padding: '1rem',
+                    pointerEvents: 'none',
+                    boxSizing: 'border-box'
                 }}>
-                    <div className="card animate-scale-in" style={{
-                        background: 'white', borderRadius: '20px', width: '920px', maxWidth: '100%',
+                    <div className="animate-scale-in" style={{
+                        background: '#ffffff', borderRadius: '20px', width: '960px', maxWidth: '98vw',
                         maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', border: '1px solid #e2e8f0'
+                        boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.08), 0 10px 25px rgba(0, 0, 0, 0.15)',
+                        border: '1px solid #cbd5e1',
+                        pointerEvents: 'auto',
+                        padding: 0
                     }}>
                         {/* Modal Header */}
                         <div style={{
-                            padding: '1.25rem 1.5rem', background: '#0f172a', color: 'white',
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                            padding: '1.1rem 1.5rem', background: '#0f172a', color: 'white',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            flexWrap: 'wrap', gap: '0.75rem'
                         }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
                                 <div style={{
-                                    width: '42px', height: '42px', borderRadius: '12px',
+                                    width: '44px', height: '44px', borderRadius: '12px',
                                     background: '#1e293b', border: '1px solid #334155',
                                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    fontWeight: '800', color: '#34d399', fontSize: '1.1rem'
+                                    fontWeight: '800', color: '#34d399', fontSize: '1.15rem',
+                                    boxShadow: '0 4px 8px rgba(0,0,0,0.2)'
                                 }}>
                                     {(activeModalPayroll.teacher.name || 'T')[0].toUpperCase()}
                                 </div>
                                 <div>
-                                    <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '800', color: 'white' }}>
-                                        {activeModalPayroll.teacher.name} — Payroll Audit
-                                    </h3>
-                                    <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
-                                        Period: {MONTH_NAMES[selectedMonth - 1]} {selectedYear} • Base Salary: Rs {activeModalPayroll.baseSalary.toLocaleString()}
-                                    </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                        {/* Quick Teacher Switcher Controls */}
+                                        <div style={{
+                                            display: 'flex', alignItems: 'center', background: '#1e293b',
+                                            border: '1.5px solid #334155', borderRadius: '10px', padding: '2px 4px',
+                                            gap: '2px'
+                                        }}>
+                                            <button
+                                                type="button"
+                                                title="Previous Staff Member"
+                                                disabled={teachers.length <= 1}
+                                                onClick={() => {
+                                                    const currIdx = teachers.findIndex(t => t.id === activeModalPayroll.teacher.id);
+                                                    const prevIdx = (currIdx - 1 + teachers.length) % teachers.length;
+                                                    setSelectedTeacherModal(teachers[prevIdx]);
+                                                }}
+                                                style={{
+                                                    background: 'none', border: 'none', color: '#cbd5e1',
+                                                    cursor: teachers.length <= 1 ? 'not-allowed' : 'pointer',
+                                                    display: 'flex', alignItems: 'center', padding: '4px',
+                                                    opacity: teachers.length <= 1 ? 0.4 : 1
+                                                }}
+                                            >
+                                                <ChevronLeft size={16} />
+                                            </button>
+
+                                            <select
+                                                value={activeModalPayroll.teacher.id}
+                                                onChange={(e) => {
+                                                    const t = teachers.find(item => item.id === e.target.value);
+                                                    if (t) setSelectedTeacherModal(t);
+                                                }}
+                                                style={{
+                                                    background: 'transparent', border: 'none', color: '#ffffff',
+                                                    fontWeight: '800', fontSize: '0.95rem', padding: '3px 6px',
+                                                    cursor: 'pointer', outline: 'none', maxWidth: '240px'
+                                                }}
+                                            >
+                                                {teachers.map(t => (
+                                                    <option key={t.id} value={t.id} style={{ background: '#0f172a', color: 'white' }}>
+                                                        {t.name} ({t.designation || 'Teacher'})
+                                                    </option>
+                                                ))}
+                                            </select>
+
+                                            <button
+                                                type="button"
+                                                title="Next Staff Member"
+                                                disabled={teachers.length <= 1}
+                                                onClick={() => {
+                                                    const currIdx = teachers.findIndex(t => t.id === activeModalPayroll.teacher.id);
+                                                    const nextIdx = (currIdx + 1) % teachers.length;
+                                                    setSelectedTeacherModal(teachers[nextIdx]);
+                                                }}
+                                                style={{
+                                                    background: 'none', border: 'none', color: '#cbd5e1',
+                                                    cursor: teachers.length <= 1 ? 'not-allowed' : 'pointer',
+                                                    display: 'flex', alignItems: 'center', padding: '4px',
+                                                    opacity: teachers.length <= 1 ? 0.4 : 1
+                                                }}
+                                            >
+                                                <ChevronRight size={16} />
+                                            </button>
+                                        </div>
+
+                                        <span style={{
+                                            fontSize: '0.72rem', fontWeight: '800', color: '#38bdf8',
+                                            background: 'rgba(2, 132, 199, 0.2)', border: '1px solid rgba(56, 189, 248, 0.35)',
+                                            padding: '3px 8px', borderRadius: '6px', textTransform: 'uppercase', letterSpacing: '0.5px'
+                                        }}>
+                                            Payroll Audit
+                                        </span>
+                                    </div>
+
+                                    <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                        <span>Base: <strong style={{ color: '#34d399' }}>Rs {activeModalPayroll.baseSalary.toLocaleString()}</strong></span>
+                                        <span style={{ color: '#475569' }}>•</span>
+                                        <span>Net: <strong style={{ color: '#fbbf24' }}>Rs {activeModalPayroll.netSalary.toLocaleString()}</strong></span>
+                                        <span style={{ color: '#475569' }}>•</span>
+                                        <span>Working Days: <strong style={{ color: '#f1f5f9' }}>{workingDaysCount}</strong></span>
+                                    </div>
                                 </div>
                             </div>
 
-                            <button
-                                onClick={() => setSelectedTeacherModal(null)}
-                                style={{
-                                    background: '#1e293b', border: 'none', borderRadius: '10px',
-                                    width: '34px', height: '34px', display: 'flex', alignItems: 'center',
-                                    justifyContent: 'center', color: '#cbd5e1', cursor: 'pointer'
-                                }}
-                            >
-                                <X size={18} />
-                            </button>
+                            {/* Right Side: Month/Year Navigator & Close Button */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                {/* Month & Year Navigator Pill */}
+                                <div style={{
+                                    display: 'flex', alignItems: 'center', background: '#1e293b',
+                                    border: '1.5px solid #334155', borderRadius: '10px', padding: '2px 5px',
+                                    gap: '2px'
+                                }}>
+                                    <button
+                                        type="button"
+                                        title="Previous Month"
+                                        onClick={() => {
+                                            if (selectedMonth === 1) {
+                                                setSelectedMonth(12);
+                                                setSelectedYear(prev => prev - 1);
+                                            } else {
+                                                setSelectedMonth(prev => prev - 1);
+                                            }
+                                        }}
+                                        style={{
+                                            background: 'none', border: 'none', color: '#94a3b8',
+                                            cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px'
+                                        }}
+                                    >
+                                        <ChevronLeft size={16} />
+                                    </button>
+
+                                    <select
+                                        value={selectedMonth}
+                                        onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                                        style={{
+                                            background: 'transparent', border: 'none', color: '#f8fafc',
+                                            fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer', outline: 'none'
+                                        }}
+                                    >
+                                        {MONTH_NAMES.map((m, idx) => (
+                                            <option key={m} value={idx + 1} style={{ background: '#0f172a', color: 'white' }}>
+                                                {m}
+                                            </option>
+                                        ))}
+                                    </select>
+
+                                    <select
+                                        value={selectedYear}
+                                        onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                        style={{
+                                            background: 'transparent', border: 'none', color: '#38bdf8',
+                                            fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer', outline: 'none'
+                                        }}
+                                    >
+                                        {[today.getFullYear() - 2, today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1].map(y => (
+                                            <option key={y} value={y} style={{ background: '#0f172a', color: 'white' }}>
+                                                {y}
+                                            </option>
+                                        ))}
+                                    </select>
+
+                                    <button
+                                        type="button"
+                                        title="Next Month"
+                                        onClick={() => {
+                                            if (selectedMonth === 12) {
+                                                setSelectedMonth(1);
+                                                setSelectedYear(prev => prev + 1);
+                                            } else {
+                                                setSelectedMonth(prev => prev + 1);
+                                            }
+                                        }}
+                                        style={{
+                                            background: 'none', border: 'none', color: '#94a3b8',
+                                            cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px'
+                                        }}
+                                    >
+                                        <ChevronRight size={16} />
+                                    </button>
+                                </div>
+
+                                <button
+                                    onClick={() => setSelectedTeacherModal(null)}
+                                    title="Close Audit Modal"
+                                    style={{
+                                        background: '#1e293b', border: '1.5px solid #334155', borderRadius: '10px',
+                                        width: '36px', height: '36px', display: 'flex', alignItems: 'center',
+                                        justifyContent: 'center', color: '#cbd5e1', cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
                         </div>
 
                         {/* Modal Nav Tabs */}
@@ -1829,7 +1992,9 @@ const PayrollDashboard = ({ schoolId, schoolInfo }) => {
                                                     cursor: 'pointer'
                                                 }}
                                             >
-                                                Up to Today (1 - {new Date().getDate()} {MONTH_NAMES[selectedMonth - 1]?.slice(0, 3)})
+                                                {(selectedMonth === (today.getMonth() + 1) && selectedYear === today.getFullYear()) 
+                                                    ? `Up to Today (1 - ${new Date().getDate()} ${MONTH_NAMES[selectedMonth - 1]?.slice(0, 3)})`
+                                                    : `Full Month (${activeModalPayroll.timeline.length} Days)`}
                                             </button>
                                             <button
                                                 type="button"
@@ -1860,7 +2025,7 @@ const PayrollDashboard = ({ schoolId, schoolInfo }) => {
                                         </div>
 
                                         <span style={{ fontSize: '0.72rem', color: '#64748b', fontStyle: 'italic' }}>
-                                            Scroll inside table to view all 31 days
+                                            Scroll inside table to view all {activeModalPayroll.timeline.length} days
                                         </span>
                                     </div>
 
