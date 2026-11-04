@@ -49,7 +49,8 @@ import {
     Send,
     Sparkles,
     Scale,
-    RefreshCw
+    RefreshCw,
+    Lock
 } from 'lucide-react';
 
 const STANDARD_EXAM_PRESETS = [
@@ -328,6 +329,93 @@ export default function Exams() {
         description: 'First comprehensive academic term assessment.'
     });
 
+    // Academic Sessions & Filtering State
+    const availableSessions = useMemo(() => {
+        const set = new Set();
+        exams.forEach(e => {
+            if (e.session && typeof e.session === 'string' && e.session.trim()) {
+                set.add(e.session.trim());
+            }
+        });
+        if (set.size === 0) {
+            set.add('2025-2026');
+            set.add('2024-2025');
+        }
+        return Array.from(set).sort((a, b) => b.localeCompare(a));
+    }, [exams]);
+
+    const [selectedSession, setSelectedSession] = useState(() => {
+        return localStorage.getItem('exams_selected_session') || '2025-2026';
+    });
+
+    useEffect(() => {
+        if (selectedSession) localStorage.setItem('exams_selected_session', selectedSession);
+    }, [selectedSession]);
+
+    useEffect(() => {
+        if (availableSessions.length > 0 && !availableSessions.includes(selectedSession)) {
+            setSelectedSession(availableSessions[0]);
+        }
+    }, [availableSessions, selectedSession]);
+
+    const [setupStatusFilter, setSetupStatusFilter] = useState('all'); // 'all' | 'active' | 'concluded'
+
+    // Current Exam Object
+    const currentExam = useMemo(() => {
+        if (selectedExamId === 'annual_aggregate') {
+            return {
+                id: 'annual_aggregate',
+                title: `Annual Consolidated Aggregate (${selectedSession || 'Academic Session'})`,
+                session: selectedSession || '2025-2026',
+                defaultTotalMarks: 100,
+                passingMarks: 33,
+                isAggregate: true
+            };
+        }
+        return exams.find(e => e.id === selectedExamId) || {
+            id: selectedExamId || 'default',
+            title: 'Term Examination',
+            session: selectedSession || '2025-2026',
+            defaultTotalMarks: 100,
+            passingMarks: 33
+        };
+    }, [exams, selectedExamId, selectedSession]);
+
+    // Filtered exams belonging to the currently selected academic session
+    const sessionExams = useMemo(() => {
+        return exams.filter(e => {
+            if (e.id === 'annual_aggregate') return false;
+            const matchSession = !selectedSession || (e.session || '').trim() === selectedSession;
+            if (!matchSession) return false;
+            if (setupStatusFilter === 'active') return e.status === 'active';
+            if (setupStatusFilter === 'concluded') return e.status === 'completed' || e.status === 'archived';
+            return true;
+        });
+    }, [exams, selectedSession, setupStatusFilter]);
+
+    // Aggregate Weightage & Annual Calculation Settings
+    const [aggregateConfig, setAggregateConfig] = useState({
+        mode: 'auto', // 'auto' | 'custom'
+        weights: {}, // { [examId]: percentageNumber }
+        includedExamIds: []
+    });
+    const [showAggregateModal, setShowAggregateModal] = useState(false);
+    const [isSavingAggregateConfig, setIsSavingAggregateConfig] = useState(false);
+    const [modalAggregateMode, setModalAggregateMode] = useState('auto');
+    const [modalAggregateWeights, setModalAggregateWeights] = useState({});
+    const [modalIncludedExamIds, setModalIncludedExamIds] = useState([]);
+
+    useEffect(() => {
+        if (showAggregateModal) {
+            setModalAggregateMode(aggregateConfig.mode || 'auto');
+            setModalAggregateWeights(aggregateConfig.weights || {});
+            const defaultIncluded = (aggregateConfig.includedExamIds && aggregateConfig.includedExamIds.length > 0)
+                ? aggregateConfig.includedExamIds
+                : sessionExams.filter(e => e.presetId !== 'monthly_test' && !e.id.includes('monthly')).map(e => e.id);
+            setModalIncludedExamIds(defaultIncluded.length > 0 ? defaultIncluded : sessionExams.map(e => e.id));
+        }
+    }, [showAggregateModal, aggregateConfig, sessionExams]);
+
     // --- Persistence Effects for Navigation Memory ---
     useEffect(() => {
         if (activeTab) localStorage.setItem('exams_active_tab', activeTab);
@@ -362,6 +450,21 @@ export default function Exams() {
                             email: d.email || ''
                         });
                     }
+                });
+
+                // Listen to Exam Settings (Aggregate weights & formulas)
+                const examSettingsRef = doc(db, `schools/${id}/settings`, 'exam_settings');
+                const unsubExamSettings = onSnapshot(examSettingsRef, (snap) => {
+                    if (snap.exists()) {
+                        const d = snap.data();
+                        setAggregateConfig({
+                            mode: d.mode || 'auto',
+                            weights: d.weights || {},
+                            includedExamIds: Array.isArray(d.includedExamIds) ? d.includedExamIds : []
+                        });
+                    }
+                }, (err) => {
+                    console.warn("Exam settings stream notice:", err);
                 });
 
                 // Listen to Exams List
@@ -399,6 +502,7 @@ export default function Exams() {
 
                 return () => {
                     unsubProfile();
+                    unsubExamSettings();
                     unsubExams();
                     unsubClasses();
                 };
@@ -487,18 +591,6 @@ export default function Exams() {
             unsubAttendance();
         };
     }, [schoolId, selectedClassId]);
-
-    // Current Exam Object
-    const currentExam = useMemo(() => {
-        return exams.find(e => e.id === selectedExamId) || {
-            id: selectedExamId || 'default',
-            title: 'Term Examination',
-            session: '2025-2026',
-            defaultTotalMarks: 100,
-            passingMarks: 33
-        };
-    }, [exams, selectedExamId]);
-
     // Current Class Object
     const currentClass = useMemo(() => {
         return classes.find(c => c.id === selectedClassId) || {
@@ -1084,7 +1176,204 @@ export default function Exams() {
             };
         }
 
-        if (!selectedExamId || students.length === 0) return { subjects: [], subjectConfigs: {}, rows: [], stats: {} };
+        if (!selectedExamId || (students.length === 0 && !isDemoMode)) return { subjects: [], subjectConfigs: {}, rows: [], stats: {} };
+
+        // =====================================================================
+        // CONSOLIDATED ANNUAL AGGREGATE CALCULATION ACROSS SESSION TERMS
+        // =====================================================================
+        if (selectedExamId === 'annual_aggregate') {
+            const sessionAllExams = exams.filter(e => (!selectedSession || e.session === selectedSession) && e.id !== 'annual_aggregate');
+            const includedExamIds = (aggregateConfig.includedExamIds && aggregateConfig.includedExamIds.length > 0)
+                ? aggregateConfig.includedExamIds
+                : sessionAllExams.filter(e => e.presetId !== 'monthly_test' && !e.id.includes('monthly')).map(e => e.id);
+            
+            const candidateExams = sessionAllExams.filter(e => includedExamIds.includes(e.id));
+            const activeTerms = candidateExams.length > 0 ? candidateExams : sessionAllExams;
+
+            const aggregateTerms = activeTerms.map(t => ({
+                id: t.id,
+                title: t.title,
+                weight: typeof aggregateConfig.weights?.[t.id] === 'number' ? aggregateConfig.weights[t.id] : (aggregateConfig.mode === 'custom' ? 0 : Math.round(100 / (activeTerms.length || 1)))
+            }));
+
+            // Deduplicate students
+            const studentGroupMap = new Map();
+            students.forEach(student => {
+                const roll = String(student.rollNumber || student.rollNo || '').trim().toLowerCase();
+                const adm = String(student.admissionNo || student.admissionNumber || '').trim().toLowerCase();
+                const name = String(student.name || student.studentName || '').trim().toLowerCase();
+                const father = String(student.fatherName || '').trim().toLowerCase();
+
+                let dedupKey = '';
+                if (roll && name) dedupKey = `roll_${roll}_name_${name}`;
+                else if (roll) dedupKey = `roll_${roll}`;
+                else if (adm) dedupKey = `adm_${adm}`;
+                else if (name && father) dedupKey = `name_${name}_father_${father}`;
+                else dedupKey = `id_${student.id}`;
+
+                if (!studentGroupMap.has(dedupKey)) studentGroupMap.set(dedupKey, []);
+                studentGroupMap.get(dedupKey).push(student);
+            });
+
+            const deduplicatedStudents = [];
+            studentGroupMap.forEach((group) => {
+                deduplicatedStudents.push({ ...group[0], _allIds: group.map(s => s.id) });
+            });
+
+            const totalConfigWeight = aggregateTerms.reduce((sum, t) => sum + (t.weight || 0), 0) || 100;
+
+            const studentRows = deduplicatedStudents.map(student => {
+                const targetIds = student._allIds || [student.id];
+                const targetRoll = String(student.rollNumber || student.rollNo || '').trim();
+
+                const termBreakdown = {};
+                let overallObtained = 0;
+                let overallMax = 0;
+                let weightedPercentageSum = 0;
+                let termsWithMarksCount = 0;
+
+                activeTerms.forEach(term => {
+                    const cleanTermId = term.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const cleanTermTitle = (term.title || '').toLowerCase().trim();
+
+                    const termMarksDocs = classMarksDocs.filter(d => {
+                        const docExamId = (d.examId || '').toString().toLowerCase();
+                        const docExamTitle = (d.examTitle || '').toString().toLowerCase().trim();
+                        const cleanDocId = d.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+                        if (docExamId === term.id.toLowerCase() || d.id.startsWith(term.id + '_')) return true;
+                        if (cleanTermTitle && docExamTitle && (cleanTermTitle === docExamTitle || cleanTermTitle.includes(docExamTitle))) return true;
+                        if (cleanDocId.startsWith(cleanTermId)) return true;
+                        return false;
+                    });
+
+                    let termObt = 0;
+                    let termMax = 0;
+                    let termHasMarks = false;
+
+                    termMarksDocs.forEach(d => {
+                        let entry = null;
+                        for (const sId of targetIds) {
+                            if (d.marks && d.marks[sId]) {
+                                entry = d.marks[sId];
+                                break;
+                            }
+                        }
+                        if (!entry && d.marks) {
+                            const match = Object.entries(d.marks).find(([k, v]) => {
+                                if (targetIds.includes(k)) return true;
+                                if (v && typeof v === 'object') {
+                                    const sId = String(v.studentId || '').trim();
+                                    const rNum = String(v.rollNumber || v.rollNo || '').trim();
+                                    if (sId && (targetIds.includes(sId) || (targetRoll && sId === targetRoll))) return true;
+                                    if (rNum && targetRoll && rNum === targetRoll) return true;
+                                }
+                                return false;
+                            });
+                            if (match) entry = match[1];
+                        }
+
+                        if (entry) {
+                            const sTotal = typeof d.totalMarks === 'number' && d.totalMarks > 0 ? d.totalMarks : 100;
+                            termMax += sTotal;
+                            if (entry.obtainedMarks !== undefined && entry.obtainedMarks !== null) {
+                                termObt += Number(entry.obtainedMarks) || 0;
+                                termHasMarks = true;
+                            }
+                        }
+                    });
+
+                    const termPct = termMax > 0 ? parseFloat(((termObt / termMax) * 100).toFixed(1)) : 0;
+                    const termGrade = calculateGrade(termObt, termMax);
+
+                    if (termHasMarks) {
+                        termsWithMarksCount++;
+                        overallObtained += termObt;
+                        overallMax += termMax;
+                        const tWeight = aggregateConfig.weights?.[term.id] || (100 / (activeTerms.length || 1));
+                        weightedPercentageSum += (termPct * tWeight) / totalConfigWeight;
+                    }
+
+                    termBreakdown[term.id] = {
+                        termId: term.id,
+                        termTitle: term.title,
+                        obtained: termHasMarks ? termObt : null,
+                        max: termMax > 0 ? termMax : 100,
+                        percentage: termPct,
+                        grade: termHasMarks ? termGrade : '—',
+                        hasMarks: termHasMarks
+                    };
+                });
+
+                const finalPercentage = aggregateConfig.mode === 'custom' && totalConfigWeight > 0
+                    ? parseFloat(weightedPercentageSum.toFixed(1))
+                    : (overallMax > 0 ? parseFloat(((overallObtained / overallMax) * 100).toFixed(1)) : 0);
+
+                const finalGrade = calculateGrade(finalPercentage, 100);
+                const isPassed = finalPercentage >= 33;
+                const isComplete = termsWithMarksCount === activeTerms.length;
+
+                return {
+                    studentId: student.id,
+                    name: student.name,
+                    rollNumber: student.rollNumber || 'N/A',
+                    fatherName: student.fatherName || 'N/A',
+                    photoUrl: student.photoUrl,
+                    attendance: '—',
+                    termBreakdown,
+                    totalObtained: overallObtained,
+                    totalMax: overallMax,
+                    percentage: finalPercentage,
+                    grade: finalGrade,
+                    isComplete,
+                    isPassed,
+                    statusLabel: isPassed ? 'PASSED' : termsWithMarksCount === 0 ? 'NOT_STARTED' : 'FAILED',
+                    moderationOverride: null,
+                    examinerRemarks: '',
+                    failedSubjectsCount: isPassed ? 0 : 1,
+                    subjectsEvaluatedCount: termsWithMarksCount,
+                    totalSubjectsCount: activeTerms.length,
+                    hasAnyAbsent: false,
+                    position: 0
+                };
+            });
+
+            // Calculate Positions
+            const rankedRows = [...studentRows].sort((a, b) => {
+                if (b.percentage !== a.percentage) return b.percentage - a.percentage;
+                return b.totalObtained - a.totalObtained;
+            });
+
+            const positionMap = {};
+            rankedRows.forEach((row, idx) => {
+                positionMap[row.studentId] = idx + 1;
+            });
+
+            const finalRowsWithPositions = studentRows.map(row => ({
+                ...row,
+                position: positionMap[row.studentId] || 1
+            }));
+
+            const passedStudents = finalRowsWithPositions.filter(r => r.isPassed);
+            const evaluatedStudents = finalRowsWithPositions.filter(r => r.subjectsEvaluatedCount > 0);
+
+            return {
+                isAggregate: true,
+                aggregateTerms,
+                subjects: [],
+                subjectConfigs: {},
+                rows: finalRowsWithPositions,
+                stats: {
+                    totalStudents: finalRowsWithPositions.length,
+                    passedCount: passedStudents.length,
+                    failedCount: finalRowsWithPositions.length - passedStudents.length,
+                    passingRate: finalRowsWithPositions.length > 0 ? Math.round((passedStudents.length / finalRowsWithPositions.length) * 100) : 0,
+                    evaluatedCount: evaluatedStudents.length,
+                    pending: finalRowsWithPositions.length - evaluatedStudents.length,
+                    highestPct: evaluatedStudents.length > 0 ? Math.max(...evaluatedStudents.map(r => r.percentage)) : 0,
+                    avgPct: evaluatedStudents.length > 0 ? parseFloat((evaluatedStudents.reduce((acc, curr) => acc + curr.percentage, 0) / evaluatedStudents.length).toFixed(1)) : 0
+                }
+            };
+        }
 
         const selectedExamObj = exams.find(e => e.id === selectedExamId);
         const selectedExamTitle = (selectedExamObj?.title || currentExam?.title || '').toLowerCase().trim();
@@ -1488,7 +1777,7 @@ export default function Exams() {
                 averagePercentage: avgPct.toFixed(1)
             }
         };
-    }, [students, classMarksDocs, classAttendanceDocs, selectedExamId, currentExam, currentClass, isDemoMode, demoDataOverride, liveModerationOverrides]);
+    }, [students, classMarksDocs, classAttendanceDocs, selectedExamId, currentExam, currentClass, isDemoMode, demoDataOverride, liveModerationOverrides, selectedSession, aggregateConfig]);
 
     // Helper: Grade Calculator
     function calculateGrade(obtained, total) {
@@ -1612,6 +1901,10 @@ export default function Exams() {
     };
 
     const handleOpenEditExam = (exam) => {
+        if (exam.isLocked) {
+            alert("🔒 This examination is permanently locked because this academic session has been finalized and students were promoted. Editing is disabled to preserve historical integrity.");
+            return;
+        }
         setEditingExam(exam);
         const matchedPreset = STANDARD_EXAM_PRESETS.find(p => p.id === exam.id || (p.id !== 'custom' && p.title === exam.title));
         setExamForm({
@@ -1633,6 +1926,11 @@ export default function Exams() {
         const cleanTitle = (examForm.title || '').trim();
         if (!cleanTitle || !schoolId) {
             alert("Please enter a valid examination title.");
+            return;
+        }
+
+        if (editingExam && editingExam.isLocked) {
+            alert("🔒 This examination is locked and cannot be edited.");
             return;
         }
 
@@ -1670,6 +1968,12 @@ export default function Exams() {
     };
 
     const handleDeleteExam = async (examId, title) => {
+        const targetExam = exams.find(e => e.id === examId);
+        if (targetExam && targetExam.isLocked) {
+            alert("🔒 This examination is permanently locked because this academic session has been finalized and students were promoted. It cannot be deleted.");
+            return;
+        }
+
         if (!window.confirm(`Are you sure you want to delete "${title}"? This cannot be undone.`)) return;
         try {
             await deleteDoc(doc(db, `schools/${schoolId}/exams`, examId));
@@ -1683,9 +1987,88 @@ export default function Exams() {
         }
     };
 
+    const handleToggleExamStatus = async (exam) => {
+        if (!schoolId || !exam.id) return;
+        if (exam.isLocked) {
+            alert("🔒 This examination is permanently locked following student promotions. Its lifecycle status cannot be changed.");
+            return;
+        }
+        const nextStatus = exam.status === 'active' ? 'completed' : 'active';
+        try {
+            await updateDoc(doc(db, `schools/${schoolId}/exams`, exam.id), {
+                status: nextStatus,
+                updatedAt: serverTimestamp()
+            });
+            setUploadSuccessMessage(`Exam status updated to "${nextStatus.toUpperCase()}"!`);
+            setTimeout(() => setUploadSuccessMessage(null), 3500);
+        } catch (err) {
+            console.error("Toggle exam status error:", err);
+            alert("Failed to update status: " + err.message);
+        }
+    };
+
+    const handleSaveAggregateConfig = async (newConfig) => {
+        if (!schoolId) return;
+        setIsSavingAggregateConfig(true);
+        try {
+            const settingsRef = doc(db, `schools/${schoolId}/settings`, 'exam_settings');
+            await setDoc(settingsRef, {
+                ...newConfig,
+                updatedAt: serverTimestamp()
+            }, { merge: true });
+            setAggregateConfig(newConfig);
+            setShowAggregateModal(false);
+            setUploadSuccessMessage('✅ Annual aggregate formula & weights saved successfully!');
+            setTimeout(() => setUploadSuccessMessage(null), 4000);
+        } catch (err) {
+            console.error("Save aggregate config error:", err);
+            alert("Failed to save aggregate settings: " + err.message);
+        } finally {
+            setIsSavingAggregateConfig(false);
+        }
+    };
+
     // --- Actions: Export CSV ---
     const handleExportCSV = () => {
         if (tabulationData.rows.length === 0) return;
+
+        if (tabulationData.isAggregate) {
+            const termHeaders = (tabulationData.aggregateTerms || []).map(t => `"${t.title} (${aggregateConfig.mode === 'custom' ? (t.weight + '%') : 'Auto'})"`);
+            const headers = ['Roll No', 'Student Name', 'Father Name', ...termHeaders, 'Total Obtained', 'Max Marks', 'Final Percentage', 'Grade', 'Annual Position', 'Status'];
+            const csvRows = [headers.join(',')];
+
+            tabulationData.rows.forEach(r => {
+                const termScores = (tabulationData.aggregateTerms || []).map(t => {
+                    const tb = r.termBreakdown?.[t.id];
+                    if (!tb || !tb.hasMarks) return '"—"';
+                    return `"${tb.obtained}/${tb.max} (${tb.percentage}%)"`;
+                });
+
+                const rowData = [
+                    `"${r.rollNumber}"`,
+                    `"${r.name}"`,
+                    `"${r.fatherName}"`,
+                    ...termScores,
+                    r.totalObtained,
+                    r.totalMax,
+                    `"${r.percentage}%"`,
+                    `"${r.grade}"`,
+                    `"${r.position}"`,
+                    `"${r.isPassed ? 'PASSED' : 'FAILED'}"`
+                ];
+                csvRows.push(rowData.join(','));
+            });
+
+            const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `${currentClass.name}_Annual_Consolidated_Gazette_${selectedSession}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            return;
+        }
 
         const headers = ['Roll No', 'Student Name', 'Father Name', ...tabulationData.subjects, 'Total Obtained', 'Max Marks', 'Percentage', 'Grade', 'Position', 'Status'];
         const csvRows = [headers.join(',')];
@@ -1884,52 +2267,92 @@ export default function Exams() {
                         <div><span style="color: #64748b; font-weight: 700;">Date of Issue:</span> <strong style="color: #0f172a;">${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</strong></div>
                     </div>
 
-                    <!-- Subject Marks Table -->
+                    <!-- Subject or Annual Term Breakdown Table -->
                     <table style="width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 12px;">
-                        <thead>
-                            <tr style="background: #f1f5f9; color: #0f172a; font-weight: 800; border-bottom: 1.5px solid #0f172a;">
-                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 35px; text-align: center;">Sr.</th>
-                                <th style="border: 1px solid #cbd5e1; padding: 6px; text-align: left;">Subject Name</th>
-                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 65px; text-align: center;">Total</th>
-                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 65px; text-align: center;">Pass Marks</th>
-                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 75px; text-align: center;">Obtained</th>
-                                <th style="border: 1px solid #cbd5e1; padding: 6px; width: 55px; text-align: center;">Grade</th>
-                                <th style="border: 1px solid #cbd5e1; padding: 6px; text-align: left;">Remarks</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${tabulationData.subjects.map((subj, idx) => {
-                                const m = studentRow?.subjectMarks?.[subj];
-                                const total = m?.totalMarks || 100;
-                                const pass = m?.passingMarks || 33;
-                                const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
-                                const grade = m ? m.grade : '-';
-                                const remarks = m?.remarks || (grade === 'A+' ? 'Outstanding' : grade === 'A' ? 'Excellent' : grade === 'B' ? 'Good' : grade === 'F' ? 'Needs Improvement' : 'Satisfactory');
-                                return `
-                                    <tr>
-                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; color: #64748b;">${idx + 1}</td>
-                                        <td style="border: 1px solid #cbd5e1; padding: 5px; font-weight: 700; color: #0f172a;">${subj}</td>
-                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center;">${total}</td>
-                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center;">${pass}</td>
-                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 900; color: #0f172a;">${obtained}</td>
-                                        <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 800;">${grade}</td>
-                                        <td style="border: 1px solid #cbd5e1; padding: 5px; font-style: italic; color: #475569; font-size: 10px;">${remarks}</td>
-                                    </tr>
-                                `;
-                            }).join('')}
-                        </tbody>
-                        <tfoot>
-                            <tr style="background: #f8fafc; font-weight: 900; border-top: 1.5px solid #0f172a;">
-                                <td colspan="2" style="border: 1px solid #cbd5e1; padding: 6px; text-align: left; text-transform: uppercase;">Grand Total</td>
-                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center;">${studentRow.totalMax}</td>
-                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center;">—</td>
-                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.totalObtained}</td>
-                                <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.grade}</td>
-                                <td style="border: 1px solid #cbd5e1; padding: 6px; font-size: 10px; font-weight: 800; color: ${isPending ? '#d97706' : isPassed ? '#059669' : '#e11d48'};">
-                                    ${isPending ? 'RESULT PENDING' : (isPassed ? 'PROMOTED / PASSED' : 'FAILED / DETAINED')}
-                                </td>
-                            </tr>
-                        </tfoot>
+                        ${tabulationData.isAggregate ? `
+                            <thead>
+                                <tr style="background: #f1f5f9; color: #0f172a; font-weight: 800; border-bottom: 1.5px solid #0f172a;">
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 35px; text-align: center;">Sr.</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; text-align: left;">Term Examination</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 75px; text-align: center;">Weight</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 75px; text-align: center;">Max Marks</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 85px; text-align: center;">Obtained</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 65px; text-align: center;">Percentage</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 55px; text-align: center;">Grade</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(tabulationData.aggregateTerms || []).map((term, idx) => {
+                                    const tb = studentRow.termBreakdown?.[term.id];
+                                    const hasData = tb && tb.hasMarks;
+                                    return `
+                                        <tr>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; color: #64748b;">${idx + 1}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; font-weight: 700; color: #0f172a;">${term.title}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 700; color: #4f46e5;">${term.weight}%</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center;">${hasData ? tb.max : '—'}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 900; color: #0f172a;">${hasData ? tb.obtained : '—'}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 800; color: #4f46e5;">${hasData ? `${tb.percentage}%` : '—'}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 800;">${hasData ? tb.grade : '—'}</td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                            <tfoot>
+                                <tr style="background: #f8fafc; font-weight: 900; border-top: 1.5px solid #0f172a;">
+                                    <td colspan="3" style="border: 1px solid #cbd5e1; padding: 6px; text-align: left; text-transform: uppercase;">Annual Consolidated Aggregate</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center;">${studentRow.totalMax}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.totalObtained}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.percentage}%</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.grade}</td>
+                                </tr>
+                            </tfoot>
+                        ` : `
+                            <thead>
+                                <tr style="background: #f1f5f9; color: #0f172a; font-weight: 800; border-bottom: 1.5px solid #0f172a;">
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 35px; text-align: center;">Sr.</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; text-align: left;">Subject Name</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 65px; text-align: center;">Total</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 65px; text-align: center;">Pass Marks</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 75px; text-align: center;">Obtained</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; width: 55px; text-align: center;">Grade</th>
+                                    <th style="border: 1px solid #cbd5e1; padding: 6px; text-align: left;">Remarks</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${tabulationData.subjects.map((subj, idx) => {
+                                    const m = studentRow?.subjectMarks?.[subj];
+                                    const total = m?.totalMarks || 100;
+                                    const pass = m?.passingMarks || 33;
+                                    const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
+                                    const grade = m ? m.grade : '-';
+                                    const remarks = m?.remarks || (grade === 'A+' ? 'Outstanding' : grade === 'A' ? 'Excellent' : grade === 'B' ? 'Good' : grade === 'F' ? 'Needs Improvement' : 'Satisfactory');
+                                    return `
+                                        <tr>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; color: #64748b;">${idx + 1}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; font-weight: 700; color: #0f172a;">${subj}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center;">${total}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center;">${pass}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 900; color: #0f172a;">${obtained}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; text-align: center; font-weight: 800;">${grade}</td>
+                                            <td style="border: 1px solid #cbd5e1; padding: 5px; font-style: italic; color: #475569; font-size: 10px;">${remarks}</td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                            <tfoot>
+                                <tr style="background: #f8fafc; font-weight: 900; border-top: 1.5px solid #0f172a;">
+                                    <td colspan="2" style="border: 1px solid #cbd5e1; padding: 6px; text-align: left; text-transform: uppercase;">Grand Total</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center;">${studentRow.totalMax}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center;">—</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.totalObtained}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; text-align: center; color: #4f46e5; font-size: 13px;">${studentRow.grade}</td>
+                                    <td style="border: 1px solid #cbd5e1; padding: 6px; font-size: 10px; font-weight: 800; color: ${isPending ? '#d97706' : isPassed ? '#059669' : '#e11d48'};">
+                                        ${isPending ? 'RESULT PENDING' : (isPassed ? 'PROMOTED / PASSED' : 'FAILED / DETAINED')}
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        `}
                     </table>
 
                     <!-- Summary Metrics Box -->
@@ -2048,7 +2471,10 @@ export default function Exams() {
                             <th style="border: 1px solid #cbd5e1; padding: 4px; width: 45px; text-align: center;">Roll #</th>
                             <th style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; min-width: 120px;">Student Name</th>
                             <th style="border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; min-width: 110px;">Father's Name</th>
-                            ${tabulationData.subjects.map(s => `<th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; min-width: 50px;">${s}</th>`).join('')}
+                            ${tabulationData.isAggregate
+                                ? (tabulationData.aggregateTerms || []).map(t => `<th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; min-width: 65px;">${t.title}<br/><span style="font-size: 8px; font-weight: normal; color: #64748b;">${aggregateConfig.mode === 'custom' ? (t.weight + '%') : 'Auto'}</span></th>`).join('')
+                                : tabulationData.subjects.map(s => `<th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; min-width: 50px;">${s}</th>`).join('')
+                            }
                             <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 55px; background: #e2e8f0;">Total</th>
                             <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 45px;">%</th>
                             <th style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; width: 40px;">Grade</th>
@@ -2068,11 +2494,18 @@ export default function Exams() {
                                     <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 800; color: #4f46e5;">${row.rollNumber}</td>
                                     <td style="border: 1px solid #cbd5e1; padding: 4px 6px; font-weight: 700; color: #0f172a; text-transform: uppercase;">${row.name}</td>
                                     <td style="border: 1px solid #cbd5e1; padding: 4px 6px; color: #334155;">${row.fatherName || '—'}</td>
-                                    ${tabulationData.subjects.map(s => {
-                                        const m = row?.subjectMarks?.[s];
-                                        const val = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '—') : '—';
-                                        return `<td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 700;">${val}</td>`;
-                                    }).join('')}
+                                    ${tabulationData.isAggregate
+                                        ? (tabulationData.aggregateTerms || []).map(t => {
+                                            const tb = row.termBreakdown?.[t.id];
+                                            const val = tb && tb.hasMarks ? `${tb.obtained}/${tb.max}<br/><span style="font-size: 8px; color: #64748b;">(${tb.percentage}%)</span>` : '—';
+                                            return `<td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 700;">${val}</td>`;
+                                        }).join('')
+                                        : tabulationData.subjects.map(s => {
+                                            const m = row?.subjectMarks?.[s];
+                                            const val = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '—') : '—';
+                                            return `<td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 700;">${val}</td>`;
+                                        }).join('')
+                                    }
                                     <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 900; background: #f1f5f9; color: #0f172a;">${row.totalObtained}/${row.totalMax}</td>
                                     <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 800;">${row.percentage}%</td>
                                     <td style="border: 1px solid #cbd5e1; padding: 4px; text-align: center; font-weight: 900; color: #4f46e5;">${row.grade}</td>
@@ -2264,39 +2697,53 @@ export default function Exams() {
         doc.setTextColor(15, 23, 42);
         doc.text(currentExam.session || '2025-2026', 148, 65);
 
-        // 4. Subject-wise Marks Table (autoTable)
-        const tableBody = tabulationData.subjects.map((subj, idx) => {
-            const m = studentRow?.subjectMarks?.[subj];
-            const totalMarks = m?.totalMarks || 100;
-            const passMarks = m?.passingMarks || 33;
-            const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
-            const grade = m ? m.grade : '-';
-            const remarks = m?.remarks || (grade === 'A+' ? 'Excellent' : grade === 'A' ? 'Very Good' : grade === 'B' ? 'Good' : grade === 'F' ? 'Needs Improvement' : 'Satisfactory');
+        // 4. Marks Table (autoTable) - Adapts to Single Term vs Annual Aggregate
+        const tableHead = tabulationData.isAggregate
+            ? [['Sr.', 'Term Examination', 'Max Marks', 'Pass Marks', 'Marks Obtained', 'Percentage', 'Grade']]
+            : [['Sr.', 'Subject Name', 'Total Marks', 'Pass Marks', 'Marks Obtained', 'Grade', 'Remarks']];
 
-            return [
-                idx + 1,
-                subj,
-                totalMarks,
-                passMarks,
-                obtained,
-                grade,
-                remarks
-            ];
-        });
+        const tableBody = tabulationData.isAggregate
+            ? (tabulationData.aggregateTerms || []).map((t, idx) => {
+                const tb = studentRow.termBreakdown?.[t.id];
+                const totalMarks = tb?.max || 100;
+                const passMarks = Math.round(totalMarks * 0.33);
+                const obtained = tb && tb.hasMarks ? tb.obtained : '—';
+                const percentage = tb && tb.hasMarks ? `${tb.percentage}%` : '—';
+                const grade = tb && tb.hasMarks ? tb.grade : '—';
+                return [idx + 1, t.title, totalMarks, passMarks, obtained, percentage, grade];
+            })
+            : tabulationData.subjects.map((subj, idx) => {
+                const m = studentRow?.subjectMarks?.[subj];
+                const totalMarks = m?.totalMarks || 100;
+                const passMarks = m?.passingMarks || 33;
+                const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
+                const grade = m ? m.grade : '-';
+                const remarks = m?.remarks || (grade === 'A+' ? 'Excellent' : grade === 'A' ? 'Very Good' : grade === 'B' ? 'Good' : grade === 'F' ? 'Needs Improvement' : 'Satisfactory');
+
+                return [
+                    idx + 1,
+                    subj,
+                    totalMarks,
+                    passMarks,
+                    obtained,
+                    grade,
+                    remarks
+                ];
+            });
 
         autoTable(doc, {
             startY: 72,
             margin: { left: 14, right: 14 },
-            head: [['Sr.', 'Subject Name', 'Total Marks', 'Pass Marks', 'Marks Obtained', 'Grade', 'Remarks']],
+            head: tableHead,
             body: tableBody,
             foot: [[
                 '—',
-                'GRAND TOTAL',
+                tabulationData.isAggregate ? 'ANNUAL AGGREGATE' : 'GRAND TOTAL',
                 studentRow.totalMax,
                 '—',
                 studentRow.totalObtained,
-                studentRow.grade,
-                !studentRow.isComplete ? 'RESULT PENDING' : (studentRow.isPassed ? 'PROMOTED / PASSED' : 'FAILED / DETAINED')
+                tabulationData.isAggregate ? `${studentRow.percentage}%` : studentRow.grade,
+                tabulationData.isAggregate ? studentRow.grade : (!studentRow.isComplete ? 'RESULT PENDING' : (studentRow.isPassed ? 'PROMOTED / PASSED' : 'FAILED / DETAINED'))
             ]],
             theme: 'grid',
             styles: {
@@ -2548,6 +2995,10 @@ export default function Exams() {
 
     const handleSaveModeration = async () => {
         if (!selectedStudentForModerate || !selectedExamId || !selectedClassId) return;
+        if (currentExam?.isLocked) {
+            alert("🔒 This examination is permanently locked because students of this session were promoted. Marks cannot be modified.");
+            return;
+        }
 
         setIsSavingModeration(true);
         try {
@@ -2632,6 +3083,58 @@ export default function Exams() {
             alert("Failed to save moderation: " + err.message);
         } finally {
             setIsSavingModeration(false);
+        }
+    };
+
+    // Demo Account (6257) Presentation Generator
+    const [isGeneratingDemoExam, setIsGeneratingDemoExam] = useState(false);
+
+    const handleGenerateDemoLockedExam = async () => {
+        if (!isDemoAccount) return;
+        setIsGeneratingDemoExam(true);
+        try {
+            const demoExamRef = doc(db, `schools/${schoolId}/exams`, 'demo_locked_exam_2024');
+            await setDoc(demoExamRef, {
+                title: 'Annual Final Examination 2024-2025 (Archive)',
+                session: '2024-2025',
+                presetId: 'final_term',
+                status: 'completed',
+                isLocked: true,
+                lockedReason: 'Session Finalized & Students Promoted',
+                lockedAt: serverTimestamp(),
+                lockedBy: 'Promotions Protocol (Demo 6257)',
+                startDate: '2025-02-15',
+                endDate: '2025-02-28',
+                defaultTotalMarks: 100,
+                passingMarks: 33,
+                description: 'Official historical assessment permanently archived following annual session transition.',
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+            }, { merge: true });
+
+            setSelectedSession('2024-2025');
+            setSelectedExamId('demo_locked_exam_2024');
+            setIsDemoMode(true);
+            try { localStorage.setItem('exams_demo_mode_active', 'true'); } catch (_) {}
+            alert("✅ Demo Locked Exam (2024-2025) successfully generated!\n\nSession: 2024-2025 select ho gaya hai. Notice karein ke card par '🔒 Locked (Promoted)' ka badge lag chuka hai aur Edit/Delete locked hain.");
+        } catch (err) {
+            console.error("Demo exam generation error:", err);
+            alert("Failed to generate demo locked exam: " + err.message);
+        } finally {
+            setIsGeneratingDemoExam(false);
+        }
+    };
+
+    const handleRemoveDemoLockedExam = async () => {
+        if (!isDemoAccount) return;
+        if (!window.confirm("Kiya aap Demo Locked Exam (2024-2025) ko remove karna chahte hain?")) return;
+        try {
+            await deleteDoc(doc(db, `schools/${schoolId}/exams`, 'demo_locked_exam_2024'));
+            setSelectedSession('2025-2026');
+            alert("Demo Locked Exam remove ho gaya hai.");
+        } catch (err) {
+            console.error("Remove demo exam error:", err);
+            alert("Failed to remove demo exam: " + err.message);
         }
     };
 
@@ -2741,109 +3244,325 @@ export default function Exams() {
             </div>
 
             {/* ========================================================================= */}
-            {/* TAB 1: EXAMS SETUP & SCHEDULING                                          */}
+            {/* TAB 1: EXAMS SETUP, ACADEMIC SESSIONS & AGGREGATE ARCHITECTURE           */}
             {/* ========================================================================= */}
             {activeTab === 'setup' && (
                 <div className="no-print space-y-6">
                     {/* Action Bar */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
-                            <h2 className="text-lg font-bold text-slate-800">Examination Terms & Sessions</h2>
-                            <p className="text-xs text-slate-500">Configure academic terms available for marks entry across Teacher Mobile Apps</p>
+                            <h2 className="text-lg font-black text-slate-800 tracking-tight">Academic Sessions & Examination Pipeline</h2>
+                            <p className="text-xs text-slate-500 font-medium">Organize terms by academic year, configure auto/custom annual aggregate weights, and manage archives</p>
                         </div>
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                            {isDemoAccount && (
+                                <div className="inline-flex items-center gap-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={handleGenerateDemoLockedExam}
+                                        disabled={isGeneratingDemoExam}
+                                        className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer disabled:opacity-50"
+                                        title="Generate a realistic locked historical exam (2024-2025) for Principal Presentation"
+                                    >
+                                        <Lock className="w-4 h-4 text-amber-200" />
+                                        <span>{isGeneratingDemoExam ? 'Generating...' : '⚡ Generate Demo Locked Exam'}</span>
+                                    </button>
+                                    {exams.some(e => e.id === 'demo_locked_exam_2024') && (
+                                        <button
+                                            type="button"
+                                            onClick={handleRemoveDemoLockedExam}
+                                            className="inline-flex items-center gap-1 px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                            title="Remove Demo Locked Exam"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                            <span>Remove Demo</span>
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                            <button
+                                onClick={() => setShowAggregateModal(true)}
+                                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-indigo-50 to-violet-50 hover:from-indigo-100 hover:to-violet-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200/80 transition-all shadow-sm cursor-pointer"
+                                title="Configure Auto Equal Average vs Custom Weightage % for Annual Aggregate Result"
+                            >
+                                <Scale className="w-4 h-4 text-indigo-600" />
+                                <span>⚙️ Configure Aggregate Weights</span>
+                            </button>
                             <button
                                 onClick={() => handleOpenCreateExam('custom')}
-                                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs rounded-xl border border-violet-200 transition-colors shadow-sm"
-                                title="Quickly create a custom examination with your own title"
+                                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs rounded-xl border border-violet-200 transition-colors shadow-sm cursor-pointer"
+                                title="Quickly create a custom assessment with your own title"
                             >
                                 <Sparkles className="w-4 h-4 text-violet-600" />
-                                Create Custom Exam
+                                <span>Create Custom Exam</span>
                             </button>
                             <button
                                 onClick={() => handleOpenCreateExam()}
-                                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 transition-colors"
+                                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 transition-colors cursor-pointer"
                             >
                                 <Plus className="w-4 h-4" />
-                                Create New Exam Term
+                                <span>Create New Exam Term</span>
                             </button>
                         </div>
                     </div>
 
+                    {/* Academic Session Filter & Status Pills Bar */}
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div>
+                                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1">
+                                    Academic Session / Year
+                                </label>
+                                <div className="relative">
+                                    <select
+                                        value={selectedSession}
+                                        onChange={(e) => setSelectedSession(e.target.value)}
+                                        className="bg-slate-50 border border-slate-300 text-slate-800 text-xs font-black rounded-xl pl-3.5 pr-8 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
+                                    >
+                                        {availableSessions.map(sess => (
+                                            <option key={sess} value={sess}>
+                                                Session: {sess} {sess === '2025-2026' ? '(Current)' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1">
+                                    Filter Terms
+                                </label>
+                                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                                    {[
+                                        { id: 'all', label: `All Terms (${exams.filter(e => (!selectedSession || e.session === selectedSession)).length})` },
+                                        { id: 'active', label: `Active (${exams.filter(e => (!selectedSession || e.session === selectedSession) && e.status === 'active').length})` },
+                                        { id: 'concluded', label: `Concluded / Archived (${exams.filter(e => (!selectedSession || e.session === selectedSession) && (e.status === 'completed' || e.status === 'archived')).length})` }
+                                    ].map(f => (
+                                        <button
+                                            key={f.id}
+                                            onClick={() => setSetupStatusFilter(f.id)}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                                setupStatusFilter === f.id
+                                                    ? 'bg-white text-indigo-700 shadow-sm border border-slate-200'
+                                                    : 'text-slate-500 hover:text-slate-800'
+                                            }`}
+                                        >
+                                            {f.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-500">
+                                Aggregate Mode:
+                            </span>
+                            <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-black">
+                                {aggregateConfig.mode === 'custom' ? '⚙️ Custom % Weights' : '⚡ Auto Sum / Equal Avg'}
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Academic Session Overview & Progressive Pipeline Banner */}
+                    <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 shadow-xl border border-indigo-900/50 relative overflow-hidden">
+                        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                            <div>
+                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                    <span className="px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-black tracking-wide">
+                                        🎓 Academic Session: {selectedSession}
+                                    </span>
+                                    <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-black">
+                                        {sessionExams.filter(e => e.status === 'active').length} Active Term(s)
+                                    </span>
+                                    <span className="px-2.5 py-1 bg-slate-800 text-slate-300 border border-slate-700 rounded-xl text-xs font-bold">
+                                        {sessionExams.filter(e => e.status === 'completed' || e.status === 'archived').length} Concluded Term(s)
+                                    </span>
+                                </div>
+                                <h3 className="text-xl font-black text-white tracking-tight">
+                                    Annual Examination Progression & Consolidated Pipeline
+                                </h3>
+                                <p className="text-xs text-slate-300 mt-1 max-w-xl font-medium">
+                                    Terms progress sequentially through the year. Historical exams remain archived safely and never need deletion. All conducted terms feed directly into the Annual Aggregate Gazette!
+                                </p>
+
+                                {/* Visual Progressive Pipeline */}
+                                <div className="flex flex-wrap items-center gap-2 mt-4">
+                                    {sessionExams.length === 0 ? (
+                                        <span className="text-xs text-slate-400 italic">No terms configured for Session {selectedSession} yet. Click "Create New Exam Term" above.</span>
+                                    ) : (
+                                        sessionExams.map((ex, i) => (
+                                            <React.Fragment key={ex.id}>
+                                                <div className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+                                                    ex.status === 'active'
+                                                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200 shadow-sm'
+                                                        : ex.status === 'completed'
+                                                        ? 'bg-slate-800/80 border-slate-700 text-slate-300'
+                                                        : 'bg-blue-500/20 border-blue-500/40 text-blue-200'
+                                                }`}>
+                                                    <span className={`w-2 h-2 rounded-full ${ex.status === 'active' ? 'bg-emerald-400 animate-pulse' : ex.status === 'completed' ? 'bg-slate-400' : 'bg-blue-400'}`} />
+                                                    <span>{ex.title}</span>
+                                                    <span className="text-[10px] opacity-75 font-normal">
+                                                        ({aggregateConfig.mode === 'custom' && aggregateConfig.weights?.[ex.id] ? `${aggregateConfig.weights[ex.id]}%` : ex.status})
+                                                    </span>
+                                                </div>
+                                                {i < sessionExams.length - 1 && (
+                                                    <span className="text-slate-500 font-bold">➔</span>
+                                                )}
+                                            </React.Fragment>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row lg:flex-col gap-2 shrink-0">
+                                <button
+                                    onClick={() => {
+                                        setSelectedExamId('annual_aggregate');
+                                        setActiveTab('gazette');
+                                    }}
+                                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
+                                >
+                                    <Award className="w-4 h-4 text-amber-200" />
+                                    <span>View Consolidated Annual Gazette</span>
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setSelectedExamId('annual_aggregate');
+                                        setActiveTab('dmc');
+                                    }}
+                                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl border border-white/20 transition-all cursor-pointer backdrop-blur-sm"
+                                >
+                                    <Printer className="w-4 h-4 text-indigo-300" />
+                                    <span>Print Annual Result Cards (DMC)</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Exams Cards Grid */}
-                    {exams.length === 0 ? (
-                        <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-12 text-center">
+                    {sessionExams.length === 0 ? (
+                        <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-12 text-center">
                             <Award className="w-12 h-12 text-slate-400 mx-auto mb-3" />
-                            <h3 className="text-base font-bold text-slate-800">No Exam Terms Created Yet</h3>
+                            <h3 className="text-base font-bold text-slate-800">No Exam Terms Found in Session {selectedSession}</h3>
                             <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-4">
-                                Create your first examination term (e.g., First Term Examination 2026) so teachers can begin submitting subject marks.
+                                Create an examination term for this academic session (e.g., First Term Examination 2026) so teachers can begin submitting subject marks.
                             </p>
                             <button
                                 onClick={handleOpenCreateExam}
-                                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg shadow-sm"
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer"
                             >
                                 <Plus className="w-4 h-4" />
-                                Add First Exam
+                                Add First Term for {selectedSession}
                             </button>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {exams.map(exam => {
+                            {sessionExams.map(exam => {
                                 const isActive = exam.status === 'active';
                                 const isUpcoming = exam.status === 'upcoming';
+                                const isCompleted = exam.status === 'completed' || exam.status === 'archived';
+                                const weightPercentage = aggregateConfig.weights?.[exam.id];
+
                                 return (
                                     <div
                                         key={exam.id}
-                                        className={`bg-white rounded-2xl p-6 border transition-all hover:shadow-md ${
-                                            isActive ? 'border-indigo-200 ring-2 ring-indigo-500/10' : 'border-slate-200'
+                                        className={`bg-white rounded-3xl p-6 border transition-all hover:shadow-lg ${
+                                            isActive
+                                                ? 'border-indigo-300 ring-2 ring-indigo-500/10 shadow-sm'
+                                                : isCompleted
+                                                ? 'border-slate-200 bg-slate-50/50'
+                                                : 'border-slate-200'
                                         }`}
                                     >
                                         <div className="flex items-start justify-between gap-2 mb-3">
                                             <div className="flex-1">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <span className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-md ${
-                                                        isActive
-                                                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                                            : isUpcoming
-                                                            ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                                            : 'bg-slate-100 text-slate-600 border border-slate-200'
-                                                    }`}>
-                                                        {exam.status || 'Active'}
-                                                    </span>
+                                                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                                    {exam.isLocked ? (
+                                                        <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-md bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-sm">
+                                                            <Lock className="w-3 h-3 text-amber-700" />
+                                                            <span>Locked (Promoted)</span>
+                                                        </span>
+                                                    ) : (
+                                                        <span className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-md ${
+                                                            isActive
+                                                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                                                : isUpcoming
+                                                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                                                : 'bg-slate-200 text-slate-700 border border-slate-300'
+                                                        }`}>
+                                                            {exam.status || 'Active'}
+                                                        </span>
+                                                    )}
                                                     <span className="text-xs font-semibold text-slate-400">
                                                         Session: {exam.session || 'N/A'}
                                                     </span>
+                                                    {aggregateConfig.mode === 'custom' && typeof weightPercentage === 'number' && (
+                                                        <span className="px-2 py-0.5 text-[10px] font-black bg-violet-100 text-violet-700 rounded-md border border-violet-200">
+                                                            Weight: {weightPercentage}%
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                <h3 className="text-lg font-bold text-slate-800">{exam.title}</h3>
+                                                <h3 className="text-lg font-black text-slate-800 tracking-tight">{exam.title}</h3>
                                             </div>
                                             <div className="flex items-center gap-1">
-                                                <button
-                                                    onClick={() => handleOpenEditExam(exam)}
-                                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                                    title="Edit Exam"
-                                                >
-                                                    <Edit2 className="w-4 h-4" />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeleteExam(exam.id, exam.title)}
-                                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                                    title="Delete Exam"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
+                                                {exam.isLocked ? (
+                                                    <span className="p-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-1 text-[10px] font-bold" title="This exam is permanently locked because students of this session were promoted.">
+                                                        <Lock className="w-3.5 h-3.5 text-amber-600" />
+                                                        <span className="hidden sm:inline">Locked</span>
+                                                    </span>
+                                                ) : (
+                                                    <>
+                                                        <button
+                                                            onClick={() => handleOpenEditExam(exam)}
+                                                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                                                            title="Edit Exam Term"
+                                                        >
+                                                            <Edit2 className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteExam(exam.id, exam.title)}
+                                                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                                            title="Delete Exam"
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </>
+                                                )}
                                             </div>
                                         </div>
 
                                         {exam.description && (
-                                            <p className="text-xs text-slate-500 line-clamp-2 mb-4">
+                                            <p className="text-xs text-slate-500 line-clamp-2 mb-4 font-medium">
                                                 {exam.description}
                                             </p>
                                         )}
 
-                                        <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 mb-4 text-xs">
+                                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 mb-4 text-xs space-y-1.5">
                                             <div className="flex items-center justify-between text-slate-600">
-                                                <span className="text-slate-400 text-[10px] font-bold uppercase">Schedule</span>
-                                                <span className="font-semibold">{exam.startDate ? `${exam.startDate} ${exam.endDate ? `to ${exam.endDate}` : ''}` : 'Active Term'}</span>
+                                                <span className="text-slate-400 text-[10px] font-black uppercase">Schedule</span>
+                                                <span className="font-bold">{exam.startDate ? `${exam.startDate} ${exam.endDate ? `to ${exam.endDate}` : ''}` : 'Active Assessment'}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between text-slate-600">
+                                                <span className="text-slate-400 text-[10px] font-black uppercase">Lifecycle Status</span>
+                                                {exam.isLocked ? (
+                                                    <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1">
+                                                        <Lock className="w-3 h-3 text-slate-400" />
+                                                        <span>Archived</span>
+                                                    </span>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => handleToggleExamStatus(exam)}
+                                                        className={`px-2 py-0.5 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                                                            isActive 
+                                                                ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' 
+                                                                : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                                        }`}
+                                                        title="Click to toggle between Active (Open for Marks) and Concluded (Archived)"
+                                                    >
+                                                        {isActive ? 'Mark as Concluded' : 'Set as Active'}
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
 
@@ -2853,7 +3572,7 @@ export default function Exams() {
                                                     setSelectedExamId(exam.id);
                                                     setActiveTab('gazette');
                                                 }}
-                                                className="flex-1 py-2 text-center text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                                                className="flex-1 py-2 text-center text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors cursor-pointer"
                                             >
                                                 View Class Gazette
                                             </button>
@@ -2862,7 +3581,7 @@ export default function Exams() {
                                                     setSelectedExamId(exam.id);
                                                     setActiveTab('dmc');
                                                 }}
-                                                className="flex-1 py-2 text-center text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                                                className="flex-1 py-2 text-center text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
                                             >
                                                 Print Result Cards
                                             </button>
@@ -2890,11 +3609,14 @@ export default function Exams() {
                                     <select
                                         value={selectedExamId}
                                         onChange={(e) => setSelectedExamId(e.target.value)}
-                                        className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                        className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
                                     >
-                                        {exams.map(e => (
-                                            <option key={e.id} value={e.id}>{e.title} ({e.session || 'Term'})</option>
-                                        ))}
+                                        <option value="annual_aggregate">🏆 Annual Consolidated Aggregate ({selectedSession || 'Current Session'})</option>
+                                        <optgroup label="Individual Examination Terms">
+                                            {exams.map(e => (
+                                                <option key={e.id} value={e.id}>{e.title} ({e.session || 'Term'})</option>
+                                            ))}
+                                        </optgroup>
                                     </select>
                                 </div>
 
@@ -2978,6 +3700,18 @@ export default function Exams() {
                                 </button>
                             </div>
                         </div>
+
+                        {currentExam?.isLocked && (
+                            <div className="no-print p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-amber-900 text-xs font-bold animate-fadeIn">
+                                <div className="flex items-center gap-2">
+                                    <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                                    <span>🔒 <strong>Read-Only Historical Archive:</strong> This examination is permanently locked because students of Academic Session {currentExam.session || selectedSession} have been promoted. Marks cannot be modified.</span>
+                                </div>
+                                <span className="px-2 py-0.5 bg-amber-200/80 text-amber-800 text-[10px] rounded font-black uppercase">
+                                    Frozen Record
+                                </span>
+                            </div>
+                        )}
 
                         {/* Search & Filter Bar */}
                         <div className="flex flex-col sm:flex-row items-center gap-3 pt-3 border-t border-slate-100">
@@ -3108,14 +3842,25 @@ export default function Exams() {
                                                     {sortBy === 'name' && (<span className="text-sky-400">{sortOrder === 'asc' ? '▲' : '▼'}</span>)}
                                                 </div>
                                             </th>
-                                            {tabulationData.subjects.map(subj => (
-                                                <th key={subj} className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center min-w-[70px] border-r border-slate-800/80 print:static print:bg-white print:text-black">
-                                                    <div className="font-extrabold text-white">{subj}</div>
-                                                    <div className="text-[9px] font-medium text-slate-400">
-                                                        Max: {tabulationData.subjectConfigs?.[subj]?.totalMarks || 100}
-                                                    </div>
-                                                </th>
-                                            ))}
+                                            {tabulationData.isAggregate ? (
+                                                (tabulationData.aggregateTerms || []).map(term => (
+                                                    <th key={term.id} className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center min-w-[110px] border-r border-slate-800/80 print:static print:bg-white print:text-black">
+                                                        <div className="font-black text-white text-xs">{term.title}</div>
+                                                        <div className="text-[10px] font-bold text-indigo-300">
+                                                            {aggregateConfig.mode === 'custom' ? `Weight: ${term.weight}%` : 'Auto Weight'}
+                                                        </div>
+                                                    </th>
+                                                ))
+                                            ) : (
+                                                tabulationData.subjects.map(subj => (
+                                                    <th key={subj} className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center min-w-[70px] border-r border-slate-800/80 print:static print:bg-white print:text-black">
+                                                        <div className="font-extrabold text-white">{subj}</div>
+                                                        <div className="text-[9px] font-medium text-slate-400">
+                                                            Max: {tabulationData.subjectConfigs?.[subj]?.totalMarks || 100}
+                                                        </div>
+                                                    </th>
+                                                ))
+                                            )}
                                             <th 
                                                 onClick={() => handleToggleSort('obtained')} 
                                                 className="sticky top-0 z-20 bg-slate-900 text-white p-3.5 text-center font-black cursor-pointer hover:bg-slate-800 transition-colors select-none border-r border-slate-800/80 print:static print:bg-white print:text-black"
@@ -3159,24 +3904,44 @@ export default function Exams() {
                                                     <div className="text-[10px] text-slate-400 font-normal">S/O: {row.fatherName}</div>
                                                 </td>
 
-                                                {tabulationData.subjects.map(subj => {
-                                                    const m = row?.subjectMarks?.[subj];
-                                                    if (!m || m.obtained === null || m.obtained === undefined) {
+                                                {tabulationData.isAggregate ? (
+                                                    (tabulationData.aggregateTerms || []).map(term => {
+                                                        const tb = row.termBreakdown?.[term.id];
+                                                        if (!tb || !tb.hasMarks) {
+                                                            return (
+                                                                <td key={term.id} className="p-3.5 text-center text-slate-300 font-bold">
+                                                                    —
+                                                                </td>
+                                                            );
+                                                        }
                                                         return (
-                                                            <td key={subj} className="p-3.5 text-center text-slate-300">
-                                                                {m?.isAbsent ? <span className="text-rose-500 font-bold">ABS</span> : '-'}
+                                                            <td key={term.id} className="p-3.5 text-center font-bold">
+                                                                <span className="text-slate-900 font-black">{tb.obtained}</span>
+                                                                <span className="text-slate-400 text-[10px] font-normal"> / {tb.max}</span>
+                                                                <span className="block text-[11px] font-bold text-indigo-600">{tb.percentage}%</span>
                                                             </td>
                                                         );
-                                                    }
-                                                    const isFail = m.obtained < (m.passingMarks || 33);
-                                                    return (
-                                                        <td key={subj} className="p-3.5 text-center font-bold">
-                                                            <span className={isFail ? 'text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded' : 'text-slate-800'}>
-                                                                {m.obtained}
-                                                            </span>
-                                                        </td>
-                                                    );
-                                                })}
+                                                    })
+                                                ) : (
+                                                    tabulationData.subjects.map(subj => {
+                                                        const m = row?.subjectMarks?.[subj];
+                                                        if (!m || m.obtained === null || m.obtained === undefined) {
+                                                            return (
+                                                                <td key={subj} className="p-3.5 text-center text-slate-300">
+                                                                    {m?.isAbsent ? <span className="text-rose-500 font-bold">ABS</span> : '-'}
+                                                                </td>
+                                                            );
+                                                        }
+                                                        const isFail = m.obtained < (m.passingMarks || 33);
+                                                        return (
+                                                            <td key={subj} className="p-3.5 text-center font-bold">
+                                                                <span className={isFail ? 'text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded' : 'text-slate-800'}>
+                                                                    {m.obtained}
+                                                                </span>
+                                                            </td>
+                                                        );
+                                                    })
+                                                )}
 
                                                 <td className="p-3.5 text-center font-black text-slate-900 bg-slate-50/50 group-hover:bg-indigo-200/70 transition-colors">
                                                     {row.totalObtained} <span className="text-[10px] font-normal text-slate-400">/ {row.totalMax}</span>
@@ -3199,16 +3964,28 @@ export default function Exams() {
                                                     {getOrdinal(row.position)}
                                                 </td>
                                                 <td className="p-3.5 text-center">
-                                                    {row.subjectsEvaluatedCount === 0 ? (
-                                                        <span className="text-slate-400 font-semibold text-[10px]">Pending</span>
-                                                    ) : !row.isComplete ? (
-                                                        <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-black text-[10px]" title={`${row.subjectsEvaluatedCount}/${tabulationData.subjects.length} Subjects entered`}>
-                                                            PENDING ({row.subjectsEvaluatedCount}/{tabulationData.subjects.length})
-                                                        </span>
-                                                    ) : row.isPassed ? (
-                                                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-black text-[10px]">PASS</span>
+                                                    {tabulationData.isAggregate ? (
+                                                        row.isPassed ? (
+                                                            <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-black text-[10px]">
+                                                                PASSED (ANNUAL)
+                                                            </span>
+                                                        ) : (
+                                                            <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-black text-[10px]">
+                                                                FAILED (ANNUAL)
+                                                            </span>
+                                                        )
                                                     ) : (
-                                                        <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-black text-[10px]">FAIL</span>
+                                                        row.subjectsEvaluatedCount === 0 ? (
+                                                            <span className="text-slate-400 font-semibold text-[10px]">Pending</span>
+                                                        ) : !row.isComplete ? (
+                                                            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-black text-[10px]" title={`${row.subjectsEvaluatedCount}/${tabulationData.subjects.length} Subjects entered`}>
+                                                                PENDING ({row.subjectsEvaluatedCount}/{tabulationData.subjects.length})
+                                                            </span>
+                                                        ) : row.isPassed ? (
+                                                            <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-black text-[10px]">PASS</span>
+                                                        ) : (
+                                                            <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-black text-[10px]">FAIL</span>
+                                                        )
                                                     )}
                                                 </td>
                                             </tr>
@@ -3234,11 +4011,14 @@ export default function Exams() {
                                 <select
                                     value={selectedExamId}
                                     onChange={(e) => setSelectedExamId(e.target.value)}
-                                    className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3.5 py-2.5 focus:outline-none"
+                                    className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-3.5 py-2.5 focus:outline-none cursor-pointer"
                                 >
-                                    {exams.map(e => (
-                                        <option key={e.id} value={e.id}>{e.title}</option>
-                                    ))}
+                                    <option value="annual_aggregate">🏆 Annual Consolidated Aggregate ({selectedSession || 'Current Session'})</option>
+                                    <optgroup label="Individual Examination Terms">
+                                        {exams.map(e => (
+                                            <option key={e.id} value={e.id}>{e.title}</option>
+                                        ))}
+                                    </optgroup>
                                 </select>
                             </div>
                             <div>
@@ -3744,18 +4524,26 @@ export default function Exams() {
                                                                             <Printer className="w-3.5 h-3.5" />
                                                                             Print
                                                                         </button>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => {
-                                                                                handleOpenModerateModal(studentRow);
-                                                                                setIsEditingMarksInDmc(true);
-                                                                            }}
-                                                                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-amber-950 text-[11px] font-black rounded-lg shadow-sm transition-all border border-amber-600/30"
-                                                                            title="Edit Marks, Grace & Promotion Status"
-                                                                        >
-                                                                            <Scale className="w-3.5 h-3.5" />
-                                                                            Edit Marks / Grace
-                                                                        </button>
+                                                                        {currentExam?.isLocked && (
+                                                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-500/20 text-amber-200 border border-amber-400/40 rounded-lg text-[10px] font-bold">
+                                                                                <Lock className="w-3 h-3 text-amber-300" />
+                                                                                <span>Read-Only (Locked)</span>
+                                                                            </span>
+                                                                        )}
+                                                                        {!tabulationData.isAggregate && !currentExam?.isLocked && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    handleOpenModerateModal(studentRow);
+                                                                                    setIsEditingMarksInDmc(true);
+                                                                                }}
+                                                                                className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-amber-950 text-[11px] font-black rounded-lg shadow-sm transition-all border border-amber-600/30"
+                                                                                title="Edit Marks, Grace & Promotion Status"
+                                                                            >
+                                                                                <Scale className="w-3.5 h-3.5" />
+                                                                                Edit Marks / Grace
+                                                                            </button>
+                                                                        )}
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => {
@@ -3825,160 +4613,202 @@ export default function Exams() {
                                                                 <div><span className="font-bold text-slate-500">Roll No:</span> <span className="font-black text-slate-900">{studentRow.rollNumber}</span></div>
                                                             </div>
 
-                                                            {/* Marks Table: Dynamic Edit or Static View */}
+                                                            {/* Marks Table: Dynamic Edit or Static View or Annual Aggregate View */}
                                                             <div className="overflow-x-auto mb-3">
                                                                 <table className="w-full text-xs border-collapse border border-slate-300 text-center min-w-[340px]">
-                                                                    <thead>
-                                                                        <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
-                                                                            <th className="border border-slate-300 p-1.5 text-left">Subject</th>
-                                                                            <th className="border border-slate-300 p-1.5 w-12 sm:w-14">Total</th>
-                                                                            {isEditingThisStudent ? (
-                                                                                <>
-                                                                                    <th className="border border-slate-300 p-1.5 w-16">Obtained</th>
-                                                                                    <th className="border border-slate-300 p-1.5 w-14">Grace (+)</th>
-                                                                                    <th className="border border-slate-300 p-1.5 w-12">Abs</th>
-                                                                                    <th className="border border-slate-300 p-1.5 w-14">Effective</th>
-                                                                                    <th className="border border-slate-300 p-1.5 text-left">Remarks</th>
-                                                                                </>
-                                                                            ) : (
-                                                                                <>
-                                                                                    <th className="border border-slate-300 p-1.5 w-14">Obt</th>
-                                                                                    <th className="border border-slate-300 p-1.5 w-12">Grade</th>
-                                                                                    <th className="border border-slate-300 p-1.5 text-left">Remarks</th>
-                                                                                </>
-                                                                            )}
-                                                                        </tr>
-                                                                    </thead>
-                                                                    <tbody>
-                                                                        {tabulationData.subjects.map(subj => {
-                                                                            if (isEditingThisStudent) {
-                                                                                const entry = moderateSubjectMarks?.[subj] || { obtained: '', graceMarks: 0, isAbsent: false, totalMarks: 100, passingMarks: 33, remarks: '' };
-                                                                                const baseVal = entry.obtained === '' || entry.obtained === null ? null : parseFloat(entry.obtained);
-                                                                                const graceVal = parseFloat(entry.graceMarks) || 0;
-                                                                                const effective = baseVal !== null && !isNaN(baseVal) ? baseVal + graceVal : null;
-                                                                                const isSubjFail = entry.isAbsent || (effective !== null && effective < (entry.passingMarks || 33));
-
-                                                                                return (
-                                                                                    <tr key={subj} className="hover:bg-amber-50/50">
-                                                                                        <td className="border border-slate-300 p-1.5 text-left font-bold">
-                                                                                            <span>{subj}</span>
-                                                                                            <span className="text-[9px] text-slate-400 font-normal block">Pass: {entry.passingMarks || 33}</span>
-                                                                                        </td>
-                                                                                        <td className="border border-slate-300 p-1.5 text-slate-600 font-semibold">{entry.totalMarks || 100}</td>
-                                                                                        <td className="border border-slate-300 p-1">
-                                                                                            <input
-                                                                                                type="number"
-                                                                                                disabled={entry.isAbsent}
-                                                                                                value={entry.obtained}
-                                                                                                placeholder="—"
-                                                                                                onChange={(e) => {
-                                                                                                    const val = e.target.value;
-                                                                                                    setModerateSubjectMarks(prev => ({
-                                                                                                        ...prev,
-                                                                                                        [subj]: { ...(prev?.[subj] || {}), obtained: val }
-                                                                                                    }));
-                                                                                                }}
-                                                                                                className="w-14 p-1 text-center font-bold text-xs bg-white border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 focus:outline-none disabled:opacity-40"
-                                                                                            />
-                                                                                        </td>
-                                                                                        <td className="border border-slate-300 p-1">
-                                                                                            <input
-                                                                                                type="number"
-                                                                                                disabled={entry.isAbsent || entry.obtained === ''}
-                                                                                                value={entry.graceMarks || ''}
-                                                                                                placeholder="+0"
-                                                                                                onChange={(e) => {
-                                                                                                    const val = e.target.value;
-                                                                                                    setModerateSubjectMarks(prev => ({
-                                                                                                        ...prev,
-                                                                                                        [subj]: { ...(prev?.[subj] || {}), graceMarks: val }
-                                                                                                    }));
-                                                                                                }}
-                                                                                                className="w-12 p-1 text-center font-bold text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded focus:ring-1 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
-                                                                                            />
-                                                                                        </td>
-                                                                                        <td className="border border-slate-300 p-1">
-                                                                                            <input
-                                                                                                type="checkbox"
-                                                                                                checked={entry.isAbsent === true}
-                                                                                                onChange={(e) => {
-                                                                                                    setModerateSubjectMarks(prev => ({
-                                                                                                        ...prev,
-                                                                                                        [subj]: { ...(prev?.[subj] || {}), isAbsent: e.target.checked }
-                                                                                                    }));
-                                                                                                }}
-                                                                                                className="w-3.5 h-3.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
-                                                                                                title="Mark Absent"
-                                                                                            />
-                                                                                        </td>
-                                                                                        <td className="border border-slate-300 p-1.5 font-black">
-                                                                                            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black ${
-                                                                                                entry.isAbsent ? 'bg-slate-200 text-slate-600' :
-                                                                                                effective === null ? 'bg-slate-100 text-slate-400' :
-                                                                                                isSubjFail ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
-                                                                                            }`}>
-                                                                                                {entry.isAbsent ? 'ABS' : effective !== null ? `${effective}${graceVal > 0 ? '*' : ''}` : '—'}
-                                                                                            </span>
-                                                                                        </td>
-                                                                                        <td className="border border-slate-300 p-1 text-left">
-                                                                                            <input
-                                                                                                type="text"
-                                                                                                value={entry.remarks || ''}
-                                                                                                placeholder="Remarks"
-                                                                                                onChange={(e) => {
-                                                                                                    const val = e.target.value;
-                                                                                                    setModerateSubjectMarks(prev => ({
-                                                                                                        ...prev,
-                                                                                                        [subj]: { ...(prev?.[subj] || {}), remarks: val }
-                                                                                                    }));
-                                                                                                }}
-                                                                                                className="w-full p-1 text-xs text-slate-700 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                                                                                            />
-                                                                                        </td>
-                                                                                    </tr>
-                                                                                );
-                                                                            } else {
-                                                                                const m = studentRow?.subjectMarks?.[subj];
-                                                                                const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
-                                                                                return (
-                                                                                    <tr key={subj} className="hover:bg-slate-50">
-                                                                                        <td className="border border-slate-300 p-1.5 text-left font-bold">{subj}</td>
-                                                                                        <td className="border border-slate-300 p-1.5 text-slate-600">{m?.totalMarks || 100}</td>
-                                                                                        <td className="border border-slate-300 p-1.5 font-black">{obtained}</td>
-                                                                                        <td className="border border-slate-300 p-1.5 font-black">{m?.grade || '-'}</td>
-                                                                                        <td className="border border-slate-300 p-1.5 text-left text-[10px] text-slate-500 italic">{m?.remarks || 'Satisfactory'}</td>
-                                                                                    </tr>
-                                                                                );
-                                                                            }
-                                                                        })}
-                                                                    </tbody>
-                                                                    <tfoot>
-                                                                        <tr className="bg-slate-100 font-black border-t border-slate-300">
-                                                                            <td className="border border-slate-300 p-1.5 text-left">Total Marks</td>
-                                                                            <td className="border border-slate-300 p-1.5">
-                                                                                {isEditingThisStudent ? liveTotalMax : studentRow.totalMax}
-                                                                            </td>
-                                                                            {isEditingThisStudent ? (
-                                                                                <>
-                                                                                    <td colSpan={3} className="border border-slate-300 p-1.5 text-indigo-700">
-                                                                                        {liveTotalObtained} {totalGraceApplied > 0 && <span className="text-amber-600 text-[10px] font-bold">(+{totalGraceApplied} Grace)</span>}
-                                                                                    </td>
-                                                                                    <td className="border border-slate-300 p-1.5 text-indigo-700">{liveGrade}</td>
-                                                                                    <td className="border border-slate-300 p-1.5 text-left text-[10px]">
-                                                                                        {!isComplete ? 'PENDING' : isPassCalc ? 'PASSED / PROMOTED' : 'FAILED / DETAINED'}
-                                                                                    </td>
-                                                                                </>
-                                                                            ) : (
-                                                                                <>
+                                                                    {tabulationData.isAggregate ? (
+                                                                        <>
+                                                                            <thead>
+                                                                                <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
+                                                                                    <th className="border border-slate-300 p-1.5 text-left">Term Examination</th>
+                                                                                    <th className="border border-slate-300 p-1.5 w-16">Weight</th>
+                                                                                    <th className="border border-slate-300 p-1.5 w-16">Max</th>
+                                                                                    <th className="border border-slate-300 p-1.5 w-16">Obt</th>
+                                                                                    <th className="border border-slate-300 p-1.5 w-14">%</th>
+                                                                                    <th className="border border-slate-300 p-1.5 w-14">Grade</th>
+                                                                                </tr>
+                                                                            </thead>
+                                                                            <tbody>
+                                                                                {(tabulationData.aggregateTerms || []).map(term => {
+                                                                                    const tb = studentRow.termBreakdown?.[term.id];
+                                                                                    const hasData = tb && tb.hasMarks;
+                                                                                    return (
+                                                                                        <tr key={term.id} className="hover:bg-slate-50">
+                                                                                            <td className="border border-slate-300 p-1.5 text-left font-bold text-slate-900">{term.title}</td>
+                                                                                            <td className="border border-slate-300 p-1.5 text-indigo-600 font-bold">{term.weight}%</td>
+                                                                                            <td className="border border-slate-300 p-1.5 text-slate-600">{hasData ? tb.max : '—'}</td>
+                                                                                            <td className="border border-slate-300 p-1.5 font-black text-slate-900">{hasData ? tb.obtained : '—'}</td>
+                                                                                            <td className="border border-slate-300 p-1.5 font-bold text-indigo-700">{hasData ? `${tb.percentage}%` : '—'}</td>
+                                                                                            <td className="border border-slate-300 p-1.5 font-black">{hasData ? tb.grade : '—'}</td>
+                                                                                        </tr>
+                                                                                    );
+                                                                                })}
+                                                                            </tbody>
+                                                                            <tfoot>
+                                                                                <tr className="bg-slate-100 font-black border-t border-slate-300">
+                                                                                    <td colSpan={2} className="border border-slate-300 p-1.5 text-left font-black uppercase">Annual Aggregate Total</td>
+                                                                                    <td className="border border-slate-300 p-1.5">{studentRow.totalMax}</td>
                                                                                     <td className="border border-slate-300 p-1.5 text-indigo-700">{studentRow.totalObtained}</td>
+                                                                                    <td className="border border-slate-300 p-1.5 text-indigo-700">{studentRow.percentage}%</td>
                                                                                     <td className="border border-slate-300 p-1.5 text-indigo-700">{studentRow.grade}</td>
-                                                                                    <td className="border border-slate-300 p-1.5 text-left text-[10px]">
-                                                                                        {!studentRow.isComplete ? 'RESULT PENDING' : (studentRow.isPassed ? 'PROMOTED / PASSED' : 'FAILED / DETAINED')}
+                                                                                </tr>
+                                                                            </tfoot>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <thead>
+                                                                                <tr className="bg-slate-100 text-slate-800 font-bold border-b border-slate-300">
+                                                                                    <th className="border border-slate-300 p-1.5 text-left">Subject</th>
+                                                                                    <th className="border border-slate-300 p-1.5 w-12 sm:w-14">Total</th>
+                                                                                    {isEditingThisStudent ? (
+                                                                                        <>
+                                                                                            <th className="border border-slate-300 p-1.5 w-16">Obtained</th>
+                                                                                            <th className="border border-slate-300 p-1.5 w-14">Grace (+)</th>
+                                                                                            <th className="border border-slate-300 p-1.5 w-12">Abs</th>
+                                                                                            <th className="border border-slate-300 p-1.5 w-14">Effective</th>
+                                                                                            <th className="border border-slate-300 p-1.5 text-left">Remarks</th>
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <>
+                                                                                            <th className="border border-slate-300 p-1.5 w-14">Obt</th>
+                                                                                            <th className="border border-slate-300 p-1.5 w-12">Grade</th>
+                                                                                            <th className="border border-slate-300 p-1.5 text-left">Remarks</th>
+                                                                                        </>
+                                                                                    )}
+                                                                                </tr>
+                                                                            </thead>
+                                                                            <tbody>
+                                                                                {tabulationData.subjects.map(subj => {
+                                                                                    if (isEditingThisStudent) {
+                                                                                        const entry = moderateSubjectMarks?.[subj] || { obtained: '', graceMarks: 0, isAbsent: false, totalMarks: 100, passingMarks: 33, remarks: '' };
+                                                                                        const baseVal = entry.obtained === '' || entry.obtained === null ? null : parseFloat(entry.obtained);
+                                                                                        const graceVal = parseFloat(entry.graceMarks) || 0;
+                                                                                        const effective = baseVal !== null && !isNaN(baseVal) ? baseVal + graceVal : null;
+                                                                                        const isSubjFail = entry.isAbsent || (effective !== null && effective < (entry.passingMarks || 33));
+
+                                                                                        return (
+                                                                                            <tr key={subj} className="hover:bg-amber-50/50">
+                                                                                                <td className="border border-slate-300 p-1.5 text-left font-bold">
+                                                                                                    <span>{subj}</span>
+                                                                                                    <span className="text-[9px] text-slate-400 font-normal block">Pass: {entry.passingMarks || 33}</span>
+                                                                                                </td>
+                                                                                                <td className="border border-slate-300 p-1.5 text-slate-600 font-semibold">{entry.totalMarks || 100}</td>
+                                                                                                <td className="border border-slate-300 p-1">
+                                                                                                    <input
+                                                                                                        type="number"
+                                                                                                        disabled={entry.isAbsent}
+                                                                                                        value={entry.obtained}
+                                                                                                        placeholder="—"
+                                                                                                        onChange={(e) => {
+                                                                                                            const val = e.target.value;
+                                                                                                            setModerateSubjectMarks(prev => ({
+                                                                                                                ...prev,
+                                                                                                                [subj]: { ...(prev?.[subj] || {}), obtained: val }
+                                                                                                            }));
+                                                                                                        }}
+                                                                                                        className="w-14 p-1 text-center font-bold text-xs bg-white border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 focus:outline-none disabled:opacity-40"
+                                                                                                    />
+                                                                                                </td>
+                                                                                                <td className="border border-slate-300 p-1">
+                                                                                                    <input
+                                                                                                        type="number"
+                                                                                                        disabled={entry.isAbsent || entry.obtained === ''}
+                                                                                                        value={entry.graceMarks || ''}
+                                                                                                        placeholder="+0"
+                                                                                                        onChange={(e) => {
+                                                                                                            const val = e.target.value;
+                                                                                                            setModerateSubjectMarks(prev => ({
+                                                                                                                ...prev,
+                                                                                                                [subj]: { ...(prev?.[subj] || {}), graceMarks: val }
+                                                                                                            }));
+                                                                                                        }}
+                                                                                                        className="w-12 p-1 text-center font-bold text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded focus:ring-1 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
+                                                                                                    />
+                                                                                                </td>
+                                                                                                <td className="border border-slate-300 p-1">
+                                                                                                    <input
+                                                                                                        type="checkbox"
+                                                                                                        checked={entry.isAbsent === true}
+                                                                                                        onChange={(e) => {
+                                                                                                            setModerateSubjectMarks(prev => ({
+                                                                                                                ...prev,
+                                                                                                                [subj]: { ...(prev?.[subj] || {}), isAbsent: e.target.checked }
+                                                                                                            }));
+                                                                                                        }}
+                                                                                                        className="w-3.5 h-3.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                                                                                                        title="Mark Absent"
+                                                                                                    />
+                                                                                                </td>
+                                                                                                <td className="border border-slate-300 p-1.5 font-black">
+                                                                                                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black ${
+                                                                                                        entry.isAbsent ? 'bg-slate-200 text-slate-600' :
+                                                                                                        effective === null ? 'bg-slate-100 text-slate-400' :
+                                                                                                        isSubjFail ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+                                                                                                    }`}>
+                                                                                                        {entry.isAbsent ? 'ABS' : effective !== null ? `${effective}${graceVal > 0 ? '*' : ''}` : '—'}
+                                                                                                    </span>
+                                                                                                </td>
+                                                                                                <td className="border border-slate-300 p-1 text-left">
+                                                                                                    <input
+                                                                                                        type="text"
+                                                                                                        value={entry.remarks || ''}
+                                                                                                        placeholder="Remarks"
+                                                                                                        onChange={(e) => {
+                                                                                                            const val = e.target.value;
+                                                                                                            setModerateSubjectMarks(prev => ({
+                                                                                                                ...prev,
+                                                                                                                [subj]: { ...(prev?.[subj] || {}), remarks: val }
+                                                                                                            }));
+                                                                                                        }}
+                                                                                                        className="w-full p-1 text-xs text-slate-700 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                                                                                                    />
+                                                                                                </td>
+                                                                                            </tr>
+                                                                                        );
+                                                                                    } else {
+                                                                                        const m = studentRow?.subjectMarks?.[subj];
+                                                                                        const obtained = m ? (m.isAbsent ? 'ABS' : (m.obtained !== null && m.obtained !== undefined) ? m.obtained : '-') : '-';
+                                                                                        return (
+                                                                                            <tr key={subj} className="hover:bg-slate-50">
+                                                                                                <td className="border border-slate-300 p-1.5 text-left font-bold">{subj}</td>
+                                                                                                <td className="border border-slate-300 p-1.5 text-slate-600">{m?.totalMarks || 100}</td>
+                                                                                                <td className="border border-slate-300 p-1.5 font-black">{obtained}</td>
+                                                                                                <td className="border border-slate-300 p-1.5 font-black">{m?.grade || '-'}</td>
+                                                                                                <td className="border border-slate-300 p-1.5 text-left text-[10px] text-slate-500 italic">{m?.remarks || 'Satisfactory'}</td>
+                                                                                            </tr>
+                                                                                        );
+                                                                                    }
+                                                                                })}
+                                                                            </tbody>
+                                                                            <tfoot>
+                                                                                <tr className="bg-slate-100 font-black border-t border-slate-300">
+                                                                                    <td className="border border-slate-300 p-1.5 text-left">Total Marks</td>
+                                                                                    <td className="border border-slate-300 p-1.5">
+                                                                                        {isEditingThisStudent ? liveTotalMax : studentRow.totalMax}
                                                                                     </td>
-                                                                                </>
-                                                                            )}
-                                                                        </tr>
-                                                                    </tfoot>
+                                                                                    {isEditingThisStudent ? (
+                                                                                        <>
+                                                                                            <td colSpan={3} className="border border-slate-300 p-1.5 text-indigo-700">
+                                                                                                {liveTotalObtained} {totalGraceApplied > 0 && <span className="text-amber-600 text-[10px] font-bold">(+{totalGraceApplied} Grace)</span>}
+                                                                                            </td>
+                                                                                            <td className="border border-slate-300 p-1.5 text-indigo-700">{liveGrade}</td>
+                                                                                            <td className="border border-slate-300 p-1.5 text-left text-[10px]">
+                                                                                                {!isComplete ? 'PENDING' : isPassCalc ? 'PASSED / PROMOTED' : 'FAILED / DETAINED'}
+                                                                                            </td>
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <>
+                                                                                            <td className="border border-slate-300 p-1.5 text-indigo-700">{studentRow.totalObtained}</td>
+                                                                                            <td className="border border-slate-300 p-1.5 text-indigo-700">{studentRow.grade}</td>
+                                                                                            <td className="border border-slate-300 p-1.5 text-left text-[10px]">
+                                                                                                {!studentRow.isComplete ? 'RESULT PENDING' : (studentRow.isPassed ? 'PROMOTED / PASSED' : 'FAILED / DETAINED')}
+                                                                                            </td>
+                                                                                        </>
+                                                                                    )}
+                                                                                </tr>
+                                                                            </tfoot>
+                                                                        </>
+                                                                    )}
                                                                 </table>
                                                             </div>
 
@@ -4517,6 +5347,250 @@ export default function Exams() {
                 document.body
             )}
 
+
+            {/* ========================================================================= */}
+            {/* MODAL: CONFIGURE ANNUAL AGGREGATE FORMULA & WEIGHTS                        */}
+            {/* ========================================================================= */}
+            {showAggregateModal && typeof document !== 'undefined' && createPortal(
+                <div className="no-print fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+                    <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+                        {/* Modal Header */}
+                        <div className="p-6 bg-gradient-to-r from-indigo-700 via-indigo-800 to-violet-800 text-white flex items-center justify-between flex-shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
+                                    <Scale className="w-6 h-6 text-indigo-200" />
+                                </div>
+                                <div>
+                                    <h3 className="font-black text-lg">Annual Aggregate & Grading Formula</h3>
+                                    <p className="text-xs text-indigo-200 font-medium">Session: {selectedSession} • Configure term weightings</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setShowAggregateModal(false)}
+                                className="p-1.5 text-white/80 hover:text-white text-lg font-bold cursor-pointer"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-6 space-y-5 overflow-y-auto flex-1 text-xs">
+                            {/* Mode Switcher */}
+                            <div>
+                                <label className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">
+                                    Select Calculation Methodology
+                                </label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div
+                                        onClick={() => setModalAggregateMode('auto')}
+                                        className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${
+                                            modalAggregateMode === 'auto'
+                                                ? 'border-indigo-600 bg-indigo-50/50 shadow-sm'
+                                                : 'border-slate-200 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <input
+                                                type="radio"
+                                                name="aggregateMode"
+                                                checked={modalAggregateMode === 'auto'}
+                                                onChange={() => setModalAggregateMode('auto')}
+                                                className="text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                            />
+                                            <span className="font-black text-slate-900 text-sm">⚡ Auto Sum / Equal Avg</span>
+                                        </div>
+                                        <p className="text-slate-500 text-[11px] leading-relaxed pl-5">
+                                            Zero configuration. System automatically calculates total obtained marks across conducted terms or equal percentage average.
+                                        </p>
+                                    </div>
+
+                                    <div
+                                        onClick={() => setModalAggregateMode('custom')}
+                                        className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${
+                                            modalAggregateMode === 'custom'
+                                                ? 'border-indigo-600 bg-indigo-50/50 shadow-sm'
+                                                : 'border-slate-200 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <input
+                                                type="radio"
+                                                name="aggregateMode"
+                                                checked={modalAggregateMode === 'custom'}
+                                                onChange={() => setModalAggregateMode('custom')}
+                                                className="text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                            />
+                                            <span className="font-black text-slate-900 text-sm">⚙️ Custom % Weights</span>
+                                        </div>
+                                        <p className="text-slate-500 text-[11px] leading-relaxed pl-5">
+                                            Assign custom % contribution for each term (e.g. First Term 20%, Mid Term 30%, Final Term 50% = 100%).
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Terms List & Weight Inputs */}
+                            <div>
+                                <label className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">
+                                    Terms Configured for Session {selectedSession}
+                                </label>
+
+                                {sessionExams.length === 0 ? (
+                                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-center text-slate-500">
+                                        No exams have been created under session {selectedSession} yet.
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2.5">
+                                        {sessionExams.map(ex => {
+                                            const isIncluded = modalIncludedExamIds.includes(ex.id);
+                                            const currentWeight = modalAggregateWeights[ex.id] ?? '';
+
+                                            return (
+                                                <div
+                                                    key={ex.id}
+                                                    className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                                                        isIncluded
+                                                            ? 'border-indigo-200 bg-indigo-50/30'
+                                                            : 'border-slate-200 bg-slate-50/50 opacity-60'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isIncluded}
+                                                            onChange={(e) => {
+                                                                if (e.target.checked) {
+                                                                    setModalIncludedExamIds([...modalIncludedExamIds, ex.id]);
+                                                                } else {
+                                                                    setModalIncludedExamIds(modalIncludedExamIds.filter(id => id !== ex.id));
+                                                                }
+                                                            }}
+                                                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                        />
+                                                        <div>
+                                                            <div className="font-bold text-slate-900">{ex.title}</div>
+                                                            <div className="text-[10px] text-slate-400 capitalize">Status: {ex.status || 'Active'} • Session: {ex.session}</div>
+                                                        </div>
+                                                    </div>
+
+                                                    {modalAggregateMode === 'custom' && isIncluded && (
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            <span className="text-slate-500 font-bold text-[11px]">Weight:</span>
+                                                            <div className="relative w-20">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    max="100"
+                                                                    value={currentWeight}
+                                                                    onChange={(e) => {
+                                                                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                                                        setModalAggregateWeights({
+                                                                            ...modalAggregateWeights,
+                                                                            [ex.id]: val
+                                                                        });
+                                                                    }}
+                                                                    placeholder="0"
+                                                                    className="w-full pr-6 pl-2.5 py-1.5 bg-white border border-slate-300 rounded-xl font-black text-right text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                                                />
+                                                                <span className="absolute right-2 top-1/2 -translate-y-1/2 font-black text-slate-400 text-xs pointer-events-none">%</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Weight Meter / Validation */}
+                            {modalAggregateMode === 'custom' && sessionExams.length > 0 && (() => {
+                                const totalWeight = modalIncludedExamIds.reduce((sum, id) => {
+                                    const w = parseFloat(modalAggregateWeights[id]) || 0;
+                                    return sum + w;
+                                }, 0);
+                                const isBalanced = Math.round(totalWeight) === 100;
+
+                                return (
+                                    <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                                        isBalanced
+                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                                            : 'bg-amber-50 border-amber-200 text-amber-900'
+                                    }`}>
+                                        <div className="flex items-center gap-2">
+                                            {isBalanced ? (
+                                                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                                            ) : (
+                                                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                                            )}
+                                            <div>
+                                                <div className="font-black text-sm">
+                                                    Total Weight Sum: {totalWeight}% / 100%
+                                                </div>
+                                                <p className="text-[11px] opacity-80 mt-0.5">
+                                                    {isBalanced
+                                                        ? 'Perfect! Terms weights sum up exactly to 100%.'
+                                                        : 'Weights must total 100% for balanced standard grading.'}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                if (modalIncludedExamIds.length === 0) return;
+                                                const evenWeight = Math.round(100 / modalIncludedExamIds.length);
+                                                const newWeights = {};
+                                                modalIncludedExamIds.forEach((id, idx) => {
+                                                    newWeights[id] = idx === modalIncludedExamIds.length - 1 ? (100 - evenWeight * (modalIncludedExamIds.length - 1)) : evenWeight;
+                                                });
+                                                setModalAggregateWeights(newWeights);
+                                            }}
+                                            className="px-3 py-1.5 bg-white text-slate-700 font-black rounded-xl border border-slate-200 text-xs shadow-sm hover:bg-slate-50 transition-colors shrink-0 cursor-pointer"
+                                        >
+                                            Auto-Distribute 100%
+                                        </button>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Footer Buttons */}
+                            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 flex-shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAggregateModal(false)}
+                                    disabled={isSavingAggregateConfig}
+                                    className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl font-bold transition-colors text-xs cursor-pointer"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        handleSaveAggregateConfig({
+                                            mode: modalAggregateMode,
+                                            weights: modalAggregateWeights,
+                                            includedExamIds: modalIncludedExamIds
+                                        });
+                                    }}
+                                    disabled={isSavingAggregateConfig}
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl font-black text-xs shadow-md shadow-indigo-200 transition-all cursor-pointer disabled:opacity-50"
+                                >
+                                    {isSavingAggregateConfig ? (
+                                        <>Saving Formula...</>
+                                    ) : (
+                                        <>
+                                            <Check className="w-4 h-4" />
+                                            Save Aggregate Formula
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
 
         </div>
     );

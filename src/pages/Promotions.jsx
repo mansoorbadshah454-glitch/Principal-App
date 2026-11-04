@@ -1318,7 +1318,7 @@ const Promotions = () => {
             // 2. Process Student Moves & History Log
             console.log("Starting Student Moves & History Logging...");
             const moveOps = [];
-            const currentSession = '2025-2026';
+            const currentSession = localStorage.getItem('exams_selected_session') || localStorage.getItem('promotions_selected_session') || '2025-2026';
             const timestampNow = new Date();
 
             for (const student of students) {
@@ -1418,6 +1418,36 @@ const Promotions = () => {
             if (moveOps.length > 0) {
                 await commitBatchChunks(moveOps, 400); // Safe limit for moves
                 console.log("Student Moves & History Logging Complete");
+            }
+
+            // 3. Auto-Lock & Conclude Academic Session Exams (Zero Cheating / Read-Only Protocol)
+            try {
+                console.log(`Auto-locking exams for concluded session: ${currentSession}`);
+                const examsRef = collection(db, `schools/${schoolId}/exams`);
+                const examsSnap = await getDocs(examsRef);
+                const examLockOps = [];
+                examsSnap.docs.forEach(eDoc => {
+                    const eData = eDoc.data();
+                    const examSession = (eData.session || '').trim();
+                    if (!examSession || examSession === currentSession) {
+                        examLockOps.push((batch) => {
+                            batch.update(eDoc.ref, {
+                                isLocked: true,
+                                status: 'completed',
+                                lockedReason: `Session ${currentSession} Finalized & Students Promoted`,
+                                lockedAt: timestampNow,
+                                lockedBy: 'Promotions Protocol'
+                            });
+                        });
+                    }
+                });
+
+                if (examLockOps.length > 0) {
+                    await commitBatchChunks(examLockOps, 400);
+                    console.log(`Auto-Locked ${examLockOps.length} exams for session ${currentSession}`);
+                }
+            } catch (lockErr) {
+                console.warn("Auto-lock exams notice (non-fatal):", lockErr);
             }
 
             // Auto-generate and download the PDF report before clearing data
