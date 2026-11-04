@@ -654,3 +654,159 @@ export const parseStudentPaidMonthsSet = (student, targetYear = 2026, historyTxs
     }
     return paidSet;
 };
+
+/**
+ * Dynamic Rolling Ledger Evaluator:
+ * Scans all months from student admission date up to targetMonthIdx - 1.
+ * Aggregates all unpaid and partially paid balances into priorPendingMonthsList and cumulativePriorArrears.
+ */
+export const getStudentCumulativeLedger = (
+    student,
+    targetMonthIdx = new Date().getMonth(),
+    targetYear = 2026,
+    currentAction = null,
+    feeSettings = {},
+    historyTxs = []
+) => {
+    if (!student) {
+        return {
+            cumulativePriorArrears: 0,
+            priorPendingMonthsList: [],
+            priorMonthsCount: 0
+        };
+    }
+
+    if (checkIs100PercentFree(student)) {
+        return {
+            cumulativePriorArrears: 0,
+            priorPendingMonthsList: [],
+            priorMonthsCount: 0
+        };
+    }
+
+    let cumulativePriorArrears = 0;
+    const priorPendingMonthsList = [];
+
+    // Determine student admission month if available
+    let admissionMonthIdx = 0;
+    if (student?.admissionDate) {
+        try {
+            const admDate = new Date(student.admissionDate);
+            if (!isNaN(admDate.getTime()) && admDate.getFullYear() === targetYear) {
+                admissionMonthIdx = admDate.getMonth();
+            }
+        } catch (_) {}
+    }
+
+    for (let m = admissionMonthIdx; m < targetMonthIdx; m++) {
+        const fin = getStudentMonthFinancialStatus(student, m, targetYear, currentAction, feeSettings, historyTxs);
+        if (fin.status === 'pre_admission' || fin.is100PercentFree || fin.status === 'paid') {
+            continue;
+        }
+
+        const unpaid = Number(fin.remainingBalance !== undefined && fin.remainingBalance > 0
+            ? fin.remainingBalance
+            : (fin.expectedAmount || 0));
+
+        if (unpaid > 0) {
+            cumulativePriorArrears += unpaid;
+            priorPendingMonthsList.push({
+                monthIdx: m,
+                monthNum: m + 1,
+                monthName: fin.monthName,
+                monthFullName: fin.monthFullName,
+                targetMonthKey: fin.targetMonthKey,
+                amount: unpaid,
+                expectedAmount: fin.expectedAmount,
+                paidAmount: fin.paidAmount || 0,
+                status: fin.status
+            });
+        }
+    }
+
+    return {
+        cumulativePriorArrears,
+        priorPendingMonthsList,
+        priorMonthsCount: priorPendingMonthsList.length
+    };
+};
+
+/**
+ * FIFO Payment Waterfall Allocator:
+ * Distributes paid amount across prior unpaid months first, then current target month.
+ */
+export const allocatePaymentWaterfall = (
+    receivedAmount = 0,
+    priorPendingMonthsList = [],
+    currentTargetMonthKey = '',
+    currentTargetPayable = 0,
+    targetMonthName = ''
+) => {
+    let unallocatedPayment = Math.max(0, Number(receivedAmount || 0));
+    const allocations = [];
+
+    // 1. Prior pending months (oldest first)
+    priorPendingMonthsList.forEach(pMonth => {
+        if (unallocatedPayment <= 0) {
+            allocations.push({
+                monthKey: pMonth.targetMonthKey,
+                monthName: pMonth.monthName,
+                monthIdx: pMonth.monthIdx,
+                billed: pMonth.amount,
+                previousPaid: pMonth.paidAmount || 0,
+                paidNow: 0,
+                remaining: pMonth.amount,
+                status: pMonth.status,
+                isPriorMonth: true
+            });
+            return;
+        }
+
+        const payForMonth = Math.min(pMonth.amount, unallocatedPayment);
+        const newRemaining = Math.max(0, pMonth.amount - payForMonth);
+        const newStatus = newRemaining === 0 ? 'paid' : 'partial';
+        unallocatedPayment -= payForMonth;
+
+        allocations.push({
+            monthKey: pMonth.targetMonthKey,
+            monthName: pMonth.monthName,
+            monthIdx: pMonth.monthIdx,
+            billed: pMonth.amount,
+            previousPaid: pMonth.paidAmount || 0,
+            paidNow: payForMonth,
+            remaining: newRemaining,
+            status: newStatus,
+            isPriorMonth: true
+        });
+    });
+
+    // 2. Current target month
+    const currentPayable = Math.max(0, Number(currentTargetPayable || 0));
+    const payForCurrent = Math.min(currentPayable, unallocatedPayment);
+    const currentRemaining = Math.max(0, currentPayable - payForCurrent);
+    const currentStatus = currentRemaining === 0 ? 'paid' : (payForCurrent > 0 ? 'partial' : 'pending');
+    unallocatedPayment -= payForCurrent;
+
+    allocations.push({
+        monthKey: currentTargetMonthKey,
+        monthName: targetMonthName,
+        billed: currentPayable,
+        previousPaid: 0,
+        paidNow: payForCurrent,
+        remaining: currentRemaining,
+        status: currentStatus,
+        isPriorMonth: false,
+        advanceSurplus: unallocatedPayment
+    });
+
+    const totalRemaining = allocations.reduce((acc, a) => acc + a.remaining, 0);
+
+    return {
+        allocations,
+        totalAllocated: Number(receivedAmount) - unallocatedPayment,
+        surplusAdvance: unallocatedPayment,
+        totalRemaining,
+        isFullySettled: totalRemaining === 0
+    };
+};
+

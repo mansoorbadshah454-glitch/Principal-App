@@ -31,7 +31,9 @@ import FeeArrearsMatrix, {
     calculateItemizedFeeBreakdown 
 } from '../components/FeeArrearsMatrix';
 import {
-    getStudentMonthFinancialStatus
+    getStudentMonthFinancialStatus,
+    getStudentCumulativeLedger,
+    allocatePaymentWaterfall
 } from '../utils/feePipeline';
 import {
     cacheStudentsOffline,
@@ -2038,26 +2040,37 @@ const PaymentResultModal = ({ isOpen, onClose, isSuccess, receiptData, errorMess
         window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
     };
 
-    return (
+    const modalContent = (
         <>
             <div style={{
-                position: 'fixed', inset: 0, zIndex: 99999,
-                background: 'rgba(15, 23, 42, 0.7)',
-                backdropFilter: 'blur(5px)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                width: '100vw',
+                height: '100vh',
+                zIndex: 999999,
+                background: 'transparent',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 padding: '1rem',
-                animation: 'fadeIn 0.2s ease-out'
+                pointerEvents: 'none',
+                boxSizing: 'border-box'
             }}>
                 <div style={{
                     background: '#ffffff',
                     borderRadius: '20px',
                     width: '100%',
-                    maxWidth: '480px',
+                    maxWidth: '460px',
                     padding: '1.75rem',
-                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                    border: isSuccess ? '2px solid #86efac' : '2px solid #fca5a5',
+                    boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.08), 0 10px 25px rgba(0, 0, 0, 0.12)',
+                    border: isSuccess ? '2.5px solid #22c55e' : '2.5px solid #ef4444',
                     textAlign: 'center',
-                    position: 'relative'
+                    position: 'relative',
+                    pointerEvents: 'auto',
+                    animation: 'fadeIn 0.2s ease-out'
                 }}>
                     {/* Close X */}
                     <button
@@ -2663,6 +2676,8 @@ const PaymentResultModal = ({ isOpen, onClose, isSuccess, receiptData, errorMess
             `}</style>
         </>
     );
+
+    return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 };
 const FeeReceiptModal = ({ isOpen, onClose, receiptData, schoolInfo }) => {
     if (!isOpen || !receiptData || typeof document === 'undefined') return null;
@@ -7337,7 +7352,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
     // 2-Step Swipeable Cashier POS States
     const [cashierStep, setCashierStep] = useState(1); // 1 = Student & Parent Profile Card, 2 = Financial Breakdown POS
     const [recentPaidMonthIdx, setRecentPaidMonthIdx] = useState(null); // Highlighting recently paid month on right card
-    const [sendWhatsAppOnSubmit, setSendWhatsAppOnSubmit] = useState(true);
+    const [sendWhatsAppOnSubmit, setSendWhatsAppOnSubmit] = useState(false);
     const [audioChimeEnabled, setAudioChimeEnabled] = useState(true);
     // 🔍 Class-Filtered Student Search Bar inside Student Dropdown
     const [studentDropdownSearch, setStudentDropdownSearch] = useState('');
@@ -7441,28 +7456,27 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
         const targetMonthHist = studentReliabilityData?.monthlyHistory?.[selectedTargetMonthIdx] || null;
         const matchingMonthTx = targetMonthHist?.txData || studentHistoryTxs.find(tx => tx.targetMonthKey === targetMonthKey || tx.targetMonthIdx === selectedTargetMonthIdx);
 
-        // Cumulative Prior Months Arrears: Sum remaining unpaid balances from months prior to selectedTargetMonthIdx
-        let priorArrearsSum = 0;
-        let priorArrearsCount = 0;
-        (studentReliabilityData?.monthlyHistory || []).forEach(m => {
-            if ((m.monthNum - 1) < selectedTargetMonthIdx) {
-                if (m.status === 'partial') {
-                    priorArrearsSum += Number(m.remainingBalance || 0);
-                    priorArrearsCount++;
-                } else if (m.status === 'overdue' || m.status === 'pending') {
-                    const defaultTuition = breakdown.tuitionPayable || breakdown.baseTuition || Number(studentToAssess.tuitionFee || 0);
-                    priorArrearsSum += Number(m.amount || defaultTuition);
-                    priorArrearsCount++;
-                }
-            }
-        });
+        // Dynamic Rolling Ledger: Calculate cumulative prior arrears and itemized pending months
+        const dynamicLedger = getStudentCumulativeLedger(
+            studentToAssess,
+            selectedTargetMonthIdx,
+            currentYear,
+            currentAction,
+            feeSettingsData,
+            studentHistoryTxs
+        );
+        const priorArrearsSum = dynamicLedger.cumulativePriorArrears;
+        const priorArrearsCount = dynamicLedger.priorMonthsCount;
+        const priorPendingMonthsList = dynamicLedger.priorPendingMonthsList;
 
         if (priorArrearsSum > 0 && !breakdown.is100PercentFree) {
             breakdown.arrears = priorArrearsSum;
             breakdown.arrearsMonthsCount = priorArrearsCount;
+            breakdown.priorPendingMonthsList = priorPendingMonthsList;
         } else {
             breakdown.arrears = 0;
             breakdown.arrearsMonthsCount = 0;
+            breakdown.priorPendingMonthsList = [];
         }
 
         const isMonthFullyPaid = targetMonthHist?.status === 'paid';
@@ -8656,19 +8670,29 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 }
             }
 
-            let prevCount = Number(st.previousMonthsUnpaidCount) || Number(st.unpaidMonthsCount) || 0;
-            if (prevCount === 0 && st.unpaidMonths && st.unpaidMonths > 1) {
-                prevCount = st.unpaidMonths - 1;
-            }
-            const prevArrears = Number(st.previousMonthsArrears) || (prevCount * tuition);
+            // Dynamic Rolling Ledger Calculation for this student
+            const currentYearNum = new Date().getFullYear();
+            const stLedger = getStudentCumulativeLedger(
+                st,
+                selectedTargetMonthIdx,
+                currentYearNum,
+                currentAction,
+                feeSettingsData,
+                studentHistoryTxs
+            );
+            const prevArrears = stLedger.cumulativePriorArrears;
+            const prevCount = stLedger.priorMonthsCount;
+            const stPriorPendingList = stLedger.priorPendingMonthsList;
 
             if (prevArrears > 0) {
+                const monthsNames = stPriorPendingList.map(p => p.monthName).join(', ');
                 items.push({
                     key: 'arrears',
-                    name: `Previous Overdue Tuition (${prevCount} Mos)`,
+                    name: `Previous Pending Dues (${monthsNames || `${prevCount} Mos`})`,
                     amount: prevArrears,
                     isArrears: true,
-                    category: 'arrears'
+                    category: 'arrears',
+                    pendingMonthsList: stPriorPendingList
                 });
             }
 
@@ -8914,7 +8938,16 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
             const b = selectedDetailMonthData.breakdown;
             const list = [];
             if (b.arrears > 0) {
-                list.push({ key: 'arrears', name: `Previous Overdue Arrears (${b.arrearsMonthsCount || 1} Mos)`, amount: b.arrears, category: 'arrears' });
+                const monthsNames = Array.isArray(b.priorPendingMonthsList) && b.priorPendingMonthsList.length > 0
+                    ? b.priorPendingMonthsList.map(p => p.monthName).join(', ')
+                    : `${b.arrearsMonthsCount || 1} Mos`;
+                list.push({ 
+                    key: 'arrears', 
+                    name: `Previous Pending Dues (${monthsNames})`, 
+                    amount: b.arrears, 
+                    category: 'arrears',
+                    pendingMonthsList: b.priorPendingMonthsList || []
+                });
             }
             if (b.tuitionPayable > 0) {
                 list.push({ key: 'tuition', name: `Monthly Tuition (${selectedDetailMonthData.targetMonthName})`, amount: b.tuitionPayable, category: 'tuition' });
@@ -9321,12 +9354,36 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                 const childPaidAmount = isMultiFamily
                     ? (isThisChildPaying ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal) : 0)
                     : finalAmount;
-                const childRemaining = Math.max(0, childSubtotal - childPaidAmount);
-                const isChildSettled = isThisChildPaying && (childPaidAmount >= childSubtotal || (childSubtotal === 0 && isPayingTuition));
 
                 const targetStudentDoc = selectedStudent.id === st.studentId ? selectedStudent : (allStudents.find(s => s.id === st.studentId) || st);
-                const oldPaidMonths = Array.isArray(targetStudentDoc.paidMonths) ? targetStudentDoc.paidMonths : [];
-                const newPaidMonths = isChildSettled ? (oldPaidMonths.includes(targetMonthKey) ? oldPaidMonths : [...oldPaidMonths, targetMonthKey]) : oldPaidMonths;
+
+                // Dynamic Rolling Ledger for this child:
+                const childLedger = getStudentCumulativeLedger(
+                    targetStudentDoc,
+                    targetMonthIndex,
+                    targetYear,
+                    currentAction,
+                    feeSettingsData,
+                    studentHistoryTxs
+                );
+
+                const isPayingArrears = selectedFeeItemKeys.includes('arrears');
+                const priorListToClear = isPayingArrears ? childLedger.priorPendingMonthsList : [];
+                const currentMonthBilled = Math.max(0, childSubtotal - (isPayingArrears ? childLedger.cumulativePriorArrears : 0));
+
+                const waterfallResult = allocatePaymentWaterfall(
+                    childPaidAmount,
+                    priorListToClear,
+                    targetMonthKey,
+                    currentMonthBilled,
+                    targetMonthName
+                );
+
+                const childRemaining = waterfallResult.totalRemaining;
+                const isChildSettled = waterfallResult.isFullySettled;
+
+                const oldPaidMonths = Array.isArray(targetStudentDoc.paidMonths) ? [...targetStudentDoc.paidMonths] : [];
+                const newPaidMonths = [...oldPaidMonths];
 
                 const existingIndActions = Array.isArray(targetStudentDoc.individualActions) ? targetStudentDoc.individualActions : [];
                 const paidCustomItems = isThisChildPaying ? existingIndActions.filter(act => {
@@ -9361,28 +9418,44 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                     return act;
                 });
 
-                const newHistory = {
-                    ...(targetStudentDoc.monthlyFeeHistory || {}),
-                    [targetMonthKey]: {
-                        status: isChildSettled ? 'paid' : 'partial',
-                        paidAmount: ((targetStudentDoc.monthlyFeeHistory?.[targetMonthKey]?.paidAmount || 0) + childPaidAmount),
-                        remainingBalance: childRemaining,
+                // Update monthlyFeeHistory for all allocated months (prior + current)
+                const newHistory = { ...(targetStudentDoc.monthlyFeeHistory || {}) };
+                waterfallResult.allocations.forEach(alloc => {
+                    const existingHist = newHistory[alloc.monthKey] || {};
+                    const totalMonthPaid = Number(existingHist.paidAmount || alloc.previousPaid || 0) + alloc.paidNow;
+                    
+                    newHistory[alloc.monthKey] = {
+                        ...existingHist,
+                        status: alloc.status,
+                        paidAmount: totalMonthPaid,
+                        remainingBalance: alloc.remaining,
                         paidAt: now.toISOString(),
                         receiptNo,
                         isFamilyCombined: isMultiFamily,
                         familyReceiptNo: receiptNo,
-                        paidItems: selectedFeeItemKeys,
+                        paidItems: alloc.monthKey === targetMonthKey ? selectedFeeItemKeys : ['arrears'],
                         paymentMode,
-                        customItems: paidCustomItems
+                        customItems: alloc.monthKey === targetMonthKey ? paidCustomItems : (existingHist.customItems || [])
+                    };
+
+                    if (alloc.status === 'paid' && !newPaidMonths.includes(alloc.monthKey)) {
+                        newPaidMonths.push(alloc.monthKey);
+                    } else if (alloc.status !== 'paid' && newPaidMonths.includes(alloc.monthKey)) {
+                        const idx = newPaidMonths.indexOf(alloc.monthKey);
+                        if (idx > -1) newPaidMonths.splice(idx, 1);
                     }
-                };
+                });
+
+                const targetMonthAlloc = waterfallResult.allocations.find(a => a.monthKey === targetMonthKey);
 
                 const updatedStudentObj = {
                     ...targetStudentDoc,
-                    monthlyFeeStatus: isChildSettled ? 'paid' : (targetStudentDoc.monthlyFeeStatus || 'pending'),
+                    monthlyFeeStatus: isChildSettled ? 'paid' : (targetMonthAlloc?.status || 'partial'),
                     monthlyFeeDate: now.toISOString(),
                     paidMonths: newPaidMonths,
                     monthlyFeeHistory: newHistory,
+                    previousMonthsArrears: childRemaining > 0 ? childRemaining : 0,
+                    pendingFeeBalance: childRemaining,
                     individualActions: updatedIndActions,
                     lastPaymentMode: paymentMode,
                     lastReceiptNo: receiptNo,
@@ -9430,7 +9503,7 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         (Number(discount) > 0 ? `*Discount:* -Rs ${Number(discount).toLocaleString()}\n` : '') +
                         `--------------------------\n` +
                         `*TOTAL PAID:* Rs ${Number(finalAmount).toLocaleString()}\n` +
-                        (transactionRecord.remainingBalance > 0 ? `*Remaining Due:* Rs ${Number(transactionRecord.remainingBalance).toLocaleString()}\n` : `*Status:* Fully Cleared ✓\n`) +
+                        (transactionRecord.remainingBalance > 0 ? `*Remaining Due (Carried Forward to Next Month):* Rs ${Number(transactionRecord.remainingBalance).toLocaleString()}\n` : `*Status:* Fully Cleared ✓\n`) +
                         `\n_Thank you for your prompt payment!_`;
 
                     let cleanPhone = fatherPhone.toString().replace(/[^0-9]/g, '');
@@ -9478,14 +9551,36 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                         const childPaidAmount = isMultiFamily
                             ? (payableNetTotal > 0 ? Math.min(childSubtotal, Math.round((childSubtotal / payableNetTotal) * finalAmount)) : childSubtotal)
                             : finalAmount;
-                        const childRemaining = Math.max(0, childSubtotal - childPaidAmount);
-                        const isChildSettled = childPaidAmount >= childSubtotal || (childSubtotal === 0 && isPayingTuition);
+
+                        const targetStudentDoc = selectedStudent.id === st.studentId ? selectedStudent : st;
+                        const childLedger = getStudentCumulativeLedger(
+                            targetStudentDoc,
+                            targetMonthIndex,
+                            targetYear,
+                            currentAction,
+                            feeSettingsData,
+                            studentHistoryTxs
+                        );
+
+                        const isPayingArrears = selectedFeeItemKeys.includes('arrears');
+                        const priorListToClear = isPayingArrears ? childLedger.priorPendingMonthsList : [];
+                        const currentMonthBilled = Math.max(0, childSubtotal - (isPayingArrears ? childLedger.cumulativePriorArrears : 0));
+
+                        const waterfallResult = allocatePaymentWaterfall(
+                            childPaidAmount,
+                            priorListToClear,
+                            targetMonthKey,
+                            currentMonthBilled,
+                            targetMonthName
+                        );
+
+                        const childRemaining = waterfallResult.totalRemaining;
+                        const isChildSettled = waterfallResult.isFullySettled;
 
                         const stRef = doc(db, `schools/${schoolId}/classes/${st.classId}/students`, st.studentId);
                         const masterStRef = doc(db, `schools/${schoolId}/students`, st.studentId);
 
                         // Extract custom items paid in this batch
-                        const targetStudentDoc = selectedStudent.id === st.studentId ? selectedStudent : st;
                         const existingIndActions = Array.isArray(targetStudentDoc.individualActions) ? targetStudentDoc.individualActions : [];
                         const paidCustomItems = [];
 
@@ -9524,28 +9619,45 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                             lastPaymentFineWaived: Boolean(isFineWaived),
                             lastPaidItems: selectedFeeItemKeys,
                             individualActions: updatedIndActions,
+                            previousMonthsArrears: childRemaining > 0 ? childRemaining : 0,
+                            pendingFeeBalance: childRemaining,
                             pendingPaymentSubmission: {
                                 status: 'approved',
                                 approvedAt: nowD.toISOString()
-                            },
-                            [`monthlyFeeHistory.${targetMonthKey}`]: {
-                                status: isChildSettled ? 'paid' : 'partial',
-                                paidAmount: childPaidAmount,
-                                remainingBalance: childRemaining,
+                            }
+                        };
+
+                        const monthsToUnion = [];
+                        waterfallResult.allocations.forEach(alloc => {
+                            const existingHist = targetStudentDoc.monthlyFeeHistory?.[alloc.monthKey] || {};
+                            const totalMonthPaid = Number(existingHist.paidAmount || alloc.previousPaid || 0) + alloc.paidNow;
+                            stPayload[`monthlyFeeHistory.${alloc.monthKey}`] = {
+                                status: alloc.status,
+                                paidAmount: totalMonthPaid,
+                                remainingBalance: alloc.remaining,
                                 paidAt: nowD.toISOString(),
                                 receiptNo,
                                 isFamilyCombined: isMultiFamily,
                                 familyReceiptNo: receiptNo,
-                                paidItems: selectedFeeItemKeys,
+                                paidItems: alloc.monthKey === targetMonthKey ? selectedFeeItemKeys : ['arrears'],
                                 paymentMode,
-                                customItems: paidCustomItems
+                                customItems: alloc.monthKey === targetMonthKey ? paidCustomItems : []
+                            };
+                            if (alloc.status === 'paid') {
+                                monthsToUnion.push(alloc.monthKey);
                             }
-                        };
+                        });
 
-                        if (isChildSettled || isPayingTuition) {
+                        const targetMonthAlloc = waterfallResult.allocations.find(a => a.monthKey === targetMonthKey);
+                        if (isChildSettled || targetMonthAlloc?.status === 'paid') {
                             stPayload.monthlyFeeStatus = 'paid';
                             stPayload.monthlyFeeDate = nowD.toISOString();
-                            stPayload.paidMonths = arrayUnion(targetMonthKey);
+                        } else {
+                            stPayload.monthlyFeeStatus = 'partial';
+                        }
+
+                        if (monthsToUnion.length > 0) {
+                            stPayload.paidMonths = arrayUnion(...monthsToUnion);
                         }
 
                         if (isPayingStore && Array.isArray(st.storePurchases)) {
@@ -11216,90 +11328,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     Active Matrix Month
                                                                 </span>
                                                             </div>
-
-                                                            {/* Dual Mode Switcher: Single vs Full Family */}
-                                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginBottom: '0.55rem' }}>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => setSiblingPaymentScope('single')}
-                                                                    style={{
-                                                                        padding: '0.45rem 0.5rem',
-                                                                        borderRadius: '7px',
-                                                                        border: siblingPaymentScope === 'single' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
-                                                                        background: siblingPaymentScope === 'single' ? '#0284c7' : '#ffffff',
-                                                                        color: siblingPaymentScope === 'single' ? '#ffffff' : '#334155',
-                                                                        fontSize: '0.72rem',
-                                                                        fontWeight: '800',
-                                                                        cursor: 'pointer',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        justifyContent: 'center',
-                                                                        gap: '4px',
-                                                                        transition: 'all 0.15s ease'
-                                                                    }}
-                                                                >
-                                                                    <span>Single Student Only</span>
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        setSiblingPaymentScope('family');
-                                                                        setSelectedSiblingIds(detectedSiblings.map(s => s.id));
-                                                                    }}
-                                                                    style={{
-                                                                        padding: '0.45rem 0.5rem',
-                                                                        borderRadius: '7px',
-                                                                        border: siblingPaymentScope === 'family' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
-                                                                        background: siblingPaymentScope === 'family' ? '#0284c7' : '#ffffff',
-                                                                        color: siblingPaymentScope === 'family' ? '#ffffff' : '#334155',
-                                                                        fontSize: '0.72rem',
-                                                                        fontWeight: '800',
-                                                                        cursor: 'pointer',
-                                                                        display: 'flex',
-                                                                        alignItems: 'center',
-                                                                        justifyContent: 'center',
-                                                                        gap: '4px',
-                                                                        transition: 'all 0.15s ease'
-                                                                    }}
-                                                                >
-                                                                    <span>Complete Family ({detectedSiblings.length})</span>
-                                                                </button>
-                                                            </div>
-
-                                                            {/* Sibling Selection Chips */}
-                                                            <div>
-                                                                <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: '700', marginBottom: '0.3rem' }}>
-                                                                    Click child to include / exclude from this bill:
-                                                                </div>
-                                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                                                    {detectedSiblings.map(sib => {
-                                                                        const isSelected = selectedSiblingIds.includes(sib.id);
-                                                                        return (
-                                                                            <span
-                                                                                key={sib.id}
-                                                                                onClick={() => toggleSiblingSelection(sib.id)}
-                                                                                style={{
-                                                                                    fontSize: '0.7rem',
-                                                                                    padding: '3px 8px',
-                                                                                    borderRadius: '6px',
-                                                                                    background: isSelected ? '#0369a1' : '#e2e8f0',
-                                                                                    color: isSelected ? '#ffffff' : '#475569',
-                                                                                    fontWeight: '700',
-                                                                                    cursor: 'pointer',
-                                                                                    display: 'inline-flex',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '4px',
-                                                                                    border: isSelected ? '1px solid #0284c7' : '1px solid #cbd5e1',
-                                                                                    transition: 'all 0.15s ease'
-                                                                                }}
-                                                                            >
-                                                                                <span>{isSelected ? '✓' : '+'}</span>
-                                                                                <span>{sib.name} ({sib.className || 'Class'})</span>
-                                                                            </span>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </div>
                                                         </div>
                                                     ) : (
                                                         /* SINGLE STUDENT PROFILE CARD */
@@ -11718,57 +11746,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                     Active Matrix Month
                                                                 </span>
                                                             </div>
-
-                                                            {/* Dual Mode Switcher if siblings exist */}
-                                                            {detectedSiblings.length > 1 && (
-                                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginTop: '0.65rem' }}>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setSiblingPaymentScope('single')}
-                                                                        style={{
-                                                                            padding: '0.5rem 0.6rem',
-                                                                            borderRadius: '7px',
-                                                                            border: siblingPaymentScope === 'single' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
-                                                                            background: siblingPaymentScope === 'single' ? '#0284c7' : '#ffffff',
-                                                                            color: siblingPaymentScope === 'single' ? '#ffffff' : '#334155',
-                                                                            fontSize: '0.82rem',
-                                                                            fontWeight: '800',
-                                                                            cursor: 'pointer',
-                                                                            display: 'flex',
-                                                                            alignItems: 'center',
-                                                                            justifyContent: 'center',
-                                                                            gap: '4px',
-                                                                            transition: 'all 0.15s ease'
-                                                                        }}
-                                                                    >
-                                                                        <span>Single Student Only</span>
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            setSiblingPaymentScope('family');
-                                                                            setSelectedSiblingIds(detectedSiblings.map(s => s.id));
-                                                                        }}
-                                                                        style={{
-                                                                            padding: '0.5rem 0.6rem',
-                                                                            borderRadius: '7px',
-                                                                            border: siblingPaymentScope === 'family' ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
-                                                                            background: siblingPaymentScope === 'family' ? '#0284c7' : '#ffffff',
-                                                                            color: siblingPaymentScope === 'family' ? '#ffffff' : '#334155',
-                                                                            fontSize: '0.82rem',
-                                                                            fontWeight: '800',
-                                                                            cursor: 'pointer',
-                                                                            display: 'flex',
-                                                                            alignItems: 'center',
-                                                                            justifyContent: 'center',
-                                                                            gap: '4px',
-                                                                            transition: 'all 0.15s ease'
-                                                                        }}
-                                                                    >
-                                                                        <span>Complete Family ({detectedSiblings.length})</span>
-                                                                    </button>
-                                                                </div>
-                                                            )}
                                                         </div>
                                                     )}
 
@@ -13109,6 +13086,52 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             </div>
                                                                         </div>
 
+                                                                        {/* Rolling Ledger Arrears Breakdown Card */}
+                                                                        {(Number(selectedDetailMonthData?.breakdown?.arrears || feeCalculation?.previousMonthsArrears || 0) > 0) && (
+                                                                            <div style={{
+                                                                                marginTop: '0.45rem',
+                                                                                marginBottom: '0.45rem',
+                                                                                padding: '0.55rem 0.75rem',
+                                                                                borderRadius: '9px',
+                                                                                background: 'linear-gradient(135deg, #fef2f2 0%, #fff1f2 100%)',
+                                                                                border: '1.5px solid #fecdd3',
+                                                                                boxShadow: '0 1px 3px rgba(225, 29, 72, 0.08)'
+                                                                            }}>
+                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                                                                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#be123c', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                        📜 Cumulative Pending Arrears:
+                                                                                    </span>
+                                                                                    <strong style={{ fontSize: '0.84rem', fontWeight: '900', color: '#be123c' }}>
+                                                                                        Rs {Number(selectedDetailMonthData?.breakdown?.arrears || feeCalculation?.previousMonthsArrears || 0).toLocaleString()}
+                                                                                    </strong>
+                                                                                </div>
+                                                                                {/* Pending Months Badges */}
+                                                                                {Array.isArray(selectedDetailMonthData?.breakdown?.priorPendingMonthsList) && selectedDetailMonthData.breakdown.priorPendingMonthsList.length > 0 && (
+                                                                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                                                                                        {selectedDetailMonthData.breakdown.priorPendingMonthsList.map((pm, pIdx) => (
+                                                                                            <span
+                                                                                                key={pm.targetMonthKey || pIdx}
+                                                                                                style={{
+                                                                                                    fontSize: '0.65rem',
+                                                                                                    padding: '2px 6px',
+                                                                                                    borderRadius: '5px',
+                                                                                                    background: '#ffffff',
+                                                                                                    border: '1px solid #fda4af',
+                                                                                                    color: '#9f1239',
+                                                                                                    fontWeight: '700'
+                                                                                                }}
+                                                                                            >
+                                                                                                {pm.monthName}: Rs {Number(pm.amount).toLocaleString()} {pm.status === 'partial' ? '(Partial)' : ''}
+                                                                                            </span>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                                <div style={{ fontSize: '0.65rem', color: '#881337', marginTop: '0.25rem' }}>
+                                                                                    ℹ️ Yeh pichlay mahinay ka pending hai jo is mahinay ke total me add kiya gaya hai.
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+
                                                                         {/* Net Payable Total (Skeuomorphic Digital POS Screen Bezel) */}
                                                                         <div style={{
                                                                             background: 'linear-gradient(180deg, #0f172a 0%, #020617 100%)',
@@ -13239,6 +13262,23 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             {selectedPayableItems.length} item{selectedPayableItems.length === 1 ? '' : 's'}
                                                                         </span>
                                                                     </div>
+                                                                    {Number(receivedAmount) > 0 && Number(receivedAmount) < payableNetTotal && (
+                                                                        <div style={{
+                                                                            marginTop: '0.5rem',
+                                                                            padding: '6px 9px',
+                                                                            borderRadius: '8px',
+                                                                            background: '#fffbeb',
+                                                                            border: '1.5px solid #fde68a',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '6px'
+                                                                        }}>
+                                                                            <span style={{ fontSize: '1.1rem' }}>🔄</span>
+                                                                            <div style={{ fontSize: '0.72rem', color: '#92400e', lineHeight: 1.35 }}>
+                                                                                <strong>Auto Roll-Forward:</strong> Bacha hua <strong>Rs {(payableNetTotal - Number(receivedAmount)).toLocaleString()}</strong> automatically aglay mahinay ke bill me shamil ho jayega.
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
                                                                 </div>
 
                                                                 {/* Non-Cash TRX Reference & Proof */}
@@ -13311,20 +13351,6 @@ const DailyWorkflow = ({ schoolId, classes, currentAction, schoolInfo, preselect
                                                                             boxSizing: 'border-box'
                                                                         }}
                                                                     />
-                                                                </div>
-
-                                                                {/* WhatsApp Receipt Automation Checkbox */}
-                                                                <div style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        id="sendWhatsAppCheckbox"
-                                                                        checked={sendWhatsAppOnSubmit}
-                                                                        onChange={(e) => setSendWhatsAppOnSubmit(e.target.checked)}
-                                                                        style={{ cursor: 'pointer', accentColor: '#16a34a', width: '14px', height: '14px' }}
-                                                                    />
-                                                                    <label htmlFor="sendWhatsAppCheckbox" style={{ fontSize: '0.74rem', fontWeight: '700', color: '#166534', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                        <span>💬 Send Instant WhatsApp Receipt to Parent</span>
-                                                                    </label>
                                                                 </div>
 
                                                                 {/* Thermal Receipt Paper Ejection Slot Bezel */}
