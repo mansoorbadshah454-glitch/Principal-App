@@ -22,6 +22,7 @@ import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import { useAlert } from '../context/AlertContext';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { getTodayPktStr } from '../utils/pakistanTimeEngine';
 
 const VEHICLE_TYPES = [
     'HiAce Van (14-16 Seater)',
@@ -2456,8 +2457,8 @@ const Transport = () => {
                 }
             }));
 
-            // Sync today's attendance logs
-            const todayStr = new Date().toISOString().slice(0, 10);
+            // Sync today's attendance logs using trusted Pakistan server time
+            const todayStr = getTodayPktStr();
             const attKey = `${todayStr}_${activeRoute?.id || 'all'}_${overviewTripType}`;
             setAttendanceLogs(prev => ({
                 ...prev,
@@ -2688,9 +2689,7 @@ const Transport = () => {
                     return true;
                 });
 
-                const dNow = new Date();
-                const todayStr = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
-                const todayUtc = dNow.toISOString().slice(0, 10);
+                const todayStr = getTodayPktStr();
                 const attKey = `${todayStr}_${overviewRoute?.id || 'all'}_${effectiveTripType}`;
                 const altKeyWithVeh = `${todayStr}_${currentOverviewVeh?.id}_${effectiveTripType}`;
                 const altKeyWithTripRoute = `${todayStr}_${currentTracking.routeId}_${effectiveTripType}`;

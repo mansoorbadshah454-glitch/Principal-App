@@ -7,27 +7,11 @@ import { collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, order
 import { auth } from '../firebase';
 import StudentCircle from '../components/StudentCircle';
 import CachedImage from '../components/CachedImage';
+import { isDateTodayTrusted } from '../utils/pakistanTimeEngine';
 
-// Shared Helper for robust date & timezone matching
+// Shared Helper for robust date & timezone matching using trusted Pakistan server time
 const isDateToday = (targetDate) => {
-    if (!targetDate) return false;
-    let targetStr = targetDate;
-    if (typeof targetDate === 'object' && targetDate.toDate) {
-        const d = targetDate.toDate();
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        targetStr = `${y}-${m}-${day}`;
-    }
-
-    const d = new Date();
-    const localYear = d.getFullYear();
-    const localMonth = String(d.getMonth() + 1).padStart(2, '0');
-    const localDay = String(d.getDate()).padStart(2, '0');
-    const localToday = `${localYear}-${localMonth}-${localDay}`;
-    const utcToday = d.toISOString().split('T')[0];
-
-    return targetStr === localToday || targetStr === utcToday;
+    return isDateTodayTrusted(targetDate);
 };
 
 // Internal Component for individual Class Card logic
@@ -84,26 +68,9 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
         }
     };
 
-    // Helper for robust date & timezone matching
+    // Helper for robust date & timezone matching using trusted Pakistan server time
     const isDateToday = (targetDate) => {
-        if (!targetDate) return false;
-        let targetStr = targetDate;
-        if (typeof targetDate === 'object' && targetDate.toDate) {
-            const d = targetDate.toDate();
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            targetStr = `${y}-${m}-${day}`;
-        }
-
-        const d = new Date();
-        const localYear = d.getFullYear();
-        const localMonth = String(d.getMonth() + 1).padStart(2, '0');
-        const localDay = String(d.getDate()).padStart(2, '0');
-        const localToday = `${localYear}-${localMonth}-${localDay}`;
-        const utcToday = d.toISOString().split('T')[0];
-
-        return targetStr === localToday || targetStr === utcToday;
+        return isDateTodayTrusted(targetDate);
     };
 
     // Live Real-Time Student Listener: Subscribes directly to class students for live attendance stats

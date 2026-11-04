@@ -13,6 +13,7 @@ import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp,
 import { httpsCallable } from 'firebase/functions';
 import { cacheDashboardStats, getCachedDashboardStats, cacheDashboardFullData, getCachedDashboardFullData } from '../utils/offlineDataEngine';
 import { getDocsFast } from '../utils/cacheUtils';
+import { getTodayPktStr, isDateTodayTrusted, isNewDayTrusted, getTrustedPktDate } from '../utils/pakistanTimeEngine';
 import {
     ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
     CartesianGrid, Tooltip, BarChart, Bar, Cell, LineChart, Line, RadialBarChart, RadialBar, Legend
@@ -433,18 +434,9 @@ const Dashboard = () => {
     ];
 
 
-    // Helper function to check if it's a new day (same as Teacher App)
+    // Helper function to check if it's a new day using trusted server PKT time
     const isNewDay = (lastUpdateTimestamp) => {
-        if (!lastUpdateTimestamp) return false; // Return false if null to prevent flickering "Off" on new writes
-
-        const lastUpdate = lastUpdateTimestamp.toDate ? lastUpdateTimestamp.toDate() : new Date(lastUpdateTimestamp);
-        const now = new Date();
-
-        // Compare dates (ignoring time)
-        const lastDate = new Date(lastUpdate.getFullYear(), lastUpdate.getMonth(), lastUpdate.getDate());
-        const currentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-        return currentDate > lastDate;
+        return isNewDayTrusted(lastUpdateTimestamp);
     };
 
     useEffect(() => {
@@ -471,11 +463,7 @@ const Dashboard = () => {
                 // Check if it's a new day - if so, consider status as 'off'
                 const isOff = isNewDay(lastDutyUpdate) || !dutyStatus;
 
-                const today = new Date();
-                const year = today.getFullYear();
-                const month = String(today.getMonth() + 1).padStart(2, '0');
-                const day = String(today.getDate()).padStart(2, '0');
-                const todayStr = `${year}-${month}-${day}`;
+                const todayStr = getTodayPktStr();
 
                 return {
                     id: doc.id,
@@ -484,7 +472,7 @@ const Dashboard = () => {
                         ? data.assignedClasses[0]
                         : (data.assignedClasses || 'Unassigned'),
                     status: isOff ? 'off' : 'on',
-                    isPresent: data.lastAttendanceDate === todayStr,
+                    isPresent: isDateTodayTrusted(data.lastAttendanceDate) || data.lastAttendanceDate === todayStr,
                     score: 75 + (((doc.id || 'A').charCodeAt(0)) % 20)
                 };
             });
@@ -698,7 +686,7 @@ const Dashboard = () => {
 
             // Priority 2: Real Client-side ranking calculation (Zero-Mock, Pure Data)
             if (teachers.length > 0) {
-                const now = new Date();
+                const now = getTrustedPktDate();
                 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
                 const currentMonthName = monthNames[now.getMonth()];
                 const cycleLabel = `${currentMonthName} ${now.getFullYear()} (30-Day Cycle)`;
@@ -991,7 +979,7 @@ const Dashboard = () => {
     useEffect(() => {
         if (!schoolId || !teachers || teachers.length === 0) return;
 
-        const now = new Date();
+        const now = getTrustedPktDate();
         const currentYear = now.getFullYear();
         const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
         const startOfMonthStr = `${currentYear}-${currentMonth}-01`;
@@ -1227,26 +1215,9 @@ const Dashboard = () => {
             setStatsLoaded(true);
         };
 
-        // Helper for robust date & timezone matching
+        // Helper for robust date & timezone matching using trusted Pakistan server time
         const isDateToday = (targetDate) => {
-            if (!targetDate) return false;
-            let targetStr = targetDate;
-            if (typeof targetDate === 'object' && targetDate.toDate) {
-                const d = targetDate.toDate();
-                const y = d.getFullYear();
-                const m = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                targetStr = `${y}-${m}-${day}`;
-            }
-
-            const d = new Date();
-            const localYear = d.getFullYear();
-            const localMonth = String(d.getMonth() + 1).padStart(2, '0');
-            const localDay = String(d.getDate()).padStart(2, '0');
-            const localToday = `${localYear}-${localMonth}-${localDay}`;
-            const utcToday = d.toISOString().split('T')[0];
-
-            return targetStr === localToday || targetStr === utcToday;
+            return isDateTodayTrusted(targetDate);
         };
 
         fetchedClasses.forEach(cls => {
@@ -1713,11 +1684,7 @@ const Dashboard = () => {
                 "Hamza Tariq", "Ayesha Malik", "Bilal Khan", "Maryam Noor"
             ];
 
-            const today = new Date();
-            const localYear = today.getFullYear();
-            const localMonth = String(today.getMonth() + 1).padStart(2, '0');
-            const localDay = String(today.getDate()).padStart(2, '0');
-            const todayStr = `${localYear}-${localMonth}-${localDay}`;
+            const todayStr = getTodayPktStr();
 
             // 2. Populate realistic students and scores for each class
             for (let cIdx = 0; cIdx < targetClasses.length; cIdx++) {

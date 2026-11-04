@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
     ShoppingBag, Search, Plus, Trash2, Edit, Printer, Download, CheckCircle,
     AlertTriangle, Filter, ArrowRight, Package, BookOpen, Shirt, FileText,
@@ -16,6 +17,7 @@ import { useAuthPermissions } from '../context/AuthPermissionsContext';
 import { useAlert } from '../context/AlertContext';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { getTodayPktStr } from '../utils/pakistanTimeEngine';
 
 export const CLASS_OPTIONS = [
     'General / All Classes', 'Playgroup', 'Nursery', 'Prep', 'KG',
@@ -1707,7 +1709,7 @@ const Store = () => {
             const sMs = getSaleMillis(s);
 
             if (salesDateFilter === 'today') {
-                const today = new Date().toISOString().slice(0, 10);
+                const today = getTodayPktStr();
                 return sIso.startsWith(today);
             }
             if (salesDateFilter === 'week') {
@@ -1715,7 +1717,7 @@ const Store = () => {
                 return sMs >= weekAgo;
             }
             if (salesDateFilter === 'month') {
-                const currentMonth = new Date().toISOString().slice(0, 7);
+                const currentMonth = getTodayPktStr().slice(0, 7);
                 return sIso.startsWith(currentMonth);
             }
 
@@ -1739,8 +1741,8 @@ const Store = () => {
             }
         });
 
-        // Today's Sales
-        const todayStr = new Date().toISOString().slice(0, 10);
+        // Today's Sales using trusted Pakistan server time
+        const todayStr = getTodayPktStr();
         let todayRevenue = 0;
         let totalRevenue = 0;
         let totalCash = 0;
@@ -3058,9 +3060,9 @@ const Store = () => {
             {/* ========================================================= */}
             {/* MODAL 1: CHECKOUT & PAYMENT DIALOG */}
             {/* ========================================================= */}
-            {checkoutModalOpen && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            {checkoutModalOpen && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-4 pt-8 md:pt-14 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto my-auto sm:my-0">
                         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                             <div>
                                 <h3 className="text-lg font-black text-slate-900">Complete POS Checkout</h3>
@@ -3222,15 +3224,16 @@ const Store = () => {
                             </button>
                         </form>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* ========================================================= */}
             {/* MODAL 2: RECEIPT VIEW & PRINT */}
             {/* ========================================================= */}
-            {receiptModalOpen && activeReceipt && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            {receiptModalOpen && activeReceipt && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-4 pt-8 md:pt-14 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto my-auto sm:my-0">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                             <h3 className="text-base font-black text-slate-900">Receipt Generated</h3>
                             <button onClick={() => setReceiptModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600">
@@ -3314,15 +3317,16 @@ const Store = () => {
                             </button>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* ========================================================= */}
             {/* MODAL 3: ADD / EDIT INVENTORY ITEM */}
             {/* ========================================================= */}
-            {itemModalOpen && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            {itemModalOpen && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-4 pt-6 md:pt-12 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto my-auto sm:my-0">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                             <h3 className="text-base font-black text-slate-900">
                                 {editingItem ? 'Edit Store Item' : 'Add New Store Item'}
@@ -3485,15 +3489,16 @@ const Store = () => {
                             </button>
                         </form>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* ========================================================= */}
             {/* MODAL 4: QUICK RESTOCK DIALOG */}
             {/* ========================================================= */}
-            {restockModalOpen && restockItem && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-100">
+            {restockModalOpen && restockItem && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-4 pt-16 md:pt-24 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-100 my-auto sm:my-0">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                             <h3 className="text-sm font-black text-slate-900">Quick Restock</h3>
                             <button onClick={() => setRestockModalOpen(false)} className="p-1 text-slate-400">
@@ -3527,15 +3532,16 @@ const Store = () => {
                             </button>
                         </form>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* ========================================================= */}
             {/* MODAL 5: 1-CLICK CLASS TEMPLATE LOADER */}
             {/* ========================================================= */}
-            {templateModalOpen && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            {templateModalOpen && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-4 pt-8 md:pt-14 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto my-auto sm:my-0">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                             <div>
                                 <h3 className="text-base font-black text-slate-900">1-Click Syllabus & Kit Loader</h3>
@@ -3615,7 +3621,8 @@ const Store = () => {
                             </button>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

@@ -20,7 +20,7 @@ try {
 }
 
 /**
- * Synchronize with Atomic Server Time (Google Cloud / Cloudflare / Public NTP / Firestore)
+ * Synchronize with Atomic Server Time (Google Cloud / Cloudflare / Public NTP / WorldTime)
  * Calculates the exact clock drift between the local laptop and atomic UTC time.
  */
 export const syncPakistanTime = async () => {
@@ -28,22 +28,56 @@ export const syncPakistanTime = async () => {
         return currentDriftOffsetMs;
     }
 
+    // Tier 1: Try Origin HEAD request (Ultra-fast when deployed on cloud/Firebase)
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocalhost) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            const fetchStart = Date.now();
+            const response = await fetch(window.location.origin + '/?t=' + Date.now(), {
+                method: 'HEAD',
+                cache: 'no-store',
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            const fetchEnd = Date.now();
+            const roundTripLatency = (fetchEnd - fetchStart) / 2;
+            const serverDateHeader = response.headers.get('date');
+            if (serverDateHeader) {
+                const serverUtcTime = new Date(serverDateHeader).getTime() + roundTripLatency;
+                if (!isNaN(serverUtcTime)) {
+                    currentDriftOffsetMs = Math.round(serverUtcTime - fetchEnd);
+                    try {
+                        localStorage.setItem(DRIFT_STORAGE_KEY, String(currentDriftOffsetMs));
+                        localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
+                    } catch (err) {}
+                    return currentDriftOffsetMs;
+                }
+            }
+        } catch (e) {
+            // Origin HEAD failed or timed out, fall through to Tier 2
+        }
+    }
+
+    // Tier 2: Public Atomic Time API (Guarantees true time even on localhost or proxy)
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
         const fetchStart = Date.now();
-        // Use a fast HEAD request to retrieve atomic Date header from origin or public reliable time endpoint
-        const response = await fetch(window.location.origin + '/?t=' + Date.now(), {
-            method: 'HEAD',
-            cache: 'no-store'
+        const res = await fetch('https://worldtimeapi.org/api/timezone/Asia/Karachi', {
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
-        const fetchEnd = Date.now();
-        const roundTripLatency = (fetchEnd - fetchStart) / 2;
-
-        const serverDateHeader = response.headers.get('date');
-        if (serverDateHeader) {
-            const serverUtcTime = new Date(serverDateHeader).getTime() + roundTripLatency;
+        if (res.ok) {
+            const data = await res.json();
+            const fetchEnd = Date.now();
+            const roundTripLatency = (fetchEnd - fetchStart) / 2;
+            const serverUtcTime = (data.unixtime * 1000) + roundTripLatency;
             if (!isNaN(serverUtcTime)) {
-                currentDriftOffsetMs = serverUtcTime - fetchEnd;
+                currentDriftOffsetMs = Math.round(serverUtcTime - fetchEnd);
                 try {
                     localStorage.setItem(DRIFT_STORAGE_KEY, String(currentDriftOffsetMs));
                     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
@@ -52,15 +86,48 @@ export const syncPakistanTime = async () => {
             }
         }
     } catch (e) {
-        // Silent fallback to last known verified drift
+        // Fallback to Tier 3: Secondary Time API
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            const fetchStart = Date.now();
+            const res = await fetch('https://timeapi.io/api/time/current/zone?timeZone=Asia/Karachi', {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (res.ok) {
+                const data = await res.json();
+                const fetchEnd = Date.now();
+                const roundTripLatency = (fetchEnd - fetchStart) / 2;
+                if (data.dateTime) {
+                    // timeapi.io dateTime is in local PKT timezone
+                    const serverPktTime = new Date(data.dateTime).getTime() + roundTripLatency;
+                    const serverUtcTime = serverPktTime - PKT_OFFSET_MS;
+                    if (!isNaN(serverUtcTime)) {
+                        currentDriftOffsetMs = Math.round(serverUtcTime - fetchEnd);
+                        try {
+                            localStorage.setItem(DRIFT_STORAGE_KEY, String(currentDriftOffsetMs));
+                            localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
+                        } catch (err) {}
+                        return currentDriftOffsetMs;
+                    }
+                }
+            }
+        } catch (err) {
+            // All remote sync failed, silently retain last known cached drift from localStorage
+        }
     }
+
     return currentDriftOffsetMs;
 };
 
-// Auto-trigger sync on module load and network reconnection
+// Auto-trigger sync on module load, network reconnection, tab focus, and periodic 15-minute interval
 if (typeof window !== 'undefined') {
     syncPakistanTime();
     window.addEventListener('online', () => syncPakistanTime());
+    window.addEventListener('focus', () => syncPakistanTime());
+    setInterval(() => syncPakistanTime(), 15 * 60 * 1000);
 }
 
 /**
@@ -128,3 +195,57 @@ export const isDayPastLocked = (dateIso) => {
     const todayPkt = getTrustedPktIsoDate();
     return cleanDateIso < todayPkt;
 };
+
+/**
+ * Convenient alias for getTrustedPktIsoDate (returns "YYYY-MM-DD" in PKT).
+ */
+export const getTodayPktStr = () => {
+    return getTrustedPktIsoDate();
+};
+
+/**
+ * Evaluates whether a given date matches today in PKT or UTC regardless of client laptop clock drift.
+ * Handles Date objects, Firestore timestamps (.toDate()), and "YYYY-MM-DD" or ISO strings.
+ */
+export const isDateTodayTrusted = (targetDate) => {
+    if (!targetDate) return false;
+    let targetStr = targetDate;
+    if (typeof targetDate === 'object' && targetDate.toDate) {
+        const d = targetDate.toDate();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        targetStr = `${y}-${m}-${day}`;
+    } else if (targetDate instanceof Date) {
+        const y = targetDate.getFullYear();
+        const m = String(targetDate.getMonth() + 1).padStart(2, '0');
+        const day = String(targetDate.getDate()).padStart(2, '0');
+        targetStr = `${y}-${m}-${day}`;
+    } else if (typeof targetDate === 'string' && targetDate.includes('T')) {
+        targetStr = targetDate.split('T')[0];
+    }
+
+    const pktToday = getTrustedPktIsoDate();
+    const utcDate = new Date(getTrustedUtcMillis());
+    const utcToday = utcDate.toISOString().split('T')[0];
+
+    return targetStr === pktToday || targetStr === utcToday;
+};
+
+/**
+ * Checks if a timestamp represents a past day relative to today in PKT.
+ */
+export const isNewDayTrusted = (lastUpdateTimestamp) => {
+    if (!lastUpdateTimestamp) return false;
+    const lastUpdate = lastUpdateTimestamp.toDate ? lastUpdateTimestamp.toDate() : new Date(lastUpdateTimestamp);
+    if (isNaN(lastUpdate.getTime())) return false;
+
+    const y = lastUpdate.getFullYear();
+    const m = String(lastUpdate.getMonth() + 1).padStart(2, '0');
+    const d = String(lastUpdate.getDate()).padStart(2, '0');
+    const lastDateStr = `${y}-${m}-${d}`;
+
+    const todayPkt = getTrustedPktIsoDate();
+    return todayPkt > lastDateStr;
+};
+

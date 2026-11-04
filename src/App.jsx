@@ -34,6 +34,7 @@ const Store = lazy(() => import('./pages/Store'));
 const Transport = lazy(() => import('./pages/Transport'));
 const HRDocuments = lazy(() => import('./pages/HRDocuments'));
 const SchoolLeaving = lazy(() => import('./pages/SchoolLeaving'));
+const VerifySLC = lazy(() => import('./pages/VerifySLC'));
 const PageLoader = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100%' }}>
     <div className="animate-spin" style={{ width: '40px', height: '40px', border: '3px solid #6366f1', borderTopColor: 'transparent', borderRadius: '50%' }} />
@@ -115,6 +116,8 @@ function App() {
         <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+            <Route path="/verify-slc" element={<VerifySLC />} />
+            <Route path="/verify-slc/:certId" element={<VerifySLC />} />
 
             <Route path="/" element={user ? <MainLayout /> : <Navigate to="/login" />}>
               <Route index element={

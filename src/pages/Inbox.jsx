@@ -13,6 +13,7 @@ import { Search, Send, ArrowLeft, MoreVertical, Phone, Video, MessageSquare, Clo
 import './Inbox.css'; // We will create this or use inline styles
 import CachedImage from '../components/CachedImage';
 import { compressImage } from '../utils/imageCompressor';
+import { isNewDayTrusted } from '../utils/pakistanTimeEngine';
 
 const Inbox = () => {
     const location = useLocation();
@@ -122,14 +123,9 @@ const Inbox = () => {
                 const dutyStatus = data.isOnDuty || false;
                 const lastDutyUpdate = data.lastDutyUpdate;
 
-                // Helper function to check if it's a new day
+                // Helper function to check if it's a new day using trusted Pakistan server time
                 const isNewDay = (lastUpdateTimestamp) => {
-                    if (!lastUpdateTimestamp) return false;
-                    const lastUpdate = lastUpdateTimestamp.toDate ? lastUpdateTimestamp.toDate() : new Date(lastUpdateTimestamp);
-                    const now = new Date();
-                    const lastDate = new Date(lastUpdate.getFullYear(), lastUpdate.getMonth(), lastUpdate.getDate());
-                    const currentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                    return currentDate > lastDate;
+                    return isNewDayTrusted(lastUpdateTimestamp);
                 };
 
                 const isOff = isNewDay(lastDutyUpdate) || !dutyStatus;

@@ -18,6 +18,8 @@ import { httpsCallable } from 'firebase/functions';
 import { getDocsFast } from '../utils/cacheUtils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import QRCode from 'qrcode';
+import QRCodeSVG from 'react-qr-code';
 import CachedImage from '../components/CachedImage';
 import SLCOverviewDashboard from '../components/SLCOverviewDashboard';
 import { checkIs100PercentFree, isMonthSettled, calculateItemizedFeeBreakdown } from '../utils/feePipeline';
@@ -135,6 +137,59 @@ function formatDateOfBirthInWords(dobStr) {
     } catch (e) {
         return dobStr;
     }
+}
+
+// Build Tamper-Proof Public Verification URL for SLC QR Code with Multi-School Tenant Isolation
+function getSlcVerificationUrl(record, schoolId = '', schoolDetails = null, isPreview = false) {
+    const certNo = record?.certificateNo || 'SLC-CERT';
+    const cleanCertId = certNo.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sId = schoolId || record?.schoolId || '';
+    
+    // Always use official live web domain; if custom domain is active on window, use it
+    let origin = 'https://mai-sms-a8dad.web.app';
+    if (typeof window !== 'undefined' && window.location?.origin && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1')) {
+        origin = window.location.origin;
+    }
+
+    const url = new URL(`${origin}/verify-slc`);
+    url.searchParams.set('id', cleanCertId);
+    if (sId) url.searchParams.set('schoolId', sId);
+
+    // If it's a live preview on canvas before issuing, encode current real student & school details
+    if (isPreview && record) {
+        try {
+            const rawLogo = schoolDetails?.logo || record.schoolLogo || '';
+            const safeLogoForUrl = (rawLogo && !rawLogo.startsWith('data:image/')) ? rawLogo : '';
+
+            const previewData = {
+                isPreview: true,
+                schoolId: sId,
+                schoolName: schoolDetails?.name || record.schoolName || 'Official School Registry',
+                schoolLogo: safeLogoForUrl,
+                schoolAddress: schoolDetails?.address || record.schoolAddress || '',
+                schoolPhone: schoolDetails?.phone || record.schoolPhone || '',
+                schoolEmail: schoolDetails?.email || record.schoolEmail || '',
+                certificateNo: certNo,
+                studentName: record.studentName || '',
+                fatherName: record.fatherName || '',
+                grNo: record.grNo || 'N/A',
+                rollNo: record.rollNo || '',
+                dob: record.dob || '',
+                classAtLeaving: record.classAtLeaving || '',
+                session: record.session || '',
+                admissionDate: record.admissionDate || '',
+                leavingDate: record.leavingDate || '',
+                conduct: record.conduct || 'Exemplary / Very Good',
+                reason: record.reason || 'Completed Academic Course',
+                remarks: record.remarks || '',
+                academicStanding: record.academicRecord?.promoCertificateText || record.academicRecord?.promoStatus || 'Qualified for Promotion',
+                duesStatusLabel: record.duesStatus === 'pending' ? 'Dues Cleared at Departure' : 'All Dues Paid in Full (100% Cleared)'
+            };
+            url.searchParams.set('p', btoa(encodeURIComponent(JSON.stringify(previewData))));
+        } catch (e) {}
+    }
+
+    return url.toString();
 }
 
 // Determine Dynamic Class Progression & Promotion Eligibility (For Nursery through Class 10 / Matric)
@@ -1302,23 +1357,68 @@ export default function SchoolLeaving() {
         }
     };
 
-    // 2. Fetch School Profile & Logo
+    // 2. Fetch School Profile & Logo (Multi-Source Resolver)
     const fetchSchoolProfile = async (sid) => {
         try {
-            const sDoc = await getDoc(doc(db, 'schools', sid));
-            if (sDoc.exists()) {
-                const data = sDoc.data();
-                const updated = {
-                    name: data.schoolName || data.name || 'The Superior Academy & High School',
-                    logo: data.logoUrl || data.logo || '',
-                    address: data.address || 'Main Campus, Educational Complex, City Road',
-                    phone: data.phone || data.contact || '+92 300 1234567',
-                    email: data.email || 'info@superiorschool.edu.pk'
-                };
-                setSchoolDetails(updated);
-                if (updated.logo) {
-                    fetchImageAsBase64(updated.logo).then(b64 => setSchoolLogoBase64(b64));
+            // A. Instant 0ms hydration from local cache
+            const localCachedLogo = localStorage.getItem('schoolLogo') || localStorage.getItem(`school_logo_base64_${sid}`) || '';
+            if (localCachedLogo) {
+                setSchoolDetails(prev => ({
+                    ...prev,
+                    logo: prev.logo || localCachedLogo
+                }));
+                if (localCachedLogo.startsWith('data:image/')) {
+                    setSchoolLogoBase64(localCachedLogo);
+                } else {
+                    fetchImageAsBase64(localCachedLogo).then(b64 => { if (b64) setSchoolLogoBase64(b64); });
                 }
+            }
+
+            // B. Primary Source: settings/profile (Where Settings.jsx saves the official profile and profileImage)
+            let profileData = null;
+            try {
+                const pDoc = await getDoc(doc(db, `schools/${sid}/settings`, 'profile'));
+                if (pDoc.exists()) {
+                    profileData = pDoc.data();
+                }
+            } catch (pErr) {
+                console.warn("[SchoolLeaving] Could not fetch settings/profile:", pErr);
+            }
+
+            // C. Secondary Source: root schools/{sid}
+            let rootData = null;
+            try {
+                const sDoc = await getDoc(doc(db, 'schools', sid));
+                if (sDoc.exists()) {
+                    rootData = sDoc.data();
+                }
+            } catch (sErr) {
+                console.warn("[SchoolLeaving] Could not fetch root schools doc:", sErr);
+            }
+
+            const resolvedName = profileData?.name || profileData?.schoolName || rootData?.schoolName || rootData?.name || 'The Superior Academy & High School';
+            const resolvedLogo = profileData?.profileImage || profileData?.logo || profileData?.logoUrl || rootData?.profileImage || rootData?.logoUrl || rootData?.logo || localCachedLogo || '';
+            const resolvedAddress = profileData?.address || rootData?.address || 'Main Campus, Educational Complex, City Road';
+            const resolvedPhone = profileData?.phone || profileData?.landline || rootData?.phone || rootData?.contact || '+92 300 1234567';
+            const resolvedEmail = profileData?.email || rootData?.email || 'info@superiorschool.edu.pk';
+
+            const updated = {
+                name: resolvedName,
+                logo: resolvedLogo,
+                address: resolvedAddress,
+                phone: resolvedPhone,
+                email: resolvedEmail
+            };
+            setSchoolDetails(updated);
+
+            if (resolvedLogo) {
+                try { localStorage.setItem('schoolLogo', resolvedLogo); } catch (e) {}
+                fetchImageAsBase64(resolvedLogo).then(b64 => {
+                    if (b64) {
+                        setSchoolLogoBase64(b64);
+                        try { localStorage.setItem(`school_logo_base64_${sid}`, b64); } catch (e) {}
+                    }
+                });
             }
         } catch (err) {
             console.warn("Failed to fetch school info:", err);
@@ -2491,7 +2591,7 @@ export default function SchoolLeaving() {
     };
 
     // 8. Generate & Download Official High-Res jsPDF
-    const generateOfficialSlcPdf = (customRecord = null) => {
+    const generateOfficialSlcPdf = async (customRecord = null) => {
         setIsGeneratingPdf(true);
         try {
             const targetRec = customRecord || {
@@ -2633,26 +2733,61 @@ export default function SchoolLeaving() {
 
             currentY = doc.lastAutoTable.finalY + 22;
 
+            // Generate High-Res Bottom-Left Verification QR Code
+            const verificationUrl = getSlcVerificationUrl(targetRec, schoolId, schoolDetails, false);
+            let qrBase64 = null;
+            try {
+                qrBase64 = await QRCode.toDataURL(verificationUrl, {
+                    width: 256,
+                    margin: 1,
+                    color: {
+                        dark: '#0f172a',
+                        light: '#ffffff'
+                    }
+                });
+            } catch (qrErr) {
+                console.warn("QR code data URL generation error:", qrErr);
+            }
+
+            // Render Bottom-Left QR Code
+            if (qrBase64) {
+                const qrSize = 20; // 20mm x 20mm
+                const qrX = 14;
+                const qrY = currentY - 14;
+
+                doc.addImage(qrBase64, 'PNG', qrX, qrY, qrSize, qrSize);
+
+                doc.setFontSize(5.5);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(51, 65, 85);
+                doc.text("SCAN TO VERIFY", qrX + (qrSize / 2), qrY + qrSize + 3, { align: 'center' });
+
+                doc.setFontSize(5);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(100, 116, 139);
+                doc.text(String(targetRec.certificateNo || slcSerialNo), qrX + (qrSize / 2), qrY + qrSize + 5.5, { align: 'center' });
+            }
+
             // Signature & Seal Desk
             doc.setFontSize(8.5);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(30, 41, 59);
 
-            // Left Signature
-            doc.line(16, currentY, 65, currentY);
-            doc.text("Class Incharge / Clerk", 40.5, currentY + 5, { align: 'center' });
+            // Left-Center Signature (Class Incharge) - shifted alongside QR code
+            doc.line(48, currentY, 90, currentY);
+            doc.text("Class Incharge / Clerk", 69, currentY + 5, { align: 'center' });
 
             // Center Seal
             if (showGoldenSeal) {
                 doc.setDrawColor(217, 119, 6);
                 doc.setLineWidth(0.6);
-                doc.circle(pageWidth / 2, currentY - 5, 10);
+                doc.circle(pageWidth / 2 + 5, currentY - 5, 10);
                 doc.setFontSize(6.5);
                 doc.setTextColor(180, 83, 9);
-                doc.text("OFFICIAL SEAL", pageWidth / 2, currentY - 5, { align: 'center' });
+                doc.text("OFFICIAL SEAL", pageWidth / 2 + 5, currentY - 5, { align: 'center' });
             }
 
-            // Right Signature
+            // Right Signature (Principal / Headmaster)
             doc.setFontSize(8.5);
             doc.setTextColor(30, 41, 59);
             doc.line(pageWidth - 65, currentY, pageWidth - 16, currentY);
@@ -2891,6 +3026,44 @@ export default function SchoolLeaving() {
                         ...slcRecord,
                         createdAt: serverTimestamp()
                     });
+
+                    // A2. Add to Global Public Certificate Registry for instant QR code verification
+                    try {
+                        const cleanCertId = slcSerialNo.replace(/[^a-zA-Z0-9_-]/g, '_');
+                        const publicRecordPayload = {
+                            verificationId: cleanCertId,
+                            certificateNo: slcSerialNo,
+                            schoolId: schoolId,
+                            schoolName: schoolDetails?.name || 'OFFICIAL SCHOOL REGISTRY',
+                            schoolLogo: schoolDetails?.logo || '',
+                            schoolAddress: schoolDetails?.address || '',
+                            schoolPhone: schoolDetails?.phone || '',
+                            schoolEmail: schoolDetails?.email || '',
+                            studentName: selectedStudent.name,
+                            fatherName: selectedStudent.fatherName || selectedStudent.parentDetails?.fatherName || '',
+                            grNo: selectedStudent.grNo || selectedStudent.admissionNo || 'N/A',
+                            rollNo: selectedStudent.rollNo || selectedStudent.rollNumber || '',
+                            dob: slcDob || selectedStudent.dob || '2009-04-14',
+                            classAtLeaving: currentCls.name,
+                            session: `${issueYear - 1}-${issueYear}`,
+                            admissionDate: selectedStudent.admissionDate || '2019-04-01',
+                            leavingDate: slcLeavingDate,
+                            reason: slcReason,
+                            conduct: slcConduct,
+                            remarks: slcRemarks,
+                            duesStatusLabel: studentClearanceStatus.duesStatus === 'pending' ? 'Dues Cleared at Departure' : 'All Dues Paid in Full (100% Cleared)',
+                            academicStanding: studentAcademicData.promoCertificateText || studentAcademicData.promoStatus || 'Qualified for Promotion',
+                            issuedAt: new Date().toISOString(),
+                            status: 'ACTIVE_AUTHENTIC',
+                            securityHash: btoa(`${slcSerialNo}_${selectedStudent.id}_${Date.now()}`).substring(0, 16)
+                        };
+
+                        // Write to multi-tenant isolated key and direct fallback key
+                        await setDoc(doc(db, 'public_certificates', `${schoolId}_${cleanCertId}`), publicRecordPayload);
+                        await setDoc(doc(db, 'public_certificates', cleanCertId), publicRecordPayload);
+                    } catch (pubCertErr) {
+                        console.warn("[SchoolLeaving] Public certificate registry write error:", pubCertErr);
+                    }
 
                     // B. Archive permanent copy to archived_students
                     try {
@@ -3678,6 +3851,35 @@ export default function SchoolLeaving() {
                                         <Printer size={13} className="text-cyan-700" />
                                         <span>Print</span>
                                     </button>
+
+                                    <a
+                                        href={getSlcVerificationUrl({
+                                            certificateNo: slcSerialNo,
+                                            studentName: selectedStudent?.name || '',
+                                            fatherName: selectedStudent?.fatherName || '',
+                                            grNo: selectedStudent?.grNo || 'GR-4890',
+                                            rollNo: selectedStudent?.rollNo || '101',
+                                            dob: slcDob || selectedStudent?.dob || '2009-04-14',
+                                            admissionDate: selectedStudent?.admissionDate || '2019-04-01',
+                                            classAtLeaving: classes.find(c => c.id === selectedClassId)?.name || 'Class 10',
+                                            session: '2025-2026',
+                                            leavingDate: slcLeavingDate,
+                                            reason: slcReason,
+                                            conduct: slcConduct,
+                                            remarks: slcRemarks,
+                                            duesStatus: studentClearanceStatus.duesStatus,
+                                            academicRecord: {
+                                                promoCertificateText: studentAcademicData.promoCertificateText || studentAcademicData.promoStatus
+                                            }
+                                        }, schoolId, schoolDetails, true)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-black border border-emerald-300 shadow-2xs cursor-pointer transition-all"
+                                        title="Open Live Public Verification Portal in New Tab"
+                                    >
+                                        <ExternalLink size={13} className="text-emerald-700" />
+                                        <span>Verify Link</span>
+                                    </a>
 
                                     {linkedParentInfo && (
                                         <span
@@ -4777,9 +4979,69 @@ export default function SchoolLeaving() {
                                             </div>
                                         </div>
 
-                                        {/* Footer Signatures & Seal */}
-                                        <div className="mt-14 pt-4 flex justify-between items-end text-center">
-                                            <div className="w-32 border-t-2 border-slate-800 pt-1">
+                                        {/* Footer Signatures, QR Code & Seal */}
+                                        <div className="mt-12 pt-4 flex justify-between items-end">
+                                            {/* Bottom-Left: Official QR Verification Code */}
+                                            <div className="flex flex-col items-center text-center">
+                                                <a
+                                                    href={getSlcVerificationUrl({
+                                                        certificateNo: slcSerialNo,
+                                                        studentName: selectedStudent?.name || '',
+                                                        fatherName: selectedStudent?.fatherName || '',
+                                                        grNo: selectedStudent?.grNo || 'GR-4890',
+                                                        rollNo: selectedStudent?.rollNo || '101',
+                                                        dob: slcDob || selectedStudent?.dob || '2009-04-14',
+                                                        admissionDate: selectedStudent?.admissionDate || '2019-04-01',
+                                                        classAtLeaving: classes.find(c => c.id === selectedClassId)?.name || 'Class 10',
+                                                        session: '2025-2026',
+                                                        leavingDate: slcLeavingDate,
+                                                        reason: slcReason,
+                                                        conduct: slcConduct,
+                                                        remarks: slcRemarks,
+                                                        duesStatus: studentClearanceStatus.duesStatus,
+                                                        academicRecord: {
+                                                            promoCertificateText: studentAcademicData.promoCertificateText || studentAcademicData.promoStatus
+                                                        }
+                                                    }, schoolId, schoolDetails, true)}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="p-1.5 bg-white border border-slate-300 rounded-lg shadow-xs hover:ring-2 hover:ring-emerald-500 transition-all cursor-pointer block"
+                                                    title="Click to Test & Open Public Verification Portal"
+                                                >
+                                                    <QRCodeSVG
+                                                        value={getSlcVerificationUrl({
+                                                            certificateNo: slcSerialNo,
+                                                            studentName: selectedStudent?.name || '',
+                                                            fatherName: selectedStudent?.fatherName || '',
+                                                            grNo: selectedStudent?.grNo || 'GR-4890',
+                                                            rollNo: selectedStudent?.rollNo || '101',
+                                                            dob: slcDob || selectedStudent?.dob || '2009-04-14',
+                                                            admissionDate: selectedStudent?.admissionDate || '2019-04-01',
+                                                            classAtLeaving: classes.find(c => c.id === selectedClassId)?.name || 'Class 10',
+                                                            session: '2025-2026',
+                                                            leavingDate: slcLeavingDate,
+                                                            reason: slcReason,
+                                                            conduct: slcConduct,
+                                                            remarks: slcRemarks,
+                                                            duesStatus: studentClearanceStatus.duesStatus,
+                                                            academicRecord: {
+                                                                promoCertificateText: studentAcademicData.promoCertificateText || studentAcademicData.promoStatus
+                                                            }
+                                                        }, schoolId, schoolDetails, true)}
+                                                        size={70}
+                                                        level="M"
+                                                    />
+                                                </a>
+                                                <span className="text-[7.5px] font-black text-slate-800 mt-1 uppercase tracking-tight">
+                                                    Scan to Verify
+                                                </span>
+                                                <span className="text-[6.5px] font-bold text-indigo-700">
+                                                    {slcSerialNo}
+                                                </span>
+                                            </div>
+
+                                            {/* Class Incharge Signature */}
+                                            <div className="w-28 border-t-2 border-slate-800 pt-1 text-center">
                                                 <span className="text-[10px] font-bold text-slate-700 block">Class Incharge</span>
                                             </div>
 
@@ -4791,7 +5053,8 @@ export default function SchoolLeaving() {
                                                 </div>
                                             )}
 
-                                            <div className="w-32 border-t-2 border-slate-800 pt-1">
+                                            {/* Principal Signature */}
+                                            <div className="w-28 border-t-2 border-slate-800 pt-1 text-center">
                                                 <span className="text-[10px] font-bold text-slate-700 block">Principal / Headmaster</span>
                                             </div>
                                         </div>

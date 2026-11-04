@@ -12,6 +12,7 @@ import { getDocsFast } from '../utils/cacheUtils';
 import { httpsCallable } from 'firebase/functions';
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { useAlert } from '../context/AlertContext';
+import { getTodayPktStr, isDateTodayTrusted, isNewDayTrusted } from '../utils/pakistanTimeEngine';
 
 // Internal Component for individual Teacher Card logic
 const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClasses, isHighlighted, todayStr }) => {
@@ -478,7 +479,7 @@ const TeacherCard = React.memo(({ teacher, onDelete, onUpdate, schoolId, dbClass
 
 // Internal Component for Teacher Table Row (Table View)
 const TeacherTableRow = ({ teacher, onDelete, onUpdate, schoolId, dbClasses, todayStr, onSelectAttendance, onEdit }) => {
-    const isPresentToday = teacher.lastAttendanceDate === todayStr;
+    const isPresentToday = isDateTodayTrusted(teacher.lastAttendanceDate) || teacher.lastAttendanceDate === todayStr;
     const subjects = Array.isArray(teacher.displaySubjects) 
         ? teacher.displaySubjects 
         : (Array.isArray(teacher.subjects) ? teacher.subjects : (teacher.subject ? [teacher.subject] : []));
@@ -1052,11 +1053,7 @@ const Teachers = () => {
     const [editingTeacherTable, setEditingTeacherTable] = useState(null);
 
     const getTodayStr = () => {
-        const today = new Date();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+        return getTodayPktStr();
     };
     const todayStr = getTodayStr();
 
@@ -1405,14 +1402,9 @@ const Teachers = () => {
         'Social Study', 'Art', 'Science', 'Biology', 'Chemistry', 'Physic'
     ];
 
-    // Helper function to check if it's a new day (same as Teacher App)
+    // Helper function to check if it's a new day using trusted Pakistan server time
     const isNewDay = (lastUpdateTimestamp) => {
-        if (!lastUpdateTimestamp) return false;
-        const lastUpdate = lastUpdateTimestamp.toDate ? lastUpdateTimestamp.toDate() : new Date(lastUpdateTimestamp);
-        const now = new Date();
-        const lastDate = new Date(lastUpdate.getFullYear(), lastUpdate.getMonth(), lastUpdate.getDate());
-        const currentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        return currentDate > lastDate;
+        return isNewDayTrusted(lastUpdateTimestamp);
     };
 
     // --- REAL ATTENDANCE DATA LOGIC ---
@@ -2293,7 +2285,7 @@ const Teachers = () => {
                     },
                     {
                         label: 'Active Today',
-                        value: teachers.filter(t => t.lastAttendanceDate === todayStr).length,
+                        value: teachers.filter(t => isDateTodayTrusted(t.lastAttendanceDate) || t.lastAttendanceDate === todayStr).length,
                         icon: User,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%)',
                         border: '#dcfce7',
@@ -2302,7 +2294,7 @@ const Teachers = () => {
                     },
                     {
                         label: 'Staff On Leave',
-                        value: teachers.filter(t => t.lastAttendanceDate !== todayStr).length,
+                        value: teachers.filter(t => !isDateTodayTrusted(t.lastAttendanceDate) && t.lastAttendanceDate !== todayStr).length,
                         icon: User,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #fffbeb 100%)',
                         border: '#fef3c7',
