@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
     CheckCircle2, XCircle, MoreVertical, Search, Filter,
-    X, Trophy, Camera, LayoutGrid
+    X, Trophy, Camera, LayoutGrid, GraduationCap, FileText
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
@@ -11,6 +11,8 @@ import StudentProfileModal from '../components/StudentProfileModal';
 import StudentActionPopup from '../components/StudentActionPopup';
 import CachedImage from '../components/CachedImage';
 import ClassPhotoStudio from '../components/ClassPhotoStudio';
+import ClassHomeworkView from '../components/ClassHomeworkView';
+import ClassTestsReportView from '../components/ClassTestsReportView';
 import { getStudentAvatar } from '../utils/defaultAvatar';
 
 
@@ -307,7 +309,7 @@ const ClassDetails = () => {
             </div>
 
             {/* View Switcher Tabs */}
-            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '2rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.85rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '2rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.85rem', overflowX: 'auto' }}>
                 <button
                     onClick={() => setActiveTab('overview')}
                     style={{
@@ -320,6 +322,7 @@ const ClassDetails = () => {
                         fontSize: '0.95rem',
                         fontWeight: '700',
                         cursor: 'pointer',
+                        whiteSpace: 'nowrap',
                         background: activeTab === 'overview' ? '#6366f1' : 'white',
                         color: activeTab === 'overview' ? 'white' : 'var(--text-secondary)',
                         boxShadow: activeTab === 'overview' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
@@ -328,6 +331,50 @@ const ClassDetails = () => {
                 >
                     <LayoutGrid size={18} />
                     Students Overview
+                </button>
+                <button
+                    onClick={() => setActiveTab('homework')}
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.65rem 1.25rem',
+                        borderRadius: '10px',
+                        border: 'none',
+                        fontSize: '0.95rem',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        background: activeTab === 'homework' ? '#6366f1' : 'white',
+                        color: activeTab === 'homework' ? 'white' : 'var(--text-secondary)',
+                        boxShadow: activeTab === 'homework' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
+                        transition: 'all 0.2s ease'
+                    }}
+                >
+                    <FileText size={18} />
+                    Daily Homework
+                </button>
+                <button
+                    onClick={() => setActiveTab('tests')}
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.65rem 1.25rem',
+                        borderRadius: '10px',
+                        border: 'none',
+                        fontSize: '0.95rem',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        background: activeTab === 'tests' ? '#6366f1' : 'white',
+                        color: activeTab === 'tests' ? 'white' : 'var(--text-secondary)',
+                        boxShadow: activeTab === 'tests' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
+                        transition: 'all 0.2s ease'
+                    }}
+                >
+                    <GraduationCap size={18} />
+                    Tests & Reports
                 </button>
                 <button
                     onClick={() => setActiveTab('photoStudio')}
@@ -341,6 +388,7 @@ const ClassDetails = () => {
                         fontSize: '0.95rem',
                         fontWeight: '700',
                         cursor: 'pointer',
+                        whiteSpace: 'nowrap',
                         background: activeTab === 'photoStudio' ? '#6366f1' : 'white',
                         color: activeTab === 'photoStudio' ? 'white' : 'var(--text-secondary)',
                         boxShadow: activeTab === 'photoStudio' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
@@ -354,6 +402,10 @@ const ClassDetails = () => {
 
             {activeTab === 'photoStudio' ? (
                 <ClassPhotoStudio schoolId={schoolId} classId={classId} students={students} />
+            ) : activeTab === 'homework' ? (
+                <ClassHomeworkView schoolId={schoolId} classId={classId} classData={classData} students={students} />
+            ) : activeTab === 'tests' ? (
+                <ClassTestsReportView schoolId={schoolId} classId={classId} classData={classData} students={students} />
             ) : (
                 <>
             {/* Top Stats Grid */}
