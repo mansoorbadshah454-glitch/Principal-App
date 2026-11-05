@@ -1315,6 +1315,24 @@ const Promotions = () => {
                 console.log("Attendance Purge Complete");
             }
 
+            // 1b. Annual Purge: Delete all scheduled & completed test reports for promoted class
+            if (selectedClass?.id) {
+                console.log("Starting Scheduled Tests Purge for Class...", selectedClass.id);
+                try {
+                    const testsRef = collection(db, `schools/${schoolId}/classes/${selectedClass.id}/scheduled_tests`);
+                    const testsSnap = await getDocsFast(testsRef);
+                    if (!testsSnap.empty) {
+                        const deleteTestOps = testsSnap.docs.map(docSnap => (batch) => {
+                            batch.delete(docSnap.ref);
+                        });
+                        await commitBatchChunks(deleteTestOps, 400);
+                        console.log("Scheduled Tests Purge Complete for Class:", selectedClass.id);
+                    }
+                } catch (err) {
+                    console.error("Error purging scheduled tests for class:", err);
+                }
+            }
+
             // 2. Process Student Moves & History Log
             console.log("Starting Student Moves & History Logging...");
             const moveOps = [];
