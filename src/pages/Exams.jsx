@@ -568,7 +568,7 @@ export default function Exams() {
                     setExams(list);
 
                     const savedExamId = localStorage.getItem('exams_selected_exam_id');
-                    if (savedExamId && list.some(e => e.id === savedExamId)) {
+                    if (savedExamId && (savedExamId === 'annual_aggregate' || list.some(e => e.id === savedExamId))) {
                         setSelectedExamId(savedExamId);
                     } else if (list.length > 0 && !selectedExamId) {
                         setSelectedExamId(list[0].id);
@@ -4082,31 +4082,6 @@ export default function Exams() {
                             <p className="text-xs text-slate-500 font-medium">Organize terms by academic year, configure auto/custom annual aggregate weights, and manage archives</p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2.5">
-                            {isDemoAccount && (
-                                <div className="inline-flex items-center gap-1.5">
-                                    <button
-                                        type="button"
-                                        onClick={handleGenerateDemoLockedExam}
-                                        disabled={isGeneratingDemoExam}
-                                        className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer disabled:opacity-50"
-                                        title="Generate a realistic locked historical exam (2024-2025) for Principal Presentation"
-                                    >
-                                        <Lock className="w-4 h-4 text-amber-200" />
-                                        <span>{isGeneratingDemoExam ? 'Generating...' : '⚡ Generate Demo Locked Exam'}</span>
-                                    </button>
-                                    {exams.some(e => e.id === 'demo_locked_exam_2024') && (
-                                        <button
-                                            type="button"
-                                            onClick={handleRemoveDemoLockedExam}
-                                            className="inline-flex items-center gap-1 px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                                            title="Remove Demo Locked Exam"
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                            <span>Remove Demo</span>
-                                        </button>
-                                    )}
-                                </div>
-                            )}
                             <button
                                 onClick={() => setShowAggregateModal(true)}
                                 className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-gradient-to-r from-indigo-50 to-violet-50 hover:from-indigo-100 hover:to-violet-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200/80 transition-all shadow-sm cursor-pointer"
@@ -4114,14 +4089,6 @@ export default function Exams() {
                             >
                                 <Scale className="w-4 h-4 text-indigo-600" />
                                 <span>⚙️ Configure Aggregate Weights</span>
-                            </button>
-                            <button
-                                onClick={() => handleOpenCreateExam('custom')}
-                                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs rounded-xl border border-violet-200 transition-colors shadow-sm cursor-pointer"
-                                title="Quickly create a custom assessment with your own title"
-                            >
-                                <Sparkles className="w-4 h-4 text-violet-600" />
-                                <span>Create Custom Exam</span>
                             </button>
                             <button
                                 onClick={() => handleOpenCreateExam()}
@@ -4464,42 +4431,6 @@ export default function Exams() {
 
                             {/* Export & Print Action Buttons */}
                             <div className="flex items-center gap-2">
-                                {isDemoAccount && (
-                                    <div className="inline-flex items-center gap-1.5">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setIsDemoMode(true);
-                                                try { localStorage.setItem('exams_demo_mode_active', 'true'); } catch (_) {}
-                                                setSelectedStudentIdsForBatch(new Set());
-                                            }}
-                                            className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all shadow-sm cursor-pointer ${
-                                                isDemoMode 
-                                                    ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200 ring-2 ring-amber-400/40' 
-                                                    : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-md shadow-amber-200'
-                                            }`}
-                                            title="Inject 15 Comprehensive Demo Students (Top 10, Passed, Failed)"
-                                        >
-                                            <Sparkles className="w-3.5 h-3.5" />
-                                            <span>⚡ Inject Demo Gazette (15 Students)</span>
-                                        </button>
-                                        {isDemoMode && (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setIsDemoMode(false);
-                                                    try { localStorage.removeItem('exams_demo_mode_active'); } catch (_) {}
-                                                    setSelectedStudentIdsForBatch(new Set());
-                                                }}
-                                                className="inline-flex items-center gap-1 px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                                                title="Clear Demo Gazette Data"
-                                            >
-                                                <Trash2 className="w-3.5 h-3.5" />
-                                                <span>Clear Demo</span>
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
                                 <button
                                     onClick={handleManualSyncMarks}
                                     disabled={isSyncingMarks || !selectedClassId}
@@ -4626,25 +4557,9 @@ export default function Exams() {
                             <div className="p-12 text-center text-slate-400">
                                 <FileSpreadsheet className="w-10 h-10 mx-auto mb-2 opacity-50" />
                                 <p className="text-sm font-bold text-slate-700">No student records found</p>
-                                <p className="text-xs text-slate-400 mt-0.5 mb-4">
+                                <p className="text-xs text-slate-400 mt-0.5">
                                     Ensure students are enrolled in this class and teachers have submitted marks via their mobile apps.
                                 </p>
-                                {isDemoAccount && (
-                                    <div className="flex justify-center items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setIsDemoMode(true);
-                                                try { localStorage.setItem('exams_demo_mode_active', 'true'); } catch (_) {}
-                                                setSelectedStudentIdsForBatch(new Set());
-                                            }}
-                                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-black rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer"
-                                        >
-                                            <Sparkles className="w-4 h-4" />
-                                            <span>⚡ Inject Demo Gazette Data (15 Students • Top 10 / Pass / Fail)</span>
-                                        </button>
-                                    </div>
-                                )}
                             </div>
                         ) : (
                             <div className="overflow-x-auto max-h-[calc(100vh-270px)] overflow-y-auto print:max-h-none print:overflow-visible custom-scrollbar relative">
@@ -5189,6 +5104,32 @@ export default function Exams() {
                                                 {classes.map(c => (
                                                     <option key={c.id} value={c.id} className="bg-slate-800 text-white font-bold">{c.name}</option>
                                                 ))}
+                                            </select>
+                                        </div>
+
+                                        {/* Exam / Term Selector Dropdown */}
+                                        <div className="flex items-center gap-1.5 bg-slate-800/90 py-1.5 px-3 rounded-xl border border-slate-700/80 shrink-0">
+                                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">Exam:</span>
+                                            <select
+                                                value={selectedExamId || ''}
+                                                onChange={(e) => {
+                                                    setSelectedExamId(e.target.value);
+                                                    setSelectedStudentForDmc(null);
+                                                    setIsEditingMarksInDmc(false);
+                                                    setSelectedStudentForModerate(null);
+                                                }}
+                                                className="bg-transparent text-white text-xs font-black focus:outline-none cursor-pointer max-w-[210px] truncate"
+                                            >
+                                                <option value="annual_aggregate" className="bg-slate-800 text-amber-300 font-bold">
+                                                    🏆 Annual Consolidated (All Terms)
+                                                </option>
+                                                <optgroup label="Individual Terms" className="bg-slate-800 text-slate-300 font-bold">
+                                                    {(sessionExams.length > 0 ? sessionExams : exams).map(e => (
+                                                        <option key={e.id} value={e.id} className="bg-slate-800 text-white font-medium">
+                                                            {e.title} {e.session ? `(${e.session})` : ''}
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
                                             </select>
                                         </div>
 
