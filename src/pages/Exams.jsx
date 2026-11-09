@@ -120,6 +120,30 @@ export function getGradeAndRemarksFromScale(pct, customScale, mode = 'default') 
     return { grade: last?.grade || 'F', remarks: last?.remarks || 'Fail' };
 }
 
+/**
+ * Recursively cleans any object to guarantee safe Firestore persistence.
+ * Converts `undefined` -> null or strips it, and prevents NaN / non-finite numbers from crashing WriteBatch.
+ */
+export function sanitizeForFirestore(val) {
+    if (val === undefined) return null;
+    if (typeof val === 'number') {
+        if (isNaN(val) || !isFinite(val)) return 0;
+        return val;
+    }
+    if (val === null || typeof val !== 'object') return val;
+    if (val instanceof Date) return val;
+    if (Array.isArray(val)) {
+        return val.map(item => sanitizeForFirestore(item));
+    }
+    const cleanObj = {};
+    for (const [key, v] of Object.entries(val)) {
+        if (v !== undefined) {
+            cleanObj[key] = sanitizeForFirestore(v);
+        }
+    }
+    return cleanObj;
+}
+
 // Robust Multi-Strategy Base64 Image Loader (Bypasses Firebase Storage & Canvas CORS)
 async function fetchImageAsBase64(url) {
     if (!url || typeof url !== 'string') return null;
@@ -330,6 +354,7 @@ export default function Exams() {
     const [showUploadToParentsModal, setShowUploadToParentsModal] = useState(false);
     const [singleStudentToPublish, setSingleStudentToPublish] = useState(null);
     const [isUploadingToParents, setIsUploadingToParents] = useState(false);
+    const [uploadProgressText, setUploadProgressText] = useState('');
     const [uploadSuccessMessage, setUploadSuccessMessage] = useState(null);
     const isDemoAccount = useMemo(() => {
         const sId = String(schoolId || '').trim();
@@ -1607,6 +1632,23 @@ export default function Exams() {
                     };
                 });
 
+                // Build Consolidated subjectMarks for standard Result Card and Parent App compatibility
+                const subjectMarks = {};
+                Object.entries(subjectMultiTerm).forEach(([subj, data]) => {
+                    const subObt = (data.totalObtained !== null && data.totalObtained !== undefined && !isNaN(data.totalObtained))
+                        ? data.totalObtained
+                        : 0;
+                    const subMax = Number(data.totalMax) || 100;
+                    subjectMarks[subj] = {
+                        obtained: subObt,
+                        totalMarks: subMax,
+                        passingMarks: Math.round(subMax * 0.33),
+                        grade: data.grade || '—',
+                        remarks: data.remarks || '',
+                        isAbsent: false
+                    };
+                });
+
                 return {
                     studentId: student.id,
                     name: student.name,
@@ -1614,6 +1656,7 @@ export default function Exams() {
                     fatherName: student.fatherName || 'N/A',
                     photoUrl: student.photoUrl,
                     attendance: '—',
+                    subjectMarks,
                     termBreakdown,
                     subjectMultiTerm,
                     totalObtained: overallObtained,
@@ -3561,69 +3604,105 @@ export default function Exams() {
         if (selectedRows.length === 0 || !schoolId || !selectedExamId || !selectedClassId) return;
 
         setIsUploadingToParents(true);
+        setUploadProgressText(`Preparing ${selectedRows.length} result cards...`);
         try {
-            const batch = writeBatch(db);
             const now = new Date();
+            const CHUNK_SIZE = 80; // 80 students * 3 writes = 240 operations max per batch (well below Firestore 500 limit)
 
-            for (const student of selectedRows) {
-                const parentId = student.parentDetails?.parentId || student.parentId || student.guardianPhone || '';
+            for (let i = 0; i < selectedRows.length; i += CHUNK_SIZE) {
+                const chunk = selectedRows.slice(i, i + CHUNK_SIZE);
+                setUploadProgressText(`Publishing ${Math.min(i + chunk.length, selectedRows.length)} / ${selectedRows.length}...`);
+                const batch = writeBatch(db);
 
-                // Result card record payload
-                const resultPayload = {
-                    examId: selectedExamId,
-                    examTitle: currentExam.title,
-                    classId: selectedClassId,
-                    className: currentClass.name,
-                    studentId: student.studentId,
-                    studentName: student.name,
-                    rollNumber: student.rollNumber,
-                    fatherName: student.fatherName,
-                    totalObtained: student.totalObtained,
-                    totalMax: student.totalMax,
-                    percentage: student.percentage,
-                    grade: student.grade,
-                    position: student.position,
-                    attendance: student.attendance,
-                    isComplete: student.isComplete,
-                    isPassed: student.isPassed,
-                    statusLabel: student.statusLabel,
-                    subjectMarks: student.subjectMarks,
-                    publishedAt: now,
-                    updatedAt: now
-                };
+                for (const student of chunk) {
+                    const studentId = student.studentId || student.id;
+                    const parentId = (student.parentDetails?.parentId || student.parentId || student.guardianPhone || '').toString().trim();
 
-                // 1. Save to student's results subcollection
-                const resultDocRef = doc(db, `schools/${schoolId}/students/${student.studentId}/results`, selectedExamId);
-                batch.set(resultDocRef, resultPayload, { merge: true });
+                    // Safely construct subjectMarks (compatible with individual & annual aggregate terms)
+                    let safeSubjectMarks = {};
+                    if (student.subjectMarks && typeof student.subjectMarks === 'object' && Object.keys(student.subjectMarks).length > 0) {
+                        safeSubjectMarks = student.subjectMarks;
+                    } else if (student.subjectMultiTerm && typeof student.subjectMultiTerm === 'object') {
+                        Object.entries(student.subjectMultiTerm).forEach(([subj, data]) => {
+                            safeSubjectMarks[subj] = {
+                                obtained: (data?.totalObtained !== null && data?.totalObtained !== undefined && !isNaN(data.totalObtained)) ? Number(data.totalObtained) : 0,
+                                totalMarks: Number(data?.totalMax) || 100,
+                                passingMarks: Math.round((Number(data?.totalMax) || 100) * 0.33),
+                                grade: data?.grade || '—',
+                                remarks: data?.remarks || '',
+                                isAbsent: false
+                            };
+                        });
+                    }
 
-                // 2. Also save to class student doc subcollection
-                const classStudentResultRef = doc(db, `schools/${schoolId}/classes/${selectedClassId}/students/${student.studentId}/results`, selectedExamId);
-                batch.set(classStudentResultRef, resultPayload, { merge: true });
-
-                // 3. Add notification for parent if parentId exists
-                if (parentId) {
-                    const notifRef = doc(collection(db, `schools/${schoolId}/notifications`));
-                    batch.set(notifRef, {
-                        parentId: parentId,
-                        studentId: student.studentId,
-                        studentName: student.name,
-                        title: `📄 ${currentExam.title} Result Card`,
-                        message: `Result card for ${student.name} (${currentExam.title}) has been published. Total Score: ${student.totalObtained}/${student.totalMax} (${student.percentage}% - Grade ${student.grade}).`,
-                        type: 'exam_result',
+                    // Result card record payload
+                    const rawResultPayload = {
                         examId: selectedExamId,
-                        read: false,
-                        createdAt: now
-                    });
+                        examTitle: currentExam?.title || (selectedExamId === 'annual_aggregate' ? 'Annual Consolidated Aggregate' : 'Result Card'),
+                        classId: selectedClassId,
+                        className: currentClass?.name || 'Class',
+                        studentId: studentId,
+                        studentName: student.name || 'Student',
+                        rollNumber: student.rollNumber || student.rollNo || 'N/A',
+                        fatherName: student.fatherName || '—',
+                        totalObtained: Number(student.totalObtained) || 0,
+                        totalMax: Number(student.totalMax) || 0,
+                        percentage: Number(student.percentage) || 0,
+                        grade: student.grade || '—',
+                        position: String(student.position || '-'),
+                        attendance: student.attendance || '—',
+                        isComplete: Boolean(student.isComplete),
+                        isPassed: Boolean(student.isPassed),
+                        statusLabel: student.statusLabel || (student.isPassed ? 'PASSED' : 'FAILED'),
+                        subjectMarks: safeSubjectMarks,
+                        subjectMultiTerm: student.subjectMultiTerm || null,
+                        termBreakdown: student.termBreakdown || null,
+                        publishedAt: now,
+                        updatedAt: now
+                    };
+
+                    const resultPayload = sanitizeForFirestore(rawResultPayload);
+
+                    // 1. Save to student's results subcollection
+                    const resultDocRef = doc(db, `schools/${schoolId}/students/${studentId}/results`, selectedExamId);
+                    batch.set(resultDocRef, resultPayload, { merge: true });
+
+                    // 2. Also save to class student doc subcollection
+                    const classStudentResultRef = doc(db, `schools/${schoolId}/classes/${selectedClassId}/students/${studentId}/results`, selectedExamId);
+                    batch.set(classStudentResultRef, resultPayload, { merge: true });
+
+                    // 3. Add notification for parent if parentId exists
+                    if (parentId) {
+                        const notifRef = doc(collection(db, `schools/${schoolId}/notifications`));
+                        const notifPayload = sanitizeForFirestore({
+                            parentId: parentId,
+                            studentId: studentId,
+                            studentName: student.name || 'Student',
+                            title: `📄 ${currentExam?.title || 'Exam'} Result Card`,
+                            message: `Result card for ${student.name || 'Student'} (${currentExam?.title || 'Exam'}) has been published. Total Score: ${Number(student.totalObtained) || 0}/${Number(student.totalMax) || 0} (${Number(student.percentage) || 0}% - Grade ${student.grade || '—'}).`,
+                            type: 'exam_result',
+                            examId: selectedExamId,
+                            read: false,
+                            createdAt: now
+                        });
+                        batch.set(notifRef, notifPayload);
+                    }
                 }
+
+                // If this is the final chunk, also mark exam/aggregate as published
+                if (i + CHUNK_SIZE >= selectedRows.length) {
+                    if (selectedExamId && selectedExamId !== 'annual_aggregate') {
+                        const examDocRef = doc(db, `schools/${schoolId}/exams`, selectedExamId);
+                        batch.set(examDocRef, { isPublished: true, publishedAt: now }, { merge: true });
+                    } else if (selectedExamId === 'annual_aggregate') {
+                        const aggPubDocRef = doc(db, `schools/${schoolId}/classes/${selectedClassId}/metadata`, 'annual_aggregate');
+                        batch.set(aggPubDocRef, { isPublished: true, publishedAt: now, session: selectedSession || '2025-2026' }, { merge: true });
+                    }
+                }
+
+                await batch.commit();
             }
 
-            // Mark this exam term as published
-            if (selectedExamId && selectedExamId !== 'annual_aggregate') {
-                const examDocRef = doc(db, `schools/${schoolId}/exams`, selectedExamId);
-                batch.set(examDocRef, { isPublished: true, publishedAt: now }, { merge: true });
-            }
-
-            await batch.commit();
             setShowUploadToParentsModal(false);
             setUploadSuccessMessage(`Successfully published Result Cards to ${selectedRows.length} parents!`);
             setTimeout(() => setUploadSuccessMessage(null), 5000);
@@ -3632,6 +3711,7 @@ export default function Exams() {
             alert("Failed to upload results to parents: " + err.message);
         } finally {
             setIsUploadingToParents(false);
+            setUploadProgressText('');
         }
     };
 
@@ -3648,56 +3728,81 @@ export default function Exams() {
         try {
             const batch = writeBatch(db);
             const now = new Date();
-            const parentId = student.parentDetails?.parentId || student.parentId || student.guardianPhone || '';
+            const studentId = student.studentId || student.id;
+            const parentId = (student.parentDetails?.parentId || student.parentId || student.guardianPhone || '').toString().trim();
 
-            const resultPayload = {
+            let safeSubjectMarks = {};
+            if (student.subjectMarks && typeof student.subjectMarks === 'object' && Object.keys(student.subjectMarks).length > 0) {
+                safeSubjectMarks = student.subjectMarks;
+            } else if (student.subjectMultiTerm && typeof student.subjectMultiTerm === 'object') {
+                Object.entries(student.subjectMultiTerm).forEach(([subj, data]) => {
+                    safeSubjectMarks[subj] = {
+                        obtained: (data?.totalObtained !== null && data?.totalObtained !== undefined && !isNaN(data.totalObtained)) ? Number(data.totalObtained) : 0,
+                        totalMarks: Number(data?.totalMax) || 100,
+                        passingMarks: Math.round((Number(data?.totalMax) || 100) * 0.33),
+                        grade: data?.grade || '—',
+                        remarks: data?.remarks || '',
+                        isAbsent: false
+                    };
+                });
+            }
+
+            const rawResultPayload = {
                 examId: selectedExamId,
-                examTitle: currentExam?.title || 'Result Card',
+                examTitle: currentExam?.title || (selectedExamId === 'annual_aggregate' ? 'Annual Consolidated Aggregate' : 'Result Card'),
                 classId: selectedClassId,
                 className: currentClass?.name || 'Class',
-                studentId: student.studentId,
-                studentName: student.name,
-                rollNumber: student.rollNumber,
-                fatherName: student.fatherName,
-                totalObtained: student.totalObtained,
-                totalMax: student.totalMax,
-                percentage: student.percentage,
-                grade: student.grade,
-                position: student.position,
-                attendance: student.attendance,
-                isComplete: student.isComplete,
-                isPassed: student.isPassed,
-                statusLabel: student.statusLabel,
-                subjectMarks: student.subjectMarks,
+                studentId: studentId,
+                studentName: student.name || 'Student',
+                rollNumber: student.rollNumber || student.rollNo || 'N/A',
+                fatherName: student.fatherName || '—',
+                totalObtained: Number(student.totalObtained) || 0,
+                totalMax: Number(student.totalMax) || 0,
+                percentage: Number(student.percentage) || 0,
+                grade: student.grade || '—',
+                position: String(student.position || '-'),
+                attendance: student.attendance || '—',
+                isComplete: Boolean(student.isComplete),
+                isPassed: Boolean(student.isPassed),
+                statusLabel: student.statusLabel || (student.isPassed ? 'PASSED' : 'FAILED'),
+                subjectMarks: safeSubjectMarks,
+                subjectMultiTerm: student.subjectMultiTerm || null,
+                termBreakdown: student.termBreakdown || null,
                 publishedAt: now,
                 updatedAt: now
             };
 
-            const resultDocRef = doc(db, `schools/${schoolId}/students/${student.studentId}/results`, selectedExamId);
+            const resultPayload = sanitizeForFirestore(rawResultPayload);
+
+            const resultDocRef = doc(db, `schools/${schoolId}/students/${studentId}/results`, selectedExamId);
             batch.set(resultDocRef, resultPayload, { merge: true });
 
-            const classStudentResultRef = doc(db, `schools/${schoolId}/classes/${selectedClassId}/students/${student.studentId}/results`, selectedExamId);
+            const classStudentResultRef = doc(db, `schools/${schoolId}/classes/${selectedClassId}/students/${studentId}/results`, selectedExamId);
             batch.set(classStudentResultRef, resultPayload, { merge: true });
 
             if (parentId) {
                 const notifRef = doc(collection(db, `schools/${schoolId}/notifications`));
-                batch.set(notifRef, {
+                const notifPayload = sanitizeForFirestore({
                     parentId: parentId,
-                    studentId: student.studentId,
-                    studentName: student.name,
+                    studentId: studentId,
+                    studentName: student.name || 'Student',
                     title: `📄 ${currentExam?.title || 'Exam'} Result Card`,
-                    message: `Result card for ${student.name} has been published. Score: ${student.totalObtained}/${student.totalMax} (${student.percentage}% - Grade ${student.grade}).`,
+                    message: `Result card for ${student.name || 'Student'} has been published. Score: ${Number(student.totalObtained) || 0}/${Number(student.totalMax) || 0} (${Number(student.percentage) || 0}% - Grade ${student.grade || '—'}).`,
                     type: 'exam_result',
                     examId: selectedExamId,
                     read: false,
                     createdAt: now
                 });
+                batch.set(notifRef, notifPayload);
             }
 
             // Mark this exam term as published
             if (selectedExamId && selectedExamId !== 'annual_aggregate') {
                 const examDocRef = doc(db, `schools/${schoolId}/exams`, selectedExamId);
                 batch.set(examDocRef, { isPublished: true, publishedAt: now }, { merge: true });
+            } else if (selectedExamId === 'annual_aggregate') {
+                const aggPubDocRef = doc(db, `schools/${schoolId}/classes/${selectedClassId}/metadata`, 'annual_aggregate');
+                batch.set(aggPubDocRef, { isPublished: true, publishedAt: now, session: selectedSession || '2025-2026' }, { merge: true });
             }
 
             await batch.commit();
@@ -6583,7 +6688,10 @@ export default function Exams() {
                                     className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl font-black text-xs shadow-md shadow-indigo-200 transition-all disabled:opacity-50"
                                 >
                                     {isUploadingToParents ? (
-                                        <>Publishing Cards...</>
+                                        <span className="inline-flex items-center gap-2">
+                                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                            <span>{uploadProgressText || 'Publishing Cards...'}</span>
+                                        </span>
                                     ) : (
                                         <>
                                             <Send className="w-3.5 h-3.5" />
