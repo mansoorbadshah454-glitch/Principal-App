@@ -1157,25 +1157,30 @@ const Settings = () => {
             // 1. Maintain active status for THIS device
             localStorage.setItem('session_password_version', newSessionVersion);
 
-            // 2. Update local saved credentials if stored
+            // 2. Remove password from local saved credentials (NEVER store password in localStorage)
             try {
                 const saved = localStorage.getItem('principal_saved_credentials');
                 if (saved) {
                     const parsed = JSON.parse(saved);
-                    parsed.password = passwordData.newPassword;
+                    delete parsed.password;
                     localStorage.setItem('principal_saved_credentials', JSON.stringify(parsed));
                 }
             } catch (_) {}
 
             // 3. Broadcast new sessionVersion to Firestore (triggers immediate logout on all other devices)
             if (currentSchoolId) {
-                try {
-                    await setDoc(doc(db, `schools/${currentSchoolId}/users`, user.uid), {
-                        sessionVersion: newSessionVersion,
-                        passwordLastReset: serverTimestamp()
-                    }, { merge: true });
-                } catch (sErr) {
-                    console.warn("Could not update school user sessionVersion", sErr);
+                const cleanId = String(currentSchoolId).trim().replace(/^SCHOOL_/i, '');
+                const fullId = `SCHOOL_${cleanId}`;
+                const targetPaths = Array.from(new Set([String(currentSchoolId).trim(), cleanId, fullId]));
+                for (const p of targetPaths) {
+                    try {
+                        await setDoc(doc(db, `schools/${p}/users`, user.uid), {
+                            sessionVersion: newSessionVersion,
+                            passwordLastReset: serverTimestamp()
+                        }, { merge: true });
+                    } catch (sErr) {
+                        console.warn(`Could not update school user sessionVersion on ${p}:`, sErr);
+                    }
                 }
             }
             try {

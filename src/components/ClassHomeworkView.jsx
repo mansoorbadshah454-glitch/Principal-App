@@ -353,7 +353,7 @@ const ClassHomeworkView = ({ schoolId, classId, classData, students = [] }) => {
                         No Homework Found
                     </h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        {searchTerm || selectedSubject !== 'all' || dateFilter !== 'all'
+                        {searchTerm || selectedSubject !== 'all'
                             ? 'No homework entries match your selected filters.'
                             : 'No homework has been assigned to this class yet.'}
                     </p>

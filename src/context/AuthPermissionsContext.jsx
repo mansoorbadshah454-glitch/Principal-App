@@ -110,43 +110,76 @@ export const AuthPermissionsProvider = ({ children }) => {
 
     // Real-Time Multi-Device Session Guard:
     // Listens for sessionVersion updates triggered when a password is changed on any device.
-    // Immediately logs out this device if its sessionVersion does not match the latest one.
+    // Immediately logs out this device if remote sessionVersion differs from this local session.
     useEffect(() => {
-        if (!uid || !schoolId) return;
+        const effectiveUid = uid || auth.currentUser?.uid;
+        if (!effectiveUid) return;
 
-        const userDocRef = doc(db, `schools/${schoolId}/users`, uid);
-        const unsub = onSnapshot(userDocRef, (snap) => {
+        const handleRemoteVersionChange = (remoteVersion) => {
+            if (!remoteVersion) return;
+            const remoteVersionStr = String(remoteVersion);
+            const localVersion = localStorage.getItem('session_password_version');
+
+            if (!localVersion) {
+                // If localVersion was somehow missing on an active session, adopt once on initial mount
+                localStorage.setItem('session_password_version', remoteVersionStr);
+                return;
+            }
+
+            if (remoteVersionStr !== String(localVersion)) {
+                console.warn("🚨 Multi-device logout: password was updated on another device.");
+
+                // 1. Clear all active session storage synchronously
+                localStorage.removeItem('manual_session');
+                localStorage.removeItem('cached_user_profile');
+                localStorage.removeItem('cached_admin_perms');
+                localStorage.removeItem('cached_school_data');
+                localStorage.removeItem('session_password_version');
+                localStorage.removeItem('principal_saved_credentials');
+
+                // 2. Set reason for login screen notification
+                try {
+                    sessionStorage.setItem('logout_reason', 'password_changed');
+                } catch (_) {}
+
+                // 3. Immediately sign out from Firebase and hard-redirect without blocking alert
+                auth.signOut().catch(() => {}).finally(() => {
+                    window.location.replace('/login?reason=password_changed');
+                });
+            }
+        };
+
+        // Primary Listener: global_users (universal document for user UID)
+        const unsubGlobal = onSnapshot(doc(db, 'global_users', effectiveUid), (snap) => {
             if (snap.exists()) {
                 const data = snap.data();
-                const remoteVersion = data.sessionVersion;
-                if (remoteVersion) {
-                    const localVersion = localStorage.getItem('session_password_version');
-                    if (!localVersion) {
-                        // First-time adoption: initialize local version with remote version
-                        localStorage.setItem('session_password_version', String(remoteVersion));
-                    } else if (String(remoteVersion) !== String(localVersion)) {
-                        console.warn("🚨 Multi-device logout: password was updated on another device.");
-                        
-                        // Clear all active session storage
-                        localStorage.removeItem('manual_session');
-                        localStorage.removeItem('cached_user_profile');
-                        localStorage.removeItem('cached_admin_perms');
-                        localStorage.removeItem('cached_school_data');
-                        localStorage.removeItem('session_password_version');
-                        localStorage.removeItem('principal_saved_credentials');
-                        
-                        auth.signOut().finally(() => {
-                            alert("Security Notice: Your password was recently updated on another device. For your account security, all other active sessions have been terminated. Please log in with your new password.");
-                            window.location.href = '/login';
-                        });
-                    }
+                if (data.sessionVersion) {
+                    handleRemoteVersionChange(data.sessionVersion);
                 }
             }
         }, (err) => {
-            console.warn("Session guard listener notice (safe offline):", err);
+            console.warn("Global session guard notice (safe offline):", err);
         });
 
-        return () => unsub();
+        // Secondary Listener: school user doc (if schoolId is present)
+        let unsubSchool = () => {};
+        if (schoolId) {
+            unsubSchool = onSnapshot(doc(db, `schools/${schoolId}/users`, effectiveUid), (snap) => {
+                if (snap.exists()) {
+                    const data = snap.data();
+                    if (data.sessionVersion) {
+                        handleRemoteVersionChange(data.sessionVersion);
+                    }
+                }
+            }, (err) => {
+                console.warn("School session guard notice (safe offline):", err);
+            });
+        }
+
+        return () => {
+            unsubGlobal();
+            unsubSchool();
+        };
     }, [uid, schoolId]);
 
     useEffect(() => {

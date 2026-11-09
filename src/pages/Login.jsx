@@ -46,17 +46,33 @@ const Login = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [securityNotice, setSecurityNotice] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
         localStorage.removeItem('manual_session');
+
+        // Check if user was redirected here due to a multi-device security logout
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const sessionReason = sessionStorage.getItem('logout_reason');
+            if (params.get('reason') === 'password_changed' || sessionReason === 'password_changed') {
+                setSecurityNotice('Security Alert: Your password was recently updated on another device. For your account security, all other active sessions have been terminated. Please enter your new password to continue.');
+                sessionStorage.removeItem('logout_reason');
+            }
+        } catch (_) {}
+
         const savedCredentials = localStorage.getItem('principal_saved_credentials');
         if (savedCredentials) {
             try {
                 const parsed = JSON.parse(savedCredentials);
                 if (parsed.email) setEmail(parsed.email);
-                if (parsed.password) setPassword(parsed.password);
                 if (parsed.schoolIdInput) setSchoolIdInput(parsed.schoolIdInput);
+                // Security safeguard: NEVER populate password from storage. Clean up legacy saved password.
+                if (parsed.password) {
+                    delete parsed.password;
+                    localStorage.setItem('principal_saved_credentials', JSON.stringify(parsed));
+                }
             } catch (e) {
                 console.error("Could not parse saved credentials", e);
             }
@@ -161,12 +177,19 @@ const Login = () => {
                 // Sync latest sessionVersion so this newly authenticated login is recognized as valid
                 let currentSessionVersion = Date.now().toString();
                 try {
-                    const uRef = doc(db, `schools/${finalSchoolId}/users`, user.uid);
-                    const uSnap = await getDoc(uRef);
-                    if (uSnap.exists() && uSnap.data().sessionVersion) {
-                        currentSessionVersion = String(uSnap.data().sessionVersion);
+                    const gRef = doc(db, 'global_users', user.uid);
+                    const gSnap = await getDoc(gRef);
+                    if (gSnap.exists() && gSnap.data().sessionVersion) {
+                        currentSessionVersion = String(gSnap.data().sessionVersion);
                     } else {
-                        await setDoc(uRef, { sessionVersion: currentSessionVersion }, { merge: true });
+                        const uRef = doc(db, `schools/${finalSchoolId}/users`, user.uid);
+                        const uSnap = await getDoc(uRef);
+                        if (uSnap.exists() && uSnap.data().sessionVersion) {
+                            currentSessionVersion = String(uSnap.data().sessionVersion);
+                        } else {
+                            await setDoc(gRef, { sessionVersion: currentSessionVersion }, { merge: true });
+                            await setDoc(uRef, { sessionVersion: currentSessionVersion }, { merge: true });
+                        }
                     }
                 } catch (e) {
                     console.warn("Session version sync notice:", e);
@@ -183,7 +206,6 @@ const Login = () => {
 
                 localStorage.setItem('principal_saved_credentials', JSON.stringify({
                     email: email,
-                    password: password,
                     schoolIdInput: schoolIdInput
                 }));
 
@@ -240,6 +262,27 @@ const Login = () => {
                                     displayNameFinal = schoolUserDoc.data().displayName || schoolUserDoc.data().name || displayNameFinal;
                                 }
 
+                                let currentSessionVersion = Date.now().toString();
+                                try {
+                                    const gRef = doc(db, 'global_users', uid);
+                                    const gSnap = await getDoc(gRef);
+                                    if (gSnap.exists() && gSnap.data().sessionVersion) {
+                                        currentSessionVersion = String(gSnap.data().sessionVersion);
+                                    } else {
+                                        const uRef = doc(db, `schools/${schoolId}/users`, uid);
+                                        const uSnap = await getDoc(uRef);
+                                        if (uSnap.exists() && uSnap.data().sessionVersion) {
+                                            currentSessionVersion = String(uSnap.data().sessionVersion);
+                                        } else {
+                                            await setDoc(gRef, { sessionVersion: currentSessionVersion }, { merge: true });
+                                            await setDoc(uRef, { sessionVersion: currentSessionVersion }, { merge: true });
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.warn("Manual session version sync notice:", e);
+                                }
+                                localStorage.setItem('session_password_version', currentSessionVersion);
+
                                 localStorage.setItem('manual_session', JSON.stringify({
                                     uid: uid,
                                     schoolId: schoolId,
@@ -251,7 +294,6 @@ const Login = () => {
 
                                 localStorage.setItem('principal_saved_credentials', JSON.stringify({
                                     email: email,
-                                    password: password,
                                     schoolIdInput: schoolIdInput
                                 }));
 
@@ -472,6 +514,25 @@ const Login = () => {
                         </div>
                     </div>
 
+                    {securityNotice && (
+                        <div style={{
+                            background: 'rgba(239, 68, 68, 0.12)',
+                            border: '1px solid rgba(239, 68, 68, 0.35)',
+                            color: '#fca5a5',
+                            padding: '1rem 1.25rem',
+                            borderRadius: '16px',
+                            marginBottom: '1.5rem',
+                            fontSize: '0.88rem',
+                            lineHeight: '1.5',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem'
+                        }}>
+                            <div style={{ fontWeight: '800', background: 'rgba(239, 68, 68, 0.25)', borderRadius: '50%', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#f87171' }}>!</div>
+                            <div>{securityNotice}</div>
+                        </div>
+                    )}
+
                     {error && (
                         <div style={{
                             background: 'rgba(239, 68, 68, 0.08)',
@@ -540,6 +601,7 @@ const Login = () => {
                             <Lock style={{ position: 'absolute', left: '1.25rem', top: '50%', transform: 'translateY(-50%)', color: '#475569' }} size={20} />
                             <input
                                 type={showPassword ? "text" : "password"}
+                                autoComplete="new-password"
                                 style={{
                                     width: '100%',
                                     background: 'rgba(255, 255, 255, 0.02)',
