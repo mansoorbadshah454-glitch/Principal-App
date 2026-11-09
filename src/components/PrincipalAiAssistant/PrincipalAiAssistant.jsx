@@ -557,7 +557,7 @@ export default function PrincipalAiAssistant({ schoolId }) {
                             {/* New Chat Button */}
                             <button
                                 onClick={handleNewChat}
-                                title="Start New Fresh Chat (Nayi Chat Shuru Karein)"
+                                title="Start New Fresh Chat"
                                 className="flex items-center gap-1 px-2.5 py-1 text-[11.5px] font-bold bg-indigo-600/90 hover:bg-indigo-600 text-white rounded-lg transition-all border border-indigo-400/40 shadow-sm active:scale-95 cursor-pointer"
                             >
                                 <PlusCircle className="w-3.5 h-3.5 text-indigo-200" />

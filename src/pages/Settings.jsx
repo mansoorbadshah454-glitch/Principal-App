@@ -2973,8 +2973,8 @@ const Settings = () => {
                                         </h4>
                                         <p style={{ margin: '0 0 1.25rem 0', fontSize: '0.85rem', color: '#94a3b8', maxWidth: '400px', marginLeft: 'auto', marginRight: 'auto' }}>
                                             {historyYearFilter !== 'all'
-                                                ? `Year ${historyYearFilter} ke liye koi payments nahi milay.`
-                                                : 'Aapne abhi tak koi subscription payment slip upload nahi ki.'}
+                                                ? `No payments found for the year ${historyYearFilter}.`
+                                                : 'No subscription payment slips uploaded yet.'}
                                         </p>
                                         <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                                             {historyYearFilter !== 'all' && (
@@ -3473,7 +3473,7 @@ const Settings = () => {
                                     <Key size={16} color="#94a3b8" style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)' }} />
                                 </div>
                                 <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.35rem', margin: 0 }}>
-                                    Yeh key aapke school ke database mein mehfooz rahegi. Agar blank chorenge toh system bina kisi API key ke built-in instant smart engine use karega.
+                                    This key will be securely saved in your school database. If left blank, the system will use the built-in smart engine without requiring an external API key.
                                 </p>
                             </div>
                         </div>

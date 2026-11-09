@@ -842,7 +842,7 @@ const EditStudentProfile = () => {
                                     100% Full Fee Waiver Activated (Free of Cost)
                                 </div>
                                 <p style={{ fontSize: '0.8rem', color: '#047857', margin: '0 0 0.75rem 0' }}>
-                                    Is student ka monthly fee balance Rs 0 rahega aur Monthly Fee Matrix me yeh student defaulter list me red ya orange nahi aayega balki automatically 100% Green/Paid rahega.
+                                    This student's monthly fee balance will remain Rs 0. In the Monthly Fee Matrix, this student will not appear on the defaulter list and will automatically be marked 100% Free / Paid.
                                 </p>
                                 <div>
                                     <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#065f46', marginBottom: '0.35rem' }}>Scholarship Category / Reason</label>

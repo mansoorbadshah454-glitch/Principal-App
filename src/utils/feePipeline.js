@@ -24,6 +24,24 @@ export const formatPKR = (amt) => {
 };
 
 /**
+ * Clean & Format Store Item Title (Removes 'Store: ' prefix, receipt codes, bulky brackets)
+ */
+export const formatCleanStoreTitle = (rawName) => {
+    if (!rawName) return 'Store Item';
+    let clean = String(rawName);
+    clean = clean.replace(/^Store\s*:\s*/i, '');
+    clean = clean.replace(/^Store\s*\/\s*Inventory\s*:\s*/i, '');
+    clean = clean.replace(/Store\/Uniform\s*/gi, 'Uniform ');
+    clean = clean.replace(/\(STORE-[^)]+\)/gi, '');
+    clean = clean.replace(/\(REC-[^)]+\)/gi, '');
+    clean = clean.replace(/\[Size\s*[^\]]+\]/gi, '');
+    clean = clean.replace(/\[[^\]]+\]/gi, '');
+    clean = clean.replace(/\s+/g, ' ');
+    clean = clean.trim().replace(/^,\s*|,\s*$/g, '');
+    return clean || 'Store Item';
+};
+
+/**
  * Check whether a student has 100% Free / Full Scholarship concession.
  */
 export const checkIs100PercentFree = (student) => {
@@ -224,78 +242,81 @@ export const calculateItemizedFeeBreakdown = (
         }
     });
 
-    // 3. Month-Isolated Store Purchases & Unpaid Aggregation
+    // 3. Store Purchases & Unpaid Aggregation
     let storeDues = 0;
     const storeItemsList = [];
 
-    if (isTargetMonthPaid) {
-        // Locked historical paid month - preserve exactly what was paid
-        if (feeHistoryEntry && Array.isArray(feeHistoryEntry.storeItems) && feeHistoryEntry.storeItems.length > 0) {
-            feeHistoryEntry.storeItems.forEach(item => {
+    // Capture settled items from fee history if available for this specific month
+    if (feeHistoryEntry && Array.isArray(feeHistoryEntry.storeItems) && feeHistoryEntry.storeItems.length > 0) {
+        feeHistoryEntry.storeItems.forEach(item => {
+            const amt = Number(item.amount || item.price || 0);
+            if (amt > 0) {
+                storeDues += amt;
+                storeItemsList.push({ ...item, status: 'paid' });
+            }
+        });
+    } else if (isTargetMonthPaid && Number(feeHistoryEntry?.storeDues || 0) > 0) {
+        storeDues += Number(feeHistoryEntry.storeDues);
+    }
+
+    // Now capture ALL active unpaid store charges across all possible storage locations
+    const rawStoreList = [
+        ...(Array.isArray(student.storeCharges) ? student.storeCharges : []),
+        ...(Array.isArray(student.storePurchases) ? student.storePurchases : []),
+        ...(Array.isArray(student.individualActions) ? student.individualActions.filter(a => a.type === 'store_inventory' || (a.id && String(a.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(a.name || a.title || '')) : [])
+    ];
+    const seenStoreKeys = new Set();
+    storeItemsList.forEach(si => {
+        const k = si.id || si.receiptNo || `${si.name}_${si.amount}`;
+        seenStoreKeys.add(k);
+    });
+
+    rawStoreList.forEach(item => {
+        const itemKeyId = item.id || item.receiptNo || `${item.name}_${item.amount}_${item.date}`;
+        if (seenStoreKeys.has(itemKeyId)) return;
+        seenStoreKeys.add(itemKeyId);
+
+        const isItemPaid = item.status === 'paid';
+        const itemKey = item.monthKey || (item.date && item.date.length >= 7 ? item.date.slice(0, 7) : '');
+
+        if (isItemPaid) {
+            if (itemKey === targetMonthKey && !storeItemsList.some(s => s.id === item.id)) {
                 const amt = Number(item.amount || item.price || 0);
                 if (amt > 0) {
                     storeDues += amt;
-                    storeItemsList.push({ ...item, status: 'paid' });
+                    storeItemsList.push({
+                        id: item.id,
+                        name: formatCleanStoreTitle(item.name || 'Store Item'),
+                        amount: amt,
+                        status: 'paid',
+                        receiptNo: item.receiptNo || 'STORE-KIT',
+                        items: item.items || null
+                    });
                 }
-            });
-        } else if (Number(feeHistoryEntry?.storeDues || 0) > 0) {
-            storeDues = Number(feeHistoryEntry.storeDues);
+            }
+        } else {
+            // UNPAID Store Charge: Always eligible unless specifically assigned to a strictly FUTURE month
+            const isFutureItem = itemKey && itemKey > targetMonthKey;
+            if (!isFutureItem) {
+                const amt = Number(item.amount || item.price || 0);
+                if (amt > 0) {
+                    storeDues += amt;
+                    storeItemsList.push({
+                        id: item.id,
+                        name: formatCleanStoreTitle(item.name || 'Store Item'),
+                        amount: amt,
+                        status: 'unpaid',
+                        receiptNo: item.receiptNo || 'STORE-KIT',
+                        items: item.items || null,
+                        actionObj: item
+                    });
+                }
+            }
         }
-    } else {
-        // Target month is OPEN / UNPAID - capture assigned items and all unpaid store charges
-        if (Array.isArray(student.storePurchases)) {
-            student.storePurchases.forEach(item => {
-                const isItemPaid = item.status === 'paid';
-                if (isItemPaid) {
-                    const itemKey = item.monthKey || '';
-                    if (itemKey !== targetMonthKey) return;
-                }
+    });
 
-                const itemKey = item.monthKey || (item.date && item.date.length >= 7 ? item.date.slice(0, 7) : '');
-                const isEligibleForUnpaidMonth = (!isItemPaid) && 
-                    (!itemKey || itemKey <= targetMonthKey);
-
-                if (isEligibleForUnpaidMonth) {
-                    const amt = Number(item.amount || item.price || 0);
-                    if (amt > 0) {
-                        storeDues += amt;
-                        storeItemsList.push({
-                            name: item.name || 'Store Item',
-                            amount: amt,
-                            status: 'unpaid',
-                            receiptNo: item.receiptNo || 'STORE-KIT'
-                        });
-                    }
-                }
-            });
-        } else if (Array.isArray(student.storeCharges)) {
-            student.storeCharges.forEach(item => {
-                const isItemPaid = item.status === 'paid';
-                if (isItemPaid) {
-                    const itemKey = item.monthKey || '';
-                    if (itemKey !== targetMonthKey) return;
-                }
-
-                const itemKey = item.monthKey || (item.date && item.date.length >= 7 ? item.date.slice(0, 7) : '');
-                const isEligibleForUnpaidMonth = (!isItemPaid) && 
-                    (!itemKey || itemKey <= targetMonthKey);
-
-                if (isEligibleForUnpaidMonth) {
-                    const amt = Number(item.amount || item.price || 0);
-                    if (amt > 0) {
-                        storeDues += amt;
-                        storeItemsList.push({
-                            name: item.name || 'Store Item',
-                            amount: amt,
-                            status: 'unpaid',
-                            receiptNo: item.receiptNo || 'STORE-KIT'
-                        });
-                    }
-                }
-            });
-        } else if (Number(student.storeDues) > 0 && targetMonthIdx === effectiveBillingMonthIdx) {
-            storeDues = Number(student.storeDues);
-        }
+    if (storeDues === 0 && Number(student.storeDues) > 0 && targetMonthIdx === effectiveBillingMonthIdx) {
+        storeDues = Number(student.storeDues);
     }
 
     // 4. Targeted Action & Individual Custom Actions & Unpaid Aggregation
@@ -303,8 +324,8 @@ export const calculateItemizedFeeBreakdown = (
     const actionNames = [];
     const customItems = [];
 
-    // Check feeHistoryEntry custom items first (Exact settled record for paid month)
-    if (isTargetMonthPaid && feeHistoryEntry && Array.isArray(feeHistoryEntry.customItems) && feeHistoryEntry.customItems.length > 0) {
+    // Capture settled items from fee history if available for this specific month
+    if (feeHistoryEntry && Array.isArray(feeHistoryEntry.customItems) && feeHistoryEntry.customItems.length > 0) {
         feeHistoryEntry.customItems.forEach(c => {
             const amt = Number(c.amount || 0);
             const title = c.title || c.name || 'Custom Fee';
@@ -314,76 +335,73 @@ export const calculateItemizedFeeBreakdown = (
                 customItems.push({ title, name: title, amount: amt, status: 'paid' });
             }
         });
-    } else if (!isTargetMonthPaid) {
-        // From individualActions on student object
-        if (Array.isArray(student.individualActions)) {
-            student.individualActions.forEach(act => {
-                // Skip store inventory items if already handled
-                if (act.type === 'store_inventory') {
-                    if (storeItemsList.some(si => (si.receiptNo && si.receiptNo === act.receiptNo) || si.name === act.name)) {
-                        return;
-                    }
-                }
+    }
 
-                // Skip recurring mirror items if already counted in otherRecurringTotal
-                if (act.type === 'recurring_fee' || act.isRecurring || recurringItems.some(r => (r.name || '').toLowerCase() === (act.name || act.title || '').toLowerCase())) {
-                    return;
-                }
+    // Now capture ALL active unpaid custom actions
+    if (Array.isArray(student.individualActions)) {
+        student.individualActions.forEach(act => {
+            // Skip store inventory items if already handled in store section
+            if (act.type === 'store_inventory' || (act.id && String(act.id).startsWith('store_')) || /store|uniform|book|stationery/i.test(act.name || act.title || '')) {
+                return;
+            }
 
-                const isActPaid = act.status === 'paid';
-                if (isActPaid) {
-                    const actKey = act.monthKey || '';
-                    if (actKey !== targetMonthKey) return;
-                }
+            // Skip recurring mirror items if already counted in otherRecurringTotal
+            if (act.type === 'recurring_fee' || act.isRecurring || recurringItems.some(r => (r.name || '').toLowerCase() === (act.name || act.title || '').toLowerCase())) {
+                return;
+            }
 
-                const actKey = act.monthKey || 
-                    (act.createdAt && act.createdAt.length >= 7 ? act.createdAt.slice(0, 7) : 
-                    (act.date && act.date.length >= 7 ? act.date.slice(0, 7) : ''));
+            const isActPaid = act.status === 'paid';
+            const actKey = act.monthKey || 
+                (act.createdAt && act.createdAt.length >= 7 ? act.createdAt.slice(0, 7) : 
+                (act.date && act.date.length >= 7 ? act.date.slice(0, 7) : ''));
 
-                const isEligibleForUnpaidMonth = (!isActPaid) && 
-                    (!actKey || actKey <= targetMonthKey);
-
-                if (isEligibleForUnpaidMonth) {
+            if (isActPaid) {
+                if (actKey === targetMonthKey && !customItems.some(c => c.id === act.id && c.title === (act.title || act.name))) {
                     const amt = Number(act.amount || 0);
                     const title = act.title || act.name || 'Custom Action';
                     if (amt > 0) {
-                        if (act.type === 'store_inventory') {
-                            storeDues += amt;
-                            storeItemsList.push({
-                                name: title,
-                                amount: amt,
-                                status: 'unpaid'
-                            });
-                        } else {
-                            actionFee += amt;
-                            if (!actionNames.includes(title)) actionNames.push(title);
-                            customItems.push({ 
-                                title, 
-                                name: title, 
-                                amount: amt, 
-                                status: 'unpaid' 
-                            });
-                        }
+                        actionFee += amt;
+                        if (!actionNames.includes(title)) actionNames.push(title);
+                        customItems.push({ title, name: title, amount: amt, status: 'paid' });
                     }
                 }
-            });
-        }
-
-        // Global Campaign Action if targeted to effective open month
-        if (currentAction && targetMonthIdx === effectiveBillingMonthIdx) {
-            const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(student.classId));
-            if (isTargeted) {
-                const amt = Number(currentAction.amount || 0);
-                if (amt > 0 && !actionNames.includes(currentAction.name)) {
-                    actionFee += amt;
-                    actionNames.push(currentAction.name);
-                    customItems.push({ 
-                        title: currentAction.name, 
-                        name: currentAction.name, 
-                        amount: amt, 
-                        status: student.customPayments?.[currentAction.name]?.status || 'unpaid' 
-                    });
+            } else {
+                // UNPAID Custom Action: Always eligible unless specifically assigned to a strictly FUTURE month
+                const isFutureAct = actKey && actKey > targetMonthKey;
+                if (!isFutureAct) {
+                    const amt = Number(act.amount || 0);
+                    const title = act.title || act.name || 'Custom Action';
+                    if (amt > 0) {
+                        actionFee += amt;
+                        if (!actionNames.includes(title)) actionNames.push(title);
+                        customItems.push({ 
+                            id: act.id,
+                            title, 
+                            name: title, 
+                            amount: amt, 
+                            status: 'unpaid',
+                            actionObj: act
+                        });
+                    }
                 }
+            }
+        });
+    }
+
+    // Global Campaign Action if targeted to effective open month
+    if (currentAction && targetMonthIdx === effectiveBillingMonthIdx) {
+        const isTargeted = currentAction.targetAll || (currentAction.targetClasses && currentAction.targetClasses.includes(student.classId));
+        if (isTargeted) {
+            const amt = Number(currentAction.amount || 0);
+            if (amt > 0 && !actionNames.includes(currentAction.name)) {
+                actionFee += amt;
+                actionNames.push(currentAction.name);
+                customItems.push({ 
+                    title: currentAction.name, 
+                    name: currentAction.name, 
+                    amount: amt, 
+                    status: student.customPayments?.[currentAction.name]?.status || 'unpaid' 
+                });
             }
         }
     }
@@ -404,11 +422,19 @@ export const calculateItemizedFeeBreakdown = (
 
     let totalPayable = tuitionPayable + transportFee + otherRecurringTotal + storeDues + actionFee + penaltyFine;
 
-    // If historical payment exists, net total must match actual collected amount
+    // If historical payment exists, evaluate whether this month is truly settled or has remaining due
     const paidAmount = feeHistoryEntry ? Number(feeHistoryEntry.paidAmount || 0) : 0;
-    if (paidAmount > 0) {
-        totalPayable = Math.max(totalPayable, paidAmount);
-    }
+    const hasUnpaidSupplementaryItems = storeItemsList.some(s => s.status === 'unpaid') || customItems.some(c => c.status === 'unpaid');
+    
+    // An itemized month is ONLY fully settled if paidAmount covers totalPayable AND there are no active unpaid supplementary items!
+    const isTargetSettled = !hasUnpaidSupplementaryItems && (
+        (isTargetMonthPaid && paidAmount >= totalPayable) ||
+        (feeHistoryEntry && feeHistoryEntry.status === 'paid' && paidAmount >= totalPayable) ||
+        (totalPayable === 0)
+    );
+    
+    let remainingDue = isTargetSettled ? 0 : Math.max(0, totalPayable - paidAmount);
+    const isPartiallyPaid = !isTargetSettled && paidAmount > 0 && remainingDue > 0;
 
     return {
         is100PercentFree,
@@ -419,13 +445,17 @@ export const calculateItemizedFeeBreakdown = (
         otherRecurringFees: recurringItems,
         otherRecurringTotal,
         storeDues,
+        storeItems: storeItemsList,
         actionFee,
         actionName: actionNames.join(', '),
         customItems,
         penaltyFine,
         totalPayable,
         paidAmount,
-        isPaid: feeHistoryEntry ? (feeHistoryEntry.status === 'paid') : false
+        alreadyPaid: paidAmount,
+        remainingDue,
+        isPartiallyPaid,
+        isPaid: isTargetSettled
     };
 };
 

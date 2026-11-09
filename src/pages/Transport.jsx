@@ -1389,7 +1389,7 @@ const Transport = () => {
         let text = `🏫 *${(schoolInfo?.name || 'SCHOOL').toUpperCase()} - DRIVER MOBILE APP LOGIN*\n`;
         text += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
         text += `Assalam-o-Alaikum *${drv.name}*,\n`;
-        text += `Aapka School Driver Mobile App account create ho chuka hai. Daily route trips aur student boarding manage karne ke liye app login karein:\n\n`;
+        text += `Your School Driver Mobile App account has been created. Please log in to manage daily route trips and student boarding:\n\n`;
         text += `📱 *APP LOGIN CREDENTIALS:*\n`;
         text += `🔑 *School ID:* ${schoolId}\n`;
         text += `📧 *Driver Email:* ${drv.email}\n`;

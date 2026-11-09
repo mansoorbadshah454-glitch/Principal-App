@@ -4757,7 +4757,7 @@ export default function SchoolLeaving() {
                                                 </span>
                                             </div>
                                             <p className="text-[11px] text-amber-900 leading-relaxed font-medium bg-white/70 p-2.5 rounded-xl border border-amber-200/60">
-                                                ⚠️ <strong>Parent Account Auto-Closure:</strong> Ye is parent ka akela student hai. School Leave / SLC issue hone par parent ka mobile app account khud-ba-khud <strong>DELETE</strong> ho jayega taake koi orphan ya dead account baki na rahe.
+                                                ⚠️ <strong>Parent Account Auto-Closure:</strong> This is the only student linked to this parent. Upon School Leaving / SLC issuance, the parent mobile app account will automatically be <strong>DELETED</strong> to prevent orphan or inactive accounts.
                                             </p>
                                         </div>
                                     ) : (
@@ -4795,7 +4795,7 @@ export default function SchoolLeaving() {
                                                     ))}
                                                 </div>
                                                 <p className="text-[10px] text-emerald-700 font-medium pt-0.5">
-                                                    🛡️ <strong>Safety Guarantee:</strong> Parent ka account bilkul delete <strong>NAHI</strong> hoga. Sirf ye student unlink ho jayega aur baki bachay parent app me active rahenge.
+                                                    🛡️ <strong>Safety Guarantee:</strong> The parent account will <strong>NOT</strong> be deleted. Only this student will be unlinked, and all remaining enrolled siblings will remain fully active in the Parent App.
                                                 </p>
                                             </div>
                                         </div>

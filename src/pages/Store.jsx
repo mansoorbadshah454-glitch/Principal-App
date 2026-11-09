@@ -809,6 +809,7 @@ const Store = () => {
                             const masterStudentDocRef = doc(db, 'schools', schoolId, 'students', saleData.studentInfo.studentId);
                             batch.set(masterStudentDocRef, {
                                 remaining: increment(saleData.finalAmount),
+                                storeCharges: arrayUnion(chargeRecord),
                                 individualActions: arrayUnion(chargeRecord)
                             }, { merge: true });
                         }

@@ -10,7 +10,7 @@ import { httpsCallable } from 'firebase/functions';
 import { useAlert } from '../context/AlertContext';
 
 // Internal Component for individual Parent Card logic
-const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbClasses, schoolId }) => {
+const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMessage, dbClasses, schoolId, globalLinkedMap, searchQuery }) => {
     const { showAlert } = useAlert();
     const [isExpanded, setIsExpanded] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
@@ -27,6 +27,7 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
     const [selectedStepClassId, setSelectedStepClassId] = useState('');
     const [selectedStepStudentId, setSelectedStepStudentId] = useState('');
     const [availableStepStudents, setAvailableStepStudents] = useState([]);
+    const [hiddenStepStudentsCount, setHiddenStepStudentsCount] = useState(0);
 
     const cardRef = React.useRef(null);
 
@@ -52,10 +53,11 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
         };
     }, [isEditing, isMessaging, parent]);
 
-    // Fetch students for Step 3 within Card
+    // Fetch students for Step 3 within Card - Hides already-linked students
     useEffect(() => {
         if (!schoolId || !selectedStepClassId) {
             setAvailableStepStudents([]);
+            setHiddenStepStudentsCount(0);
             return;
         }
 
@@ -63,29 +65,47 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes/${selectedStepClassId}/students`));
                 const snapshot = await getDocsFast(q);
-                // Automatically vaporize any ghost clones that were created by the earlier bug!
                 const validStudents = [];
+                let hiddenCount = 0;
+
                 snapshot.docs.forEach(docSnap => {
                     const data = docSnap.data();
                     if (!data.name && !data.firstName) {
                         // This is a ghost clone! Destroy it natively.
                         deleteDoc(docSnap.ref).catch(e => console.error("Ghost Buster Error:", e));
                     } else {
-                        validStudents.push({
-                            id: docSnap.id,
-                            name: data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim(),
-                            rollNo: data.rollNo
-                        });
+                        const sId = docSnap.id;
+                        const sName = data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim();
+                        // Check if already linked to another parent
+                        const existingParentInfo = globalLinkedMap?.[sId];
+                        const directParentId = data.parentDetails?.parentId || data.parentId;
+                        const isLinkedToAnother = (existingParentInfo && existingParentInfo.parentId && existingParentInfo.parentId !== parent.id) ||
+                                                  (directParentId && directParentId !== parent.id);
+                        const isLinkedToThis = editedParent.linkedStudents?.some(s => s.studentId === sId);
+
+                        if (isLinkedToAnother) {
+                            hiddenCount++;
+                            return; // Hide student to prevent duplicate linking across parents
+                        }
+
+                        if (!isLinkedToThis) {
+                            validStudents.push({
+                                id: sId,
+                                name: sName,
+                                rollNo: data.rollNo
+                            });
+                        }
                     }
                 });
                 
                 setAvailableStepStudents(validStudents);
+                setHiddenStepStudentsCount(hiddenCount);
             } catch (err) {
                 console.error("Error fetching students in card:", err);
             }
         };
         fetchStudents();
-    }, [schoolId, selectedStepClassId]);
+    }, [schoolId, selectedStepClassId, globalLinkedMap, parent.id, editedParent.linkedStudents]);
 
     const handleLinkStudent = () => {
         if (!selectedStepClassId || !selectedStepStudentId) return;
@@ -383,7 +403,10 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <select
                                             value={selectedStepClassId}
-                                            onChange={(e) => setSelectedStepClassId(e.target.value)}
+                                            onChange={(e) => {
+                                                setSelectedStepClassId(e.target.value);
+                                                setSelectedStepStudentId('');
+                                            }}
                                             style={{ flex: 1, padding: '0.6rem', borderRadius: '10px', border: '1px solid #f1f5f9', fontSize: '0.85rem', outline: 'none' }}
                                         >
                                             <option value="">Class</option>
@@ -392,10 +415,12 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                                         <select
                                             value={selectedStepStudentId}
                                             onChange={(e) => setSelectedStepStudentId(e.target.value)}
-                                            disabled={!selectedStepClassId}
-                                            style={{ flex: 1.5, padding: '0.6rem', borderRadius: '10px', border: '1px solid #f1f5f9', fontSize: '0.85rem', outline: 'none' }}
+                                            disabled={!selectedStepClassId || availableStepStudents.length === 0}
+                                            style={{ flex: 1.5, padding: '0.6rem', borderRadius: '10px', border: '1px solid #f1f5f9', fontSize: '0.85rem', outline: 'none', background: (!selectedStepClassId || availableStepStudents.length === 0) ? '#f8fafc' : 'white' }}
                                         >
-                                            <option value="">Student</option>
+                                            <option value="">
+                                                {!selectedStepClassId ? 'Class First' : availableStepStudents.length === 0 ? 'All Linked' : 'Select Student'}
+                                            </option>
                                             {availableStepStudents.map(s => <option key={s.id} value={s.id}>{s.name} ({s.rollNo})</option>)}
                                         </select>
                                         <button
@@ -494,15 +519,27 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                             <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'white', marginBottom: '0.1rem' }}>
                                 {parent?.name || 'Parent'}
                             </h3>
-                            <span style={{
-                                fontSize: '0.75rem', color: 'white',
-                                background: 'rgba(255, 255, 255, 0.2)', padding: '0.2rem 0.6rem',
-                                borderRadius: '12px', fontWeight: '600',
-                                backdropFilter: 'blur(4px)',
-                                border: '1px solid rgba(255, 255, 255, 0.3)'
-                            }}>
-                                {parent.email || 'No Email'}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                <span style={{
+                                    fontSize: '0.75rem', color: 'white',
+                                    background: 'rgba(255, 255, 255, 0.2)', padding: '0.2rem 0.6rem',
+                                    borderRadius: '12px', fontWeight: '600',
+                                    backdropFilter: 'blur(4px)',
+                                    border: '1px solid rgba(255, 255, 255, 0.3)'
+                                }}>
+                                    {parent.email || 'No Email'}
+                                </span>
+                                {parent.isProfileIncomplete && (
+                                    <span style={{
+                                        fontSize: '0.7rem', color: '#78350f',
+                                        background: '#fef3c7', padding: '0.15rem 0.5rem',
+                                        borderRadius: '8px', fontWeight: '700',
+                                        border: '1px solid #fde68a'
+                                    }}>
+                                        ⚠️ Incomplete Profile
+                                    </span>
+                                )}
+                            </div>
                         </div>
                     </div>
 
@@ -536,6 +573,30 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
                     </div>
                 </div>
             </div>
+
+            {/* Matched Child Quick Finder Highlight */}
+            {(() => {
+                const qClean = (searchQuery || '').toLowerCase().trim();
+                const matchedChild = qClean ? parent.linkedStudents?.find(s =>
+                    (s.studentName && s.studentName.toLowerCase().includes(qClean)) ||
+                    (s.rollNo && s.rollNo.toString().includes(qClean))
+                ) : null;
+                if (!matchedChild) return null;
+                return (
+                    <div style={{
+                        padding: '0.55rem 1.25rem',
+                        background: '#ecfdf5',
+                        borderBottom: '1.5px solid #a7f3d0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#065f46' }}>
+                            🎯 Matched Student: {matchedChild.studentName} ({matchedChild.className || 'Class'}) {matchedChild.rollNo ? `• Roll #${matchedChild.rollNo}` : ''}
+                        </span>
+                    </div>
+                );
+            })()}
 
             {/* Body with Light Neon Background */}
             <div style={{ padding: '1.5rem', background: 'rgba(255, 255, 255, 0.6)' }}>
@@ -656,9 +717,15 @@ const ParentCard = React.memo(({ parent, onDelete, onUpdate, onMessage, onSendMe
 });
 
 // Internal Component for Parent Table Row (Table View)
-const ParentTableRow = ({ parent, onDelete, onUpdate, onSendMessage, dbClasses, schoolId, onEdit, onMessage }) => {
+const ParentTableRow = ({ parent, onDelete, onUpdate, onSendMessage, dbClasses, schoolId, onEdit, onMessage, searchQuery }) => {
     const isAppUser = Boolean(parent.username && parent.password);
     const linkedStudents = parent.linkedStudents || [];
+
+    const qClean = (searchQuery || '').toLowerCase().trim();
+    const matchedChild = qClean ? linkedStudents.find(s =>
+        (s.studentName && s.studentName.toLowerCase().includes(qClean)) ||
+        (s.rollNo && s.rollNo.toString().includes(qClean))
+    ) : null;
 
     return (
         <tr
@@ -690,9 +757,27 @@ const ParentTableRow = ({ parent, onDelete, onUpdate, onSendMessage, dbClasses, 
                         {parent.name ? parent.name.charAt(0).toUpperCase() : 'P'}
                     </div>
                     <div>
-                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.95rem' }}>
-                            {parent.name}
+                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <span>{parent.name}</span>
+                            {parent.isProfileIncomplete && (
+                                <span style={{
+                                    fontSize: '0.65rem',
+                                    color: '#78350f',
+                                    background: '#fef3c7',
+                                    padding: '0.1rem 0.4rem',
+                                    borderRadius: '6px',
+                                    fontWeight: '700',
+                                    border: '1px solid #fde68a'
+                                }}>
+                                    Incomplete
+                                </span>
+                            )}
                         </div>
+                        {matchedChild && (
+                            <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: '800', marginTop: '1px' }}>
+                                🎯 Matched: {matchedChild.studentName} ({matchedChild.className || 'Class'})
+                            </div>
+                        )}
                         <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '2px' }}>
                             {parent.phone && (
                                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
@@ -732,25 +817,28 @@ const ParentTableRow = ({ parent, onDelete, onUpdate, onSendMessage, dbClasses, 
 
                     {linkedStudents.length > 0 ? (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                            {linkedStudents.map((s, idx) => (
-                                <span
-                                    key={idx}
-                                    style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '0.3rem',
-                                        fontSize: '0.75rem',
-                                        padding: '0.2rem 0.55rem',
-                                        borderRadius: '6px',
-                                        background: '#f8fafc',
-                                        border: '1px solid #e2e8f0',
-                                        color: '#334155',
-                                        fontWeight: '600'
-                                    }}
-                                >
-                                    <span>{s.studentName || 'Student'} <span style={{ color: '#64748b', fontWeight: '500' }}>({s.className || 'Class'})</span></span>
-                                </span>
-                            ))}
+                            {linkedStudents.map((s, idx) => {
+                                const isMatched = matchedChild && s.studentId === matchedChild.studentId;
+                                return (
+                                    <span
+                                        key={idx}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.3rem',
+                                            fontSize: '0.75rem',
+                                            padding: '0.2rem 0.55rem',
+                                            borderRadius: '6px',
+                                            background: isMatched ? '#ecfdf5' : '#f8fafc',
+                                            border: isMatched ? '1.5px solid #10b981' : '1px solid #e2e8f0',
+                                            color: isMatched ? '#065f46' : '#334155',
+                                            fontWeight: isMatched ? '800' : '600'
+                                        }}
+                                    >
+                                        <span>{s.studentName || 'Student'} <span style={{ color: isMatched ? '#047857' : '#64748b', fontWeight: '500' }}>({s.className || 'Class'})</span></span>
+                                    </span>
+                                );
+                            })}
                         </div>
                     ) : (
                         <span style={{ fontSize: '0.78rem', color: '#94a3b8', fontStyle: 'italic' }}>
@@ -880,7 +968,7 @@ const ParentTableRow = ({ parent, onDelete, onUpdate, onSendMessage, dbClasses, 
 };
 
 // Internal Component for Parent Edit Modal (Used in Table View)
-const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
+const ParentEditModal = ({ parent, dbClasses, schoolId, globalLinkedMap, onCancel, onSave }) => {
     const [editStep, setEditStep] = useState(1);
     const [isSaving, setIsSaving] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
@@ -893,10 +981,12 @@ const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
     const [selectedStepClassId, setSelectedStepClassId] = useState('');
     const [selectedStepStudentId, setSelectedStepStudentId] = useState('');
     const [availableStepStudents, setAvailableStepStudents] = useState([]);
+    const [hiddenStepStudentsCount, setHiddenStepStudentsCount] = useState(0);
 
     useEffect(() => {
         if (!schoolId || !selectedStepClassId) {
             setAvailableStepStudents([]);
+            setHiddenStepStudentsCount(0);
             return;
         }
 
@@ -905,23 +995,42 @@ const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
                 const q = query(collection(db, `schools/${schoolId}/classes/${selectedStepClassId}/students`));
                 const snapshot = await getDocsFast(q);
                 const validStudents = [];
+                let hiddenCount = 0;
+
                 snapshot.docs.forEach(docSnap => {
                     const data = docSnap.data();
                     if (data.name || data.firstName) {
-                        validStudents.push({
-                            id: docSnap.id,
-                            name: data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim(),
-                            rollNo: data.rollNo
-                        });
+                        const sId = docSnap.id;
+                        const sName = data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim();
+                        // Check if already linked to another parent
+                        const existingParentInfo = globalLinkedMap?.[sId];
+                        const directParentId = data.parentDetails?.parentId || data.parentId;
+                        const isLinkedToAnother = (existingParentInfo && existingParentInfo.parentId && existingParentInfo.parentId !== parent.id) ||
+                                                  (directParentId && directParentId !== parent.id);
+                        const isLinkedToThis = editedParent.linkedStudents?.some(s => s.studentId === sId);
+
+                        if (isLinkedToAnother) {
+                            hiddenCount++;
+                            return; // Hide student already linked to another parent
+                        }
+
+                        if (!isLinkedToThis) {
+                            validStudents.push({
+                                id: sId,
+                                name: sName,
+                                rollNo: data.rollNo
+                            });
+                        }
                     }
                 });
                 setAvailableStepStudents(validStudents);
+                setHiddenStepStudentsCount(hiddenCount);
             } catch (err) {
                 console.error("Error fetching students in modal:", err);
             }
         };
         fetchStudents();
-    }, [schoolId, selectedStepClassId]);
+    }, [schoolId, selectedStepClassId, globalLinkedMap, parent.id, editedParent.linkedStudents]);
 
     const handleLinkStudent = () => {
         if (!selectedStepClassId || !selectedStepStudentId) return;
@@ -1193,7 +1302,10 @@ const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                                     <select
                                         value={selectedStepClassId}
-                                        onChange={(e) => setSelectedStepClassId(e.target.value)}
+                                        onChange={(e) => {
+                                            setSelectedStepClassId(e.target.value);
+                                            setSelectedStepStudentId('');
+                                        }}
                                         style={{ padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.85rem', background: '#faf5ff' }}
                                     >
                                         <option value="">Select Class</option>
@@ -1204,10 +1316,12 @@ const ParentEditModal = ({ parent, dbClasses, schoolId, onCancel, onSave }) => {
                                     <select
                                         value={selectedStepStudentId}
                                         onChange={(e) => setSelectedStepStudentId(e.target.value)}
-                                        disabled={!selectedStepClassId}
-                                        style={{ padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.85rem', background: '#faf5ff' }}
+                                        disabled={!selectedStepClassId || availableStepStudents.length === 0}
+                                        style={{ padding: '0.65rem', borderRadius: '12px', border: '1px solid #fdf2ff', outline: 'none', fontSize: '0.85rem', background: (!selectedStepClassId || availableStepStudents.length === 0) ? '#f8fafc' : '#faf5ff' }}
                                     >
-                                        <option value="">Select Student</option>
+                                        <option value="">
+                                            {!selectedStepClassId ? 'Select Class' : availableStepStudents.length === 0 ? 'All Linked' : 'Select Student'}
+                                        </option>
                                         {availableStepStudents.map(s => (
                                             <option key={s.id} value={s.id}>{s.name} {s.rollNo ? `(#${s.rollNo})` : ''}</option>
                                         ))}
@@ -1400,6 +1514,8 @@ const Parents = () => {
 
     const [showAddParent, setShowAddParent] = useState(false);
     const [step, setStep] = useState(1);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editingId, setEditingId] = useState(null);
     const [isSubmittingParent, setIsSubmittingParent] = useState(false);
     const [showAddParentPassword, setShowAddParentPassword] = useState(false);
     const [newParent, setNewParent] = useState({
@@ -1555,25 +1671,55 @@ const Parents = () => {
         };
         fetchCounts();
 
-        // Listen for Parents
+        // Listen for Parents (with Ghost Parent Auto-Purge)
         const q = query(
             collection(db, `schools/${schoolId}/parents`),
             limit(parentLimit)
         );
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const parentsData = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
+            const validParents = [];
+            const ghostDocRefs = [];
+
+            snapshot.docs.forEach(docSnap => {
+                const data = docSnap.data();
+                const rawName = (data.name || data.fatherName || data.displayName || '').trim();
+                const isGenericName = !rawName || rawName.toLowerCase() === 'parent' || rawName.toLowerCase() === 'undefined' || rawName.toLowerCase() === 'null';
+                const phone = (data.phone || '').trim();
+                const email = (data.email || '').trim();
+                const linked = (data.linkedStudents && Array.isArray(data.linkedStudents) && data.linkedStudents.length > 0)
+                    ? data.linkedStudents.filter(s => s && s.studentId && (s.studentName || s.name))
+                    : [];
+
+                // Pure Ghost: no real name, no contact info, and no linked students
+                const isGhost = isGenericName && !phone && !email && linked.length === 0;
+
+                if (isGhost) {
+                    ghostDocRefs.push(docSnap.ref);
+                    return; // Purge ghost from UI view
+                }
+
+                validParents.push({
+                    id: docSnap.id,
                     ...data,
-                    name: data.name || data.fatherName || data.displayName || 'Parent'
-                };
+                    name: rawName || (linked.length > 0 ? 'Parent (Profile Incomplete)' : 'Parent'),
+                    linkedStudents: linked,
+                    isProfileIncomplete: isGenericName || (!phone && !email)
+                });
             });
-            setParents(parentsData);
+
+            // Automatically purge ghost parent docs natively from Firestore
+            if (ghostDocRefs.length > 0) {
+                console.log(`Ghost Buster: Auto-purging ${ghostDocRefs.length} ghost parent records from Firestore...`);
+                ghostDocRefs.forEach(ref => {
+                    deleteDoc(ref).catch(err => console.warn("Ghost parent purge error:", err));
+                });
+            }
+
+            setParents(validParents);
             setLoading(false);
 
             // Self-healing desync: If live parents count is 0, auto-heal atomic counter to 0
-            if (parentsData.length === 0) {
+            if (validParents.length === 0) {
                 setParentCount(0);
                 setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), {
                     parentCount: 0
@@ -1587,10 +1733,50 @@ const Parents = () => {
         return () => unsubscribe();
     }, [schoolId, parentLimit]);
 
-    // Fetch students when a class is selected
+    // Global Student-to-Parent Link Index
+    const [globalLinkedMap, setGlobalLinkedMap] = useState({});
+    const [hiddenStudentsCount, setHiddenStudentsCount] = useState(0);
+
+    const refreshGlobalLinks = React.useCallback(async () => {
+        if (!schoolId) return;
+        try {
+            const allParentsSnap = await getDocsFast(collection(db, `schools/${schoolId}/parents`));
+            const map = {};
+            allParentsSnap.docs.forEach(docSnap => {
+                const data = docSnap.data();
+                const parentId = docSnap.id;
+                const parentName = (data.name || data.fatherName || data.displayName || 'Parent').trim();
+                const parentPhone = (data.phone || '').trim();
+                if (data.linkedStudents && Array.isArray(data.linkedStudents)) {
+                    data.linkedStudents.forEach(st => {
+                        if (st && st.studentId) {
+                            map[st.studentId] = {
+                                parentId,
+                                parentName,
+                                parentPhone,
+                                className: st.className || ''
+                            };
+                        }
+                    });
+                }
+            });
+            setGlobalLinkedMap(map);
+        } catch (err) {
+            console.error("Error refreshing global parent-student links:", err);
+        }
+    }, [schoolId]);
+
+    useEffect(() => {
+        if (schoolId) {
+            refreshGlobalLinks();
+        }
+    }, [schoolId, parents, refreshGlobalLinks]);
+
+    // Fetch students when a class is selected (Hides already-linked students)
     useEffect(() => {
         if (!schoolId || !selectedClassId) {
             setAvailableStudents([]);
+            setHiddenStudentsCount(0);
             return;
         }
 
@@ -1598,18 +1784,44 @@ const Parents = () => {
             try {
                 const q = query(collection(db, `schools/${schoolId}/classes/${selectedClassId}/students`));
                 const snapshot = await getDocsFast(q);
-                const studentsList = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    name: doc.data().name || `${doc.data().firstName} ${doc.data().lastName}`,
-                    rollNo: doc.data().rollNo
-                }));
+                const studentsList = [];
+                let hiddenCount = 0;
+
+                snapshot.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    const sId = docSnap.id;
+                    const sName = data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim();
+                    if (!sName) return; // Skip ghost students
+
+                    // Check if already linked to another parent
+                    const linkedInfo = globalLinkedMap[sId];
+                    const directParentId = data.parentDetails?.parentId || data.parentId;
+                    const isLinkedToOther = (linkedInfo && linkedInfo.parentId && (!editingId || linkedInfo.parentId !== editingId)) ||
+                                            (directParentId && (!editingId || directParentId !== editingId));
+                    const isAlreadyInNewParent = newParent.linkedStudents.some(s => s.studentId === sId);
+
+                    if (isLinkedToOther) {
+                        hiddenCount++;
+                        return; // Hide student already linked to another parent
+                    }
+
+                    if (!isAlreadyInNewParent) {
+                        studentsList.push({
+                            id: sId,
+                            name: sName,
+                            rollNo: data.rollNo
+                        });
+                    }
+                });
+
                 setAvailableStudents(studentsList);
+                setHiddenStudentsCount(hiddenCount);
             } catch (err) {
                 console.error("Error fetching students:", err);
             }
         };
         fetchStudents();
-    }, [schoolId, selectedClassId]);
+    }, [schoolId, selectedClassId, globalLinkedMap, editingId, newParent.linkedStudents]);
 
     const handleAddStudentLink = () => {
         if (!selectedClassId || !selectedStudentId) return;
@@ -1643,10 +1855,7 @@ const Parents = () => {
             linkedStudents: prev.linkedStudents.filter(s => s.studentId !== studentId)
         }));
     };
-
-    const [isEditing, setIsEditing] = useState(false);
-    const [editingId, setEditingId] = useState(null);
-
+ 
     const handleUpdateParent = async (id, updatedData) => {
         try {
             const oldParent = parents.find(p => p.id === id);
@@ -1714,9 +1923,24 @@ const Parents = () => {
                 }
             }
 
-            // 3. Grant access to newly linked students (finds true location safely)
+            // 3. Grant access to newly linked students (finds true location safely and removes from any previous parent)
             for (const child of freshlyLinkedStudents) {
                 if (child.studentId) {
+                    const prevInfo = globalLinkedMap[child.studentId];
+                    if (prevInfo && prevInfo.parentId && prevInfo.parentId !== id) {
+                        try {
+                            const oldPRef = doc(db, `schools/${schoolId}/parents`, prevInfo.parentId);
+                            const oldPSnap = await getDoc(oldPRef);
+                            if (oldPSnap.exists()) {
+                                const oldLinks = oldPSnap.data().linkedStudents || [];
+                                const filteredOld = oldLinks.filter(s => s.studentId !== child.studentId);
+                                batch.update(oldPRef, { linkedStudents: filteredOld });
+                            }
+                        } catch (unlErr) {
+                            console.warn("Auto-unlink previous parent error:", unlErr);
+                        }
+                    }
+
                     const refs = getPossibleRefs(child);
                     const snaps = await Promise.all(refs.map(r => getDoc(r)));
                     snaps.forEach(snap => {
@@ -1728,6 +1952,7 @@ const Parents = () => {
             }
 
             await batch.commit();
+            refreshGlobalLinks();
         } catch (error) {
             console.error("Error updating parent:", error);
             alert("DB ERROR: " + error.message);
@@ -1839,6 +2064,21 @@ const Parents = () => {
                     };
                     for (const child of newParent.linkedStudents) {
                         if (child.studentId) {
+                            const prevInfo = globalLinkedMap[child.studentId];
+                            if (prevInfo && prevInfo.parentId && prevInfo.parentId !== result.data.uid) {
+                                try {
+                                    const oldPRef = doc(db, `schools/${activeSchoolId}/parents`, prevInfo.parentId);
+                                    const oldPSnap = await getDoc(oldPRef);
+                                    if (oldPSnap.exists()) {
+                                        const oldLinks = oldPSnap.data().linkedStudents || [];
+                                        const filteredOld = oldLinks.filter(s => s.studentId !== child.studentId);
+                                        batch.update(oldPRef, { linkedStudents: filteredOld });
+                                    }
+                                } catch (unlErr) {
+                                    console.warn("Auto-unlink previous parent error during add:", unlErr);
+                                }
+                            }
+
                             const refs = getPossibleRefs(child);
                             const snaps = await Promise.all(refs.map(r => getDoc(r)));
                             snaps.forEach(snap => {
@@ -1849,6 +2089,7 @@ const Parents = () => {
                         }
                     }
                     await batch.commit();
+                    refreshGlobalLinks();
                 }
 
                 setShowAddParent(false);
@@ -2221,6 +2462,30 @@ const Parents = () => {
                 )}
             </div>
 
+            {searchQuery && (
+                <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.6rem 1rem',
+                    background: '#ecfdf5',
+                    borderRadius: '10px',
+                    border: '1px solid #a7f3d0',
+                    color: '#065f46',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.5rem',
+                    flexWrap: 'wrap'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span>🔍 Showing results for <strong>"{searchQuery}"</strong> ({filteredParents.length} parent accounts found)</span>
+                    </div>
+                    <span style={{ fontSize: '0.75rem', color: '#047857', fontWeight: '600' }}>
+                        Matched students are highlighted in green
+                    </span>
+                </div>
+            )}
+
             {/* Parents Grid */}
             {loading ? (
                 <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
@@ -2251,6 +2516,8 @@ const Parents = () => {
                                     onSendMessage={handleSendMessage}
                                     dbClasses={dbClasses}
                                     schoolId={schoolId}
+                                    globalLinkedMap={globalLinkedMap}
+                                    searchQuery={searchQuery}
                                 />
                             ))}
                         </motion.div>
@@ -2299,6 +2566,7 @@ const Parents = () => {
                                                 schoolId={schoolId}
                                                 onEdit={(parent) => setEditingParentTable(parent)}
                                                 onMessage={(parent) => setMessagingParentTable(parent)}
+                                                searchQuery={searchQuery}
                                             />
                                         ))}
                                     </tbody>
@@ -2315,6 +2583,7 @@ const Parents = () => {
                     parent={editingParentTable}
                     dbClasses={dbClasses}
                     schoolId={schoolId}
+                    globalLinkedMap={globalLinkedMap}
                     onCancel={() => setEditingParentTable(null)}
                     onSave={handleUpdateParent}
                 />
@@ -2645,6 +2914,14 @@ const Parents = () => {
                                                 <Plus size={20} />
                                             </button>
                                         </div>
+
+                                        {selectedClassId && availableStudents.length === 0 && (
+                                            <div style={{ marginBottom: '0.75rem', fontSize: '0.75rem', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                <span style={{ background: '#fee2e2', padding: '0.2rem 0.5rem', borderRadius: '6px', fontWeight: '600' }}>
+                                                    ⚠️ All students in this class are already linked to parent accounts.
+                                                </span>
+                                            </div>
+                                        )}
 
                                         {/* Linked Students List */}
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
