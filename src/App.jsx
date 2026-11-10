@@ -27,7 +27,7 @@ const Users = lazy(() => import('./pages/Users'));
 const Inbox = lazy(() => import('./pages/Inbox'));
 const EditStudentProfile = lazy(() => import('./pages/EditStudentProfile'));
 const LiveSurveillance = lazy(() => import('./pages/LiveSurveillance'));
-const PaperGenerator = lazy(() => import('./pages/PaperGenerator'));
+const ExamPapersHub = lazy(() => import('./pages/ExamPapersHub'));
 const BoardTOSStudio = lazy(() => import('./pages/BoardTOSStudio'));
 const Exams = lazy(() => import('./pages/Exams'));
 const Store = lazy(() => import('./pages/Store'));
@@ -216,8 +216,13 @@ function App() {
                 </ProtectedRoute>
               } />
               <Route path="paper-generator" element={
-                <ProtectedRoute requiredPermission="canManagePaperGenerator" pageName="Paper Generator">
-                  <PaperGenerator />
+                <ProtectedRoute requiredPermission="canManagePaperGenerator" pageName="Exam Papers Hub">
+                  <ExamPapersHub />
+                </ProtectedRoute>
+              } />
+              <Route path="exam-papers" element={
+                <ProtectedRoute requiredPermission="canManagePaperGenerator" pageName="Exam Papers Hub">
+                  <ExamPapersHub />
                 </ProtectedRoute>
               } />
               <Route path="board-blueprints" element={
