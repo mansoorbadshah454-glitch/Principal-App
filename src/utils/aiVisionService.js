@@ -99,7 +99,7 @@ export const fetchSupportedModels = async (activeKey) => {
 /**
  * Executes a Gemini request strictly against verified, supported models.
  */
-const executeGeminiRequest = async (activeKey, payload) => {
+export const executeGeminiRequest = async (activeKey, payload) => {
     let candidateModels = [];
 
     if (cachedWorkingModel) {

@@ -14,11 +14,12 @@ import {
 import { calculateItemizedFeeBreakdown, MONTH_NAMES, MONTH_SHORT, formatPKR, isMonthKeySettled } from '../utils/feePipeline';
 import { cacheStudentsOffline, getCachedStudentsOffline } from '../utils/offlineFeeEngine';
 import { playShopifyChachingSound } from '../utils/audioAlerts';
+import { triggerAiAuditAndSync } from '../utils/aiReceiptClient';
 
 const ITEMS_PER_PAGE = 25;
 
 const OnlineSubmissionsDashboard = ({ 
-    schoolId, 
+    schoolId: propSchoolId, 
     schoolInfo, 
     classes = [], 
     feeSettings = {}, 
@@ -57,16 +58,37 @@ const OnlineSubmissionsDashboard = ({
     const [reuploadSub, setReuploadSub] = useState(null);
     const [reuploadNote, setReuploadNote] = useState('');
     const [processingId, setProcessingId] = useState(null);
+    const [partialConfirmSub, setPartialConfirmSub] = useState(null);
     const [isInjectingDemo, setIsInjectingDemo] = useState(false);
     const [copiedTrx, setCopiedTrx] = useState('');
+    const [aiScanningId, setAiScanningId] = useState(null);
+    const [aiScanError, setAiScanError] = useState(null);
+    const [expandedBreakdowns, setExpandedBreakdowns] = useState({});
 
-    // 🔒 Strict Gatekeeper: Demo Injection & Mock Slips are EXCLUSIVELY active for Demo Presentation Account (School ID: 6257)
-    // On ANY other school account, these buttons are 100% hidden and restricted.
+    // 🔒 Robust School ID Resolver with Fallback
+    const effectiveSchoolId = useMemo(() => {
+        if (propSchoolId) return String(propSchoolId).trim();
+        try {
+            const manual = localStorage.getItem('manual_session');
+            if (manual) {
+                const parsed = JSON.parse(manual);
+                if (parsed?.schoolId) return String(parsed.schoolId).trim();
+            }
+            const stored = localStorage.getItem('schoolId') || localStorage.getItem('currentSchoolId');
+            if (stored) return String(stored).trim();
+        } catch (_) {}
+        return '';
+    }, [propSchoolId]);
+
+    const schoolId = propSchoolId || effectiveSchoolId;
+
+    // 🔒 Strict Gatekeeper: Demo Injection & Mock Slips are active in Dev mode OR for Demo Presentation Account (School ID: 6257)
     const isDemoAccount = useMemo(() => {
-        const sId = String(schoolId || '').trim();
+        if (import.meta.env.DEV) return true;
+        const sId = String(effectiveSchoolId || schoolId || '').trim();
         const pId = String(schoolInfo?.schoolId || schoolInfo?.id || '').trim();
-        return sId === '6257' || pId === '6257' || sId.includes('6257') || pId.includes('6257');
-    }, [schoolId, schoolInfo]);
+        return sId === '6257' || pId === '6257' || sId.includes('6257') || pId.includes('6257') || sId.toLowerCase().includes('demo');
+    }, [effectiveSchoolId, schoolId, schoolInfo]);
 
     // Audio & Real-time Live Alert States
     const [audioEnabled, setAudioEnabled] = useState(true);
@@ -104,9 +126,14 @@ const OnlineSubmissionsDashboard = ({
 
     // Real-time listener for payment submissions
     useEffect(() => {
-        if (!schoolId) return;
+        const currentSid = effectiveSchoolId || schoolId;
+        if (!currentSid) {
+            // Unblock spinner if schoolId is not yet loaded
+            const timer = setTimeout(() => setLoading(false), 1200);
+            return () => clearTimeout(timer);
+        }
 
-        const subsRef = collection(db, `schools/${schoolId}/paymentSubmissions`);
+        const subsRef = collection(db, `schools/${currentSid}/paymentSubmissions`);
         const q = query(subsRef);
 
         const unsub = onSnapshot(q, (snapshot) => {
@@ -138,7 +165,7 @@ const OnlineSubmissionsDashboard = ({
         });
 
         return () => unsub();
-    }, [schoolId, audioEnabled]);
+    }, [effectiveSchoolId, schoolId, audioEnabled]);
 
     // ⚡ SUPER-FAST OFFLINE & MULTI-CLASS REALTIME STUDENT AGGREGATOR
     // 1. Instantly pull cached students from IndexedDB (0ms delay)
@@ -608,19 +635,39 @@ const OnlineSubmissionsDashboard = ({
     }, [filteredHistoryList, historyPage]);
 
     // Handle Approve (Executes Atomic Batch with Multi-Sibling Support)
-    const handleApprove = async (subToApprove) => {
+    const handleApprove = async (subToApprove, allowPartial = false) => {
         const sub = subToApprove || activeSub;
         if (!sub) return;
 
-        const payingStudents = resolvedFamilyStudents.filter(st => selectedSiblingsPayingMap[st.id] !== false);
-        const isMulti = payingStudents.length > 1;
-
-        const confirmMsg = isMulti
-            ? `Approve combined family fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${payingStudents.length} students (${payingStudents.map(s => s.name).join(', ')})?`
-            : `Approve fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${sub.studentName || payingStudents[0]?.name || 'Student'} (${sub.className || payingStudents[0]?.className || 'Class'})?`;
-
-        if (!window.confirm(confirmMsg)) {
+        if (sub.status === 'approved') {
+            alert("This payment submission has already been approved.");
             return;
+        }
+
+        const payingStudents = resolvedFamilyStudents.filter(st => selectedSiblingsPayingMap[st.id] !== false);
+        if (payingStudents.length === 0) {
+            alert("Please select at least one student from the family list to approve this fee payment.");
+            return;
+        }
+
+        const isMulti = payingStudents.length > 1;
+        const finalAmount = Number(sub.amount) || 0;
+        const isUnderpaid = totalCalculatedDue > 0 && finalAmount < totalCalculatedDue;
+
+        // 🛡️ Partial Payment Safeguard: Prompt cashier before proceeding with underpaid submission
+        if (isUnderpaid && !allowPartial) {
+            setPartialConfirmSub(sub);
+            return;
+        }
+
+        if (!allowPartial) {
+            const confirmMsg = isMulti
+                ? `Approve combined family fee payment of Rs. ${finalAmount.toLocaleString()} for ${payingStudents.length} students (${payingStudents.map(s => s.name).join(', ')})?`
+                : `Approve fee payment of Rs. ${finalAmount.toLocaleString()} for ${sub.studentName || payingStudents[0]?.name || 'Student'} (${sub.className || payingStudents[0]?.className || 'Class'})?`;
+
+            if (!window.confirm(confirmMsg)) {
+                return;
+            }
         }
 
         setProcessingId(sub.id);
@@ -628,7 +675,6 @@ const OnlineSubmissionsDashboard = ({
             const now = new Date();
             const nowIso = now.toISOString();
             const receiptNo = sub.transactionId ? `ONL-${sub.transactionId}` : `ONL-${Date.now().toString().slice(-6)}`;
-            const finalAmount = Number(sub.amount) || 0;
             const { monthKey, monthName } = parseMonthInfo(sub.month);
 
             const batch = writeBatch(db);
@@ -637,24 +683,31 @@ const OnlineSubmissionsDashboard = ({
             for (const st of payingStudents) {
                 const childSubtotal = Number(st.calculatedDue || st.subtotal || 0);
                 const classId = st.classId || sub.classId || '';
+                const childPaid = isMulti && totalCalculatedDue > 0 
+                    ? Math.round((childSubtotal / totalCalculatedDue) * finalAmount) 
+                    : finalAmount;
+                const childRemaining = Math.max(0, childSubtotal - childPaid);
+                const isChildPartial = childRemaining > 0;
+                const childStatus = isChildPartial ? 'partial' : 'paid';
 
                 const studentPayload = {
-                    monthlyFeeStatus: 'paid',
+                    monthlyFeeStatus: childStatus,
                     monthlyFeeDate: nowIso,
-                    paidMonths: arrayUnion(monthKey),
                     lastPaymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
                     lastReceiptNo: receiptNo,
-                    lastPaymentAmount: isMulti && totalCalculatedDue > 0 ? Math.round((childSubtotal / totalCalculatedDue) * finalAmount) : finalAmount,
+                    lastPaymentAmount: childPaid,
                     lastPaymentProofUrl: sub.proofUrl || null,
                     pendingPaymentSubmission: {
                         status: 'approved',
                         approvedAt: nowIso,
-                        receiptNo
+                        receiptNo,
+                        isPartial: isChildPartial,
+                        remainingBalance: childRemaining
                     },
                     [`monthlyFeeHistory.${monthKey}`]: {
-                        status: 'paid',
-                        paidAmount: isMulti && totalCalculatedDue > 0 ? Math.round((childSubtotal / totalCalculatedDue) * finalAmount) : finalAmount,
-                        remainingBalance: 0,
+                        status: childStatus,
+                        paidAmount: childPaid,
+                        remainingBalance: childRemaining,
                         paidAt: nowIso,
                         receiptNo,
                         paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
@@ -664,6 +717,11 @@ const OnlineSubmissionsDashboard = ({
                         monthName
                     }
                 };
+
+                // Only register full month settlement in paidMonths if 100% paid
+                if (!isChildPartial) {
+                    studentPayload.paidMonths = arrayUnion(monthKey);
+                }
 
                 // Clear store purchases for this month if any
                 if (Array.isArray(st.storePurchases)) {
@@ -709,17 +767,25 @@ const OnlineSubmissionsDashboard = ({
             }
 
             // 2. Create Master Fee Transaction record
+            const shortAmt = Math.max(0, totalCalculatedDue - finalAmount);
             const transactionRecord = {
                 receiptNo,
                 isFamilyCombined: isMulti,
-                familyStudents: payingStudents.map(s => ({
-                    studentId: s.id,
-                    studentName: s.name,
-                    className: s.className,
-                    classId: s.classId || '',
-                    rollNo: s.rollNo || '',
-                    subtotal: s.calculatedDue || 0
-                })),
+                familyStudents: payingStudents.map(s => {
+                    const cSub = Number(s.calculatedDue || s.subtotal || 0);
+                    const cPaid = isMulti && totalCalculatedDue > 0 ? Math.round((cSub / totalCalculatedDue) * finalAmount) : finalAmount;
+                    return {
+                        studentId: s.id,
+                        studentName: s.name,
+                        className: s.className,
+                        classId: s.classId || '',
+                        rollNo: s.rollNo || '',
+                        subtotal: cSub,
+                        paidAmount: cPaid,
+                        remainingBalance: Math.max(0, cSub - cPaid),
+                        status: cSub > cPaid ? 'partial' : 'paid'
+                    };
+                }),
                 studentId: payingStudents[0]?.id || sub.studentId || '',
                 studentName: isMulti ? `Family of ${sub.parentName || payingStudents[0]?.fatherName || 'Parent'} (${payingStudents.length} Students)` : (sub.studentName || payingStudents[0]?.name || 'Student'),
                 rollNo: isMulti ? '-' : (sub.rollNo || payingStudents[0]?.rollNo || 'N/A'),
@@ -729,12 +795,15 @@ const OnlineSubmissionsDashboard = ({
                 fatherPhone: sub.parentPhone || payingStudents[0]?.fatherPhone || '',
                 paidCategories: ['tuition', 'transport', 'action', 'store'],
                 totalPaid: finalAmount,
+                totalDue: totalCalculatedDue,
+                remainingBalance: shortAmt,
+                isPartial: isUnderpaid,
                 targetMonth: monthName,
                 targetMonthKey: monthKey,
                 paymentMode: `Online - ${sub.paymentMethod || 'Transfer'}`,
                 proofUrl: sub.proofUrl || null,
                 transactionId: sub.transactionId || null,
-                status: 'paid',
+                status: isUnderpaid ? 'partial' : 'paid',
                 cashier: 'Online Verification Studio',
                 schoolId,
                 timestamp: serverTimestamp(),
@@ -750,6 +819,9 @@ const OnlineSubmissionsDashboard = ({
                 status: 'approved',
                 approvedAt: nowIso,
                 receiptNo,
+                isPartial: isUnderpaid,
+                paidAmount: finalAmount,
+                remainingBalance: shortAmt,
                 approvedSiblings: payingStudents.map(s => ({ studentId: s.id, studentName: s.name, className: s.className }))
             });
 
@@ -779,8 +851,10 @@ const OnlineSubmissionsDashboard = ({
                     id: notifRef.id,
                     parentId: sub.parentId,
                     studentId: sub.studentId || null,
-                    title: 'Fee Payment Approved ✓',
-                    message: `Your fee payment of Rs. ${Number(sub.amount || 0).toLocaleString()} for ${monthName || sub.month || 'Fee'} has been approved and verified by the school administration. Receipt: ${receiptNo}`,
+                    title: isUnderpaid ? 'Partial Fee Payment Approved ✓' : 'Fee Payment Approved ✓',
+                    message: isUnderpaid
+                        ? `Your partial fee payment of Rs. ${finalAmount.toLocaleString()} for ${monthName || sub.month || 'Fee'} has been recorded. Outstanding balance of Rs. ${shortAmt.toLocaleString()} remains due in your ledger. Receipt: ${receiptNo}`
+                        : `Your fee payment of Rs. ${finalAmount.toLocaleString()} for ${monthName || sub.month || 'Fee'} has been approved and verified by the school administration. Receipt: ${receiptNo}`,
                     type: 'fee',
                     read: false,
                     createdAt: serverTimestamp()
@@ -800,6 +874,11 @@ const OnlineSubmissionsDashboard = ({
     // Handle Reject
     const confirmReject = async () => {
         if (!rejectingSub) return;
+        if (rejectingSub.status === 'approved') {
+            alert("Cannot reject an already approved submission.");
+            setRejectingSub(null);
+            return;
+        }
 
         setProcessingId(rejectingSub.id);
         try {
@@ -870,6 +949,11 @@ const OnlineSubmissionsDashboard = ({
     // Handle Request Re-upload
     const confirmRequestReupload = async () => {
         if (!reuploadSub) return;
+        if (reuploadSub.status === 'approved') {
+            alert("Cannot request re-upload for an already approved submission.");
+            setReuploadSub(null);
+            return;
+        }
 
         setProcessingId(reuploadSub.id);
         try {
@@ -921,6 +1005,48 @@ const OnlineSubmissionsDashboard = ({
             alert("Failed to request re-upload: " + err.message);
         } finally {
             setProcessingId(null);
+        }
+    };
+
+    // =========================================================================
+    // 🧠 AI SLIP AUDITOR & ANTI-FRAUD VERIFIER ACTIONS
+    // =========================================================================
+    const handleTriggerAiScan = async (subToScan) => {
+        const sub = subToScan || activeSub;
+        if (!sub || !sub.proofUrl) {
+            alert("No payment slip image found to scan.");
+            return;
+        }
+        setAiScanningId(sub.id);
+        setAiScanError(null);
+        try {
+            await triggerAiAuditAndSync(schoolId, sub.id, sub.proofUrl, sub);
+        } catch (err) {
+            console.error("AI Slip Scan error:", err);
+            setAiScanError(err.message || "Failed to scan slip with AI.");
+            alert("AI Scan Notice: " + (err.message || "Failed to scan slip."));
+        } finally {
+            setAiScanningId(null);
+        }
+    };
+
+    const handleAutoReuploadFromAi = (sub) => {
+        if (!sub) return;
+        const reason = sub.aiScan?.unmatchedReason || "AI Slip Auditor: The uploaded image is not a recognized bank deposit slip or transaction receipt. Please upload a clear original payment receipt screenshot/photo.";
+        setReuploadNote(reason);
+        setReuploadSub(sub);
+    };
+
+    const handleApplyAiTrx = async (sub, detectedTrx) => {
+        if (!sub || !detectedTrx) return;
+        try {
+            const subDocRef = doc(db, `schools/${schoolId}/paymentSubmissions`, sub.id);
+            await updateDoc(subDocRef, {
+                transactionId: detectedTrx
+            });
+        } catch (err) {
+            console.error("Error applying AI TRX ID:", err);
+            alert("Failed to update TRX ID: " + err.message);
         }
     };
 
@@ -1040,43 +1166,107 @@ const OnlineSubmissionsDashboard = ({
     ];
 
     const createMockSlipDataUrl = (studentName, amount, trxId, method) => {
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="850" viewBox="0 0 600 850">
-            <rect width="600" height="850" fill="#f8fafc" rx="20"/>
-            <rect width="600" height="150" fill="#065f46" rx="20"/>
-            <text x="300" y="60" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle">TRANSACTION RECEIPT</text>
-            <text x="300" y="100" font-family="Arial, sans-serif" font-size="16" fill="#a7f3d0" text-anchor="middle">Official Payment Proof • Verified Channel</text>
-            <circle cx="300" cy="210" r="45" fill="#ecfdf5" stroke="#10b981" stroke-width="4"/>
-            <text x="300" y="222" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#059669" text-anchor="middle">✓</text>
-            <text x="300" y="290" font-family="Arial, sans-serif" font-size="15" fill="#64748b" text-anchor="middle">Amount Paid</text>
-            <text x="300" y="335" font-family="Arial, sans-serif" font-size="36" font-weight="900" fill="#0f172a" text-anchor="middle">PKR ${Number(amount).toLocaleString()}</text>
-            <rect x="40" y="370" width="520" height="360" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
-            <text x="70" y="420" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Student / Family:</text>
-            <text x="530" y="420" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#0f172a" text-anchor="end">${studentName}</text>
-            <line x1="70" y1="440" x2="530" y2="440" stroke="#f1f5f9" stroke-width="1.5"/>
-            <text x="70" y="480" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Payment Channel:</text>
-            <text x="530" y="480" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#047857" text-anchor="end">${method}</text>
-            <line x1="70" y1="500" x2="530" y2="500" stroke="#f1f5f9" stroke-width="1.5"/>
-            <text x="70" y="540" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Transaction ID (TRX):</text>
-            <text x="530" y="540" font-family="Courier, monospace" font-size="16" font-weight="bold" fill="#1e293b" text-anchor="end">${trxId}</text>
-            <line x1="70" y1="560" x2="530" y2="560" stroke="#f1f5f9" stroke-width="1.5"/>
-            <text x="70" y="600" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Fee Month:</text>
-            <text x="530" y="600" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#4338ca" text-anchor="end">October 2026</text>
-            <line x1="70" y1="620" x2="530" y2="620" stroke="#f1f5f9" stroke-width="1.5"/>
-            <text x="70" y="660" font-family="Arial, sans-serif" font-size="14" fill="#64748b">Verification Status:</text>
-            <text x="530" y="660" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#16a34a" text-anchor="end">SUCCESSFUL (PENDING APPROVAL)</text>
-            <line x1="70" y1="680" x2="530" y2="680" stroke="#f1f5f9" stroke-width="1.5"/>
-            <text x="300" y="780" font-family="Arial, sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">Official Slip Uploaded by Parent via Mobile App</text>
-        </svg>`;
-        return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 600;
+            canvas.height = 850;
+            const ctx = canvas.getContext('2d');
+
+            // Background
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(0, 0, 600, 850);
+
+            // Header Banner
+            const isEasyPaisa = String(method).toLowerCase().includes('easypaisa');
+            const isJazzCash = String(method).toLowerCase().includes('jazzcash');
+            ctx.fillStyle = isEasyPaisa ? '#059669' : (isJazzCash ? '#b91c1c' : '#1e3a8a');
+            ctx.fillRect(0, 0, 600, 150);
+
+            // Header Title
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 24px Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(isEasyPaisa ? 'EASYPAISA PAYMENT' : (isJazzCash ? 'JAZZCASH RECEIPT' : 'BANK TRANSFER SLIP'), 300, 60);
+
+            ctx.fillStyle = '#e2e8f0';
+            ctx.font = '15px Arial, sans-serif';
+            ctx.fillText('Official School Fee Transfer Proof', 300, 95);
+
+            // Success Circle
+            ctx.beginPath();
+            ctx.arc(300, 210, 42, 0, 2 * Math.PI);
+            ctx.fillStyle = '#ecfdf5';
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#10b981';
+            ctx.stroke();
+
+            ctx.fillStyle = '#059669';
+            ctx.font = 'bold 36px Arial, sans-serif';
+            ctx.fillText('✓', 300, 222);
+
+            // Amount Label & Value
+            ctx.fillStyle = '#64748b';
+            ctx.font = '14px Arial, sans-serif';
+            ctx.fillText('Amount Paid to School', 300, 285);
+
+            ctx.fillStyle = '#0f172a';
+            ctx.font = '900 34px Arial, sans-serif';
+            ctx.fillText(`PKR ${Number(amount).toLocaleString()}`, 300, 330);
+
+            // Receipt Details Card
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#e2e8f0';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(40, 365, 520, 360);
+            ctx.strokeRect(40, 365, 520, 360);
+
+            const drawRow = (label, value, y, valColor = '#0f172a', isMono = false) => {
+                ctx.textAlign = 'left';
+                ctx.fillStyle = '#64748b';
+                ctx.font = '14px Arial, sans-serif';
+                ctx.fillText(label, 70, y);
+
+                ctx.textAlign = 'right';
+                ctx.fillStyle = valColor;
+                ctx.font = isMono ? 'bold 15px monospace' : 'bold 15px Arial, sans-serif';
+                ctx.fillText(value, 530, y);
+
+                ctx.strokeStyle = '#f1f5f9';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(70, y + 20);
+                ctx.lineTo(530, y + 20);
+                ctx.stroke();
+            };
+
+            drawRow('Student Name:', studentName, 415);
+            drawRow('Payment Channel:', method, 470, '#047857');
+            drawRow('Transaction ID (TRX):', trxId, 525, '#0284c7', true);
+            drawRow('Paid To Account:', 'The Smart School A/C', 580);
+            drawRow('Fee Billing Month:', 'October 2026', 635, '#4f46e5');
+            drawRow('Status:', 'TRANSACTION SUCCESSFUL', 690, '#16a34a');
+
+            // Footer
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px Arial, sans-serif';
+            ctx.fillText('Official Electronic Payment Slip • MAI School System', 300, 785);
+
+            return canvas.toDataURL('image/jpeg', 0.9);
+        } catch (_) {
+            return '';
+        }
     };
 
     const handleInjectDemoData = async () => {
-        if (!schoolId) {
+        const currentSid = effectiveSchoolId || schoolId;
+        if (!currentSid) {
             alert("School ID is missing.");
             return;
         }
         if (!isDemoAccount) {
-            alert("Restricted: Demo data injection is only available for Demo Presentation Account 6257.");
+            alert("Restricted: Demo data injection is only available for Demo Presentation Account 6257 or Dev environment.");
             return;
         }
         setIsInjectingDemo(true);
@@ -1085,9 +1275,75 @@ const OnlineSubmissionsDashboard = ({
             const now = Date.now();
 
             MOCK_DEMO_SLIPS.forEach((item, index) => {
-                const subDocRef = doc(collection(db, `schools/${schoolId}/paymentSubmissions`));
+                const subDocRef = doc(collection(db, `schools/${currentSid}/paymentSubmissions`));
                 const trxId = item.method.includes('EasyPaisa') ? `EP-${Math.floor(1000000000 + Math.random() * 9000000000)}` : (item.method.includes('JazzCash') ? `JC-${Math.floor(1000000000 + Math.random() * 9000000000)}` : `BNK-${Math.floor(100000000 + Math.random() * 900000000)}`);
                 const submittedAt = new Date(now - (index * 12 * 60 * 1000)).toISOString();
+
+                let demoAiScan = null;
+                if (index === 0) {
+                    demoAiScan = {
+                        status: 'completed',
+                        isValidReceipt: true,
+                        detectedAmount: item.amount,
+                        detectedTrxId: trxId,
+                        paymentChannel: 'EasyPaisa',
+                        receiverTitle: 'The Smart School',
+                        senderName: item.father,
+                        detectedDate: '2026-10-15',
+                        confidenceScore: 0.99
+                    };
+                } else if (index === 1) {
+                    demoAiScan = {
+                        status: 'completed',
+                        isValidReceipt: true,
+                        detectedAmount: item.amount,
+                        detectedTrxId: trxId,
+                        paymentChannel: 'JazzCash',
+                        receiverTitle: 'Official School A/C',
+                        senderName: item.father,
+                        detectedDate: '2026-10-15',
+                        confidenceScore: 0.97
+                    };
+                } else if (index === 2) {
+                    // Demo of Wrong / Unmatched Image
+                    demoAiScan = {
+                        status: 'unmatched_image',
+                        isValidReceipt: false,
+                        unmatchedReason: 'The uploaded file is a personal photo/landscape, not an official bank deposit or transfer slip.',
+                        confidenceScore: 0.12
+                    };
+                } else if (index === 3) {
+                    // 100% Exact Match Demo for Zainab Bibi
+                    demoAiScan = {
+                        status: 'completed',
+                        isValidReceipt: true,
+                        detectedAmount: item.amount,
+                        detectedTrxId: trxId,
+                        paymentChannel: 'EasyPaisa',
+                        receiverTitle: 'The Smart School',
+                        senderName: item.father,
+                        detectedDate: '2026-10-15',
+                        confidenceScore: 0.99
+                    };
+                } else if (index === 4) {
+                    // Demo of Real Tampering Discrepancy: Parent typed 8,000 in form, but uploaded a 5,000 slip!
+                    demoAiScan = {
+                        status: 'completed',
+                        isValidReceipt: true,
+                        detectedAmount: 5000,
+                        detectedTrxId: trxId,
+                        paymentChannel: 'JazzCash',
+                        receiverTitle: 'The Smart School',
+                        senderName: item.father,
+                        detectedDate: '2026-10-14',
+                        confidenceScore: 0.96
+                    };
+                }
+
+                // Ensure the drawn slip image strictly matches the AI scan amount (e.g. 5,000 for tampering demo)
+                const slipAmountToDraw = (demoAiScan && demoAiScan.detectedAmount !== null && demoAiScan.detectedAmount !== undefined) 
+                    ? demoAiScan.detectedAmount 
+                    : item.amount;
 
                 const payload = {
                     id: subDocRef.id,
@@ -1115,7 +1371,8 @@ const OnlineSubmissionsDashboard = ({
                     createdAt: submittedAt,
                     isFamilyCombined: Boolean(item.isFamilyCombined),
                     familyStudents: item.familyStudents || null,
-                    proofUrl: createMockSlipDataUrl(item.student, item.amount, trxId, item.method),
+                    proofUrl: createMockSlipDataUrl(item.student, slipAmountToDraw, trxId, item.method),
+                    aiScan: demoAiScan,
                     notes: 'Demo slip generated for preview and layout inspection'
                 };
 
@@ -1132,7 +1389,8 @@ const OnlineSubmissionsDashboard = ({
     };
 
     const handleClearDemoData = async () => {
-        if (!schoolId) return;
+        const currentSid = effectiveSchoolId || schoolId;
+        if (!currentSid) return;
         if (!window.confirm("Are you sure you want to delete all injected demo slips?")) return;
 
         setIsInjectingDemo(true);
@@ -1145,7 +1403,7 @@ const OnlineSubmissionsDashboard = ({
 
             const batch = writeBatch(db);
             demoSubs.forEach(s => {
-                const ref = doc(db, `schools/${schoolId}/paymentSubmissions`, s.id);
+                const ref = doc(db, `schools/${currentSid}/paymentSubmissions`, s.id);
                 batch.delete(ref);
             });
 
@@ -1883,22 +2141,56 @@ const OnlineSubmissionsDashboard = ({
                                             </div>
                                         </div>
 
-                                        {/* Sibling Students List with Offline Fee Counter Style Categorized Breakdown */}
-                                        <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#334155', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                    <FileCheck size={16} color="#7c3aed" />
-                                                    <span>Enrolled Children & Itemized Calculations</span>
+                                        {/* Reconciliation Match Card (Moved to TOP for instant Cashier Glance) */}
+                                        <div style={{ padding: '0.85rem 1.25rem', borderBottom: '1px solid #e2e8f0', background: isExactMatch ? '#f0fdf4' : (discrepancy < 0 ? '#fef2f2' : '#eff6ff') }}>
+                                            <div style={{
+                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem'
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    {isExactMatch ? (
+                                                        <CheckCircle2 size={20} color="#059669" />
+                                                    ) : (
+                                                        <AlertCircle size={20} color={discrepancy < 0 ? '#dc2626' : '#2563eb'} />
+                                                    )}
+                                                    <div>
+                                                        <div style={{
+                                                            fontSize: '0.86rem', fontWeight: '900',
+                                                            color: isExactMatch ? '#065f46' : (discrepancy < 0 ? '#991b1b' : '#1e40af')
+                                                        }}>
+                                                            {isExactMatch ? 'Exact 100% Match (Zero Discrepancy)' : (discrepancy < 0 ? `Short by Rs. ${Math.abs(discrepancy).toLocaleString()}` : `Excess Rs. ${discrepancy.toLocaleString()}`)}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.72rem', color: isExactMatch ? '#047857' : (discrepancy < 0 ? '#b91c1c' : '#1d4ed8') }}>
+                                                            {isExactMatch ? 'Calculated fee matches bank slip amount perfectly' : (discrepancy < 0 ? 'Slip amount is less than total dues' : 'Slip amount includes advance / credit balance')}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <span style={{ fontSize: '0.68rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '800' }}>Calculated Dues</span>
+                                                    <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a' }}>
+                                                        Rs. {Number(totalCalculatedDue || 0).toLocaleString()}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Sibling Students List: High-Speed POS Compact Table */}
+                                        <div style={{
+                                            padding: '0.85rem 1.25rem',
+                                            display: 'flex', flexDirection: 'column', gap: '0.65rem',
+                                            maxHeight: '420px', overflowY: 'auto'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.15rem' }}>
+                                                <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                    <FileCheck size={14} color="#7c3aed" />
+                                                    <span>Enrolled Children ({resolvedFamilyStudents.length})</span>
                                                 </span>
-                                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                                    Target children are locked • Siblings can be added
+                                                <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                                    Checkbox to include/exclude siblings
                                                 </span>
                                             </div>
 
                                             {resolvedFamilyStudents.map((st) => {
-                                                // 🔒 SMART LOCKING LOGIC:
-                                                // If Family combined: All students submitted in family are LOCKED
-                                                // If Single payment: Target student is LOCKED
                                                 const isSubmittedInSlip = activeSub.isFamilyCombined
                                                     ? Boolean(activeSub.familyStudents?.some(fs => fs.studentId === st.id))
                                                     : (st.id === activeSub.studentId);
@@ -1906,239 +2198,149 @@ const OnlineSubmissionsDashboard = ({
                                                 const isLocked = isSubmittedInSlip || st.isSettled;
                                                 const isPaying = isSubmittedInSlip ? true : (selectedSiblingsPayingMap[st.id] !== false);
                                                 const bd = st.breakdown || {};
+                                                const isExpanded = Boolean(expandedBreakdowns[st.id]);
+
+                                                const tuitionAmt = Number(bd.tuitionPayable || bd.baseTuition || st.monthlyFee || (st.calculatedDue - (bd.transportFee || 0) - (bd.storeDues || 0) - (bd.actionFee || 0)) || 0);
+                                                const transportAmt = Number(bd.transportFee || st.transportFee || 0);
+                                                const storeAmt = Number(bd.storeDues || st.storeDues || 0);
+                                                const actionAmt = Number(bd.actionFee || st.actionFee || 0);
+                                                const recurringAmt = Array.isArray(bd.recurringItems) ? bd.recurringItems.reduce((s, i) => s + (Number(i.amount) || 0), 0) : 0;
+                                                const fineAmt = Number(bd.penaltyFine || 0);
+
+                                                const hasDetails = (Array.isArray(bd.storePurchases) && bd.storePurchases.length > 0) || (Array.isArray(bd.actions) && bd.actions.length > 0) || (Array.isArray(bd.recurringItems) && bd.recurringItems.length > 0);
 
                                                 return (
                                                     <div
                                                         key={st.id}
                                                         style={{
-                                                            background: isPaying ? '#ffffff' : (st.isSettled ? '#f0fdf4' : '#f8fafc'),
-                                                            borderRadius: '16px',
-                                                            border: isPaying ? '1.5px solid #a855f7' : (st.isSettled ? '1px solid #bbf7d0' : '1px solid #e2e8f0'),
-                                                            boxShadow: isPaying ? '0 4px 12px rgba(168, 85, 247, 0.08)' : 'none',
-                                                            padding: '1.1rem',
-                                                            transition: 'all 0.15s'
+                                                            background: isPaying ? '#ffffff' : (st.isSettled ? '#f8fafc' : '#f8fafc'),
+                                                            borderRadius: '12px',
+                                                            border: isPaying ? '1.5px solid #c084fc' : (st.isSettled ? '1px solid #bbf7d0' : '1px solid #e2e8f0'),
+                                                            boxShadow: isPaying ? '0 2px 6px rgba(192, 132, 252, 0.08)' : 'none',
+                                                            padding: '0.65rem 0.85rem',
+                                                            transition: 'all 0.15s ease'
                                                         }}
                                                     >
-                                                        {/* Student Card Top Bar */}
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                        {/* Top Row: Checkbox, Name, Class & Roll, Total Due */}
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
                                                                 <input
                                                                     type="checkbox"
                                                                     checked={isPaying}
                                                                     disabled={isLocked}
                                                                     onChange={() => {
-                                                                        if (!isLocked) {
-                                                                            toggleSiblingPaying(st.id);
-                                                                        }
+                                                                        if (!isLocked) toggleSiblingPaying(st.id);
                                                                     }}
                                                                     style={{
-                                                                        width: '18px', height: '18px',
+                                                                        width: '16px', height: '16px',
                                                                         cursor: isLocked ? 'not-allowed' : 'pointer',
-                                                                        accentColor: '#7c3aed', opacity: isLocked ? 0.85 : 1
+                                                                        accentColor: '#7c3aed'
                                                                     }}
                                                                 />
                                                                 <div>
-                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
-                                                                        <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: '900', color: isPaying ? '#4c1d95' : '#334155' }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                                                                        <span style={{ fontSize: '0.92rem', fontWeight: '900', color: isPaying ? '#4c1d95' : '#334155' }}>
                                                                             {st.name}
-                                                                        </h4>
+                                                                        </span>
+                                                                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                                                            ({st.className} {st.rollNo ? `• #${st.rollNo}` : ''})
+                                                                        </span>
                                                                         {isSubmittedInSlip ? (
-                                                                            <span style={{
-                                                                                background: '#f3e8ff', color: '#7e22ce', padding: '2px 8px',
-                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900', border: '1px solid #d8b4fe'
-                                                                            }}>
-                                                                                🔒 Submitted in Slip (Locked)
+                                                                            <span style={{ fontSize: '0.65rem', fontWeight: '800', background: '#f3e8ff', color: '#7e22ce', padding: '1px 6px', borderRadius: '4px', border: '1px solid #d8b4fe' }}>
+                                                                                Target Child
                                                                             </span>
                                                                         ) : st.isSettled ? (
-                                                                            <span style={{
-                                                                                background: '#dcfce7', color: '#15803d', padding: '2px 8px',
-                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800', border: '1px solid #bbf7d0'
-                                                                            }}>
-                                                                                🟢 Already Settled ✓
+                                                                            <span style={{ fontSize: '0.65rem', fontWeight: '800', background: '#dcfce7', color: '#15803d', padding: '1px 6px', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
+                                                                                Settled ✓
                                                                             </span>
-                                                                        ) : isPaying ? (
-                                                                            <span style={{
-                                                                                background: '#eff6ff', color: '#2563eb', padding: '2px 8px',
-                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800', border: '1px solid #bfdbfe'
-                                                                            }}>
-                                                                                ⚡ Added by Cashier
-                                                                            </span>
-                                                                        ) : (
-                                                                            <span style={{
-                                                                                background: '#fee2e2', color: '#b91c1c', padding: '2px 8px',
-                                                                                borderRadius: '6px', fontSize: '0.7rem', fontWeight: '800', border: '1px solid #fecaca'
-                                                                            }}>
-                                                                                🔴 Unpaid (Excluded)
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.2rem' }}>
-                                                                        Class: <strong style={{ color: '#1e293b' }}>{st.className}</strong> • Roll: <strong style={{ color: '#1e293b' }}>{st.rollNo || 'N/A'}</strong>
+                                                                        ) : null}
                                                                     </div>
                                                                 </div>
                                                             </div>
 
-                                                            <div style={{ textAlign: 'right' }}>
-                                                                <span style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Calculated Due</span>
-                                                                <div style={{ fontSize: '1.15rem', fontWeight: '900', color: isPaying ? '#6b21a8' : '#64748b' }}>
-                                                                    Rs. {Number(st.calculatedDue || 0).toLocaleString()}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* 📊 Offline Fee Counter Style Itemized Categorized Breakdown */}
-                                                        {isPaying && (
-                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.65rem' }}>
-                                                                
-                                                                {/* 1. Tuition & Base Fee */}
-                                                                <div style={{
-                                                                    background: '#eff6ff', borderRadius: '10px',
-                                                                    border: '1px solid #bfdbfe', padding: '0.65rem 0.85rem',
-                                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem'
-                                                                }}>
-                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                                        <span style={{ fontSize: '1rem' }}>🎓</span>
-                                                                        <div>
-                                                                            <strong style={{ color: '#1e40af' }}>Monthly Tuition Fee</strong>
-                                                                            {bd.isScholarship && (
-                                                                                <span style={{ marginLeft: '0.4rem', background: '#dcfce7', color: '#166534', padding: '1px 5px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800' }}>
-                                                                                    {bd.concessionType || 'Scholarship'} Applied
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                    <strong style={{ color: '#1e3a8a', fontSize: '0.9rem' }}>
-                                                                        Rs. {Number(bd.tuitionPayable || bd.baseTuition || st.monthlyFee || (st.calculatedDue - (bd.transportFee || 0) - (bd.storeDues || 0) - (bd.actionFee || 0)) || 0).toLocaleString()}
-                                                                    </strong>
-                                                                </div>
-
-                                                                {/* 2. Transport Fee if any */}
-                                                                {Number(bd.transportFee || st.transportFee || 0) > 0 && (
-                                                                    <div style={{
-                                                                        background: '#fefce8', borderRadius: '10px',
-                                                                        border: '1px solid #fef08a', padding: '0.65rem 0.85rem',
-                                                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem'
-                                                                    }}>
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                                            <span style={{ fontSize: '1rem' }}>🚌</span>
-                                                                            <strong style={{ color: '#854d0e' }}>Transport Charges</strong>
-                                                                        </div>
-                                                                        <strong style={{ color: '#713f12', fontSize: '0.9rem' }}>
-                                                                            Rs. {Number(bd.transportFee || st.transportFee).toLocaleString()}
-                                                                        </strong>
-                                                                    </div>
-                                                                )}
-
-                                                                {/* 3. Store Purchases / Uniform / Books if any */}
-                                                                {Number(bd.storeDues || st.storeDues || 0) > 0 && (
-                                                                    <div style={{
-                                                                        background: '#faf5ff', borderRadius: '10px',
-                                                                        border: '1px solid #e9d5ff', padding: '0.65rem 0.85rem',
-                                                                        fontSize: '0.8rem'
-                                                                    }}>
-                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                                                <span style={{ fontSize: '1rem' }}>🛍️</span>
-                                                                                <strong style={{ color: '#6b21a8' }}>Store / Uniform & Books</strong>
-                                                                            </div>
-                                                                            <strong style={{ color: '#581c87', fontSize: '0.9rem' }}>
-                                                                                Rs. {Number(bd.storeDues || st.storeDues).toLocaleString()}
-                                                                            </strong>
-                                                                        </div>
-                                                                        {Array.isArray(bd.storePurchases) && bd.storePurchases.length > 0 && (
-                                                                            <div style={{ fontSize: '0.74rem', color: '#7e22ce', paddingLeft: '1.4rem' }}>
-                                                                                {bd.storePurchases.map((sp, idx) => (
-                                                                                    <span key={idx} style={{ marginRight: '0.6rem' }}>
-                                                                                        • {sp.title || sp.name || sp.item || 'Item'} (Rs. {Number(sp.amount || 0).toLocaleString()})
-                                                                                    </span>
-                                                                                ))}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                )}
-
-                                                                {/* 4. Exams & Action Charges if any */}
-                                                                {Number(bd.actionFee || st.actionFee || 0) > 0 && (
-                                                                    <div style={{
-                                                                        background: '#f0fdf4', borderRadius: '10px',
-                                                                        border: '1px solid #bbf7d0', padding: '0.65rem 0.85rem',
-                                                                        fontSize: '0.8rem'
-                                                                    }}>
-                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                                                <span style={{ fontSize: '1rem' }}>📝</span>
-                                                                                <strong style={{ color: '#166534' }}>Exams & Special Charges</strong>
-                                                                            </div>
-                                                                            <strong style={{ color: '#14532d', fontSize: '0.9rem' }}>
-                                                                                Rs. {Number(bd.actionFee || st.actionFee).toLocaleString()}
-                                                                            </strong>
-                                                                        </div>
-                                                                        {Array.isArray(bd.actions) && bd.actions.length > 0 && (
-                                                                            <div style={{ fontSize: '0.74rem', color: '#15803d', paddingLeft: '1.4rem' }}>
-                                                                                {bd.actions.map((act, idx) => (
-                                                                                    <span key={idx} style={{ marginRight: '0.6rem' }}>
-                                                                                        • {act.name || act.title || 'Charge'} (Rs. {Number(act.amount || 0).toLocaleString()})
-                                                                                    </span>
-                                                                                ))}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                )}
-
-                                                                {/* 4.1 Other Recurring / Custom Items if any */}
-                                                                {Array.isArray(bd.recurringItems) && bd.recurringItems.length > 0 && (
-                                                                    <div style={{
-                                                                        background: '#f8fafc', borderRadius: '10px',
-                                                                        border: '1px solid #e2e8f0', padding: '0.65rem 0.85rem',
-                                                                        fontSize: '0.8rem'
-                                                                    }}>
-                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                                                <span style={{ fontSize: '1rem' }}>💻</span>
-                                                                                <strong style={{ color: '#334155' }}>Other Charges & Services</strong>
-                                                                            </div>
-                                                                            <strong style={{ color: '#0f172a', fontSize: '0.9rem' }}>
-                                                                                Rs. {Number(bd.recurringItems.reduce((s, i) => s + (Number(i.amount) || 0), 0)).toLocaleString()}
-                                                                            </strong>
-                                                                        </div>
-                                                                        <div style={{ fontSize: '0.74rem', color: '#64748b', paddingLeft: '1.4rem' }}>
-                                                                            {bd.recurringItems.map((item, idx) => (
-                                                                                <span key={idx} style={{ marginRight: '0.6rem' }}>
-                                                                                    • {item.name || 'Charge'} (Rs. {Number(item.amount || 0).toLocaleString()})
-                                                                                </span>
-                                                                            ))}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-
-                                                                {/* 5. Late Fine if any */}
-                                                                {Number(bd.penaltyFine || 0) > 0 && (
-                                                                    <div style={{
-                                                                        background: '#fef2f2', borderRadius: '10px',
-                                                                        border: '1px solid #fecaca', padding: '0.55rem 0.85rem',
-                                                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem'
-                                                                    }}>
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                                                            <span style={{ fontSize: '1rem' }}>⏱️</span>
-                                                                            <strong style={{ color: '#991b1b' }}>Late Fine Charges</strong>
-                                                                        </div>
-                                                                        <strong style={{ color: '#dc2626', fontSize: '0.88rem' }}>
-                                                                            Rs. {Number(bd.penaltyFine).toLocaleString()}
-                                                                        </strong>
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Child Subtotal Footer Pill */}
-                                                                <div style={{
-                                                                    padding: '0.5rem 0.75rem', background: '#f8fafc',
-                                                                    borderRadius: '8px', border: '1px solid #e2e8f0',
-                                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem'
-                                                                }}>
-                                                                    <span style={{ color: '#64748b', fontWeight: '700' }}>Child Subtotal Due:</span>
-                                                                    <span style={{ color: '#4c1d95', fontWeight: '900', fontSize: '0.92rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                                <div style={{ textAlign: 'right' }}>
+                                                                    <span style={{ fontSize: '0.98rem', fontWeight: '900', color: isPaying ? '#6b21a8' : '#94a3b8' }}>
                                                                         Rs. {Number(st.calculatedDue || 0).toLocaleString()}
                                                                     </span>
                                                                 </div>
+                                                                {hasDetails && isPaying && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setExpandedBreakdowns(prev => ({ ...prev, [st.id]: !prev[st.id] }))}
+                                                                        style={{
+                                                                            background: 'none', border: 'none', cursor: 'pointer',
+                                                                            padding: '2px', color: '#7c3aed', display: 'flex', alignItems: 'center'
+                                                                        }}
+                                                                        title="Toggle itemized details"
+                                                                    >
+                                                                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Sub-row: Inline Compact Chips (Tuition, Transport, Store, Exam, Fine) */}
+                                                        {isPaying && (
+                                                            <div style={{
+                                                                display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+                                                                gap: '0.35rem', marginTop: '0.45rem', paddingTop: '0.4rem',
+                                                                borderTop: '1px dashed #f1f5f9'
+                                                            }}>
+                                                                <span style={{ fontSize: '0.72rem', fontWeight: '700', background: '#eff6ff', color: '#1e40af', padding: '2px 7px', borderRadius: '5px' }}>
+                                                                    🎓 Tuition: Rs. {tuitionAmt.toLocaleString()}
+                                                                </span>
+
+                                                                {transportAmt > 0 && (
+                                                                    <span style={{ fontSize: '0.72rem', fontWeight: '700', background: '#fefce8', color: '#854d0e', padding: '2px 7px', borderRadius: '5px' }}>
+                                                                        🚌 Van: Rs. {transportAmt.toLocaleString()}
+                                                                    </span>
+                                                                )}
+
+                                                                {storeAmt > 0 && (
+                                                                    <span style={{ fontSize: '0.72rem', fontWeight: '700', background: '#faf5ff', color: '#6b21a8', padding: '2px 7px', borderRadius: '5px' }}>
+                                                                        🛍️ Store: Rs. {storeAmt.toLocaleString()}
+                                                                    </span>
+                                                                )}
+
+                                                                {actionAmt > 0 && (
+                                                                    <span style={{ fontSize: '0.72rem', fontWeight: '700', background: '#f0fdf4', color: '#166534', padding: '2px 7px', borderRadius: '5px' }}>
+                                                                        📝 Exam: Rs. {actionAmt.toLocaleString()}
+                                                                    </span>
+                                                                )}
+
+                                                                {recurringAmt > 0 && (
+                                                                    <span style={{ fontSize: '0.72rem', fontWeight: '700', background: '#f8fafc', color: '#334155', padding: '2px 7px', borderRadius: '5px' }}>
+                                                                        💻 Misc: Rs. {recurringAmt.toLocaleString()}
+                                                                    </span>
+                                                                )}
+
+                                                                {fineAmt > 0 && (
+                                                                    <span style={{ fontSize: '0.72rem', fontWeight: '700', background: '#fef2f2', color: '#dc2626', padding: '2px 7px', borderRadius: '5px' }}>
+                                                                        ⏱️ Fine: Rs. {fineAmt.toLocaleString()}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Optional Collapsed Itemized Detail view */}
+                                                        {isExpanded && isPaying && hasDetails && (
+                                                            <div style={{
+                                                                marginTop: '0.45rem', padding: '0.45rem 0.65rem', background: '#f8fafc',
+                                                                borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.72rem', color: '#475569'
+                                                            }}>
+                                                                {Array.isArray(bd.storePurchases) && bd.storePurchases.map((sp, idx) => (
+                                                                    <div key={`sp-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 0' }}>
+                                                                        <span>• {sp.title || sp.name || 'Store Item'}</span>
+                                                                        <strong>Rs. {Number(sp.amount || 0).toLocaleString()}</strong>
+                                                                    </div>
+                                                                ))}
+                                                                {Array.isArray(bd.actions) && bd.actions.map((act, idx) => (
+                                                                    <div key={`act-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '1px 0' }}>
+                                                                        <span>• {act.name || act.title || 'Exam/Charge'}</span>
+                                                                        <strong>Rs. {Number(act.amount || 0).toLocaleString()}</strong>
+                                                                    </div>
+                                                                ))}
                                                             </div>
                                                         )}
                                                     </div>
@@ -2146,34 +2348,20 @@ const OnlineSubmissionsDashboard = ({
                                             })}
                                         </div>
 
-                                        {/* Reconciliation Match Card */}
-                                        <div style={{ padding: '0 1.4rem 1.4rem' }}>
-                                            <div style={{
-                                                padding: '1rem 1.25rem', borderRadius: '14px',
-                                                background: isExactMatch ? '#ecfdf5' : (discrepancy < 0 ? '#fef2f2' : '#eff6ff'),
-                                                border: `1.5px solid ${isExactMatch ? '#a7f3d0' : (discrepancy < 0 ? '#fecaca' : '#bfdbfe')}`,
-                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                                            }}>
-                                                <div>
-                                                    <div style={{
-                                                        fontSize: '0.85rem', fontWeight: '800',
-                                                        color: isExactMatch ? '#065f46' : (discrepancy < 0 ? '#991b1b' : '#1e40af'),
-                                                        display: 'flex', alignItems: 'center', gap: '0.4rem'
-                                                    }}>
-                                                        {isExactMatch ? <CheckCircle2 size={18} color="#059669" /> : <AlertCircle size={18} color={discrepancy < 0 ? '#dc2626' : '#2563eb'} />}
-                                                        <span>{isExactMatch ? 'Exact 100% Match (Zero Discrepancy)' : (discrepancy < 0 ? 'Underpaid Slip Amount' : 'Overpaid / Advance Credit')}</span>
-                                                    </div>
-                                                    <div style={{ fontSize: '0.78rem', color: isExactMatch ? '#047857' : (discrepancy < 0 ? '#b91c1c' : '#1d4ed8'), marginTop: '0.15rem' }}>
-                                                        {isExactMatch ? 'Calculated fee matches bank slip amount perfectly' : (discrepancy < 0 ? `Slip is short by Rs. ${Math.abs(discrepancy).toLocaleString()}` : `Slip has Rs. ${discrepancy.toLocaleString()} excess`)}
-                                                    </div>
-                                                </div>
-
-                                                <div style={{ textAlign: 'right' }}>
-                                                    <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Calculated Dues Total</div>
-                                                    <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a' }}>
-                                                        Rs. {Number(totalCalculatedDue || 0).toLocaleString()}
-                                                    </div>
-                                                </div>
+                                        {/* Bottom Quick-Action Footer */}
+                                        <div style={{
+                                            padding: '0.75rem 1.25rem', background: '#f8fafc',
+                                            borderTop: '1px solid #e2e8f0', display: 'flex',
+                                            justifyContent: 'space-between', alignItems: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '700' }}>
+                                                Settling <strong>{payingSiblings}</strong> student{payingSiblings > 1 ? 's' : ''} in this invoice
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Total Due:</span>
+                                                <span style={{ fontSize: '1.15rem', fontWeight: '900', color: '#4c1d95' }}>
+                                                    Rs. {Number(totalCalculatedDue || 0).toLocaleString()}
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
@@ -2288,6 +2476,271 @@ const OnlineSubmissionsDashboard = ({
                                                 <span>Warning: Duplicate TRX ID found in {trxCountMap[(activeSub.transactionId || '').trim()]} different submissions!</span>
                                             </div>
                                         )}
+
+                                        {/* ========================================================================= */}
+                                        {/* 🧠 AI SMART RECONCILIATION & SLIP AUDITOR COCKPIT                         */}
+                                        {/* ========================================================================= */}
+                                        {(() => {
+                                            const isScanning = aiScanningId === activeSub.id || activeSub.aiScan?.status === 'scanning';
+                                            const ai = activeSub.aiScan;
+                                            
+                                            if (isScanning) {
+                                                return (
+                                                    <div style={{
+                                                        padding: '0.85rem 1.15rem',
+                                                        background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+                                                        borderBottom: '1px solid #4338ca',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                        gap: '0.75rem'
+                                                    }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                            <Loader2 size={18} className="animate-spin" color="#a5b4fc" />
+                                                            <div>
+                                                                <div style={{ color: '#ffffff', fontSize: '0.82rem', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                                    <Sparkles size={14} color="#facc15" /> 
+                                                                    <span>AI Vision Slip Auditor Working...</span>
+                                                                </div>
+                                                                <div style={{ color: '#c7d2fe', fontSize: '0.72rem' }}>
+                                                                    Scanning printed amount, TID/TRX & checking bank authenticity
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <span style={{ fontSize: '0.68rem', fontWeight: '800', background: '#3730a3', color: '#e0e7ff', padding: '2px 8px', borderRadius: '6px' }}>
+                                                            Node 22 Flash Vision
+                                                        </span>
+                                                    </div>
+                                                );
+                                            }
+
+                                            // 🚨 WRONG IMAGE / UNMATCHED STATE
+                                            if (ai && (ai.isValidReceipt === false || ai.status === 'unmatched_image')) {
+                                                return (
+                                                    <div style={{
+                                                        padding: '0.85rem 1.15rem', background: '#450a0a',
+                                                        borderBottom: '1.5px solid #dc2626', display: 'flex', flexDirection: 'column', gap: '0.6rem'
+                                                    }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                                                                <AlertCircle size={20} color="#ef4444" style={{ flexShrink: 0, marginTop: '2px' }} />
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.84rem', fontWeight: '900', color: '#fecaca', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                                        <span>🚨 WRONG IMAGE / UNMATCHED SLIP</span>
+                                                                        <span style={{ fontSize: '0.68rem', background: '#7f1d1d', color: '#fca5a5', padding: '1px 6px', borderRadius: '4px' }}>
+                                                                            No Slip Found
+                                                                        </span>
+                                                                    </div>
+                                                                    <div style={{ fontSize: '0.74rem', color: '#fca5a5', marginTop: '0.2rem', lineHeight: '1.35' }}>
+                                                                        {ai.unmatchedReason || "The uploaded image does not contain a recognized financial receipt or bank deposit slip."}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleTriggerAiScan(activeSub)}
+                                                                title="Re-scan with AI"
+                                                                style={{
+                                                                    padding: '0.35rem 0.65rem', borderRadius: '7px', border: '1px solid #7f1d1d',
+                                                                    background: '#1e0505', color: '#fca5a5', fontSize: '0.72rem', fontWeight: '800', cursor: 'pointer',
+                                                                    display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0
+                                                                }}
+                                                            >
+                                                                <RefreshCw size={12} />
+                                                                <span>Re-Scan</span>
+                                                            </button>
+                                                        </div>
+
+                                                        {/* One-click Action to alert parent */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleAutoReuploadFromAi(activeSub)}
+                                                            style={{
+                                                                padding: '0.45rem 0.75rem', borderRadius: '8px', border: '1px solid #f87171',
+                                                                background: '#dc2626', color: '#ffffff', fontSize: '0.76rem', fontWeight: '800', cursor: 'pointer',
+                                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                                                                boxShadow: '0 2px 4px rgba(220, 38, 38, 0.4)'
+                                                            }}
+                                                        >
+                                                            <RefreshCw size={13} />
+                                                            <span>1-Click: Send Re-Upload Notice to Parent</span>
+                                                        </button>
+                                                    </div>
+                                                );
+                                            }
+
+                                            // 🟢 VALID RECEIPT DETECTED & PARSED
+                                            if (ai && ai.isValidReceipt === true) {
+                                                const detectedAmt = ai.detectedAmount !== null ? Number(ai.detectedAmount) : null;
+                                                const parentAmt = Number(activeSub.amount || 0);
+                                                const dueTotal = Number(totalCalculatedDue || 0);
+
+                                                const isTampered = detectedAmt !== null && Math.abs(detectedAmt - parentAmt) > 1;
+                                                const isExactFeeMatch = detectedAmt !== null && detectedAmt === dueTotal;
+                                                const isUnderpaid = detectedAmt !== null && detectedAmt < dueTotal;
+                                                const isOverpaid = detectedAmt !== null && detectedAmt > dueTotal;
+
+                                                const detectedTrx = ai.detectedTrxId;
+                                                const formTrx = activeSub.transactionId;
+                                                const hasTrxDiff = detectedTrx && (!formTrx || detectedTrx.toLowerCase() !== formTrx.toLowerCase());
+
+                                                return (
+                                                    <div style={{
+                                                        padding: '0.85rem 1.15rem',
+                                                        background: isTampered ? '#2a0808' : (isExactFeeMatch ? '#062817' : (isUnderpaid ? '#2e1903' : '#082136')),
+                                                        borderBottom: `1.5px solid ${isTampered ? '#dc2626' : (isExactFeeMatch ? '#059669' : (isUnderpaid ? '#d97706' : '#2563eb'))}`,
+                                                        display: 'flex', flexDirection: 'column', gap: '0.65rem'
+                                                    }}>
+                                                        {/* Header Status Line */}
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                                {isTampered ? (
+                                                                    <AlertTriangle size={17} color="#ef4444" />
+                                                                ) : isExactFeeMatch ? (
+                                                                    <CheckCircle2 size={17} color="#10b981" />
+                                                                ) : isUnderpaid ? (
+                                                                    <AlertCircle size={17} color="#f59e0b" />
+                                                                ) : (
+                                                                    <ShieldCheck size={17} color="#38bdf8" />
+                                                                )}
+                                                                <span style={{
+                                                                    fontSize: '0.82rem', fontWeight: '900',
+                                                                    color: isTampered ? '#fca5a5' : (isExactFeeMatch ? '#6ee7b7' : (isUnderpaid ? '#fde68a' : '#7dd3fc'))
+                                                                }}>
+                                                                    {isTampered
+                                                                        ? '🚨 AMOUNT MISMATCH / TAMPERING ALERT'
+                                                                        : isExactFeeMatch
+                                                                            ? '🟢 AI VERIFIED: 100% EXACT FULL PAYMENT'
+                                                                            : isUnderpaid
+                                                                                ? `🟡 PARTIAL / HALF PAYMENT (SHORT BY Rs. ${(dueTotal - detectedAmt).toLocaleString()})`
+                                                                                : `🔵 OVERPAID CREDIT (EXCESS Rs. ${(detectedAmt - dueTotal).toLocaleString()})`}
+                                                                </span>
+                                                            </div>
+
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                                <span style={{
+                                                                    fontSize: '0.68rem', fontWeight: '800',
+                                                                    background: 'rgba(255,255,255,0.1)', color: '#cbd5e1',
+                                                                    padding: '2px 7px', borderRadius: '5px'
+                                                                }}>
+                                                                    {ai.paymentChannel || 'Bank/Wallet'}
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleTriggerAiScan(activeSub)}
+                                                                    title="Re-scan slip"
+                                                                    style={{
+                                                                        background: 'none', border: 'none', cursor: 'pointer',
+                                                                        color: '#94a3b8', padding: '2px', display: 'flex', alignItems: 'center'
+                                                                    }}
+                                                                >
+                                                                    <RefreshCw size={13} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Tampering Details Callout if Parent Entered Fake Amount */}
+                                                        {isTampered && (
+                                                            <div style={{
+                                                                padding: '0.45rem 0.65rem', borderRadius: '6px',
+                                                                background: 'rgba(220, 38, 38, 0.25)', border: '1px solid #ef4444',
+                                                                color: '#fecaca', fontSize: '0.74rem', fontWeight: '700'
+                                                            }}>
+                                                                ⚠️ Parent claimed <strong>Rs. {parentAmt.toLocaleString()}</strong> in form, but AI slip scan reveals <strong>Rs. {detectedAmt ? detectedAmt.toLocaleString() : '0'}</strong>!
+                                                            </div>
+                                                        )}
+
+                                                        {/* Extracted Intelligence Badges (4 Grid Cards) */}
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.4rem' }}>
+                                                            {/* 1. Slip Detected Amount */}
+                                                            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.4rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                                                <div style={{ color: '#94a3b8', fontSize: '0.65rem', textTransform: 'uppercase', fontWeight: '700' }}>AI Slip Amount</div>
+                                                                <div style={{ color: '#38bdf8', fontSize: '0.88rem', fontWeight: '900' }}>
+                                                                    Rs. {detectedAmt ? detectedAmt.toLocaleString() : '—'}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* 2. Detected TRX ID */}
+                                                            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.4rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                    <span style={{ color: '#94a3b8', fontSize: '0.65rem', textTransform: 'uppercase', fontWeight: '700' }}>AI TID / TRX</span>
+                                                                    {hasTrxDiff && detectedTrx && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleApplyAiTrx(activeSub, detectedTrx)}
+                                                                            title="Use AI extracted TRX"
+                                                                            style={{
+                                                                                border: 'none', background: '#38bdf8', color: '#0f172a',
+                                                                                fontSize: '0.62rem', fontWeight: '800', padding: '1px 5px',
+                                                                                borderRadius: '4px', cursor: 'pointer'
+                                                                            }}
+                                                                        >
+                                                                            Apply ✓
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                                <div style={{ color: '#f8fafc', fontSize: '0.78rem', fontWeight: '800', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                    {detectedTrx || 'Not legible'}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* 3. Deposited Account Title */}
+                                                            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.4rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                                                <div style={{ color: '#94a3b8', fontSize: '0.65rem', textTransform: 'uppercase', fontWeight: '700' }}>Paid To Title</div>
+                                                                <div style={{ color: '#e2e8f0', fontSize: '0.76rem', fontWeight: '800', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                    {ai.receiverTitle || ai.receiverAccount || 'Official A/C'}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* 4. Sender / Date */}
+                                                            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.4rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                                                <div style={{ color: '#94a3b8', fontSize: '0.65rem', textTransform: 'uppercase', fontWeight: '700' }}>Payer & Date</div>
+                                                                <div style={{ color: '#e2e8f0', fontSize: '0.75rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                    {ai.senderName || activeSub.parentName || 'Parent'} • {ai.detectedDate || 'Recent'}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+
+                                            // 🔘 DEFAULT READY TO SCAN STATE (NOT YET SCANNED)
+                                            return (
+                                                <div style={{
+                                                    padding: '0.65rem 1.15rem', background: '#0b1329',
+                                                    borderBottom: '1px solid #1e293b', display: 'flex',
+                                                    justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem'
+                                                }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <Sparkles size={16} color="#818cf8" />
+                                                        <div>
+                                                            <div style={{ color: '#e2e8f0', fontSize: '0.78rem', fontWeight: '800' }}>
+                                                                AI Slip Auditor & Anti-Fraud Scanner
+                                                            </div>
+                                                            <div style={{ color: '#64748b', fontSize: '0.68rem' }}>
+                                                                Reads amount, TRX, checks full/half paid & detects wrong images
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleTriggerAiScan(activeSub)}
+                                                        disabled={!activeSub.proofUrl}
+                                                        style={{
+                                                            padding: '0.4rem 0.85rem', borderRadius: '8px', border: '1px solid #6366f1',
+                                                            background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
+                                                            color: 'white', fontSize: '0.76rem', fontWeight: '800',
+                                                            cursor: !activeSub.proofUrl ? 'not-allowed' : 'pointer',
+                                                            display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                                            boxShadow: '0 2px 4px rgba(79, 70, 229, 0.4)'
+                                                        }}
+                                                    >
+                                                        <Zap size={13} color="#facc15" />
+                                                        <span>⚡ Scan Slip with AI</span>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })()}
 
                                         {/* HD Slip Canvas Viewport */}
                                         <div style={{
@@ -2944,6 +3397,104 @@ const OnlineSubmissionsDashboard = ({
                     </div>
                 </div>
             )}
+
+            {/* ========================================================================= */}
+            {/* 🛡️ PARTIAL PAYMENT CONFIRMATION SAFEGUARD MODAL (ENGLISH)                   */}
+            {/* ========================================================================= */}
+            {partialConfirmSub && (() => {
+                const slipAmt = Number(partialConfirmSub.amount || 0);
+                const shortAmt = Math.max(0, totalCalculatedDue - slipAmt);
+                return (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}>
+                        <div style={{ background: 'white', borderRadius: '20px', maxWidth: '520px', width: '100%', padding: '1.75rem', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', border: '1px solid #fed7aa' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.85rem' }}>
+                                <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: '#fff7ed', border: '1px solid #ffedd5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <AlertTriangle size={22} color="#ea580c" />
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#9a3412', margin: 0 }}>Partial Payment Detected</h3>
+                                    <p style={{ margin: 0, fontSize: '0.78rem', color: '#c2410c' }}>Slip amount is less than total outstanding ledger dues</p>
+                                </div>
+                            </div>
+
+                            <div style={{ background: '#fff7ed', borderRadius: '12px', border: '1px solid #ffedd5', padding: '1rem', marginBottom: '1.25rem' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', textAlign: 'center' }}>
+                                    <div style={{ padding: '0.5rem', background: 'white', borderRadius: '8px', border: '1px solid #fed7aa' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Slip Amount</span>
+                                        <div style={{ fontSize: '1.1rem', fontWeight: '900', color: '#0284c7', marginTop: '2px' }}>Rs. {slipAmt.toLocaleString()}</div>
+                                    </div>
+                                    <div style={{ padding: '0.5rem', background: 'white', borderRadius: '8px', border: '1px solid #fed7aa' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Total Dues</span>
+                                        <div style={{ fontSize: '1.1rem', fontWeight: '900', color: '#1e293b', marginTop: '2px' }}>Rs. {totalCalculatedDue.toLocaleString()}</div>
+                                    </div>
+                                    <div style={{ padding: '0.5rem', background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#b91c1c', fontWeight: '700', textTransform: 'uppercase' }}>Short By</span>
+                                        <div style={{ fontSize: '1.1rem', fontWeight: '900', color: '#dc2626', marginTop: '2px' }}>Rs. {shortAmt.toLocaleString()}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '0.85rem', marginBottom: '1.25rem', fontSize: '0.82rem', color: '#475569', lineHeight: 1.5, border: '1px solid #e2e8f0' }}>
+                                <strong style={{ color: '#0f172a' }}>Ledger Impact:</strong> Approving as partial will record <strong>Rs. {slipAmt.toLocaleString()}</strong> as paid, mark the month status as <span style={{ color: '#ea580c', fontWeight: '800' }}>Partial (Warm Orange)</span>, and carry forward <strong>Rs. {shortAmt.toLocaleString()}</strong> as outstanding arrears for subsequent billing.
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const subToProcess = partialConfirmSub;
+                                        setPartialConfirmSub(null);
+                                        handleApprove(subToProcess, true);
+                                    }}
+                                    disabled={processingId === partialConfirmSub.id}
+                                    style={{
+                                        padding: '0.75rem 1.25rem', borderRadius: '10px', border: 'none',
+                                        background: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
+                                        color: 'white', fontWeight: '800', fontSize: '0.9rem', cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                                        boxShadow: '0 4px 12px rgba(234, 88, 12, 0.35)'
+                                    }}
+                                >
+                                    <Check size={18} />
+                                    <span>Approve as Partial (Carry Forward Rs. {shortAmt.toLocaleString()} Arrears)</span>
+                                </button>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const subToReupload = partialConfirmSub;
+                                            setPartialConfirmSub(null);
+                                            setReuploadNote(`The slip amount of Rs. ${slipAmt.toLocaleString()} is less than total dues of Rs. ${totalCalculatedDue.toLocaleString()} (Short by Rs. ${shortAmt.toLocaleString()}). Please upload the complete payment proof or remaining transfer slip.`);
+                                            setReuploadSub(subToReupload);
+                                        }}
+                                        style={{
+                                            padding: '0.65rem 1rem', borderRadius: '10px', border: '1px solid #fed7aa',
+                                            background: '#fff7ed', color: '#c2410c', fontWeight: '700', fontSize: '0.82rem',
+                                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem'
+                                        }}
+                                    >
+                                        <RefreshCw size={15} />
+                                        <span>Request Re-upload</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setPartialConfirmSub(null)}
+                                        style={{
+                                            padding: '0.65rem 1rem', borderRadius: '10px', border: '1px solid #cbd5e1',
+                                            background: 'white', color: '#64748b', fontWeight: '700', fontSize: '0.82rem',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 };
