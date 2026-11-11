@@ -2188,6 +2188,15 @@ const ExamPapersHub = () => {
                                                                                 </span>
                                                                             )}
                                                                         </div>
+                                                                        {q.diagramBase64 && (
+                                                                            <div style={{ margin: '6px 0' }}>
+                                                                                <img
+                                                                                    src={`data:image/png;base64,${q.diagramBase64}`}
+                                                                                    alt="Question Diagram"
+                                                                                    style={{ maxHeight: '110px', objectFit: 'contain', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px', background: '#fff' }}
+                                                                                />
+                                                                            </div>
+                                                                        )}
                                                                         <div style={{ fontSize: '11.5px', color: '#312e81', background: '#eef2ff', padding: '6px 10px', borderRadius: '6px', lineHeight: 1.5 }}>
                                                                             <strong>Expected Answer / Rubric:</strong> {q.rubric || q.correctAnswer || 'Follow standard marking rubric.'}
                                                                         </div>
@@ -2239,6 +2248,15 @@ const ExamPapersHub = () => {
                                                                                 </span>
                                                                             )}
                                                                         </div>
+                                                                        {q.diagramBase64 && (
+                                                                            <div style={{ margin: '6px 0' }}>
+                                                                                <img
+                                                                                    src={`data:image/png;base64,${q.diagramBase64}`}
+                                                                                    alt="Question Diagram"
+                                                                                    style={{ maxHeight: '110px', objectFit: 'contain', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '4px', background: '#fff' }}
+                                                                                />
+                                                                            </div>
+                                                                        )}
                                                                         <div style={{ fontSize: '11.5px', color: '#312e81', background: '#eef2ff', padding: '6px 10px', borderRadius: '6px', lineHeight: 1.5 }}>
                                                                             <strong>Model Solution / Rubric:</strong> {q.rubric || q.correctAnswer || 'Comprehensive model response.'}
                                                                         </div>
@@ -2370,6 +2388,28 @@ const ExamPapersHub = () => {
                                                                 [{q.marks || 1} Marks]
                                                             </span>
                                                         </div>
+
+                                                        {q.diagramBase64 && (
+                                                            <div style={{
+                                                                marginTop: '8px',
+                                                                paddingLeft: isUrdu ? '0' : '24px',
+                                                                paddingRight: isUrdu ? '24px' : '0',
+                                                                textAlign: isUrdu ? 'right' : 'left'
+                                                            }}>
+                                                                <img
+                                                                    src={`data:image/png;base64,${q.diagramBase64}`}
+                                                                    alt="Question Diagram"
+                                                                    style={{
+                                                                        maxHeight: '130px',
+                                                                        objectFit: 'contain',
+                                                                        border: '1px solid #cbd5e1',
+                                                                        borderRadius: '6px',
+                                                                        padding: '6px',
+                                                                        background: '#ffffff'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        )}
 
                                                         {Array.isArray(q.options) && q.options.length > 0 && (
                                                             <div style={{
