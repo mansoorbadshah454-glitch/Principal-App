@@ -26,7 +26,6 @@ const ROUTE_LOADERS = [
     () => import('../pages/EditStudentProfile'),
     () => import('../pages/LiveSurveillance'),
     () => import('../pages/PaperGenerator'),
-    () => import('../pages/BoardTOSStudio'),
     () => import('../pages/Exams'),
     () => import('../pages/Store'),
     () => import('../pages/Transport'),

@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon,
-    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Lock, DoorOpen, BookOpen
+    FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Lock, DoorOpen
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
@@ -27,7 +27,6 @@ const NAV_GROUPS = [
         items: [
             { icon: GraduationCap, label: 'Classes & Students', path: '/classes', permission: 'canManageClasses' },
             { icon: FileCheck, label: 'Exam Papers Hub', path: '/paper-generator', permission: 'canManagePaperGenerator' },
-            { icon: BookOpen, label: 'Board TOS & Blueprints', path: '/board-blueprints', permission: 'canManagePaperGenerator', isNew: true },
             { icon: Award, label: 'Exams & Results', path: '/exams', permission: 'canManageExams' },
             { icon: TrendingUp, label: 'Promotions', path: '/promotions', permission: 'canManagePromotions' },
             { icon: DoorOpen, label: 'School Leaving (SLC)', path: '/school-leaving', permission: 'canManageSLC' }

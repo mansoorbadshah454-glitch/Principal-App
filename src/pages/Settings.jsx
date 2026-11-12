@@ -1363,7 +1363,6 @@ const Settings = () => {
                         },
                         { id: 'import', label: 'Import Students', icon: Users, desc: 'Excel / CSV bulk upload' },
                         { id: 'fee_migration', label: 'Fee Migration & Baseline', icon: DollarSign, desc: 'CSV fee & backlog setup' },
-                        { id: 'upload_syllabus', label: 'Upload Syllabus', icon: BookOpen, desc: 'Curricula scanner' },
                         { id: 'ai_assistant', label: 'AI Copilot', icon: Sparkles, desc: 'Gemini Copilot engine' },
                         { id: 'security', label: 'Security & Password', icon: ShieldCheck, desc: 'Private password control' }
                     ].map((tab) => {
@@ -3368,12 +3367,6 @@ const Settings = () => {
                         ) : (
                             <div>Generating School ID...</div>
                         )}
-                    </div>
-                )}
-
-                {activeTab === 'upload_syllabus' && (
-                    <div style={{ animation: 'fadeIn 0.3s ease-out' }}>
-                        {schoolId ? <UploadSyllabusTab schoolId={schoolId} /> : <div>Generating School ID...</div>}
                     </div>
                 )}
 
