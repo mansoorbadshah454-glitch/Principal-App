@@ -349,8 +349,24 @@ const Dashboard = () => {
                 const snap = await getDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'));
                 if (snap.exists()) {
                     const cData = snap.data();
-                    setAtomicCounts(cData);
-                    cacheDashboardFullData(schoolId, { atomicCounts: cData });
+                    const cleanStudent = Math.max(0, cData.studentCount || 0);
+                    const cleanTeacher = Math.max(0, cData.teacherCount || 0);
+                    const cleanParent = Math.max(0, cData.parentCount || 0);
+
+                    const sanitized = {
+                        ...cData,
+                        studentCount: cleanStudent,
+                        teacherCount: cleanTeacher,
+                        parentCount: cleanParent
+                    };
+
+                    setAtomicCounts(sanitized);
+                    cacheDashboardFullData(schoolId, { atomicCounts: sanitized });
+
+                    // Auto-heal Firestore if negative numbers exist in school metrics
+                    if ((cData.studentCount ?? 0) < 0 || (cData.teacherCount ?? 0) < 0 || (cData.parentCount ?? 0) < 0) {
+                        setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), sanitized, { merge: true }).catch(() => {});
+                    }
                 }
             } catch (err) {
                 console.error("Dashboard: Error fetching atomic counters", err);
@@ -394,7 +410,7 @@ const Dashboard = () => {
     const overviewStats = [
         {
             label: 'Total Students',
-            value: statsLoaded ? (collectionStats.total || atomicCounts.studentCount || 0).toLocaleString() : 'Loading...',
+            value: statsLoaded ? Math.max(0, collectionStats.total || atomicCounts.studentCount || 0).toLocaleString() : 'Loading...',
             icon: Users,
             gradient: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
             shadow: 'rgba(99, 102, 241, 0.4)',

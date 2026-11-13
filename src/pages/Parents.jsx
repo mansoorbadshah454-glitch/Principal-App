@@ -1663,7 +1663,14 @@ const Parents = () => {
             try {
                 const docSnap = await getDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'));
                 if (docSnap.exists()) {
-                    setParentCount(docSnap.data().parentCount || 0);
+                    const rawParentCount = docSnap.data().parentCount ?? 0;
+                    const cleanCount = Math.max(0, rawParentCount);
+                    setParentCount(cleanCount);
+                    if (rawParentCount < 0) {
+                        setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), {
+                            parentCount: cleanCount
+                        }, { merge: true }).catch(() => {});
+                    }
                 }
             } catch (err) {
                 console.error("Error fetching parent count", err);
@@ -2345,7 +2352,7 @@ const Parents = () => {
                 {[
                     {
                         label: 'Total Parents',
-                        value: parents.length === 0 ? 0 : (parentCount || parents.length),
+                        value: parents.length === 0 ? 0 : Math.max(0, parentCount || parents.length),
                         icon: Users,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f5f7ff 100%)',
                         border: '#e0e7ff',

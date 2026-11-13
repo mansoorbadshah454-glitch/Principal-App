@@ -1766,7 +1766,14 @@ const Teachers = () => {
 
                 const countsDoc = await getDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'));
                 if (countsDoc.exists()) {
-                    setTeacherCount(countsDoc.data().teacherCount || 0);
+                    const rawTeacherCount = countsDoc.data().teacherCount ?? 0;
+                    const cleanCount = Math.max(0, rawTeacherCount);
+                    setTeacherCount(cleanCount);
+                    if (rawTeacherCount < 0) {
+                        setDoc(doc(db, `schools/${schoolId}/metrics`, 'counts'), {
+                            teacherCount: cleanCount
+                        }, { merge: true }).catch(() => {});
+                    }
                 }
             } catch (err) {
                 console.error("Error fetching school info", err);
@@ -2276,7 +2283,7 @@ const Teachers = () => {
                 {[
                     {
                         label: 'Total Teachers',
-                        value: teachers.length === 0 ? 0 : (teacherCount || teachers.length), // Always 0 if list is empty
+                        value: teachers.length === 0 ? 0 : Math.max(0, teacherCount || teachers.length), // Always 0 if list is empty
                         icon: Users,
                         bg: 'linear-gradient(135deg, #ffffff 0%, #f5f7ff 100%)',
                         border: '#e0e7ff',
