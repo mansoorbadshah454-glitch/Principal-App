@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Award, BookOpen, Users, Camera, Upload, Sparkles, CheckCircle2,
     AlertTriangle, ArrowRight, ArrowLeft, RefreshCw, X, Eye, FileText,
     ShieldAlert, ShieldCheck, Layers, HelpCircle, Save, Database, Trash2,
-    Plus, Beaker, PlayCircle
+    Plus, Beaker, PlayCircle, Download, FileSpreadsheet, Check
 } from 'lucide-react';
 import { db } from '../../firebase';
 import {
@@ -21,6 +21,10 @@ import {
     mergeMultiImageResults
 } from './GeminiVisionService';
 import { generateSampleRegisterImage } from './SampleRegisterGenerator';
+import {
+    downloadExamCsvTemplate,
+    parseExamCsv
+} from './CsvBroadsheetParser';
 import MathLockWorkspaceModal from './MathLockWorkspaceModal';
 
 // Standard Grade calculator matching Exams.jsx
@@ -60,9 +64,17 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
     const [newSubjectInput, setNewSubjectInput] = useState('');
     const [newSubjectMax, setNewSubjectMax] = useState('100');
 
-    // 3. Multi-Image Queue State
+    // 3. Source Mode & Multi-Image Queue State
+    const [sourceMode, setSourceMode] = useState('camera'); // 'camera' | 'csv'
     const [imageQueue, setImageQueue] = useState([]);
     const [isProcessingCanvas, setIsProcessingCanvas] = useState(false);
+
+    // 3b. CSV Import State
+    const [csvFileName, setCsvFileName] = useState('');
+    const [csvSummary, setCsvSummary] = useState(null); // { matchedCount, totalParsed, totalClassStudents }
+    const [csvError, setCsvError] = useState('');
+    const [isDraggingCsv, setIsDraggingCsv] = useState(false);
+    const csvFileInputRef = useRef(null);
 
     // 4. AI & Extraction State
     const [isExtractingAI, setIsExtractingAI] = useState(false);
@@ -362,6 +374,109 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
         }
 
         setMergedRoster(currentRoster);
+        setShowWorkspace(true);
+    };
+
+    // 📊 CSV Broadsheet Operations
+    const handleDownloadCsvTemplate = () => {
+        const currentCls = classes.find(c => c.id === selectedClassId);
+        const className = currentCls?.name || 'Class';
+        downloadExamCsvTemplate(className, subjects, students);
+    };
+
+    const processCsvContent = (csvText, fileName = 'broadsheet.csv') => {
+        setCsvError('');
+        try {
+            const result = parseExamCsv({
+                csvText,
+                students,
+                subjects
+            });
+
+            setCsvFileName(fileName);
+            setCsvSummary({
+                matchedCount: result.matchedCount,
+                totalParsed: result.totalParsed,
+                totalClassStudents: students.length
+            });
+            setMergedRoster(result.roster);
+            setSuccessBanner(`📊 CSV Broadsheet Parsed! ${result.matchedCount} of ${result.totalParsed} students matched with class roster.`);
+        } catch (err) {
+            console.error("CSV Parse Error:", err);
+            setCsvError(err.message || "Failed to parse CSV file.");
+        }
+    };
+
+    const handleCsvFileSelected = (file) => {
+        if (!file) return;
+        if (!file.name.toLowerCase().endsWith('.csv') && !file.type.includes('csv')) {
+            setCsvError("Please upload a valid .csv file.");
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const content = e.target.result;
+            processCsvContent(content, file.name);
+        };
+        reader.onerror = () => {
+            setCsvError("Could not read file. Please try again.");
+        };
+        reader.readAsText(file);
+    };
+
+    const handleLoadSampleCsv = () => {
+        const currentCls = classes.find(c => c.id === selectedClassId);
+        const className = currentCls?.name || 'Class';
+
+        const sampleList = students.length > 0 ? students : [
+            { rollNo: '1', name: 'Muhammad Ali' },
+            { rollNo: '2', name: 'Fatima Zahra' },
+            { rollNo: '3', name: 'Ahmed Bilal' },
+            { rollNo: '4', name: 'Ayesha Khan' },
+            { rollNo: '5', name: 'Zainab Bibi' },
+            { rollNo: '6', name: 'Hamza Tariq' },
+            { rollNo: '7', name: 'Usman Ghani' },
+            { rollNo: '8', name: 'Hafsa Noor' },
+            { rollNo: '9', name: 'Bilal Hassan' },
+            { rollNo: '10', name: 'Mariam Siddiqui' }
+        ];
+
+        if (students.length === 0) {
+            setStudents(sampleList.map((st, i) => ({
+                id: `std_demo_${i + 1}`,
+                studentId: `std_demo_${i + 1}`,
+                name: st.name,
+                rollNo: st.rollNo
+            })));
+        }
+
+        const headers = ['Roll No', 'Student Name', ...subjects.map(s => `${s.name} (Max ${s.maxMarks})`), 'Total Marks'];
+        const rows = sampleList.map((st, idx) => {
+            const rNo = st.rollNo || (idx + 1);
+            const name = st.name;
+            let sum = 0;
+            const marks = subjects.map((sub, sIdx) => {
+                const m = Math.min(sub.maxMarks, Math.floor(sub.maxMarks * (0.68 + ((idx * 5 + sIdx * 7) % 28) / 100)));
+                sum += m;
+                return m;
+            });
+            // Row 3 has a discrepancy for Math-Lock demonstration
+            const total = idx === 2 ? sum + 10 : sum;
+            return [rNo, name, ...marks, total];
+        });
+
+        const csvString = headers.map(h => `"${h}"`).join(',') + '\n' +
+            rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+
+        processCsvContent(csvString, `${className}_Sample_Broadsheet.csv`);
+    };
+
+    const handleLaunchCsvWorkspace = () => {
+        if (!mergedRoster || mergedRoster.length === 0) {
+            alert("Please upload or load a CSV broadsheet first.");
+            return;
+        }
         setShowWorkspace(true);
     };
 
@@ -746,150 +861,340 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                 </div>
             </div>
 
-            {/* Step 2: Multi-Image Queue & Canvas Pipeline */}
+            {/* Step 2: Data Ingestion (Register Photos AI OCR vs. Excel / CSV File) */}
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col gap-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-3">
                     <div className="flex items-center gap-2">
                         <span className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                        <h3 className="text-sm font-bold text-slate-800">Upload Broadsheet Photos (Multi-Part Support)</h3>
+                        <h3 className="text-sm font-bold text-slate-800">Choose Broadsheet Source</h3>
                     </div>
-                    <span className="text-xs text-slate-500">
-                        {imageQueue.length} photo(s) queued
-                    </span>
+
+                    {/* Mode Toggle Switch */}
+                    <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold">
+                        <button
+                            type="button"
+                            onClick={() => setSourceMode('camera')}
+                            className={`px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
+                                sourceMode === 'camera'
+                                    ? 'bg-white text-indigo-700 shadow-xs'
+                                    : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                        >
+                            <Camera size={14} />
+                            <span>📸 Register Photos (AI OCR)</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setSourceMode('csv')}
+                            className={`px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
+                                sourceMode === 'csv'
+                                    ? 'bg-white text-emerald-700 shadow-xs'
+                                    : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                        >
+                            <FileSpreadsheet size={14} />
+                            <span>📊 Excel / CSV File (Drag & Drop)</span>
+                        </button>
+                    </div>
                 </div>
 
-                {/* Upload Drag/Select Box */}
-                <label className="border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50/70 transition-colors rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer text-center">
-                    <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 mb-2">
-                        <Camera size={24} />
-                    </div>
-                    <span className="text-xs font-bold text-slate-700">
-                        Click or Drop Register Photos Here (Part 1, Part 2, etc.)
-                    </span>
-                    <span className="text-[11px] text-slate-500 mt-1 max-w-md">
-                        Take horizontal photos of the broadsheet. For long classes, take Part 1 (Roll 1-15), Part 2 (Roll 16-30), etc.
-                        Our client-side canvas will auto-detect blur and boost contrast.
-                    </span>
-                    <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={handleImageFilesSelected}
-                        className="hidden"
-                    />
-                </label>
+                {/* MODE A: CAMERA / REGISTER PHOTOS */}
+                {sourceMode === 'camera' && (
+                    <div className="space-y-4 animate-fadeIn">
+                        {/* Upload Drag/Select Box */}
+                        <label className="border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50/70 transition-colors rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer text-center">
+                            <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 mb-2">
+                                <Camera size={24} />
+                            </div>
+                            <span className="text-xs font-bold text-slate-700">
+                                Click or Drop Register Photos Here (Part 1, Part 2, etc.)
+                            </span>
+                            <span className="text-[11px] text-slate-500 mt-1 max-w-md">
+                                Take horizontal photos of the broadsheet. For long classes, take Part 1 (Roll 1-15), Part 2 (Roll 16-30), etc.
+                                Our client-side canvas will auto-detect blur and boost contrast.
+                            </span>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                onChange={handleImageFilesSelected}
+                                className="hidden"
+                            />
+                        </label>
 
-                {isProcessingCanvas && (
-                    <div className="flex items-center justify-center gap-2 text-xs text-indigo-600 font-semibold py-2">
-                        <RefreshCw size={14} className="animate-spin" />
-                        <span>Running client-side HTML5 Canvas sharpness & contrast check...</span>
+                        {isProcessingCanvas && (
+                            <div className="flex items-center justify-center gap-2 text-xs text-indigo-600 font-semibold py-2">
+                                <RefreshCw size={14} className="animate-spin" />
+                                <span>Running client-side HTML5 Canvas sharpness & contrast check...</span>
+                            </div>
+                        )}
+
+                        {/* Uploaded Photos Cards */}
+                        {imageQueue.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2">
+                                {imageQueue.map((item, idx) => (
+                                    <div
+                                        key={idx}
+                                        className={`rounded-xl border p-3 flex flex-col gap-2 relative bg-white shadow-xs ${
+                                            item.isBlurry ? 'border-rose-400 bg-rose-50/30' : 'border-slate-200'
+                                        }`}
+                                    >
+                                        <div className="h-32 rounded-lg bg-slate-900 overflow-hidden flex items-center justify-center relative">
+                                            <img
+                                                src={item.enhancedBase64 || item.base64}
+                                                alt={item.label}
+                                                className="h-full w-full object-cover"
+                                            />
+                                            <div className="absolute top-1.5 left-1.5 bg-black/70 text-white font-mono text-[10px] px-2 py-0.5 rounded">
+                                                {item.label}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => removeImage(idx)}
+                                                className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center"
+                                                title="Remove Photo"
+                                            >
+                                                <X size={12} />
+                                            </button>
+                                        </div>
+
+                                        <div className="flex items-center justify-between text-[11px]">
+                                            {item.isBlurry ? (
+                                                <span className="text-rose-700 font-bold flex items-center gap-1 bg-rose-100 px-2 py-0.5 rounded">
+                                                    <AlertTriangle size={12} /> Blurry (Variance: {item.variance})
+                                                </span>
+                                            ) : (
+                                                <span className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100 px-2 py-0.5 rounded">
+                                                    <CheckCircle2 size={12} /> Sharp (Clear)
+                                                </span>
+                                            )}
+                                            <span className="text-slate-400 font-mono text-[10px]">
+                                                Enhanced
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
 
-                {/* Uploaded Photos Cards */}
-                {imageQueue.length > 0 && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2">
-                        {imageQueue.map((item, idx) => (
-                            <div
-                                key={idx}
-                                className={`rounded-xl border p-3 flex flex-col gap-2 relative bg-white shadow-xs ${
-                                    item.isBlurry ? 'border-rose-400 bg-rose-50/30' : 'border-slate-200'
-                                }`}
-                            >
-                                <div className="h-32 rounded-lg bg-slate-900 overflow-hidden flex items-center justify-center relative">
-                                    <img
-                                        src={item.enhancedBase64 || item.base64}
-                                        alt={item.label}
-                                        className="h-full w-full object-cover"
-                                    />
-                                    <div className="absolute top-1.5 left-1.5 bg-black/70 text-white font-mono text-[10px] px-2 py-0.5 rounded">
-                                        {item.label}
+                {/* MODE B: EXCEL / CSV DRAG & DROP */}
+                {sourceMode === 'csv' && (
+                    <div className="space-y-4 animate-fadeIn">
+                        {/* CSV Drag & Drop Zone */}
+                        <div
+                            onDragOver={(e) => {
+                                e.preventDefault();
+                                setIsDraggingCsv(true);
+                            }}
+                            onDragLeave={() => setIsDraggingCsv(false)}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                setIsDraggingCsv(false);
+                                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                    handleCsvFileSelected(e.dataTransfer.files[0]);
+                                }
+                            }}
+                            onClick={() => csvFileInputRef.current?.click()}
+                            className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer text-center transition-all ${
+                                isDraggingCsv
+                                    ? 'border-emerald-500 bg-emerald-50/80 scale-[1.01]'
+                                    : 'border-emerald-200 hover:border-emerald-400 bg-emerald-50/30 hover:bg-emerald-50/60'
+                            }`}
+                        >
+                            <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 mb-2">
+                                <FileSpreadsheet size={24} />
+                            </div>
+                            <span className="text-xs font-bold text-slate-800">
+                                Click or Drag & Drop Broadsheet CSV / Excel File
+                            </span>
+                            <span className="text-[11px] text-slate-500 mt-1 max-w-md">
+                                Supports .csv files exported from Excel, Google Sheets, or school legacy databases.
+                                Columns like Roll No, Student Name, Subjects, and Grand Total will auto-match automatically.
+                            </span>
+
+                            <input
+                                ref={csvFileInputRef}
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                        handleCsvFileSelected(e.target.files[0]);
+                                    }
+                                }}
+                                className="hidden"
+                            />
+                        </div>
+
+                        {/* CSV Actions Toolbar */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleDownloadCsvTemplate}
+                                    className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:border-indigo-400 hover:text-indigo-600 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                                    title="Download pre-formatted CSV template tailored to your current class subjects and student list"
+                                >
+                                    <Download size={14} className="text-indigo-600" />
+                                    <span>Download Broadsheet Template (.CSV)</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={handleLoadSampleCsv}
+                                    className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                                    title="Instant Test with realistic sample CSV data"
+                                >
+                                    <Beaker size={14} className="text-emerald-600" />
+                                    <span>🧪 Load Demo CSV Data</span>
+                                </button>
+                            </div>
+
+                            <span className="text-[11px] text-slate-500">
+                                UTF-8 Encoded • Comma-separated
+                            </span>
+                        </div>
+
+                        {/* CSV Error Banner */}
+                        {csvError && (
+                            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
+                                <AlertTriangle size={16} className="text-rose-600 shrink-0" />
+                                <span>{csvError}</span>
+                            </div>
+                        )}
+
+                        {/* CSV Success Card & Match Summary */}
+                        {csvFileName && csvSummary && (
+                            <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-300 text-slate-800 space-y-2 animate-fadeIn">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2 font-bold text-xs text-emerald-900">
+                                        <CheckCircle2 size={16} className="text-emerald-600" />
+                                        <span>File Loaded: {csvFileName}</span>
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={() => removeImage(idx)}
-                                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center"
-                                        title="Remove Photo"
+                                        onClick={() => {
+                                            setCsvFileName('');
+                                            setCsvSummary(null);
+                                            setMergedRoster([]);
+                                        }}
+                                        className="text-slate-400 hover:text-rose-600 text-xs flex items-center gap-1"
                                     >
-                                        <X size={12} />
+                                        <X size={14} /> Clear
                                     </button>
                                 </div>
 
-                                <div className="flex items-center justify-between text-[11px]">
-                                    {item.isBlurry ? (
-                                        <span className="text-rose-700 font-bold flex items-center gap-1 bg-rose-100 px-2 py-0.5 rounded">
-                                            <AlertTriangle size={12} /> Blurry (Variance: {item.variance})
-                                        </span>
-                                    ) : (
-                                        <span className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100 px-2 py-0.5 rounded">
-                                            <CheckCircle2 size={12} /> Sharp (Clear)
-                                        </span>
-                                    )}
-                                    <span className="text-slate-400 font-mono text-[10px]">
-                                        Enhanced
-                                    </span>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
+                                    <div className="bg-white p-2.5 rounded-lg border border-emerald-200">
+                                        <div className="text-[10px] text-slate-500">Rows in File</div>
+                                        <div className="text-base font-bold text-slate-800 font-mono">{csvSummary.totalParsed}</div>
+                                    </div>
+                                    <div className="bg-white p-2.5 rounded-lg border border-emerald-200">
+                                        <div className="text-[10px] text-slate-500">Matched with Class Roster</div>
+                                        <div className="text-base font-bold text-emerald-700 font-mono">
+                                            {csvSummary.matchedCount} / {csvSummary.totalClassStudents || csvSummary.totalParsed}
+                                        </div>
+                                    </div>
+                                    <div className="bg-white p-2.5 rounded-lg border border-emerald-200 col-span-2 sm:col-span-1">
+                                        <div className="text-[10px] text-slate-500">Subjects Mapped</div>
+                                        <div className="text-base font-bold text-indigo-700 font-mono">{subjects.length} Subjects</div>
+                                    </div>
                                 </div>
                             </div>
-                        ))}
+                        )}
                     </div>
                 )}
             </div>
 
-            {/* Step 3: Launch Modes (Instant Test vs AI Extract vs. Offline Manual Mode) */}
+            {/* Step 3: Launch Modes */}
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col lg:flex-row items-center justify-between gap-4">
                 <div>
-                    <h3 className="text-sm font-bold text-slate-800">Ready to Digitize</h3>
+                    <h3 className="text-sm font-bold text-slate-800">
+                        {sourceMode === 'csv' ? 'Ready to Verify CSV Broadsheet' : 'Ready to Digitize'}
+                    </h3>
                     <p className="text-xs text-slate-500">
-                        Extract numbers automatically via Gemini Flash Vision, or enter directly via 2-Key rapid keyboard workspace.
+                        {sourceMode === 'csv'
+                            ? 'Run mathematical consistency check against file totals and finalize into Firestore.'
+                            : 'Extract numbers automatically via Gemini Flash Vision, or enter directly via 2-Key rapid keyboard workspace.'}
                     </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                    {/* Instant Test Workspace Button */}
-                    <button
-                        type="button"
-                        onClick={handleLaunchDemoWorkspace}
-                        className="px-3.5 py-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
-                        title="Instant Test: Launches workspace with sample broadsheet data to test 2-Key navigation & Math-Lock"
-                    >
-                        <PlayCircle size={15} className="text-amber-600" />
-                        <span>Instant Test Workspace</span>
-                    </button>
+                    {sourceMode === 'csv' ? (
+                        <>
+                            <button
+                                type="button"
+                                onClick={handleDownloadCsvTemplate}
+                                className="px-3.5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center gap-1.5"
+                            >
+                                <Download size={15} />
+                                <span>Get Template</span>
+                            </button>
 
-                    {/* Manual Rapid-Entry Mode (100% Offline) */}
-                    <button
-                        type="button"
-                        onClick={handleLaunchManualMode}
-                        className="px-3.5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center gap-1.5"
-                        title="Enter marks rapidly using keyboard without internet or AI"
-                    >
-                        <Layers size={15} />
-                        <span>Manual Rapid Mode (100% Offline)</span>
-                    </button>
+                            <button
+                                type="button"
+                                disabled={!csvFileName || mergedRoster.length === 0}
+                                onClick={handleLaunchCsvWorkspace}
+                                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-lg flex items-center gap-2 ${
+                                    !csvFileName || mergedRoster.length === 0
+                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-500/25 cursor-pointer'
+                                }`}
+                            >
+                                <ShieldCheck size={16} />
+                                <span>Open Math-Lock Studio ({mergedRoster.length} Records)</span>
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            {/* Instant Test Workspace Button */}
+                            <button
+                                type="button"
+                                onClick={handleLaunchDemoWorkspace}
+                                className="px-3.5 py-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                                title="Instant Test: Launches workspace with sample broadsheet data to test 2-Key navigation & Math-Lock"
+                            >
+                                <PlayCircle size={15} className="text-amber-600" />
+                                <span>Instant Test Workspace</span>
+                            </button>
 
-                    {/* AI Vision Auto-Extraction Button */}
-                    <button
-                        type="button"
-                        disabled={isExtractingAI || imageQueue.length === 0}
-                        onClick={handleStartAiExtraction}
-                        className={`px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-lg flex items-center gap-2 ${
-                            isExtractingAI || imageQueue.length === 0
-                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-500/25 cursor-pointer'
-                        }`}
-                    >
-                        {isExtractingAI ? (
-                            <>
-                                <RefreshCw size={15} className="animate-spin" />
-                                <span>{aiProgressText || 'Extracting with Gemini...'}</span>
-                            </>
-                        ) : (
-                            <>
-                                <Sparkles size={15} />
-                                <span>AI Auto-Extract Broadsheet</span>
-                            </>
-                        )}
-                    </button>
+                            {/* Manual Rapid-Entry Mode (100% Offline) */}
+                            <button
+                                type="button"
+                                onClick={handleLaunchManualMode}
+                                className="px-3.5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center gap-1.5"
+                                title="Enter marks rapidly using keyboard without internet or AI"
+                            >
+                                <Layers size={15} />
+                                <span>Manual Rapid Mode (100% Offline)</span>
+                            </button>
+
+                            {/* AI Vision Auto-Extraction Button */}
+                            <button
+                                type="button"
+                                disabled={isExtractingAI || imageQueue.length === 0}
+                                onClick={handleStartAiExtraction}
+                                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition shadow-lg flex items-center gap-2 ${
+                                    isExtractingAI || imageQueue.length === 0
+                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-500/25 cursor-pointer'
+                                }`}
+                            >
+                                {isExtractingAI ? (
+                                    <>
+                                        <RefreshCw size={15} className="animate-spin" />
+                                        <span>{aiProgressText || 'Extracting with Gemini...'}</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles size={15} />
+                                        <span>AI Auto-Extract Broadsheet</span>
+                                    </>
+                                )}
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -955,6 +1260,7 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                 initialRoster={mergedRoster}
                 onSaveVerifiedResults={handleSaveVerifiedResults}
                 isSaving={isSavingFirestore}
+                csvInfo={sourceMode === 'csv' ? { fileName: csvFileName, ...csvSummary } : null}
             />
         </div>
     );

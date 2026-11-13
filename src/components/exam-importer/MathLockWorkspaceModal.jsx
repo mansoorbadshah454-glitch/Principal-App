@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import {
     X, ZoomIn, ZoomOut, RotateCw, RefreshCw, CheckCircle2, AlertTriangle,
     ShieldCheck, ArrowRight, CornerDownLeft, Sparkles, Lock, Save,
-    Maximize2, HelpCircle, Layers, ChevronRight, AlertCircle
+    Maximize2, HelpCircle, Layers, ChevronRight, AlertCircle,
+    FileSpreadsheet, Minimize2, PanelLeftClose, PanelLeft
 } from 'lucide-react';
 
 /**
@@ -184,10 +185,11 @@ export default function MathLockWorkspaceModal({
     classDetails,
     examTitle,
     subjects,
-    processedImages, // Array of { base64, previewUrl, label }
-    initialRoster,   // Merged students array
+    processedImages = [], // Array of { base64, previewUrl, label }
+    initialRoster,        // Merged students array
     onSaveVerifiedResults,
-    isSaving
+    isSaving,
+    csvInfo = null        // { fileName, matchedCount, totalParsed, isFromCsv }
 }) {
     if (!isOpen) return null;
 
@@ -195,7 +197,8 @@ export default function MathLockWorkspaceModal({
     const [roster, setRoster] = useState(initialRoster);
     const [activeRowIndex, setActiveRowIndex] = useState(0);
 
-    // Image Viewer Transform States
+    // Image Viewer & Layout States
+    const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
@@ -562,98 +565,207 @@ export default function MathLockWorkspaceModal({
             </div>
 
             {/* Main Split Screen Body */}
-            <div className="flex-1 flex overflow-hidden bg-slate-100">
-                {/* LEFT PANE (40% width): Interactive Image Viewer with Auto-Switch */}
-                <div className="w-[42%] flex flex-col bg-slate-950 border-r border-slate-800 relative">
-                    {/* Top Image Multi-Part Switcher & Zoom Controls */}
-                    <div className="bg-slate-900/90 border-b border-slate-800 p-2 flex items-center justify-between text-xs text-white z-10">
-                        {/* Part Tabs */}
-                        <div className="flex items-center gap-1.5">
-                            {processedImages.map((img, i) => (
-                                <button
-                                    key={i}
-                                    onClick={() => setSelectedImageIdx(i)}
-                                    className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                                        selectedImageIdx === i
-                                            ? 'bg-indigo-600 text-white shadow-sm'
-                                            : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                                    }`}
-                                >
-                                    <Layers size={13} />
-                                    <span>{img.label || `Part ${i + 1}`}</span>
-                                </button>
-                            ))}
-                        </div>
-
-                        {/* Interactive Zoom/Rotate Toolbar */}
-                        <div className="flex items-center gap-1 bg-slate-800/90 px-2 py-0.5 rounded-lg border border-slate-700">
+            <div className="flex-1 flex overflow-hidden bg-slate-100 relative">
+                {/* LEFT PANE: Interactive Image Viewer or CSV Data Inspector */}
+                <div
+                    className={`${
+                        isLeftCollapsed ? 'w-10' : 'w-[42%]'
+                    } flex flex-col bg-slate-950 border-r border-slate-800 relative transition-all duration-200 shrink-0`}
+                >
+                    {isLeftCollapsed ? (
+                        <div className="flex flex-col items-center py-4 gap-4 h-full">
                             <button
-                                onClick={() => setZoom(z => Math.max(0.4, z - 0.2))}
-                                className="p-1 hover:text-indigo-400 transition"
-                                title="Zoom Out"
+                                type="button"
+                                onClick={() => setIsLeftCollapsed(false)}
+                                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+                                title="Expand Left Pane"
                             >
-                                <ZoomOut size={15} />
+                                <PanelLeft size={18} />
                             </button>
-                            <span className="font-mono text-[11px] text-slate-300 w-10 text-center">
-                                {Math.round(zoom * 100)}%
+                            <span className="text-[11px] text-slate-500 [writing-mode:vertical-lr] font-mono tracking-widest uppercase">
+                                {csvInfo ? 'CSV Inspector' : 'Register Photo'}
                             </span>
-                            <button
-                                onClick={() => setZoom(z => Math.min(4, z + 0.2))}
-                                className="p-1 hover:text-indigo-400 transition"
-                                title="Zoom In"
-                            >
-                                <ZoomIn size={15} />
-                            </button>
-                            <div className="h-3 w-px bg-slate-700 mx-0.5" />
-                            <button
-                                onClick={() => setRotation(r => (r + 90) % 360)}
-                                className="p-1 hover:text-indigo-400 transition"
-                                title="Rotate 90°"
-                            >
-                                <RotateCw size={15} />
-                            </button>
-                            <button
-                                onClick={resetViewer}
-                                className="p-1 hover:text-indigo-400 transition"
-                                title="Reset View"
-                            >
-                                <RefreshCw size={13} />
-                            </button>
                         </div>
-                    </div>
+                    ) : (
+                        <>
+                            {/* Top Left Pane Header with Collapse Toggle */}
+                            <div className="bg-slate-900/90 border-b border-slate-800 p-2 flex items-center justify-between text-xs text-white z-10">
+                                {/* Part Tabs (if photos present) */}
+                                <div className="flex items-center gap-1.5 overflow-x-auto">
+                                    {processedImages.length > 0 ? (
+                                        processedImages.map((img, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => setSelectedImageIdx(i)}
+                                                className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                                                    selectedImageIdx === i
+                                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                                                }`}
+                                            >
+                                                <Layers size={13} />
+                                                <span>{img.label || `Part ${i + 1}`}</span>
+                                            </button>
+                                        ))
+                                    ) : (
+                                        <div className="flex items-center gap-1.5 text-xs text-slate-300 font-semibold px-1">
+                                            <FileSpreadsheet size={15} className="text-emerald-400" />
+                                            <span>{csvInfo?.fileName || 'CSV Broadsheet Inspector'}</span>
+                                        </div>
+                                    )}
+                                </div>
 
-                    {/* Canvas / Image Display Area (Draggable & Zoomable) */}
-                    <div
-                        className="flex-1 overflow-hidden flex items-center justify-center relative cursor-grab active:cursor-grabbing bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px]"
-                        onMouseDown={handleMouseDownPan}
-                        onMouseMove={handleMouseMovePan}
-                        onMouseUp={handleMouseUpPan}
-                        onMouseLeave={handleMouseUpPan}
-                        onWheel={handleWheelZoom}
-                    >
-                        {processedImages[selectedImageIdx] ? (
-                            <img
-                                src={processedImages[selectedImageIdx].previewUrl || processedImages[selectedImageIdx].base64}
-                                alt="Register Broadsheet"
-                                style={{
-                                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) rotate(${rotation}deg)`,
-                                    transformOrigin: 'center center',
-                                    transition: isPanning ? 'none' : 'transform 0.15s ease-out',
-                                    maxWidth: '90%',
-                                    maxHeight: '90%'
-                                }}
-                                className="shadow-2xl rounded select-none pointer-events-none"
-                                draggable={false}
-                            />
-                        ) : (
-                            <div className="text-slate-500 text-xs">No image loaded for this section.</div>
-                        )}
+                                {/* Controls */}
+                                <div className="flex items-center gap-1 bg-slate-800/90 px-2 py-0.5 rounded-lg border border-slate-700">
+                                    {processedImages.length > 0 && (
+                                        <>
+                                            <button
+                                                onClick={() => setZoom(z => Math.max(0.4, z - 0.2))}
+                                                className="p-1 hover:text-indigo-400 transition"
+                                                title="Zoom Out"
+                                            >
+                                                <ZoomOut size={15} />
+                                            </button>
+                                            <span className="font-mono text-[11px] text-slate-300 w-10 text-center">
+                                                {Math.round(zoom * 100)}%
+                                            </span>
+                                            <button
+                                                onClick={() => setZoom(z => Math.min(4, z + 0.2))}
+                                                className="p-1 hover:text-indigo-400 transition"
+                                                title="Zoom In"
+                                            >
+                                                <ZoomIn size={15} />
+                                            </button>
+                                            <div className="h-3 w-px bg-slate-700 mx-0.5" />
+                                            <button
+                                                onClick={() => setRotation(r => (r + 90) % 360)}
+                                                className="p-1 hover:text-indigo-400 transition"
+                                                title="Rotate 90°"
+                                            >
+                                                <RotateCw size={15} />
+                                            </button>
+                                            <button
+                                                onClick={resetViewer}
+                                                className="p-1 hover:text-indigo-400 transition"
+                                                title="Reset View"
+                                            >
+                                                <RefreshCw size={13} />
+                                            </button>
+                                            <div className="h-3 w-px bg-slate-700 mx-0.5" />
+                                        </>
+                                    )}
+                                    <button
+                                        onClick={() => setIsLeftCollapsed(true)}
+                                        className="p-1 hover:text-amber-400 transition text-slate-400"
+                                        title="Collapse Left Pane (Full Width Grid)"
+                                    >
+                                        <PanelLeftClose size={15} />
+                                    </button>
+                                </div>
+                            </div>
 
-                        {/* Floating Indicator for active photo part */}
-                        <div className="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur border border-slate-700/80 text-slate-300 text-[11px] px-2.5 py-1 rounded-md shadow-lg pointer-events-none">
-                            Active photo: <span className="font-bold text-white">{processedImages[selectedImageIdx]?.label || `Part ${selectedImageIdx + 1}`}</span>
-                        </div>
-                    </div>
+                            {/* Left Pane Content Body */}
+                            {processedImages.length > 0 ? (
+                                <div
+                                    className="flex-1 overflow-hidden flex items-center justify-center relative cursor-grab active:cursor-grabbing bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px]"
+                                    onMouseDown={handleMouseDownPan}
+                                    onMouseMove={handleMouseMovePan}
+                                    onMouseUp={handleMouseUpPan}
+                                    onMouseLeave={handleMouseUpPan}
+                                    onWheel={handleWheelZoom}
+                                >
+                                    {processedImages[selectedImageIdx] ? (
+                                        <img
+                                            src={processedImages[selectedImageIdx].previewUrl || processedImages[selectedImageIdx].base64}
+                                            alt="Register Broadsheet"
+                                            style={{
+                                                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) rotate(${rotation}deg)`,
+                                                transformOrigin: 'center center',
+                                                transition: isPanning ? 'none' : 'transform 0.15s ease-out',
+                                                maxWidth: '90%',
+                                                maxHeight: '90%'
+                                            }}
+                                            className="shadow-2xl rounded select-none pointer-events-none"
+                                            draggable={false}
+                                        />
+                                    ) : (
+                                        <div className="text-slate-500 text-xs">No image loaded for this section.</div>
+                                    )}
+
+                                    {/* Floating Indicator for active photo part */}
+                                    <div className="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur border border-slate-700/80 text-slate-300 text-[11px] px-2.5 py-1 rounded-md shadow-lg pointer-events-none">
+                                        Active photo: <span className="font-bold text-white">{processedImages[selectedImageIdx]?.label || `Part ${selectedImageIdx + 1}`}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                /* CSV Data Inspector View when no physical photo */
+                                <div className="flex-1 overflow-y-auto p-6 text-slate-200 space-y-5 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
+                                    <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-400 shrink-0">
+                                                <FileSpreadsheet size={22} />
+                                            </div>
+                                            <div>
+                                                <div className="text-sm font-bold text-white truncate max-w-[260px]">
+                                                    {csvInfo?.fileName || 'Broadsheet Import'}
+                                                </div>
+                                                <div className="text-[11px] text-emerald-400 font-semibold">
+                                                    CSV Source Verified
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800 text-xs">
+                                            <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                                                <div className="text-[10px] text-slate-400">Total Rows</div>
+                                                <div className="text-sm font-bold text-white font-mono mt-0.5">
+                                                    {csvInfo?.totalParsed || roster.length} Students
+                                                </div>
+                                            </div>
+                                            <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                                                <div className="text-[10px] text-slate-400">Roster Matched</div>
+                                                <div className="text-sm font-bold text-emerald-400 font-mono mt-0.5">
+                                                    {csvInfo?.matchedCount || roster.length} Matched
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* How Math-Lock verifies CSVs */}
+                                    <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-800/40 space-y-2.5 text-xs">
+                                        <h4 className="font-bold text-indigo-300 flex items-center gap-1.5 text-xs">
+                                            <ShieldCheck size={16} className="text-indigo-400" />
+                                            <span>Math-Lock Integrity Rules for CSV</span>
+                                        </h4>
+                                        <p className="text-[11px] text-indigo-200/80 leading-relaxed">
+                                            Even in Excel/CSV files, human typo errors frequently happen in formula sums.
+                                            Math-Lock recalculated the sum of all subject columns for each student.
+                                        </p>
+                                        <div className="space-y-1.5 pt-1 text-[11px]">
+                                            <div className="flex items-center gap-2 text-emerald-300">
+                                                <CheckCircle2 size={13} className="shrink-0" />
+                                                <span>Green Rows: Sum matches the file total perfectly.</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-rose-300">
+                                                <AlertTriangle size={13} className="shrink-0" />
+                                                <span>Red Rows: Mismatch detected or mark exceeds maximum.</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Button to expand grid full-screen */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsLeftCollapsed(true)}
+                                        className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center justify-center gap-2 border border-slate-700"
+                                    >
+                                        <Maximize2 size={14} />
+                                        <span>Expand Spreadsheet to Full Width</span>
+                                    </button>
+                                </div>
+                            )}
+                        </>
+                    )}
                 </div>
 
                 {/* RIGHT PANE (58% width): High-Speed Spreadsheet Grid with Math-Lock */}
