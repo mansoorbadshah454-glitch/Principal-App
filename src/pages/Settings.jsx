@@ -6,7 +6,7 @@ import {
     Plus, Trash2, Users, Info, BookOpen, Sparkles, Bot, Key, ExternalLink,
     CreditCard, Landmark, Upload, Eye, EyeOff, Lock, Mail, FileText, AlertCircle, AlertTriangle, ArrowRight,
     Smartphone, RefreshCw, X, Check, Search, Calendar, LayoutGrid, ListFilter,
-    CheckCheck, Ban, ArrowUpRight, DollarSign
+    CheckCheck, Ban, ArrowUpRight, DollarSign, Award
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
@@ -17,6 +17,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
 import UploadSyllabusTab from '../components/UploadSyllabusTab';
 import FeeMigrationStudio from '../components/FeeMigrationStudio';
+import ExamBroadsheetImporter from '../components/exam-importer/ExamBroadsheetImporter';
 import CachedImage from '../components/CachedImage';
 import { compressImage } from '../utils/imageCompressor';
 import PaymentMethodLogo, { getPaymentMethodTheme } from '../components/PaymentLogos';
@@ -29,7 +30,7 @@ const Settings = () => {
         try {
             const params = new URLSearchParams(window.location.search);
             const tabParam = params.get('tab');
-            if (tabParam && ['details', 'timing', 'accounts', 'ai', 'billing', 'import', 'syllabus', 'security'].includes(tabParam)) {
+            if (tabParam && ['details', 'timing', 'accounts', 'ai', 'billing', 'import', 'syllabus', 'fee_migration', 'exam_onboarding', 'security'].includes(tabParam)) {
                 return tabParam;
             }
         } catch (e) {}
@@ -1363,6 +1364,7 @@ const Settings = () => {
                         },
                         { id: 'import', label: 'Import Students', icon: Users, desc: 'Excel / CSV bulk upload' },
                         { id: 'fee_migration', label: 'Fee Migration & Baseline', icon: DollarSign, desc: 'CSV fee & backlog setup' },
+                        { id: 'exam_onboarding', label: 'Smart Exam Importer', icon: Award, desc: '1st & 2nd Term digitized registers' },
                         { id: 'ai_assistant', label: 'AI Copilot', icon: Sparkles, desc: 'Gemini Copilot engine' },
                         { id: 'security', label: 'Security & Password', icon: ShieldCheck, desc: 'Private password control' }
                     ].map((tab) => {
@@ -3363,6 +3365,35 @@ const Settings = () => {
                                 onSettingsUpdated={() => {
                                     setFeeSettings(prev => ({ ...prev, historicalBaselineCompleted: true }));
                                 }}
+                            />
+                        ) : (
+                            <div>Generating School ID...</div>
+                        )}
+                    </div>
+                )}
+
+                {activeTab === 'exam_onboarding' && (
+                    <div style={{ animation: 'fadeIn 0.3s ease-out' }} className="w-full space-y-4">
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                            <div className="flex items-center gap-3">
+                                <Award className="text-indigo-600 shrink-0" size={24} />
+                                <div>
+                                    <h4 className="font-bold text-slate-800 text-sm">Dedicated Full-Size Page Available</h4>
+                                    <p className="text-slate-600 text-[11px]">You can use the importer here, or open it in 100% full-screen mode like Exams & Results Center.</p>
+                                </div>
+                            </div>
+                            <a
+                                href="/exam-importer"
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold flex items-center gap-1.5 shrink-0 shadow-sm"
+                            >
+                                <span>Open Full-Screen Page</span>
+                                <ArrowUpRight size={14} />
+                            </a>
+                        </div>
+                        {schoolId ? (
+                            <ExamBroadsheetImporter
+                                schoolId={schoolId}
+                                classes={classesList}
                             />
                         ) : (
                             <div>Generating School ID...</div>

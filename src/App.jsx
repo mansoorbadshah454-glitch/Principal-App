@@ -29,6 +29,7 @@ const EditStudentProfile = lazy(() => import('./pages/EditStudentProfile'));
 const LiveSurveillance = lazy(() => import('./pages/LiveSurveillance'));
 const ExamPapersHub = lazy(() => import('./pages/ExamPapersHub'));
 const Exams = lazy(() => import('./pages/Exams'));
+const SmartExamImporter = lazy(() => import('./pages/SmartExamImporter'));
 const Store = lazy(() => import('./pages/Store'));
 const Transport = lazy(() => import('./pages/Transport'));
 const HRDocuments = lazy(() => import('./pages/HRDocuments'));
@@ -227,6 +228,11 @@ function App() {
               <Route path="exams" element={
                 <ProtectedRoute requiredPermission="canManageExams" pageName="Exams">
                   <Exams />
+                </ProtectedRoute>
+              } />
+              <Route path="exam-importer" element={
+                <ProtectedRoute requiredPermission="canManageExams" pageName="Smart Exam Importer">
+                  <SmartExamImporter />
                 </ProtectedRoute>
               } />
             </Route>
