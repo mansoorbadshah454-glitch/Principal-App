@@ -448,13 +448,16 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                 ? `exam_${(customTermTitle || 'custom').toLowerCase().replace(/[^a-z0-9]/g, '_')}`
                 : selectedTermId;
 
-            // 1. Ensure the exam header document exists in schools/${schoolId}/exams
+            // 1. Ensure the exam header document exists in schools/${schoolId}/exams (Locked & Completed)
             const examDocRef = doc(db, `schools/${schoolId}/exams`, targetExamId);
             await setDoc(examDocRef, {
                 id: targetExamId,
                 title: activeExamTitle,
                 session: '2025-2026',
                 status: 'completed',
+                isLocked: true,
+                isCompleted: true,
+                lockedReason: 'Onboarded via Smart Exam Broadsheet Importer',
                 defaultTotalMarks: 100,
                 passingMarks: 33,
                 source: 'broadsheet_importer',
