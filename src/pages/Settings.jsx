@@ -3415,22 +3415,6 @@ const Settings = () => {
 
                 {activeTab === 'exam_onboarding' && (
                     <div style={{ animation: 'fadeIn 0.3s ease-out' }} className="w-full space-y-4">
-                        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                            <div className="flex items-center gap-3">
-                                <Award className="text-indigo-600 shrink-0" size={24} />
-                                <div>
-                                    <h4 className="font-bold text-slate-800 text-sm">Dedicated Full-Size Page Available</h4>
-                                    <p className="text-slate-600 text-[11px]">You can use the importer here, or open it in 100% full-screen mode like Exams & Results Center.</p>
-                                </div>
-                            </div>
-                            <a
-                                href="/exam-importer"
-                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold flex items-center gap-1.5 shrink-0 shadow-sm"
-                            >
-                                <span>Open Full-Screen Page</span>
-                                <ArrowUpRight size={14} />
-                            </a>
-                        </div>
                         {schoolId ? (
                             <ExamBroadsheetImporter
                                 schoolId={schoolId}

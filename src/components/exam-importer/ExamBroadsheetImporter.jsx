@@ -18,7 +18,8 @@ import {
 import {
     getGeminiApiKey,
     extractBroadsheetPageWithAI,
-    mergeMultiImageResults
+    mergeMultiImageResults,
+    detectSubjectsFromRegisterImage
 } from './GeminiVisionService';
 import { generateSampleRegisterImage } from './SampleRegisterGenerator';
 import {
@@ -61,6 +62,9 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
     const [students, setStudents] = useState([]);
     const [loadingStudents, setLoadingStudents] = useState(false);
     const [subjects, setSubjects] = useState([]); // [{ subjectId, name, maxMarks }]
+    const [isAutoDetectedFromImage, setIsAutoDetectedFromImage] = useState(false);
+    const [isDetectingHeader, setIsDetectingHeader] = useState(false);
+    const [showManualColumnEditor, setShowManualColumnEditor] = useState(false);
     const [newSubjectInput, setNewSubjectInput] = useState('');
     const [newSubjectMax, setNewSubjectMax] = useState('100');
 
@@ -317,6 +321,15 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
         setImageQueue(newQueue);
         setIsProcessingCanvas(false);
         e.target.value = '';
+
+        // Auto-detect register columns from the first uploaded image automatically (Zero buttons needed)
+        if (newQueue.length > 0) {
+            const firstImg = newQueue[0].enhancedBase64 || newQueue[0].base64;
+            const effectiveKey = geminiKey || getGeminiApiKey(schoolId);
+            if (firstImg && effectiveKey) {
+                handleAutoDetectHeader(firstImg);
+            }
+        }
     };
 
     const removeImage = (index) => {
@@ -480,6 +493,40 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
         setShowWorkspace(true);
     };
 
+    // Auto-detect subject columns directly from register photo header
+    const handleAutoDetectHeader = async (targetBase64 = null) => {
+        const base64ToScan = targetBase64 || imageQueue[0]?.enhancedBase64 || imageQueue[0]?.base64;
+        if (!base64ToScan) {
+            alert("Please upload or capture at least one register photo first.");
+            return;
+        }
+
+        const effectiveKey = geminiKey || getGeminiApiKey(schoolId);
+        if (!effectiveKey) {
+            setShowKeyModal(true);
+            return;
+        }
+
+        setIsDetectingHeader(true);
+        try {
+            const detected = await detectSubjectsFromRegisterImage({
+                base64Image: base64ToScan,
+                defaultSubjects: subjects,
+                schoolId,
+                customApiKey: effectiveKey
+            });
+
+            if (detected && detected.length > 0) {
+                setSubjects(detected);
+                setIsAutoDetectedFromImage(true);
+            }
+        } catch (err) {
+            console.warn("Auto-detect header notice:", err);
+        } finally {
+            setIsDetectingHeader(false);
+        }
+    };
+
     // Trigger AI Vision Extraction
     const handleStartAiExtraction = async () => {
         if (imageQueue.length === 0) {
@@ -501,6 +548,7 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
         const extractedParts = [];
 
         try {
+            let activeSubjects = [...subjects];
             for (let i = 0; i < imageQueue.length; i++) {
                 const img = imageQueue[i];
                 setAiProgressText(`AI scanning ${img.label} (${i + 1}/${imageQueue.length})...`);
@@ -509,19 +557,26 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                     base64Image: img.enhancedBase64 || img.base64,
                     imageIndex: i,
                     students,
-                    subjects,
+                    subjects: activeSubjects,
                     schoolId,
                     customApiKey: effectiveKey
                 });
 
+                // Auto-adopt columns from register image if detected by AI
+                if (Array.isArray(result?.detectedSubjects) && result.detectedSubjects.length > 0) {
+                    activeSubjects = result.detectedSubjects;
+                    setSubjects(activeSubjects);
+                    setIsAutoDetectedFromImage(true);
+                }
+
                 extractedParts.push(result);
             }
 
-            setAiProgressText('Merging rows & running Math-Lock checks...');
+            setAiProgressText('Register columns matched! Merging rows & running Math-Lock checks...');
             const finalMerged = mergeMultiImageResults({
                 extractedParts,
                 students,
-                subjects
+                subjects: activeSubjects
             });
 
             setMergedRoster(finalMerged);
@@ -653,49 +708,18 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
     };
 
     return (
-        <div className="w-full space-y-6">
-            {/* Top Info Banner */}
-            <div className="w-full bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 rounded-2xl p-6 text-white shadow-md border border-indigo-700/40 relative overflow-hidden">
-                <div className="relative z-10">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur border border-white/20 flex items-center justify-center shrink-0">
-                                <Award className="text-amber-400" size={24} />
-                            </div>
-                            <div>
-                                <h2 className="text-lg font-bold">Smart Exam Broadsheet Digitizer & Math-Lock Studio</h2>
-                                <p className="text-xs text-indigo-200">
-                                    Digitize 1st Term & 2nd Term offline handwritten register records with 100% mathematical zero-error accuracy.
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* One-Click Instant Test Generator Button */}
-                        <div className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={handleLoadSampleRegister}
-                                className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
-                                title="No camera or physical register? Click to generate a sample broadsheet image instantly."
-                            >
-                                <Beaker size={15} className="text-amber-400" />
-                                <span>🧪 Load Demo Sample Register</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
-                        <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-3 py-1 rounded-full font-semibold flex items-center gap-1.5">
-                            <ShieldCheck size={14} /> Zero Math Errors Engine
-                        </span>
-                        <span className="bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 px-3 py-1 rounded-full font-semibold flex items-center gap-1.5">
-                            <Sparkles size={14} /> 2-Key Rapid Verification (Enter skips Green rows)
-                        </span>
-                        <span className="bg-slate-700/60 text-slate-300 border border-slate-600 px-3 py-1 rounded-full font-semibold flex items-center gap-1.5">
-                            <Layers size={14} /> Multi-Part Photo Stitching
-                        </span>
-                    </div>
-                </div>
+        <div className="w-full space-y-4">
+            {/* Top Toolbar (Load Demo Sample Register) */}
+            <div className="flex items-center justify-end">
+                <button
+                    type="button"
+                    onClick={handleLoadSampleRegister}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    title="No camera or physical register? Click to generate a sample broadsheet image instantly."
+                >
+                    <Beaker size={14} className="text-amber-600" />
+                    <span>🧪 Load Demo Sample Register</span>
+                </button>
             </div>
 
             {/* Success Message Banner */}
@@ -765,119 +789,6 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                                 className="mt-2 w-full px-3 py-1.5 text-xs rounded border border-slate-300 focus:border-indigo-500"
                             />
                         )}
-                    </div>
-                </div>
-
-                {/* Subject Column Sequence Mapper (Dynamic Add, Remove & Reorder) */}
-                <div className="mt-2 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                        <div>
-                            <span className="text-xs font-bold text-slate-700">
-                                Subject Column Sequence Mapper ({subjects.length} Subjects Active)
-                            </span>
-                            <p className="text-[11px] text-slate-500">
-                                Match the exact left-to-right columns as written on the physical register. Add any extra subjects if needed.
-                            </p>
-                        </div>
-
-                        {/* Custom Subject Quick Add Form */}
-                        <div className="flex items-center gap-1.5">
-                            <input
-                                type="text"
-                                placeholder="Subject name..."
-                                value={newSubjectInput}
-                                onChange={(e) => setNewSubjectInput(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleAddSubject(newSubjectInput, newSubjectMax);
-                                }}
-                                className="px-2.5 py-1 text-xs rounded border border-slate-300 bg-white w-32 focus:border-indigo-500"
-                            />
-                            <input
-                                type="number"
-                                placeholder="Max"
-                                value={newSubjectMax}
-                                onChange={(e) => setNewSubjectMax(e.target.value)}
-                                className="px-1.5 py-1 text-xs font-mono w-14 text-center rounded border border-slate-300 bg-white"
-                                title="Max Marks"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => handleAddSubject(newSubjectInput, newSubjectMax)}
-                                className="p-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-bold flex items-center gap-1"
-                                title="Add Subject to Register"
-                            >
-                                <Plus size={14} />
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Quick Suggestion Pills */}
-                    <div className="flex flex-wrap items-center gap-1.5 mb-3 pt-1">
-                        <span className="text-[10px] text-slate-400 font-semibold mr-1">Quick Add:</span>
-                        {COMMON_EXTRA_SUBJECTS.filter(name => !subjects.some(s => s.name.toLowerCase() === name.toLowerCase())).slice(0, 5).map(name => (
-                            <button
-                                key={name}
-                                type="button"
-                                onClick={() => handleAddSubject(name, 100)}
-                                className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200/70 hover:bg-indigo-100 hover:text-indigo-700 text-slate-700 font-medium transition"
-                            >
-                                + {name}
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Reorderable Subject Pills Grid */}
-                    <div className="flex flex-wrap gap-2 pt-1">
-                        {subjects.map((sub, idx) => (
-                            <div
-                                key={sub.subjectId}
-                                className="bg-white border border-slate-300 rounded-lg p-2 flex items-center gap-2 shadow-xs text-xs"
-                            >
-                                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 font-mono font-bold text-[10px] flex items-center justify-center">
-                                    {idx + 1}
-                                </span>
-                                <span className="font-bold text-slate-800">{sub.name}</span>
-
-                                <div className="flex items-center gap-1 border-l border-slate-200 pl-2">
-                                    <span className="text-[10px] text-slate-400">max:</span>
-                                    <input
-                                        type="number"
-                                        value={sub.maxMarks}
-                                        onChange={(e) => updateMaxMarks(idx, e.target.value)}
-                                        className="w-12 text-center text-xs font-mono font-bold py-0.5 border border-slate-200 rounded"
-                                    />
-                                </div>
-
-                                <div className="flex items-center gap-0.5 border-l border-slate-200 pl-1">
-                                    <button
-                                        type="button"
-                                        disabled={idx === 0}
-                                        onClick={() => moveSubject(idx, -1)}
-                                        className="p-1 text-slate-500 hover:text-indigo-600 disabled:opacity-30"
-                                        title="Move Left"
-                                    >
-                                        <ArrowLeft size={13} />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled={idx === subjects.length - 1}
-                                        onClick={() => moveSubject(idx, 1)}
-                                        className="p-1 text-slate-500 hover:text-indigo-600 disabled:opacity-30"
-                                        title="Move Right"
-                                    >
-                                        <ArrowRight size={13} />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleRemoveSubject(idx)}
-                                        className="p-1 text-rose-500 hover:text-rose-700 ml-0.5"
-                                        title="Remove Subject"
-                                    >
-                                        <Trash2 size={13} />
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
                     </div>
                 </div>
             </div>
@@ -989,9 +900,22 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                                                     <CheckCircle2 size={12} /> Sharp (Clear)
                                                 </span>
                                             )}
-                                            <span className="text-slate-400 font-mono text-[10px]">
-                                                Enhanced
-                                            </span>
+
+                                            {isDetectingHeader ? (
+                                                <span className="text-[10px] text-indigo-600 font-bold flex items-center gap-1">
+                                                    <RefreshCw size={11} className="animate-spin" />
+                                                    Auto-syncing...
+                                                </span>
+                                            ) : isAutoDetectedFromImage ? (
+                                                <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                                    <CheckCircle2 size={11} className="text-emerald-600" />
+                                                    Auto-Matched ({subjects.length} Cols)
+                                                </span>
+                                            ) : (
+                                                <span className="text-slate-400 font-mono text-[10px]">
+                                                    Enhanced
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
