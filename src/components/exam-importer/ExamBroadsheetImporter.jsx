@@ -190,10 +190,10 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
         return found?.title || 'Examination';
     }, [selectedTermId, customTermTitle, existingExams]);
 
-    // Demo Account Detection (School ID 6257)
+    // Demo Account Detection (School ID 6257 / SCHOOL_6257)
     const isDemoAccount = useMemo(() => {
-        const sId = String(schoolId || '').trim();
-        return sId === '6257' || sId.toLowerCase().includes('demo');
+        const sId = String(schoolId || '').trim().toLowerCase();
+        return sId.includes('6257') || sId.includes('demo');
     }, [schoolId]);
 
     // Automatically inject realistic dummy register image for School ID 6257 / Demo account
@@ -619,6 +619,27 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
             });
 
             await batch.commit();
+
+            // 3. Automatically sync the exact broadsheet subjects to the Class Card in Firestore
+            try {
+                const exactSubjectNames = subjects.map(s => s.name.trim()).filter(Boolean);
+                if (exactSubjectNames.length > 0) {
+                    const classDocRef = doc(db, `schools/${schoolId}/classes`, selectedClassId);
+                    await setDoc(classDocRef, {
+                        subjects: exactSubjectNames,
+                        updatedAt: serverTimestamp()
+                    }, { merge: true });
+
+                    setClasses(prev => prev.map(c => {
+                        if (c.id === selectedClassId) {
+                            return { ...c, subjects: exactSubjectNames };
+                        }
+                        return c;
+                    }));
+                }
+            } catch (syncErr) {
+                console.warn("Could not sync broadsheet subjects to class card:", syncErr);
+            }
 
             setShowWorkspace(false);
             setSuccessBanner(`🎉 Successfully digitized and committed ${verifiedRoster.length} student broadsheet records for ${currentCls?.name || 'Class'} into ${activeExamTitle}!`);

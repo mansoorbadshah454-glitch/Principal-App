@@ -4,7 +4,7 @@ import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon,
     FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Lock, DoorOpen,
-    FileSpreadsheet
+    FileSpreadsheet, Camera
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';

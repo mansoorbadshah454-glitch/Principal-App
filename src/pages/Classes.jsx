@@ -8,6 +8,7 @@ import { auth } from '../firebase';
 import StudentCircle from '../components/StudentCircle';
 import CachedImage from '../components/CachedImage';
 import { isDateTodayTrusted } from '../utils/pakistanTimeEngine';
+import { getClassOrder } from '../utils/studentSequenceHelper';
 
 // Shared Helper for robust date & timezone matching using trusted Pakistan server time
 const isDateToday = (targetDate) => {
@@ -366,21 +367,29 @@ const ClassCard = ({ cls, onDelete, onEdit, schoolId, isEditing, teachers, subje
 
                         {showSubjects && (
                             <div className="animate-fade-in-up" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                                {cls.subjects?.slice(0, 5).map((subj, idx) => (
-                                    <span key={idx} style={{
-                                        fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '6px',
-                                        background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
-                                        boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
-                                    }}>
-                                        {subj}
-                                    </span>
-                                ))}
-                                {cls.subjects?.length > 5 && (
-                                    <span style={{
-                                        fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '6px',
-                                        background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'
-                                    }}>
-                                        +{cls.subjects.length - 5}
+                                {Array.isArray(cls.subjects) && cls.subjects.length > 0 ? (
+                                    <>
+                                        {cls.subjects.slice(0, 5).map((subj, idx) => (
+                                            <span key={idx} style={{
+                                                fontSize: '0.75rem', padding: '0.25rem 0.75rem', borderRadius: '6px',
+                                                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                                            }}>
+                                                {subj}
+                                            </span>
+                                        ))}
+                                        {cls.subjects.length > 5 && (
+                                            <span style={{
+                                                fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '6px',
+                                                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'
+                                            }}>
+                                                +{cls.subjects.length - 5}
+                                            </span>
+                                        )}
+                                    </>
+                                ) : (
+                                    <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)', fontStyle: 'italic', padding: '0.25rem 0' }}>
+                                        No subjects yet &bull; Sync via Smart Exam Importer
                                     </span>
                                 )}
                             </div>
@@ -775,7 +784,7 @@ const ClassTableRow = ({ cls, schoolId, onEdit, onDelete, navigate }) => {
                             )}
                         </>
                     ) : (
-                        <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>None</span>
+                        <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic' }}>Pending Exam Sync</span>
                     )}
                 </div>
             </td>
@@ -1160,9 +1169,12 @@ const Classes = () => {
                 // We do nothing here to avoid conflicts or client-side spam.
             }
 
-            // Enhanced Sort
+            // Enhanced Universal Educational Hierarchy Sort (Playgroup -> Nursery -> Prep -> Class 1..10)
             classesData.sort((a, b) => {
-                return getClassOrder(a.name) - getClassOrder(b.name);
+                const orderA = a.order !== undefined && a.order !== null ? a.order : getClassOrder(a.name);
+                const orderB = b.order !== undefined && b.order !== null ? b.order : getClassOrder(b.name);
+                if (orderA !== orderB) return orderA - orderB;
+                return (a.name || '').localeCompare(b.name || '');
             });
 
             setClasses(classesData);
@@ -1536,71 +1548,53 @@ const Classes = () => {
                     <Loader2 className="animate-spin" size={32} color="var(--primary)" />
                 </div>
             ) : classes.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <BookOpen size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
-                    <p style={{ marginBottom: '1.5rem' }}>No classes found. You can set up the default structure instantly.</p>
-                    <button
-                        onClick={async () => {
-                            console.log("Setup button clicked. School ID:", schoolId);
-                            if (!schoolId) {
-                                // Try to get from localStorage one more time as a fallback
-                                const manualSession = localStorage.getItem('manual_session');
-                                if (manualSession) {
-                                    const userData = JSON.parse(manualSession);
-                                    if (userData.schoolId) {
-                                        setSchoolId(userData.schoolId);
-                                        // But we can't proceed immediately with setSchoolId (async), so alert user to refresh
-                                        alert("School ID found in storage but not loaded. Reloading...");
-                                        window.location.reload();
-                                        return;
-                                    }
-                                }
-                                alert("Error: School ID is missing. Please log out and log in again.");
-                                return;
-                            }
-
-                            setLoading(true);
-                            try {
-                                const DEFAULT_CLASSES = [
-                                    'Nursery', 'Prep',
-                                    'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5',
-                                    'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'
-                                ];
-
-                                const batch = writeBatch(db);
-                                DEFAULT_CLASSES.forEach(name => {
-                                    const docRef = doc(collection(db, `schools/${schoolId}/classes`));
-                                    batch.set(docRef, {
-                                        name,
-                                        teacher: '',
-                                        students: 0,
-                                        subjects: ['English', 'Urdu', 'Mathematics', 'Islamiyat'],
-                                        createdAt: new Date()
-                                    });
-                                });
-
-                                await batch.commit();
-                                // No manual reload needed, onSnapshot will pick it up
-                            } catch (error) {
-                                console.error("Error seeding classes:", error);
-                                alert("Failed to create default classes.");
-                                setLoading(false);
-                            }
-                        }}
-                        className="btn-primary"
-                        style={{
-                            padding: '0.75rem 1.5rem',
-                            borderRadius: '12px',
-                            fontWeight: '600',
-                            cursor: 'pointer',
-                            background: 'var(--primary)',
-                            color: 'white',
-                            border: 'none',
-                            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
-                        }}
-                    >
-                        Setup Default Classes
-                    </button>
+                <div style={{ textAlign: 'center', padding: '4rem 2rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ width: '64px', height: '64px', borderRadius: '20px', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.25rem' }}>
+                        <BookOpen size={32} style={{ color: 'var(--primary)' }} />
+                    </div>
+                    <h3 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'var(--text-main)', marginBottom: '0.5rem' }}>
+                        No Classes Created Yet
+                    </h3>
+                    <p style={{ maxWidth: '520px', marginBottom: '1.75rem', fontSize: '0.88rem', lineHeight: '1.6', color: '#64748b' }}>
+                        Classes are automatically created with live student counts as soon as you onboard students from physical registers or files. You can also create a custom class manually.
+                    </p>
+                    <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
+                        <a
+                            href="/settings?tab=import"
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                padding: '0.75rem 1.4rem',
+                                borderRadius: '12px',
+                                fontWeight: '700',
+                                fontSize: '0.88rem',
+                                textDecoration: 'none',
+                                background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                                color: 'white',
+                                boxShadow: '0 4px 14px rgba(99, 102, 241, 0.25)'
+                            }}
+                        >
+                            <span>📸 Onboard Students & Auto-Generate Classes</span>
+                        </a>
+                        <button
+                            type="button"
+                            onClick={() => setShowAddModal(true)}
+                            style={{
+                                padding: '0.75rem 1.4rem',
+                                borderRadius: '12px',
+                                fontWeight: '600',
+                                fontSize: '0.88rem',
+                                cursor: 'pointer',
+                                background: 'white',
+                                color: '#334155',
+                                border: '1px solid #cbd5e1',
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                            }}
+                        >
+                            + Add Single Class
+                        </button>
+                    </div>
                 </div>
             ) : (
                 <AnimatePresence mode="wait">

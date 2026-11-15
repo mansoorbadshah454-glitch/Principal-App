@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { db, storage, functions } from "../firebase";
 import AdmissionHistory from "./AdmissionHistory";
+import StudentRegisterImporter from "../components/student-importer/StudentRegisterImporter";
 import {
   collection,
   getDocs,
@@ -2484,10 +2485,46 @@ const Admission = () => {
             <History size={18} />
             <span>Admissions History</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveView("smart_importer")}
+            style={{
+              padding: "0.75rem 1.5rem",
+              borderRadius: "14px",
+              fontWeight: "800",
+              fontSize: "0.95rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.6rem",
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+              border:
+                activeView === "smart_importer"
+                  ? "3px solid #ffffff"
+                  : "2px solid rgba(255, 255, 255, 0.3)",
+              background:
+                activeView === "smart_importer"
+                  ? "#ffffff"
+                  : "rgba(255, 255, 255, 0.15)",
+              color: activeView === "smart_importer" ? "#059669" : "#ffffff",
+              boxShadow:
+                activeView === "smart_importer"
+                  ? "0 6px 16px rgba(0,0,0,0.15)"
+                  : "none",
+            }}
+          >
+            <Camera size={18} />
+            <span>Smart Register Importer</span>
+          </button>
         </div>
       </div>
 
-      {activeView === "history" ? (
+      {activeView === "smart_importer" ? (
+        <div style={{ maxWidth: "1400px", margin: "2rem auto", padding: "0 1.5rem" }}>
+          <StudentRegisterImporter schoolId={schoolId} />
+        </div>
+      ) : activeView === "history" ? (
         <AdmissionHistory />
       ) : (
         <div className="admission-container">

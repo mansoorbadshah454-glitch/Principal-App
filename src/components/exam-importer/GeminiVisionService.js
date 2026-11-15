@@ -25,6 +25,32 @@ export function getGeminiApiKey(schoolId) {
 }
 
 /**
+ * Dynamically queries Google API to get all active generation models for this key.
+ */
+export async function getSupportedGeminiModels(apiKey) {
+    try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (res.ok) {
+            const data = await res.json();
+            const supported = (data.models || [])
+                .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
+                .map(m => m.name.replace(/^models\//, ''));
+
+            if (supported.length > 0) {
+                return supported.sort((a, b) => {
+                    const aFlash = a.includes('flash') ? 1 : 0;
+                    const bFlash = b.includes('flash') ? 1 : 0;
+                    return bFlash - aFlash;
+                });
+            }
+        }
+    } catch (e) {
+        console.warn("Dynamic model query failed:", e);
+    }
+    return ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+}
+
+/**
  * Calls Gemini Flash Vision with the processed broadsheet image
  * and the preloaded student/subject roster.
  */
@@ -97,8 +123,8 @@ STRICT RULES:
         }
     };
 
-    // Use Gemini 2.5 Flash with fallback to 1.5 Flash
-    const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
+    // Dynamically retrieve supported models for this key
+    const models = await getSupportedGeminiModels(apiKey);
     let lastError = null;
 
     for (const model of models) {

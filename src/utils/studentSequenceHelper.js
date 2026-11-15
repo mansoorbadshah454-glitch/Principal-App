@@ -236,3 +236,34 @@ export const syncCountersFromBulkUpload = async (schoolId, previewStudents, db) 
     console.warn("Failed to sync counters from bulk upload:", err);
   }
 };
+
+/**
+ * Universal Pakistani & International Educational Hierarchy Class Sorter
+ * Smallest to Highest rank:
+ * Playgroup (-5) -> Nursery (-4) -> Prep/KG 1 (-3) -> KG 2 (-2) -> Class 1..10 (1..10) -> 11th..12th (11..12)
+ */
+export const getClassOrder = (name) => {
+  if (!name || typeof name !== "string") return 0;
+  const lower = name.toLowerCase().trim();
+
+  // 1. Pre-School / Early Childhood
+  if (lower.includes("playgroup") || lower.includes("play group") || lower.match(/\bpg\b/) || lower.includes("daycare")) return -5;
+  if (lower.includes("nursery") || lower.includes("pre-nursery")) return -4;
+  if (lower.includes("prep") || lower.includes("kg 1") || lower.includes("kg-1") || lower.includes("kg-i") || lower.includes("montessori")) return -3;
+  if (lower.includes("kg 2") || lower.includes("kg-2") || lower.includes("kg-ii") || lower.includes("reception") || lower.includes("kindergarten")) return -2;
+
+  // 2. Pre-9 & Higher Secondary
+  if (lower.includes("pre-9") || lower.includes("pre 9") || lower.includes("pre-nine")) return 8.5;
+  if (lower.includes("matric") || lower.includes("10th") || lower.includes("grade 10") || lower.includes("class 10")) return 10;
+  if (lower.includes("1st year") || lower.includes("first year") || lower.includes("11th") || lower.includes("grade 11") || lower.includes("inter part 1")) return 11;
+  if (lower.includes("2nd year") || lower.includes("second year") || lower.includes("12th") || lower.includes("grade 12") || lower.includes("inter part 2")) return 12;
+
+  // 3. Extract exact numeric digits (e.g. "Class 1", "Grade 7", "Class 8 A")
+  const match = lower.match(/\d+/);
+  if (match) {
+    return parseInt(match[0], 10);
+  }
+
+  // 4. Custom classes (e.g. Hifz, Nazra, Special)
+  return 50;
+};

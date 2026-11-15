@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import BulkUploadCard from '../components/BulkUploadCard';
+import StudentRegisterImporter from '../components/student-importer/StudentRegisterImporter';
 import UploadSyllabusTab from '../components/UploadSyllabusTab';
 import FeeMigrationStudio from '../components/FeeMigrationStudio';
 import ExamBroadsheetImporter from '../components/exam-importer/ExamBroadsheetImporter';
@@ -76,6 +77,7 @@ const Settings = () => {
 
     // One-Time Initial Historical Fee Baseline States
     const [classesList, setClassesList] = useState([]);
+    const [importSubTab, setImportSubTab] = useState('smart_register'); // 'smart_register' | 'csv_upload'
     const [historicalCutoffMonthIdx, setHistoricalCutoffMonthIdx] = useState(() => {
         const currentMonth = new Date().getMonth();
         return Math.max(0, currentMonth - 2); // default e.g. June if September (2 months arrear backlog)
@@ -3350,8 +3352,67 @@ const Settings = () => {
                 )}
 
                 {activeTab === 'import' && (
-                    <div style={{ animation: 'fadeIn 0.3s ease-out' }}>
-                        {schoolId ? <BulkUploadCard schoolId={schoolId} /> : <div>Generating School ID...</div>}
+                    <div style={{ animation: 'fadeIn 0.3s ease-out' }} className="w-full space-y-4">
+                        {/* Dedicated Full-Screen Link Banner */}
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                            <div className="flex items-center gap-3">
+                                <Users className="text-emerald-600 shrink-0" size={24} />
+                                <div>
+                                    <h4 className="font-bold text-slate-800 text-sm">Student Onboarding Center</h4>
+                                    <p className="text-slate-600 text-[11px]">
+                                        Digitize physical handwritten registers via Camera / Image, or upload an Excel/CSV spreadsheet.
+                                    </p>
+                                </div>
+                            </div>
+                            <a
+                                href="/student-importer"
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5 shrink-0 shadow-sm"
+                            >
+                                <span>Open Full-Screen Page</span>
+                                <ArrowUpRight size={14} />
+                            </a>
+                        </div>
+
+                        {/* Dual Sub-Tab Switcher: Left Tab = Smart Register Importer (Image), Right Tab = CSV Importer */}
+                        <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                            <button
+                                type="button"
+                                onClick={() => setImportSubTab('smart_register')}
+                                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+                                    importSubTab === 'smart_register'
+                                        ? 'bg-emerald-600 text-white shadow-sm'
+                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                            >
+                                <Camera size={15} />
+                                <span>Smart Register Importer (By Image / Camera)</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setImportSubTab('csv_upload')}
+                                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+                                    importSubTab === 'csv_upload'
+                                        ? 'bg-emerald-600 text-white shadow-sm'
+                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                            >
+                                <Upload size={15} />
+                                <span>Upload CSV / Excel File</span>
+                            </button>
+                        </div>
+
+                        {schoolId ? (
+                            importSubTab === 'smart_register' ? (
+                                <StudentRegisterImporter
+                                    schoolId={schoolId}
+                                    classes={classesList}
+                                />
+                            ) : (
+                                <BulkUploadCard schoolId={schoolId} />
+                            )
+                        ) : (
+                            <div>Generating School ID...</div>
+                        )}
                     </div>
                 )}
 
