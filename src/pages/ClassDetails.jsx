@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Users, BookOpen, Calendar, Activity,
     CheckCircle2, XCircle, MoreVertical, Search, Filter,
-    X, Trophy, Camera, LayoutGrid, GraduationCap, FileText
+    X, Trophy, Camera, LayoutGrid, GraduationCap, FileText, Award
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc, collection, onSnapshot, query, updateDoc } from 'firebase/firestore';
@@ -13,6 +13,7 @@ import CachedImage from '../components/CachedImage';
 import ClassPhotoStudio from '../components/ClassPhotoStudio';
 import ClassHomeworkView from '../components/ClassHomeworkView';
 import ClassTestsReportView from '../components/ClassTestsReportView';
+import ClassExamsView from '../components/ClassExamsView';
 import { getStudentAvatar } from '../utils/defaultAvatar';
 
 
@@ -150,8 +151,23 @@ const ClassDetails = () => {
 
     }, [schoolId, classId]);
 
-    const rankedAndFilteredStudents = useMemo(() => {
-        if (!students) return [];
+    // Natural sort helper by Roll Number (Option 2)
+    const parseRollNumber = (r) => {
+        if (r === null || r === undefined || r === '') return 999999;
+        const num = parseInt(String(r).replace(/[^0-9]/g, ''), 10);
+        return isNaN(num) ? 999999 : num;
+    };
+
+    const sortByRollNumber = (a, b) => {
+        const rollA = parseRollNumber(a.rollNo || a.rollNumber);
+        const rollB = parseRollNumber(b.rollNo || b.rollNumber);
+        if (rollA !== rollB) return rollA - rollB;
+        return String(a.rollNo || '').localeCompare(String(b.rollNo || ''), undefined, { numeric: true });
+    };
+
+    // Master ranked and roll-number sorted students list (Single Source of Truth across ALL tabs)
+    const masterOrderedStudents = useMemo(() => {
+        if (!students || students.length === 0) return [];
 
         const currentSubjects = classData?.subjects || [];
 
@@ -159,7 +175,6 @@ const ClassDetails = () => {
         const studentsWithTrueAverages = students.map(student => {
             const subScoresRaw = student.academicScores || [];
 
-            // Only aggregate if we have defined subjects, otherwise fallback to all subjects (raw avgScore)
             if (currentSubjects.length > 0) {
                 const validSubScores = subScoresRaw
                     .filter(i => currentSubjects.includes(i.subject))
@@ -175,26 +190,31 @@ const ClassDetails = () => {
             return { ...student, trueAvgScore: student.avgScore || 0 };
         });
 
-        // 2. Sort by True Average Descending to assign ranks
+        // 2. Sort by True Average Descending to assign ranks (#1, #2, #3...)
         const sortedForRanks = [...studentsWithTrueAverages].sort((a, b) => b.trueAvgScore - a.trueAvgScore);
-
-        // 3. Assign Ranks
         sortedForRanks.forEach((student, index) => {
             student.classRank = index + 1;
         });
 
-        // 4. Apply UI Filters (Search & Present/Absent)
-        return sortedForRanks.filter(student => {
+        // 3. Option 2: Unified display sort by Roll Number (1, 2, 3...)
+        sortedForRanks.sort(sortByRollNumber);
+
+        return sortedForRanks;
+    }, [students, classData]);
+
+    const rankedAndFilteredStudents = useMemo(() => {
+        return masterOrderedStudents.filter(student => {
             const matchesStatus = filterStatus === 'all' ||
                 (filterStatus === 'present' ? student.status === 'present' : student.status !== 'present');
 
             const searchLower = searchTerm.toLowerCase();
             const matchesSearch = student.name?.toLowerCase().includes(searchLower) ||
-                student.rollNo?.toString().includes(searchTerm);
+                student.rollNo?.toString().includes(searchTerm) ||
+                (student.classRank || '').toString().includes(searchTerm);
 
             return matchesStatus && matchesSearch;
         });
-    }, [students, filterStatus, searchTerm, classData]);
+    }, [masterOrderedStudents, filterStatus, searchTerm]);
 
     // Sync selectedStudent with live data for real-time modal updates
     useEffect(() => {
@@ -308,104 +328,64 @@ const ClassDetails = () => {
                 </div>
             </div>
 
-            {/* View Switcher Tabs */}
-            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '2rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.85rem', overflowX: 'auto' }}>
-                <button
-                    onClick={() => setActiveTab('overview')}
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.65rem 1.25rem',
-                        borderRadius: '10px',
-                        border: 'none',
-                        fontSize: '0.95rem',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        background: activeTab === 'overview' ? '#6366f1' : 'white',
-                        color: activeTab === 'overview' ? 'white' : 'var(--text-secondary)',
-                        boxShadow: activeTab === 'overview' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
-                        transition: 'all 0.2s ease'
-                    }}
-                >
-                    <LayoutGrid size={18} />
-                    Students Overview
-                </button>
-                <button
-                    onClick={() => setActiveTab('homework')}
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.65rem 1.25rem',
-                        borderRadius: '10px',
-                        border: 'none',
-                        fontSize: '0.95rem',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        background: activeTab === 'homework' ? '#6366f1' : 'white',
-                        color: activeTab === 'homework' ? 'white' : 'var(--text-secondary)',
-                        boxShadow: activeTab === 'homework' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
-                        transition: 'all 0.2s ease'
-                    }}
-                >
-                    <FileText size={18} />
-                    Daily Homework
-                </button>
-                <button
-                    onClick={() => setActiveTab('tests')}
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.65rem 1.25rem',
-                        borderRadius: '10px',
-                        border: 'none',
-                        fontSize: '0.95rem',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        background: activeTab === 'tests' ? '#6366f1' : 'white',
-                        color: activeTab === 'tests' ? 'white' : 'var(--text-secondary)',
-                        boxShadow: activeTab === 'tests' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
-                        transition: 'all 0.2s ease'
-                    }}
-                >
-                    <GraduationCap size={18} />
-                    Tests & Reports
-                </button>
-                <button
-                    onClick={() => setActiveTab('photoStudio')}
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.65rem 1.25rem',
-                        borderRadius: '10px',
-                        border: 'none',
-                        fontSize: '0.95rem',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        background: activeTab === 'photoStudio' ? '#6366f1' : 'white',
-                        color: activeTab === 'photoStudio' ? 'white' : 'var(--text-secondary)',
-                        boxShadow: activeTab === 'photoStudio' ? '0 4px 10px rgba(99, 102, 241, 0.25)' : 'none',
-                        transition: 'all 0.2s ease'
-                    }}
-                >
-                    <Camera size={18} />
-                    📸 Photo Studio
-                </button>
+            {/* View Switcher Tabs - Unified Size & Style */}
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: '0.75rem',
+                marginBottom: '2rem',
+                borderBottom: '1px solid #e2e8f0',
+                paddingBottom: '1rem',
+                width: '100%'
+            }}>
+                {[
+                    { id: 'overview', label: 'Students Overview', icon: LayoutGrid },
+                    { id: 'homework', label: 'Daily Homework', icon: FileText },
+                    { id: 'tests', label: 'Tests & Reports', icon: GraduationCap },
+                    { id: 'exams', label: 'Exam', icon: Award },
+                    { id: 'photoStudio', label: 'Photo Studio', icon: Camera },
+                ].map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '0.6rem',
+                                padding: '0.75rem 1rem',
+                                borderRadius: '12px',
+                                border: isActive ? '1.5px solid #6366f1' : '1px solid #e2e8f0',
+                                fontSize: '0.92rem',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                whiteSpace: 'nowrap',
+                                background: isActive ? 'linear-gradient(135deg, #6366f1, #4f46e5)' : 'white',
+                                color: isActive ? 'white' : 'var(--text-secondary)',
+                                boxShadow: isActive ? '0 4px 14px rgba(99, 102, 241, 0.28)' : '0 1px 3px rgba(0,0,0,0.04)',
+                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                width: '100%',
+                                minHeight: '48px'
+                            }}
+                        >
+                            <Icon size={18} />
+                            <span>{tab.label}</span>
+                        </button>
+                    );
+                })}
             </div>
 
             {activeTab === 'photoStudio' ? (
-                <ClassPhotoStudio schoolId={schoolId} classId={classId} students={students} />
+                <ClassPhotoStudio schoolId={schoolId} classId={classId} students={masterOrderedStudents} />
             ) : activeTab === 'homework' ? (
-                <ClassHomeworkView schoolId={schoolId} classId={classId} classData={classData} students={students} />
+                <ClassHomeworkView schoolId={schoolId} classId={classId} classData={classData} students={masterOrderedStudents} />
             ) : activeTab === 'tests' ? (
-                <ClassTestsReportView schoolId={schoolId} classId={classId} classData={classData} students={students} />
+                <ClassTestsReportView schoolId={schoolId} classId={classId} classData={classData} students={masterOrderedStudents} />
+            ) : activeTab === 'exams' ? (
+                <ClassExamsView schoolId={schoolId} classId={classId} classData={classData} students={masterOrderedStudents} />
             ) : (
                 <>
             {/* Top Stats Grid */}

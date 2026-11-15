@@ -44,10 +44,37 @@ const ClassPhotoStudio = ({ schoolId, classId, students = [] }) => {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
 
-    // Check if student has an existing real uploaded photo (not dicebear avatar default)
+    // Check if student has an existing real uploaded photo (not dicebear, ui-avatars, or SVG default avatar)
     const hasRealPhoto = (student) => {
-        const photo = student.profilePic || student.avatar || student.profileImageUrl || student.photoUrl || student.image || '';
-        return Boolean(photo && typeof photo === 'string' && !photo.includes('api.dicebear.com'));
+        if (!student) return false;
+        const candidates = [
+            student.profilePic,
+            student.profileImageUrl,
+            student.photoUrl,
+            student.image,
+            student.avatar
+        ];
+
+        for (const raw of candidates) {
+            if (!raw || typeof raw !== 'string') continue;
+            const photo = raw.trim();
+            if (!photo) continue;
+
+            // Reject fallback SVG data URI or inline SVGs
+            if (photo.startsWith('data:image/svg+xml') || photo.includes('<svg') || photo.includes('data:image')) continue;
+
+            // Reject placeholder / cartoon generators
+            if (photo.includes('dicebear.com') || photo.includes('api.dicebear')) continue;
+            if (photo.includes('ui-avatars.com')) continue;
+            if (photo.includes('defaultAvatar') || photo.includes('default_avatar')) continue;
+
+            // Only accept real web URLs (Firebase storage, AWS, Cloudinary, http/https, blob)
+            if (photo.startsWith('http://') || photo.startsWith('https://') || photo.startsWith('blob:')) {
+                return true;
+            }
+        }
+
+        return false;
     };
 
     // Filter & search students
