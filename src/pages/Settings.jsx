@@ -3353,26 +3353,6 @@ const Settings = () => {
 
                 {activeTab === 'import' && (
                     <div style={{ animation: 'fadeIn 0.3s ease-out' }} className="w-full space-y-4">
-                        {/* Dedicated Full-Screen Link Banner */}
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                            <div className="flex items-center gap-3">
-                                <Users className="text-emerald-600 shrink-0" size={24} />
-                                <div>
-                                    <h4 className="font-bold text-slate-800 text-sm">Student Onboarding Center</h4>
-                                    <p className="text-slate-600 text-[11px]">
-                                        Digitize physical handwritten registers via Camera / Image, or upload an Excel/CSV spreadsheet.
-                                    </p>
-                                </div>
-                            </div>
-                            <a
-                                href="/student-importer"
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5 shrink-0 shadow-sm"
-                            >
-                                <span>Open Full-Screen Page</span>
-                                <ArrowUpRight size={14} />
-                            </a>
-                        </div>
-
                         {/* Dual Sub-Tab Switcher: Left Tab = Smart Register Importer (Image), Right Tab = CSV Importer */}
                         <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
                             <button

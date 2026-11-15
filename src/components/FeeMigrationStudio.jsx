@@ -5,9 +5,22 @@ import {
     Upload, FileUp, FileDown, CheckCircle, AlertCircle, Loader2, Users, 
     CheckCircle2, AlertTriangle, Sparkles, RefreshCw, Search, CheckSquare, 
     Square, DollarSign, Filter, ArrowRight, ShieldCheck, FileText, ChevronRight,
-    HelpCircle, Eye, Info
+    HelpCircle, Eye, Info, Camera, Layers, Beaker, PlayCircle, Trash2, Key,
+    Maximize2, ShieldAlert, Zap, Wifi, WifiOff
 } from 'lucide-react';
 import { MONTH_NAMES, MONTH_SHORT, formatPKR } from '../utils/feePipeline';
+import {
+    optimizeAndCompressImage,
+    detectImageBlur,
+    applyHighContrastFilter
+} from './exam-importer/CanvasImageProcessor';
+import {
+    getGeminiApiKey,
+    extractFeeRegisterWithAI,
+    mergeMultiPageFeeRecords
+} from './fee-importer/GeminiFeeVisionService';
+import { generateSampleFeeRegisterImage, SAMPLE_FEE_DATA, SAMPLE_CUTTINGS_FEE_DATA } from './fee-importer/SampleFeeRegisterGenerator';
+import FeeVerificationWorkspaceModal from './fee-importer/FeeVerificationWorkspaceModal';
 
 // Extended header synonyms for fee records
 const COLUMN_SYNONYMS = {
@@ -97,6 +110,9 @@ const parseMonthsUpTo = (val, targetYear = 2026) => {
 };
 
 const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettingsUpdated }) => {
+    // Mode Switch: 'image' (Smart AI Register OCR) vs 'csv' (Spreadsheet CSV upload)
+    const [activeMode, setActiveMode] = useState('image');
+
     const [selectedClassId, setSelectedClassId] = useState('all');
     const [existingStudents, setExistingStudents] = useState([]);
     const [fetchingStudents, setFetchingStudents] = useState(false);
@@ -117,9 +133,46 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
     const [completedSummary, setCompletedSummary] = useState(null);
     const fileInputRef = useRef(null);
 
-    // 1. Fetch Students from Firestore based on selectedClassId
+    // AI & Image Processing States
+    const [imageQueue, setImageQueue] = useState([]);
+    const [isProcessingCanvas, setIsProcessingCanvas] = useState(false);
+    const [isExtractingAI, setIsExtractingAI] = useState(false);
+    const [aiProgressText, setAiProgressText] = useState('');
+    const [geminiKey, setGeminiKey] = useState(() => getGeminiApiKey(schoolId) || '');
+    const [showKeyModal, setShowKeyModal] = useState(false);
+    const [customApiKeyInput, setCustomApiKeyInput] = useState('');
+    const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
+    const imageInputRef = useRef(null);
+
+    // Network status detection for 100% offline support
+    const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+    useEffect(() => {
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    // 1. Fetch Students from Firestore based on selectedClassId with instant local cache
     useEffect(() => {
         if (!schoolId) return;
+
+        // Instant sub-millisecond local cache check
+        const cacheKey = `fee_students_cache_${schoolId}_${selectedClassId}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            try {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    setExistingStudents(parsed);
+                }
+            } catch (e) {}
+        }
+
         const loadStudents = async () => {
             setFetchingStudents(true);
             try {
@@ -140,6 +193,9 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                     });
                 }
                 setExistingStudents(list);
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify(list));
+                } catch (e) {}
             } catch (err) {
                 console.error("Error loading students for migration:", err);
             } finally {
@@ -149,6 +205,42 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
 
         loadStudents();
     }, [schoolId, selectedClassId, classes]);
+
+    // 1b. Rapid Offline Studio Entry (Zero AI / Zero Internet needed)
+    const handleLaunchOfflineMode = () => {
+        const targetCls = selectedClassId === 'all' 
+            ? (classes[0] || { id: 'all', name: 'All Classes' }) 
+            : (classes.find(c => c.id === selectedClassId) || { id: selectedClassId, name: 'Class' });
+
+        const rosterSource = existingStudents.length > 0 ? existingStudents : SAMPLE_FEE_DATA;
+        const matchedSet = new Set();
+        const offlineRows = rosterSource.map((st, idx) => {
+            const rowId = `offline-row-${st.id || idx + 1}`;
+            matchedSet.add(rowId);
+            return {
+                id: rowId,
+                rowNumber: idx + 1,
+                admissionNo: st.admissionNo || st.admissionNumber || `ADM-${String(100 + idx + 1).padStart(3, '0')}`,
+                rollNo: st.rollNo || st.rollNumber || String(idx + 1),
+                studentName: st.fullName || st.name || st.studentName || 'Student',
+                rawClass: st.className || targetCls.name || 'Class',
+                monthlyFee: Number(st.tuitionFee || st.monthlyFee || 0),
+                arrears: Number(st.previousArrears || st.arrears || 0),
+                paidUpToStr: (Array.isArray(st.paidMonths) && st.paidMonths.length > 0) 
+                    ? st.paidMonths[st.paidMonths.length - 1] 
+                    : 'August 2026',
+                settledMonths: Array.isArray(st.paidMonths) ? st.paidMonths : parseMonthsUpTo('August 2026'),
+                matchedStudent: st,
+                isMatched: true,
+                lowConfidence: false,
+                katPitReason: ''
+            };
+        });
+
+        setPreviewRows(offlineRows);
+        setSelectedRowIds(matchedSet);
+        setShowWorkspaceModal(true);
+    };
 
     // 2. Download Pre-Filled CSV Template
     const handleDownloadTemplate = () => {
@@ -192,7 +284,7 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
         URL.revokeObjectURL(url);
     };
 
-    // 3. File Upload & Processing
+    // 3. CSV File Upload & Processing
     const handleFileUpload = (e) => {
         const uploadedFile = e.target.files[0];
         if (!uploadedFile) return;
@@ -266,30 +358,7 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
             const paidUpToStr = getValue('paidUpToMonth');
 
             // Find matching student from existing database
-            const matchedStudent = existingStudents.find(st => {
-                const stAdm = normalizeKey(st.admissionNo || st.admissionNumber || st.id);
-                const csvAdm = normalizeKey(admissionNo);
-                if (stAdm && csvAdm && stAdm === csvAdm) return true;
-
-                const stRoll = normalizeKey(st.rollNo || st.rollNumber);
-                const csvRoll = normalizeKey(rollNo);
-                if (stRoll && csvRoll && stRoll === csvRoll) {
-                    if (selectedClassId !== 'all') return true;
-                    // If all classes, also verify class name match
-                    const stCls = normalizeKey(st.className);
-                    const csvCls = normalizeKey(rawClass);
-                    if (!csvCls || stCls.includes(csvCls) || csvCls.includes(stCls)) return true;
-                }
-
-                // Fallback: Name match if roll and admission are empty
-                if (!csvAdm && !csvRoll && studentName) {
-                    const stName = normalizeKey(st.fullName || st.name || st.studentName);
-                    const csvName = normalizeKey(studentName);
-                    if (stName && csvName && (stName === csvName || stName.includes(csvName))) return true;
-                }
-
-                return false;
-            });
+            const matchedStudent = findMatchingStudent({ admissionNo, rollNo, studentName, rawClass });
 
             const rowId = `row-${i}`;
             const settledMonths = parseMonthsUpTo(paidUpToStr);
@@ -306,7 +375,8 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                 paidUpToStr: paidUpToStr || 'None',
                 settledMonths,
                 matchedStudent: matchedStudent || null,
-                isMatched: Boolean(matchedStudent)
+                isMatched: Boolean(matchedStudent),
+                lowConfidence: false
             };
 
             parsedList.push(rowObj);
@@ -323,7 +393,288 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
         }
     };
 
-    // 5. Filter & Search
+    // Helper: Find Matching Student
+    const findMatchingStudent = ({ admissionNo, rollNo, studentName, rawClass }) => {
+        const csvAdm = normalizeKey(admissionNo);
+        const csvRoll = normalizeKey(rollNo);
+        const csvName = normalizeKey(studentName);
+        const csvCls = normalizeKey(rawClass);
+
+        return existingStudents.find(st => {
+            const stAdm = normalizeKey(st.admissionNo || st.admissionNumber || st.id);
+            if (stAdm && csvAdm && stAdm === csvAdm) return true;
+
+            const stRoll = normalizeKey(st.rollNo || st.rollNumber);
+            if (stRoll && csvRoll && stRoll === csvRoll) {
+                if (selectedClassId !== 'all') return true;
+                const stCls = normalizeKey(st.className);
+                if (!csvCls || stCls.includes(csvCls) || csvCls.includes(stCls)) return true;
+            }
+
+            if (!csvAdm && !csvRoll && csvName) {
+                const stName = normalizeKey(st.fullName || st.name || st.studentName);
+                if (stName && (stName === csvName || stName.includes(csvName))) return true;
+            }
+
+            return false;
+        });
+    };
+
+    // 5. Image Upload & Pre-Processing
+    const handleImageFilesSelected = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        setIsProcessingCanvas(true);
+        setErrorMsg('');
+        const newQueueItems = [];
+
+        try {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const optimized = await optimizeAndCompressImage(file, 1600, 0.85);
+                const blurResult = await detectImageBlur(optimized.base64);
+
+                newQueueItems.push({
+                    id: `img-${Date.now()}-${i}`,
+                    file,
+                    base64: optimized.base64,
+                    previewUrl: optimized.previewUrl,
+                    width: optimized.width,
+                    height: optimized.height,
+                    blurScore: blurResult?.score || 150,
+                    isBlurry: Boolean(blurResult?.isBlurry)
+                });
+            }
+
+            setImageQueue(prev => [...prev, ...newQueueItems]);
+        } catch (err) {
+            console.error("Error processing register photos:", err);
+            setErrorMsg("Failed to process one or more images. Please try clear JPG or PNG photos.");
+        } finally {
+            setIsProcessingCanvas(false);
+            if (imageInputRef.current) imageInputRef.current.value = '';
+        }
+    };
+
+    // 6. Test Demo Register Photo Generator with Realistic Mixed Dataset
+    const handleLoadSampleRegister = (withCuttings = false) => {
+        setIsProcessingCanvas(true);
+        setErrorMsg('');
+        try {
+            const sample = generateSampleFeeRegisterImage(withCuttings);
+            const sampleItem = {
+                id: `demo-${Date.now()}`,
+                base64: sample.base64,
+                previewUrl: sample.base64,
+                width: sample.width,
+                height: sample.height,
+                blurScore: 220,
+                isBlurry: false,
+                isDemoSample: true,
+                demoLabel: withCuttings ? 'Demo Register (With Kat-pit / Cuttings)' : 'Demo Register (Clean)'
+            };
+
+            setImageQueue([sampleItem]);
+
+            // Immediately construct realistic MIXED test roster
+            const sourceData = withCuttings ? SAMPLE_CUTTINGS_FEE_DATA : SAMPLE_FEE_DATA;
+            const targetCls = selectedClassId === 'all' 
+                ? (classes[0] || { id: 'demo_class', name: 'Class 5' }) 
+                : (classes.find(c => c.id === selectedClassId) || { id: selectedClassId, name: 'Class 5' });
+
+            const matchedSet = new Set();
+            const demoRows = sourceData.map((s, idx) => {
+                const rowId = `demo-row-${idx + 1}`;
+                let matchedStudent = findMatchingStudent({
+                    admissionNo: `ADM-${String(100 + idx + 1).padStart(3, '0')}`,
+                    rollNo: s.rollNo,
+                    studentName: s.studentName
+                });
+
+                if (s.isDemoMatched !== false) {
+                    if (!matchedStudent) {
+                        if (existingStudents.length > 0 && idx < existingStudents.length) {
+                            matchedStudent = existingStudents[idx];
+                        } else {
+                            matchedStudent = {
+                                id: `demo_st_${idx + 1}`,
+                                fullName: s.studentName,
+                                name: s.studentName,
+                                rollNo: s.rollNo,
+                                classId: targetCls.id,
+                                className: targetCls.name || targetCls.className || 'Class 5',
+                                admissionNo: `ADM-${String(100 + idx + 1).padStart(3, '0')}`
+                            };
+                        }
+                    }
+                } else {
+                    matchedStudent = null;
+                }
+
+                if (matchedStudent) {
+                    matchedSet.add(rowId);
+                }
+
+                return {
+                    id: rowId,
+                    rowNumber: idx + 1,
+                    admissionNo: `ADM-${String(100 + idx + 1).padStart(3, '0')}`,
+                    rollNo: s.rollNo,
+                    studentName: s.studentName,
+                    rawClass: targetCls.name || 'Class 5',
+                    monthlyFee: s.monthlyFee,
+                    arrears: s.arrears,
+                    paidUpToStr: s.paidUpToMonth,
+                    settledMonths: parseMonthsUpTo(s.paidUpToMonth),
+                    matchedStudent,
+                    isMatched: Boolean(matchedStudent),
+                    lowConfidence: Boolean(s.lowConfidence),
+                    katPitReason: s.katPitReason || ''
+                };
+            });
+
+            setPreviewRows(demoRows);
+            setSelectedRowIds(matchedSet);
+            setShowWorkspaceModal(true);
+        } catch (err) {
+            console.error("Sample generator error:", err);
+            setErrorMsg("Could not generate demo register.");
+        } finally {
+            setIsProcessingCanvas(false);
+        }
+    };
+
+    // 7. Scan & Extract Fee Records with AI
+    const handleScanRegisterWithAI = async () => {
+        if (imageQueue.length === 0) {
+            setErrorMsg("Please upload or take a photograph of your fee register first.");
+            return;
+        }
+
+        const effectiveKey = geminiKey || getGeminiApiKey(schoolId);
+        const hasDemo = imageQueue.some(img => img.isDemoSample);
+
+        if (!effectiveKey && !hasDemo) {
+            setShowKeyModal(true);
+            return;
+        }
+
+        setIsExtractingAI(true);
+        setErrorMsg('');
+        setAiProgressText('Connecting to Gemini Vision Copilot...');
+
+        try {
+            const pagesResults = [];
+
+            for (let i = 0; i < imageQueue.length; i++) {
+                const img = imageQueue[i];
+                setAiProgressText(`Scanning Register Page ${i + 1} of ${imageQueue.length}...`);
+
+                const pageData = await extractFeeRegisterWithAI({
+                    base64Image: img.base64,
+                    imageIndex: i,
+                    imageLabel: img.demoLabel || img.file?.name || '',
+                    schoolId,
+                    targetClassName: selectedClassId === 'all' ? '' : classes.find(c => c.id === selectedClassId)?.name || '',
+                    customApiKey: effectiveKey
+                });
+
+                pagesResults.push(pageData);
+            }
+
+            setAiProgressText('Reconciling student records with Class roster...');
+            const allExtractedRows = mergeMultiPageFeeRecords(pagesResults);
+
+            const reconciledList = [];
+            const matchedSet = new Set();
+            const targetCls = selectedClassId === 'all' 
+                ? (classes[0] || { id: 'demo_class', name: 'Class 5' }) 
+                : (classes.find(c => c.id === selectedClassId) || { id: selectedClassId, name: 'Class 5' });
+
+            allExtractedRows.forEach((r, idx) => {
+                let matchedStudent = findMatchingStudent({
+                    admissionNo: r.admissionNo,
+                    rollNo: r.rollNo,
+                    studentName: r.studentName
+                });
+
+                // If demo sample / test mode, provide the realistic MIX:
+                const isDemo = hasDemo || r.isDemoSample || imageQueue.some(img => img.isDemoSample);
+                if (isDemo && r.isDemoMatched !== false) {
+                    if (!matchedStudent) {
+                        if (existingStudents.length > 0 && idx < existingStudents.length) {
+                            matchedStudent = existingStudents[idx];
+                        } else {
+                            matchedStudent = {
+                                id: `demo_st_${idx + 1}`,
+                                fullName: r.studentName,
+                                name: r.studentName,
+                                rollNo: r.rollNo || String(idx + 1),
+                                classId: targetCls.id,
+                                className: targetCls.name || targetCls.className || 'Class 5',
+                                admissionNo: r.admissionNo || `ADM-${String(100 + idx + 1).padStart(3, '0')}`
+                            };
+                        }
+                    }
+                } else if (r.isDemoMatched === false) {
+                    matchedStudent = null;
+                }
+
+                const rowId = `ai-row-${idx + 1}`;
+                const settledMonths = parseMonthsUpTo(r.paidUpToMonth);
+
+                const rowObj = {
+                    id: rowId,
+                    rowNumber: idx + 1,
+                    admissionNo: r.admissionNo || matchedStudent?.admissionNo || '--',
+                    rollNo: r.rollNo || matchedStudent?.rollNo || '--',
+                    studentName: r.studentName || matchedStudent?.fullName || matchedStudent?.name || 'Unknown',
+                    rawClass: matchedStudent?.className || targetCls.name || '',
+                    monthlyFee: Number(r.monthlyFee) || 0,
+                    arrears: Number(r.arrears) || 0,
+                    paidUpToStr: r.paidUpToMonth || 'None',
+                    settledMonths,
+                    matchedStudent: matchedStudent || null,
+                    isMatched: Boolean(matchedStudent),
+                    lowConfidence: Boolean(r.lowConfidence),
+                    katPitReason: r.katPitReason || ''
+                };
+
+                reconciledList.push(rowObj);
+                if (matchedStudent) {
+                    matchedSet.add(rowId);
+                }
+            });
+
+            setPreviewRows(reconciledList);
+            setSelectedRowIds(matchedSet);
+
+            // Automatically open side-by-side workspace modal for 1000% verification
+            setShowWorkspaceModal(true);
+        } catch (err) {
+            console.error("AI Fee Extraction error:", err);
+            setErrorMsg("AI Extraction failed: " + (err.message || "Please check your image or API key."));
+        } finally {
+            setIsExtractingAI(false);
+            setAiProgressText('');
+        }
+    };
+
+    // 8. Save Custom Gemini Key
+    const handleSaveGeminiKey = () => {
+        if (!customApiKeyInput.trim()) return;
+        const key = customApiKeyInput.trim();
+        if (schoolId) {
+            localStorage.setItem(`gemini_api_key_${schoolId}`, key);
+        }
+        localStorage.setItem('gemini_api_key', key);
+        setGeminiKey(key);
+        setShowKeyModal(false);
+        setCustomApiKeyInput('');
+    };
+
+    // 9. Filter & Search
     const filteredRows = useMemo(() => {
         return previewRows.filter(r => {
             if (activeFilter === 'matched' && !r.isMatched) return false;
@@ -346,6 +697,7 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
         const matchedCount = previewRows.filter(r => r.isMatched).length;
         const unmatchedCount = totalRows - matchedCount;
         const selectedCount = selectedRowIds.size;
+        const katPitCount = previewRows.filter(r => r.lowConfidence).length;
 
         const totalFees = previewRows
             .filter(r => selectedRowIds.has(r.id))
@@ -355,7 +707,7 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
             .filter(r => selectedRowIds.has(r.id))
             .reduce((sum, r) => sum + r.arrears, 0);
 
-        return { totalRows, matchedCount, unmatchedCount, selectedCount, totalFees, totalArrears };
+        return { totalRows, matchedCount, unmatchedCount, selectedCount, katPitCount, totalFees, totalArrears };
     }, [previewRows, selectedRowIds]);
 
     // Checkbox toggles
@@ -375,10 +727,16 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
         setSelectedRowIds(next);
     };
 
-    // 6. Firestore Batch Commit
-    const handleApplyMigration = async () => {
-        if (selectedRowIds.size === 0) {
-            alert("Please select at least one student row to update.");
+    // 10. Firestore Batch Commit
+    const handleApplyMigration = async (overrideRows = null) => {
+        const sourceRows = Array.isArray(overrideRows) 
+            ? overrideRows 
+            : previewRows.filter(r => selectedRowIds.has(r.id) && r.matchedStudent);
+
+        const rowsToUpdate = sourceRows.filter(r => r.matchedStudent);
+
+        if (rowsToUpdate.length === 0) {
+            alert("Please select at least one matched student row to update.");
             return;
         }
 
@@ -387,9 +745,8 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
         setSyncProgress(0);
 
         try {
-            const rowsToUpdate = previewRows.filter(r => selectedRowIds.has(r.id) && r.matchedStudent);
             const total = rowsToUpdate.length;
-            const batchSize = 300;
+            const batchSize = 250;
             let currentBatch = writeBatch(db);
             let opCount = 0;
             let successCount = 0;
@@ -401,9 +758,7 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                 // Safe mode check: skip if fee already exists and safe mode is on
                 if (updateMode === 'safe') {
                     const hasExistingFee = Number(st.tuitionFee || st.monthlyFee || 0) > 0;
-                    const hasExistingArrears = Number(st.previousArrears || st.arrears || 0) > 0;
                     if (hasExistingFee && r.monthlyFee <= 0) {
-                        // Keep existing fee
                         r.monthlyFee = Number(st.tuitionFee || st.monthlyFee);
                     }
                 }
@@ -485,6 +840,8 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
             // Clear preview
             setPreviewRows([]);
             setFile(null);
+            setImageQueue([]);
+            setShowWorkspaceModal(false);
         } catch (err) {
             console.error("Migration batch write error:", err);
             setErrorMsg("Failed to apply migration to Firestore: " + err.message);
@@ -519,11 +876,11 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                         </h2>
                     </div>
                     <p style={{ margin: 0, fontSize: '0.85rem', color: '#e0e7ff', maxWidth: '650px', lineHeight: 1.4 }}>
-                        Upload your previous school fee records or Excel ledger. Automatically match students, assign monthly tuition, set opening backlog arrears, and settle past months directly into the Fee Matrix.
+                        Upload your previous school fee register photographs or Excel ledger. Automatically match students, assign monthly tuition, set opening backlog arrears, and settle past months directly into the Fee Matrix.
                     </p>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.6rem' }}>
+                <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
                     <button
                         type="button"
                         onClick={handleDownloadTemplate}
@@ -596,7 +953,90 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                 </div>
             )}
 
-            {/* Step 1: Controls & Class Selector */}
+            {/* Mode Switcher Tabs */}
+            {!isOnline && (
+                <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.65rem 1rem',
+                    background: '#fffbeb',
+                    border: '1px solid #fde68a',
+                    borderRadius: '12px',
+                    color: '#92400e',
+                    fontSize: '0.82rem',
+                    fontWeight: '700',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                }}>
+                    <WifiOff size={16} />
+                    <span>Offline Mode Active: Internet is disconnected, but Rapid Offline Studio, cached classes, and local workspace are 100% operational!</span>
+                </div>
+            )}
+            <div style={{
+                display: 'flex',
+                gap: '0.5rem',
+                marginBottom: '1rem',
+                borderBottom: '1px solid #e2e8f0',
+                paddingBottom: '0.75rem'
+            }}>
+                <button
+                    type="button"
+                    onClick={() => setActiveMode('image')}
+                    style={{
+                        padding: '0.65rem 1.25rem',
+                        borderRadius: '12px',
+                        border: activeMode === 'image' ? '1.5px solid #4f46e5' : '1px solid #e2e8f0',
+                        background: activeMode === 'image' ? '#eef2ff' : 'white',
+                        color: activeMode === 'image' ? '#4f46e5' : '#64748b',
+                        fontWeight: '800',
+                        fontSize: '0.88rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        boxShadow: activeMode === 'image' ? '0 2px 8px rgba(79, 70, 229, 0.15)' : 'none',
+                        transition: 'all 0.15s'
+                    }}
+                >
+                    <Camera size={18} />
+                    <span>Smart Register Image Upload (AI Vision OCR)</span>
+                    <span style={{
+                        padding: '2px 7px',
+                        background: '#10b981',
+                        color: 'white',
+                        borderRadius: '12px',
+                        fontSize: '0.68rem',
+                        fontWeight: '900'
+                    }}>
+                        RECOMMENDED
+                    </span>
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => setActiveMode('csv')}
+                    style={{
+                        padding: '0.65rem 1.25rem',
+                        borderRadius: '12px',
+                        border: activeMode === 'csv' ? '1.5px solid #4f46e5' : '1px solid #e2e8f0',
+                        background: activeMode === 'csv' ? '#eef2ff' : 'white',
+                        color: activeMode === 'csv' ? '#4f46e5' : '#64748b',
+                        fontWeight: '800',
+                        fontSize: '0.88rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        boxShadow: activeMode === 'csv' ? '0 2px 8px rgba(79, 70, 229, 0.15)' : 'none',
+                        transition: 'all 0.15s'
+                    }}
+                >
+                    <FileText size={18} />
+                    <span>Upload CSV / Excel Sheet</span>
+                </button>
+            </div>
+
+            {/* Step 1: Controls & Scope Selector */}
             <div style={{
                 background: 'white',
                 padding: '1.25rem 1.5rem',
@@ -639,44 +1079,84 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                         </span>
                     </div>
 
-                    {/* File Upload Zone */}
-                    <div>
-                        <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '800', color: '#334155', marginBottom: '0.4rem' }}>
-                            Upload School Fee CSV File:
-                        </label>
-                        <input
-                            type="file"
-                            accept=".csv"
-                            ref={fileInputRef}
-                            onChange={handleFileUpload}
-                            style={{ display: 'none' }}
-                        />
-                        <button
-                            type="button"
-                            onClick={() => fileInputRef.current?.click()}
-                            style={{
-                                width: '100%',
-                                padding: '0.62rem 1rem',
-                                borderRadius: '10px',
-                                border: '1.5px dashed #4f46e5',
-                                background: '#eef2ff',
-                                color: '#4f46e5',
-                                fontWeight: '700',
-                                fontSize: '0.85rem',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '0.5rem',
-                                transition: 'all 0.2s'
-                            }}
-                        >
-                            <Upload size={16} />
-                            {file ? file.name : "Select .CSV File from Computer"}
-                        </button>
-                    </div>
+                    {/* Mode Specific Action Area */}
+                    {activeMode === 'csv' ? (
+                        <div>
+                            <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '800', color: '#334155', marginBottom: '0.4rem' }}>
+                                Upload School Fee CSV File:
+                            </label>
+                            <input
+                                type="file"
+                                accept=".csv"
+                                ref={fileInputRef}
+                                onChange={handleFileUpload}
+                                style={{ display: 'none' }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                style={{
+                                    width: '100%',
+                                    padding: '0.62rem 1rem',
+                                    borderRadius: '10px',
+                                    border: '1.5px dashed #4f46e5',
+                                    background: '#eef2ff',
+                                    color: '#4f46e5',
+                                    fontWeight: '700',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '0.5rem',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                <Upload size={16} />
+                                {file ? file.name : "Select .CSV File from Computer"}
+                            </button>
+                        </div>
+                    ) : (
+                        <div>
+                            <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '800', color: '#334155', marginBottom: '0.4rem' }}>
+                                Upload Register Photo(s):
+                            </label>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                ref={imageInputRef}
+                                onChange={handleImageFilesSelected}
+                                style={{ display: 'none' }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => imageInputRef.current?.click()}
+                                disabled={isProcessingCanvas}
+                                style={{
+                                    width: '100%',
+                                    padding: '0.62rem 1rem',
+                                    borderRadius: '10px',
+                                    border: '1.5px dashed #10b981',
+                                    background: '#ecfdf5',
+                                    color: '#047857',
+                                    fontWeight: '700',
+                                    fontSize: '0.85rem',
+                                    cursor: isProcessingCanvas ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '0.5rem',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                <Camera size={16} />
+                                {isProcessingCanvas ? "Optimizing photo quality..." : "Select or Snap Register Photos"}
+                            </button>
+                        </div>
+                    )}
 
-                    {/* Update Mode Selector */}
+                    {/* Conflict / Update Mode Selector */}
                     <div>
                         <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '800', color: '#334155', marginBottom: '0.4rem' }}>
                             Conflict / Safe Mode:
@@ -696,10 +1176,188 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                             }}
                         >
                             <option value="safe">🟢 Safe Mode: Only Update Pending / Zero Fee Records</option>
-                            <option value="overwrite">🔵 Full Sync: Overwrite with File Values</option>
+                            <option value="overwrite">🔵 Full Sync: Overwrite with File/Image Values</option>
                         </select>
                     </div>
                 </div>
+
+                {/* Smart Image Queue Strip & AI Action (Visible in Image Mode) */}
+                {activeMode === 'image' && (
+                    <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid #f1f5f9' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e293b' }}>
+                                    Register Photos ({imageQueue.length} pages queued)
+                                </span>
+                                {imageQueue.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setImageQueue([])}
+                                        style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: '700', cursor: 'pointer' }}
+                                    >
+                                        Clear All
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Demo Buttons & Scan Action */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => handleLoadSampleRegister(false)}
+                                    style={{
+                                        padding: '0.45rem 0.85rem',
+                                        background: '#f8fafc',
+                                        border: '1px solid #cbd5e1',
+                                        borderRadius: '8px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: '700',
+                                        color: '#475569',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem'
+                                    }}
+                                >
+                                    <Beaker size={14} />
+                                    <span>Test Clean Sample</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleLoadSampleRegister(true)}
+                                    style={{
+                                        padding: '0.45rem 0.85rem',
+                                        background: '#fffbeb',
+                                        border: '1px solid #fde68a',
+                                        borderRadius: '8px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: '700',
+                                        color: '#92400e',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem'
+                                    }}
+                                >
+                                    <AlertTriangle size={14} />
+                                    <span>Test Kat-Pit Sample</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleLaunchOfflineMode}
+                                    style={{
+                                        padding: '0.45rem 0.85rem',
+                                        background: '#ecfdf5',
+                                        border: '1.5px solid #a7f3d0',
+                                        borderRadius: '8px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: '800',
+                                        color: '#065f46',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem',
+                                        boxShadow: '0 1px 3px rgba(16, 185, 129, 0.1)'
+                                    }}
+                                    title="Open side-by-side workspace offline without requiring Internet or AI (Zero Cost)"
+                                >
+                                    <Zap size={14} className="text-emerald-600 fill-emerald-600" />
+                                    <span>Rapid Offline Studio (Zero AI / Zero Cost)</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    disabled={imageQueue.length === 0 || isExtractingAI}
+                                    onClick={handleScanRegisterWithAI}
+                                    style={{
+                                        padding: '0.55rem 1.25rem',
+                                        background: imageQueue.length === 0 || isExtractingAI ? '#94a3b8' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '10px',
+                                        fontWeight: '800',
+                                        fontSize: '0.85rem',
+                                        cursor: imageQueue.length === 0 || isExtractingAI ? 'not-allowed' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
+                                    }}
+                                >
+                                    {isExtractingAI ? (
+                                        <>
+                                            <Loader2 size={16} className="animate-spin" />
+                                            <span>{aiProgressText || 'Scanning Fees...'}</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles size={16} />
+                                            <span>Scan & Extract Fees with AI</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Image Thumbnails Queue */}
+                        {imageQueue.length > 0 && (
+                            <div style={{ display: 'flex', gap: '0.75rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+                                {imageQueue.map((item, idx) => (
+                                    <div
+                                        key={item.id}
+                                        style={{
+                                            position: 'relative',
+                                            width: '130px',
+                                            height: '95px',
+                                            borderRadius: '10px',
+                                            overflow: 'hidden',
+                                            border: item.isBlurry ? '2px solid #f59e0b' : '2px solid #e2e8f0',
+                                            flexShrink: 0,
+                                            boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
+                                        }}
+                                    >
+                                        <img
+                                            src={item.previewUrl || item.base64}
+                                            alt={`Page ${idx + 1}`}
+                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        />
+                                        <div style={{
+                                            position: 'absolute',
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                            background: 'rgba(15, 23, 42, 0.8)',
+                                            color: 'white',
+                                            fontSize: '0.65rem',
+                                            fontWeight: '700',
+                                            padding: '2px 4px',
+                                            textAlign: 'center'
+                                        }}>
+                                            Page {idx + 1}
+                                        </div>
+                                        {item.isBlurry && (
+                                            <div
+                                                title="Slightly blurry photo"
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: '4px',
+                                                    right: '4px',
+                                                    background: '#f59e0b',
+                                                    color: 'white',
+                                                    borderRadius: '4px',
+                                                    padding: '2px',
+                                                    fontSize: '0.6rem'
+                                                }}
+                                            >
+                                                <AlertTriangle size={12} />
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Error Message */}
@@ -745,7 +1403,7 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
                             <div>
-                                <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Total In File</span>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Total In Source</span>
                                 <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#0f172a' }}>{stats.totalRows}</div>
                             </div>
                             <div style={{ width: '1px', height: '24px', background: '#cbd5e1' }} />
@@ -753,9 +1411,18 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                                 <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#059669', textTransform: 'uppercase' }}>Matched with DB</span>
                                 <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#059669' }}>{stats.matchedCount}</div>
                             </div>
+                            {stats.katPitCount > 0 && (
+                                <>
+                                    <div style={{ width: '1px', height: '24px', background: '#cbd5e1' }} />
+                                    <div>
+                                        <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#d97706', textTransform: 'uppercase' }}>Kat-Pit / Cuttings</span>
+                                        <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#d97706' }}>{stats.katPitCount}</div>
+                                    </div>
+                                </>
+                            )}
                             <div style={{ width: '1px', height: '24px', background: '#cbd5e1' }} />
                             <div>
-                                <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#d97706', textTransform: 'uppercase' }}>Not Found / Skipped</span>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#d97706', textTransform: 'uppercase' }}>Not Found in Class</span>
                                 <div style={{ fontSize: '1.15rem', fontWeight: '800', color: '#d97706' }}>{stats.unmatchedCount}</div>
                             </div>
                             <div style={{ width: '1px', height: '24px', background: '#cbd5e1' }} />
@@ -765,38 +1432,64 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                             </div>
                         </div>
 
-                        {/* Apply Commit Button */}
-                        <button
-                            type="button"
-                            disabled={isApplying || stats.selectedCount === 0}
-                            onClick={handleApplyMigration}
-                            style={{
-                                padding: '0.75rem 1.75rem',
-                                background: isApplying ? '#94a3b8' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '12px',
-                                fontWeight: '800',
-                                fontSize: '0.9rem',
-                                cursor: isApplying ? 'not-allowed' : 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
-                            }}
-                        >
-                            {isApplying ? (
-                                <>
-                                    <Loader2 size={18} className="animate-spin" />
-                                    <span>Applying ({syncProgress}%)...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <CheckCircle2 size={18} />
-                                    <span>Confirm & Apply to ({stats.selectedCount}) Students</span>
-                                </>
+                        {/* Action Buttons: Open Visual Workspace & Apply Commit */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                            {imageQueue.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowWorkspaceModal(true)}
+                                    style={{
+                                        padding: '0.75rem 1.25rem',
+                                        background: '#0f172a',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '12px',
+                                        fontWeight: '800',
+                                        fontSize: '0.85rem',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.45rem',
+                                        boxShadow: '0 2px 8px rgba(15, 23, 42, 0.2)'
+                                    }}
+                                >
+                                    <Maximize2 size={16} />
+                                    <span>Open Visual Verification Workspace</span>
+                                </button>
                             )}
-                        </button>
+
+                            <button
+                                type="button"
+                                disabled={isApplying || stats.selectedCount === 0}
+                                onClick={() => handleApplyMigration()}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    background: isApplying ? '#94a3b8' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '12px',
+                                    fontWeight: '800',
+                                    fontSize: '0.85rem',
+                                    cursor: isApplying ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
+                                }}
+                            >
+                                {isApplying ? (
+                                    <>
+                                        <Loader2 size={18} className="animate-spin" />
+                                        <span>Applying ({syncProgress}%)...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <CheckCircle2 size={18} />
+                                        <span>Confirm & Apply ({stats.selectedCount}) Students</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
 
                     {/* Filter & Search Bar */}
@@ -809,7 +1502,7 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                         flexWrap: 'wrap',
                         gap: '0.75rem'
                     }}>
-                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                             {[
                                 { id: 'all', label: `All Rows (${previewRows.length})` },
                                 { id: 'matched', label: `Matched (${stats.matchedCount})` },
@@ -952,13 +1645,14 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                                                         alignItems: 'center',
                                                         gap: '4px',
                                                         padding: '3px 8px',
-                                                        background: '#ecfdf5',
-                                                        color: '#047857',
+                                                        background: r.lowConfidence ? '#fffbeb' : '#ecfdf5',
+                                                        color: r.lowConfidence ? '#b45309' : '#047857',
                                                         borderRadius: '6px',
                                                         fontSize: '0.72rem',
                                                         fontWeight: '800'
                                                     }}>
-                                                        <CheckCircle2 size={12} /> Matched
+                                                        {r.lowConfidence ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />}
+                                                        {r.lowConfidence ? 'Kat-Pit / Alert' : 'Matched'}
                                                     </span>
                                                 ) : (
                                                     <span style={{
@@ -966,8 +1660,8 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                                                         alignItems: 'center',
                                                         gap: '4px',
                                                         padding: '3px 8px',
-                                                        background: '#fffbeb',
-                                                        color: '#b45309',
+                                                        background: '#fef2f2',
+                                                        color: '#b91c1c',
                                                         borderRadius: '6px',
                                                         fontSize: '0.72rem',
                                                         fontWeight: '700'
@@ -981,6 +1675,107 @@ const FeeMigrationStudio = ({ schoolId, classes = [], feeSettings = {}, onSettin
                                 })}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Side-by-Side Visual Verification Workspace Modal */}
+            {showWorkspaceModal && (
+                <FeeVerificationWorkspaceModal
+                    isOpen={showWorkspaceModal}
+                    onClose={() => setShowWorkspaceModal(false)}
+                    images={imageQueue}
+                    initialRows={previewRows}
+                    existingStudents={existingStudents}
+                    selectedClassName={selectedClassId === 'all' ? 'All Classes' : classes.find(c => c.id === selectedClassId)?.name || ''}
+                    onApplyVerifiedRows={(verifiedRows) => handleApplyMigration(verifiedRows)}
+                    isSaving={isApplying}
+                />
+            )}
+
+            {/* API Key Modal if Key Missing */}
+            {showKeyModal && (
+                <div style={{
+                    position: 'fixed',
+                    inset: 0,
+                    zIndex: 9999,
+                    background: 'rgba(15, 23, 42, 0.75)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '1rem'
+                }}>
+                    <div style={{
+                        background: 'white',
+                        maxWidth: '480px',
+                        width: '100%',
+                        borderRadius: '16px',
+                        padding: '1.5rem',
+                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.75rem' }}>
+                            <div style={{ background: '#eef2ff', color: '#4f46e5', padding: '0.5rem', borderRadius: '10px' }}>
+                                <Key size={20} />
+                            </div>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '800', color: '#1e293b' }}>
+                                Gemini API Key Required
+                            </h3>
+                        </div>
+                        <p style={{ fontSize: '0.82rem', color: '#64748b', lineHeight: 1.5, marginBottom: '1rem' }}>
+                            To analyze handwritten or printed register photographs, please enter your free Google Gemini API Key. You can get one in seconds from Google AI Studio.
+                        </p>
+                        <input
+                            type="password"
+                            placeholder="Paste your AI Studio API key here..."
+                            value={customApiKeyInput}
+                            onChange={(e) => setCustomApiKeyInput(e.target.value)}
+                            style={{
+                                width: '100%',
+                                padding: '0.65rem 0.85rem',
+                                borderRadius: '10px',
+                                border: '1.5px solid #cbd5e1',
+                                fontSize: '0.85rem',
+                                marginBottom: '1rem',
+                                outline: 'none'
+                            }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                            <button
+                                type="button"
+                                onClick={() => setShowKeyModal(false)}
+                                style={{
+                                    padding: '0.55rem 1rem',
+                                    borderRadius: '8px',
+                                    border: '1px solid #cbd5e1',
+                                    background: 'white',
+                                    color: '#475569',
+                                    fontWeight: '700',
+                                    fontSize: '0.82rem',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveGeminiKey}
+                                disabled={!customApiKeyInput.trim()}
+                                style={{
+                                    padding: '0.55rem 1.25rem',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: '#4f46e5',
+                                    color: 'white',
+                                    fontWeight: '800',
+                                    fontSize: '0.82rem',
+                                    cursor: customApiKeyInput.trim() ? 'pointer' : 'not-allowed',
+                                    opacity: customApiKeyInput.trim() ? 1 : 0.6
+                                }}
+                            >
+                                Save & Continue
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
