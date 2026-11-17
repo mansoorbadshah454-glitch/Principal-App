@@ -4,7 +4,7 @@ import {
     LayoutDashboard, UserPlus, Users, UserCheck, GraduationCap,
     Wallet, TrendingUp, UserCog, LogOut, Shield, Settings as SettingsIcon,
     FileText, Tv, FileCheck, Mail, Award, ShoppingBag, ChevronDown, Bus, Lock, DoorOpen,
-    FileSpreadsheet, Camera
+    Camera
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
@@ -29,7 +29,6 @@ const NAV_GROUPS = [
             { icon: GraduationCap, label: 'Classes & Students', path: '/classes', permission: 'canManageClasses' },
             { icon: FileCheck, label: 'Exam Papers Hub', path: '/paper-generator', permission: 'canManagePaperGenerator' },
             { icon: Award, label: 'Exams & Results', path: '/exams', permission: 'canManageExams' },
-            { icon: FileSpreadsheet, label: 'Smart Exam Importer', path: '/exam-importer', permission: 'canManageExams' },
             { icon: TrendingUp, label: 'Promotions', path: '/promotions', permission: 'canManagePromotions' },
             { icon: DoorOpen, label: 'School Leaving (SLC)', path: '/school-leaving', permission: 'canManageSLC' }
         ]
