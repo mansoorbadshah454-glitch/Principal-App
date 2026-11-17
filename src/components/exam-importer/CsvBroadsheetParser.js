@@ -37,7 +37,7 @@ export function parseCsvLine(text) {
  */
 export function downloadExamCsvTemplate(className, subjects = [], sampleStudents = []) {
     const cleanClassName = (className || 'Class').replace(/[^a-zA-Z0-9_\-]/g, '_');
-    const headers = ['Roll No', 'Student Name', ...subjects.map(s => `${s.name} (Max ${s.maxMarks})`), 'Total Marks'];
+    const headers = ['Roll No', 'Student Name', ...subjects.map(s => `${s.name} (Max ${s.maxMarks})`), 'Total Marks', 'Remarks'];
 
     const rows = [];
     const dummyStudents = sampleStudents.length > 0 ? sampleStudents : [
@@ -57,7 +57,7 @@ export function downloadExamCsvTemplate(className, subjects = [], sampleStudents
             sum += m;
             return m;
         });
-        rows.push([rNo, name, ...marks, sum]);
+        rows.push([rNo, name, ...marks, sum, '']);
     });
 
     const csvContent = "\uFEFF" + headers.map(h => `"${h}"`).join(',') + '\n' +
@@ -113,12 +113,17 @@ export function parseExamCsv({
         h.includes('total') || h.includes('meezan') || h.includes('grandtotal') || h === 'sum'
     );
 
+    // Detect Remarks column (Preserve teacher/register notes if present)
+    const remarksIndex = cleanHeaders.findIndex(h =>
+        h.includes('remark') || h.includes('comment') || h.includes('kaifiyat') || h.includes('note')
+    );
+
     // Map subject columns
     const subjectColumnMap = {}; // subjectId -> colIndex
     subjects.forEach(sub => {
         const subClean = sub.name.toLowerCase().replace(/[^a-z0-9]/g, '');
         const matchedIdx = cleanHeaders.findIndex((h, cIdx) => {
-            if (cIdx === rollIndex || cIdx === nameIndex || cIdx === totalIndex) return false;
+            if (cIdx === rollIndex || cIdx === nameIndex || cIdx === totalIndex || cIdx === remarksIndex) return false;
             return h.includes(subClean) || subClean.includes(h);
         });
         if (matchedIdx !== -1) {
@@ -135,6 +140,7 @@ export function parseExamCsv({
         const rollVal = rollIndex !== -1 ? (cells[rollIndex] || '') : String(i);
         const nameVal = nameIndex !== -1 ? (cells[nameIndex] || '') : `Student ${rollVal}`;
         const totalVal = totalIndex !== -1 ? parseFloat(cells[totalIndex]) : null;
+        const remarksVal = remarksIndex !== -1 ? (cells[remarksIndex] || '').trim() : '';
 
         const marks = {};
         let rowSum = 0;
@@ -169,6 +175,7 @@ export function parseExamCsv({
             rollNo: String(rollVal).trim(),
             name: String(nameVal).trim(),
             marks,
+            remarks: remarksVal,
             systemTotal: rowSum,
             registerGrandTotal: totalVal !== null && !isNaN(totalVal) ? totalVal : rowSum,
             lowConfidenceSubjects: lowConf
@@ -197,6 +204,7 @@ export function parseExamCsv({
                 name: st.name || found.name,
                 fatherName: st.fatherName || '',
                 marks: found.marks,
+                remarks: found.remarks || '',
                 systemTotal: found.systemTotal,
                 registerGrandTotal: found.registerGrandTotal,
                 lowConfidenceSubjects: found.lowConfidenceSubjects,
@@ -214,6 +222,7 @@ export function parseExamCsv({
                 name: st.name || `Student #${stRoll}`,
                 fatherName: st.fatherName || '',
                 marks: defaultMarks,
+                remarks: '',
                 systemTotal: 0,
                 registerGrandTotal: 0,
                 lowConfidenceSubjects: [],

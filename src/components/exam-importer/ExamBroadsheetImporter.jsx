@@ -3,7 +3,7 @@ import {
     Award, BookOpen, Users, Camera, Upload, Sparkles, CheckCircle2,
     AlertTriangle, ArrowRight, ArrowLeft, RefreshCw, X, Eye, FileText,
     ShieldAlert, ShieldCheck, Layers, HelpCircle, Save, Database, Trash2,
-    Plus, Beaker, PlayCircle, Download, FileSpreadsheet, Check
+    Plus, Beaker, PlayCircle, Download, FileSpreadsheet, Check, Percent, Sliders
 } from 'lucide-react';
 import { db } from '../../firebase';
 import {
@@ -27,20 +27,14 @@ import {
     parseExamCsv
 } from './CsvBroadsheetParser';
 import MathLockWorkspaceModal from './MathLockWorkspaceModal';
+import { getGradeAndRemarksFromScale, DEFAULT_GRADING_SCALE } from '../../pages/Exams';
 
-// Standard Grade calculator matching Exams.jsx
-function computeGrade(obtained, total) {
-    if (obtained === null || obtained === undefined || total <= 0) return '—';
-    if (obtained === -1) return 'ABS';
-    const pct = (obtained / total) * 100;
-    if (pct >= 90) return 'A++';
-    if (pct >= 80) return 'A+';
-    if (pct >= 70) return 'A';
-    if (pct >= 60) return 'B';
-    if (pct >= 50) return 'C';
-    if (pct >= 40) return 'D';
-    if (pct >= 33) return 'E';
-    return 'F';
+// Compute Grade and Remarks with support for School's Custom Scale
+function computeGradeWithScale(obtained, total, customScale, mode = 'default') {
+    if (obtained === null || obtained === undefined || total <= 0) return { grade: '—', remarks: '—' };
+    if (obtained === -1) return { grade: 'ABS', remarks: 'Absent' };
+    const pct = Math.round((obtained / total) * 100);
+    return getGradeAndRemarksFromScale(pct, customScale, mode);
 }
 
 const COMMON_EXTRA_SUBJECTS = [
@@ -57,6 +51,14 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
     const [selectedTermId, setSelectedTermId] = useState('first_term_2026');
     const [customTermTitle, setCustomTermTitle] = useState('');
     const [existingExams, setExistingExams] = useState([]);
+
+    // 1b. School Exam Settings (Grading Scale & Term Weights)
+    const [examSettings, setExamSettings] = useState({
+        weights: {},
+        gradingScaleMode: 'default',
+        customGradingScale: DEFAULT_GRADING_SCALE
+    });
+    const [termWeight, setTermWeight] = useState(20);
 
     // 2. Class Students & Subjects State
     const [students, setStudents] = useState([]);
@@ -125,9 +127,42 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
             }
         };
 
+        const fetchExamSettings = async () => {
+            try {
+                const sRef = doc(db, `schools/${schoolId}/settings`, 'exam_settings');
+                const snap = await getDoc(sRef);
+                if (snap.exists()) {
+                    const d = snap.data();
+                    setExamSettings({
+                        weights: d.weights || {},
+                        gradingScaleMode: d.gradingScaleMode || 'default',
+                        customGradingScale: Array.isArray(d.customGradingScale) ? d.customGradingScale : DEFAULT_GRADING_SCALE
+                    });
+                }
+            } catch (err) {
+                console.warn("Error loading exam settings:", err);
+            }
+        };
+
         fetchClassesList();
         fetchExams();
+        fetchExamSettings();
     }, [schoolId]);
+
+    // Sync Term Weight when Term or Exam Settings change
+    useEffect(() => {
+        if (examSettings.weights && typeof examSettings.weights[selectedTermId] === 'number') {
+            setTermWeight(examSettings.weights[selectedTermId]);
+        } else if (selectedTermId === 'first_term_2026') {
+            setTermWeight(20);
+        } else if (selectedTermId === 'mid_term_2026') {
+            setTermWeight(30);
+        } else if (selectedTermId === 'final_term_2026') {
+            setTermWeight(50);
+        } else {
+            setTermWeight(20);
+        }
+    }, [selectedTermId, examSettings.weights]);
 
     // When Class changes: fetch students & initialize subject sequence
     useEffect(() => {
@@ -624,6 +659,7 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                 id: targetExamId,
                 title: activeExamTitle,
                 session: '2025-2026',
+                weight: Number(termWeight) || 20,
                 status: 'completed',
                 isLocked: true,
                 isCompleted: true,
@@ -633,6 +669,20 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                 source: 'broadsheet_importer',
                 updatedAt: serverTimestamp()
             }, { merge: true });
+
+            // 1b. Automatically sync this term's weight into School Exam Settings for Annual Aggregate
+            try {
+                const settingsRef = doc(db, `schools/${schoolId}/settings`, 'exam_settings');
+                await setDoc(settingsRef, {
+                    weights: {
+                        ...(examSettings.weights || {}),
+                        [targetExamId]: Number(termWeight) || 20
+                    },
+                    updatedAt: serverTimestamp()
+                }, { merge: true });
+            } catch (wErr) {
+                console.warn("Could not sync term weight into exam_settings:", wErr);
+            }
 
             // 2. Prepare atomic writeBatch for exam_marks per subject
             const batch = writeBatch(db);
@@ -648,13 +698,25 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                     const isAbsent = rawVal === -1;
                     const numObtained = isAbsent ? null : (Number(rawVal) || 0);
 
+                    const scaleResult = computeGradeWithScale(
+                        rawVal,
+                        sub.maxMarks,
+                        examSettings.customGradingScale,
+                        examSettings.gradingScaleMode
+                    );
+
+                    // If teacher supplied a custom remark (e.g. from CSV), prioritize it; otherwise use school scale remarks
+                    const finalRemarks = isAbsent
+                        ? 'Absent'
+                        : (student.remarks && student.remarks.trim() ? student.remarks.trim() : (scaleResult.remarks || ''));
+
                     marksMap[student.studentId] = {
                         obtainedMarks: numObtained,
                         baseMarks: numObtained,
                         graceMarks: 0,
                         isAbsent,
-                        grade: computeGrade(rawVal, sub.maxMarks),
-                        remarks: isAbsent ? 'Absent' : '',
+                        grade: scaleResult.grade,
+                        remarks: finalRemarks,
                         updatedAt: new Date().toISOString()
                     };
                 });
@@ -789,6 +851,41 @@ export default function ExamBroadsheetImporter({ schoolId, classes: initialClass
                                 className="mt-2 w-full px-3 py-1.5 text-xs rounded border border-slate-300 focus:border-indigo-500"
                             />
                         )}
+                    </div>
+                </div>
+
+                {/* School Exam Policy & Term Weightage Card */}
+                <div className="mt-3 p-3.5 bg-gradient-to-r from-indigo-50/70 to-violet-50/70 rounded-xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                            <Percent size={18} />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-800">Annual Aggregate Weightage & Grading</span>
+                                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-700">
+                                    School Policy Linked
+                                </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                                Active Scale: <strong className="text-slate-700">{examSettings.gradingScaleMode === 'custom' ? 'Custom School Grading Scale' : 'Standard 8-Tier Scale (A++, A+, A...)'}</strong>. Percentages, grades & remarks will auto-calculate according to this school policy.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 bg-white/80 px-3 py-1.5 rounded-lg border border-indigo-200/60 shadow-2xs">
+                        <label className="text-xs font-bold text-slate-700 whitespace-nowrap">Term Weight in Annual:</label>
+                        <div className="relative w-20">
+                            <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={termWeight}
+                                onChange={(e) => setTermWeight(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                                className="w-full px-2 py-1 text-xs font-bold text-indigo-900 bg-indigo-50/50 border border-indigo-200 rounded text-center pr-5 focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">%</span>
+                        </div>
                     </div>
                 </div>
             </div>
