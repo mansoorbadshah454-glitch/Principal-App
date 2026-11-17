@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { db } from '../firebase';
 import { collection, getDocs, writeBatch, doc, serverTimestamp, increment } from 'firebase/firestore';
-import { syncCountersFromBulkUpload } from '../utils/studentSequenceHelper';
+import { syncCountersFromBulkUpload, getClassOrder } from '../utils/studentSequenceHelper';
 import { 
     Upload, FileUp, FileDown, CheckCircle, AlertCircle, Loader2, Users, 
     CheckCircle2, AlertTriangle, Sparkles, RefreshCw 
@@ -66,25 +66,27 @@ const BulkUploadCard = ({ schoolId }) => {
     const [completedSummary, setCompletedSummary] = useState(null);
     const fileInputRef = useRef(null);
 
+    // Fetch Classes Helper
+    const fetchClasses = useCallback(async () => {
+        if (!schoolId) return;
+        try {
+            const querySnapshot = await getDocs(collection(db, 'schools', schoolId, 'classes'));
+            const classesList = querySnapshot.docs.map(doc => ({
+                id: doc.id,
+                name: doc.data().name || doc.data().className || doc.id,
+                ...doc.data()
+            }));
+            setClasses(classesList);
+        } catch (err) {
+            console.error("Error fetching classes:", err);
+            setError("Failed to load classes from database.");
+        }
+    }, [schoolId]);
+
     // Fetch Classes on Mount
     useEffect(() => {
-        const fetchClasses = async () => {
-            if (!schoolId) return;
-            try {
-                const querySnapshot = await getDocs(collection(db, 'schools', schoolId, 'classes'));
-                const classesList = querySnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    name: doc.data().name || doc.data().className || doc.id,
-                    ...doc.data()
-                }));
-                setClasses(classesList);
-            } catch (err) {
-                console.error("Error fetching classes:", err);
-                setError("Failed to load classes from database.");
-            }
-        };
         fetchClasses();
-    }, [schoolId]);
+    }, [fetchClasses]);
 
     // Download Template with full updated schema & multi-class sample data
     const downloadTemplate = () => {
@@ -221,6 +223,7 @@ const BulkUploadCard = ({ schoolId }) => {
 
         const validList = [];
         const skippedList = [];
+        const pendingNewClasses = new Map();
 
         for (let i = 1; i < lines.length; i++) {
             const currentLine = parseCSVLine(lines[i]);
@@ -260,15 +263,31 @@ const BulkUploadCard = ({ schoolId }) => {
                 continue;
             }
 
-            // 2. Class Resolution
-            const matchedCls = matchClass(rawClass);
+            // 2. Class Resolution (Auto-create missing class dynamically)
+            let matchedCls = matchClass(rawClass);
+            if (!matchedCls) {
+                const cleanClass = (rawClass || '').trim();
+                if (cleanClass) {
+                    const key = cleanClass.toLowerCase();
+                    if (pendingNewClasses.has(key)) {
+                        matchedCls = pendingNewClasses.get(key);
+                    } else {
+                        const newDocRef = doc(collection(db, 'schools', schoolId, 'classes'));
+                        matchedCls = {
+                            id: newDocRef.id,
+                            name: cleanClass,
+                            isNewClass: true
+                        };
+                        pendingNewClasses.set(key, matchedCls);
+                    }
+                }
+            }
+
             if (!matchedCls) {
                 skippedList.push({
                     rowNumber,
                     name: fullName,
-                    reason: rawClass 
-                        ? `Class "${rawClass}" does not exist in school. Please create it first.` 
-                        : "No Class specified for this row."
+                    reason: "No Class specified for this row."
                 });
                 continue;
             }
@@ -281,6 +300,7 @@ const BulkUploadCard = ({ schoolId }) => {
                 admissionNo,
                 classId: matchedCls.id,
                 className: matchedCls.name || rawClass,
+                isNewClass: !!matchedCls.isNewClass,
                 section: section || '',
                 fatherName: fatherName || '',
                 fatherPhone: fatherPhone || '',
@@ -305,7 +325,10 @@ const BulkUploadCard = ({ schoolId }) => {
         const counts = {};
         previewData.forEach(st => {
             const key = st.className || 'Unknown';
-            counts[key] = (counts[key] || 0) + 1;
+            if (!counts[key]) {
+                counts[key] = { count: 0, isNewClass: !!st.isNewClass };
+            }
+            counts[key].count += 1;
         });
         return counts;
     }, [previewData]);
@@ -474,13 +497,35 @@ const BulkUploadCard = ({ schoolId }) => {
                 }
             }
 
-            // 3. Update student count on each affected class ONLY for newly inserted records
+            // 3. Update student count on each affected class ONLY for newly inserted records, or create new class document
             for (const [clsId, list] of Object.entries(actualStudentsByClass)) {
                 if (list.length > 0) {
                     const classRef = doc(db, 'schools', schoolId, 'classes', clsId);
-                    currentBatch.update(classRef, {
-                        students: increment(list.length)
-                    });
+                    const isNewClass = list.some(s => s.isNewClass) || !classes.some(c => c.id === clsId);
+                    const targetClassName = list[0]?.className || 'New Class';
+
+                    // Collect distinct sections from imported students
+                    const classSections = Array.from(new Set(
+                        list.map(s => (s.section || '').trim().toUpperCase()).filter(Boolean)
+                    ));
+                    if (classSections.length === 0) classSections.push('A');
+
+                    if (isNewClass) {
+                        currentBatch.set(classRef, {
+                            name: targetClassName,
+                            teacher: '',
+                            teacherId: null,
+                            students: list.length,
+                            sections: classSections,
+                            subjects: ['English', 'Urdu', 'Mathematics', 'Islamiyat'],
+                            order: getClassOrder(targetClassName),
+                            createdAt: serverTimestamp()
+                        }, { merge: true });
+                    } else {
+                        currentBatch.set(classRef, {
+                            students: increment(list.length)
+                        }, { merge: true });
+                    }
                     opCount++;
 
                     if (opCount >= BATCH_SIZE) {
@@ -503,6 +548,13 @@ const BulkUploadCard = ({ schoolId }) => {
                 }
             } catch (syncErr) {
                 console.warn("Could not sync counters from bulk upload:", syncErr);
+            }
+
+            // Refresh local classes state so UI stays synced immediately
+            try {
+                await fetchClasses();
+            } catch (refErr) {
+                console.warn("Could not refresh classes after bulk upload:", refErr);
             }
 
             const totalUploaded = addedStudents.length;
@@ -701,15 +753,21 @@ const BulkUploadCard = ({ schoolId }) => {
                                 </span>
                             </div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                {Object.entries(classBreakdown).map(([cName, count]) => (
-                                    <span key={cName} style={{ 
-                                        padding: '0.25rem 0.65rem', borderRadius: '6px', 
-                                        background: '#ffffff', border: '1px solid #a5b4fc', 
-                                        fontSize: '0.8rem', fontWeight: '700', color: '#4338ca' 
-                                    }}>
-                                        {cName}: <strong>{count} students</strong>
-                                    </span>
-                                ))}
+                                {Object.entries(classBreakdown).map(([cName, info]) => {
+                                    const studentCount = typeof info === 'object' ? info.count : info;
+                                    const isNew = typeof info === 'object' ? info.isNewClass : false;
+                                    return (
+                                        <span key={cName} style={{ 
+                                            padding: '0.25rem 0.65rem', borderRadius: '6px', 
+                                            background: isNew ? '#ecfdf5' : '#ffffff', 
+                                            border: isNew ? '1px solid #10b981' : '1px solid #a5b4fc', 
+                                            fontSize: '0.8rem', fontWeight: '700', 
+                                            color: isNew ? '#047857' : '#4338ca' 
+                                        }}>
+                                            {cName}{isNew ? ' ✨ New Class' : ''}: <strong>{studentCount} students</strong>
+                                        </span>
+                                    );
+                                })}
                             </div>
                         </div>
                     )}

@@ -75,7 +75,7 @@ export default function StudentRegisterImporter({ schoolId, classes: initialClas
                     setSelectedClassId(list[0].id);
                     setTargetClassName(list[0].name);
                 } else if (list.length === 0 && !targetClassName) {
-                    setTargetClassName('Class 1');
+                    setTargetClassName('');
                 }
             } catch (err) {
                 console.error("Error loading classes:", err);
@@ -298,7 +298,7 @@ export default function StudentRegisterImporter({ schoolId, classes: initialClas
                         teacher: '',
                         students: finalRoster.length,
                         sections: [selectedSection.trim().toUpperCase() || 'A'],
-                        subjects: [], // Official subjects will be synced from Smart Exam Importer (Image or CSV)
+                        subjects: ['English', 'Urdu', 'Mathematics', 'Islamiyat'],
                         order: getClassOrder(finalClassName),
                         createdAt: serverTimestamp()
                     };
