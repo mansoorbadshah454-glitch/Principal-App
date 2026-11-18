@@ -1935,8 +1935,8 @@ const Settings = () => {
                             </div>
                         )}
 
-                        {/* 2. Monthly Due Date & Suspension Policy Info Badge */}
-                        {billingPolicy.enabled !== false && (() => {
+                        {/* 2. Monthly Due Date & Suspension Policy Info Badge (Shown only when NOT already suspended) */}
+                        {billingPolicy.enabled !== false && !(subscriptionInfo.status === 'suspended' || schoolData.status === 'suspended') && (() => {
                             const dueDay = billingPolicy.dueDay || 5;
                             const graceDays = billingPolicy.graceDays ?? 2;
                             const currentDay = new Date().getDate();
