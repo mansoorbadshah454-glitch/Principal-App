@@ -6,7 +6,7 @@ import {
     Plus, Trash2, Users, Info, BookOpen, Sparkles, Bot, Key, ExternalLink,
     CreditCard, Landmark, Upload, Eye, EyeOff, Lock, Mail, FileText, AlertCircle, AlertTriangle, ArrowRight,
     Smartphone, RefreshCw, X, Check, Search, Calendar, LayoutGrid, ListFilter,
-    CheckCheck, Ban, ArrowUpRight, DollarSign, Award
+    CheckCheck, Ban, ArrowUpRight, DollarSign, Award, Download
 } from 'lucide-react';
 import { db, storage, auth } from '../firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
@@ -19,6 +19,7 @@ import StudentRegisterImporter from '../components/student-importer/StudentRegis
 import UploadSyllabusTab from '../components/UploadSyllabusTab';
 import FeeMigrationStudio from '../components/FeeMigrationStudio';
 import ExamBroadsheetImporter from '../components/exam-importer/ExamBroadsheetImporter';
+import DataExportStudio from '../components/settings/DataExportStudio';
 import CachedImage from '../components/CachedImage';
 import { compressImage } from '../utils/imageCompressor';
 import PaymentMethodLogo, { getPaymentMethodTheme } from '../components/PaymentLogos';
@@ -31,7 +32,7 @@ const Settings = () => {
         try {
             const params = new URLSearchParams(window.location.search);
             const tabParam = params.get('tab');
-            if (tabParam && ['details', 'timing', 'accounts', 'ai', 'billing', 'import', 'syllabus', 'fee_migration', 'exam_onboarding', 'security'].includes(tabParam)) {
+            if (tabParam && ['details', 'timing', 'accounts', 'ai', 'billing', 'import', 'syllabus', 'fee_migration', 'exam_onboarding', 'security', 'export_data'].includes(tabParam)) {
                 return tabParam;
             }
         } catch (e) {}
@@ -1368,7 +1369,8 @@ const Settings = () => {
                         { id: 'fee_migration', label: 'Fee Migration & Baseline', icon: DollarSign, desc: 'CSV fee & backlog setup' },
                         { id: 'exam_onboarding', label: 'Smart Exam Importer', icon: Award, desc: '1st & 2nd Term digitized registers' },
                         { id: 'ai_assistant', label: 'AI Copilot', icon: Sparkles, desc: 'Gemini Copilot engine' },
-                        { id: 'security', label: 'Security & Password', icon: ShieldCheck, desc: 'Private password control' }
+                        { id: 'security', label: 'Security & Password', icon: ShieldCheck, desc: 'Private password control' },
+                        { id: 'export_data', label: 'Export School Data', icon: Download, desc: 'Excel & full backup' }
                     ].map((tab) => {
                         const isActive = activeTab === tab.id;
                         const Icon = tab.icon;
@@ -3846,6 +3848,11 @@ const Settings = () => {
                             </button>
                         </div>
                     </div>
+                )}
+
+                {/* Export School Data Tab */}
+                {activeTab === 'export_data' && (
+                    <DataExportStudio schoolId={schoolId} />
                 )}
             </div>
             </div>
