@@ -687,7 +687,7 @@ Microsoft Excel, Google Sheets, LibreOffice, and any modern database.
                             One-Click Complete School Backup
                         </h2>
                         <p className="text-slate-300 text-sm leading-relaxed">
-                            Pora school data ek sath download karein. Tamam tulba, teachers, classes, fee receipts, aur waldein ka record ba-hifazat single file me package ho kar download ho jaye ga. Kisi bhi doosre software me shift hona nihayat aasan hai.
+                            Download your entire school data in a single unified operation. All student profiles, faculty records, academic classes, fee collection ledgers, and parent contacts are securely bundled and prepared for immediate export. Makes migrating to any external system completely seamless.
                         </p>
 
                         {/* Quick Data Indicators */}
@@ -870,7 +870,7 @@ Microsoft Excel, Google Sheets, LibreOffice, and any modern database.
                         Zero Vendor Lock-In & Complete Data Ownership
                     </h4>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                        MAI SMS protocol ke mutabiq aapka school data aapka apna sarmaya hai. Tamam exported files me UTF-8 BOM encoding mojood hai taake Urdu, English, aur Special characters baghair kisi masle ke open hon. Agar kal ko aap kisi doosre vendor ya custom software par shift hona chahein, toh yeh files 100% ready-to-import hain.
+                        Under the MAI SMS Data Sovereignty Protocol, your institution maintains unconditional 100% legal and operational ownership of all records. All exported CSV and Excel files include native UTF-8 BOM encoding for seamless cross-platform compatibility across Microsoft Excel, Google Sheets, and third-party school software with zero formatting errors.
                     </p>
                 </div>
             </div>
