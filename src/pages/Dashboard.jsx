@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
     Users, UserCheck, CreditCard, PieChart as PieIcon,
     Send, Activity, Award, User, Clock, ChevronRight, ChevronLeft, Wallet, X, ChevronDown, GraduationCap, MessageCircle, MessagesSquare, Trash2, Paperclip, BookOpen, CheckCircle2, CircleDashed,
-    Wifi, WifiOff, RefreshCw, Loader2, Sparkles, ClipboardList, Trophy, Medal
+    Wifi, WifiOff, RefreshCw, Loader2, Sparkles, ClipboardList, Trophy, Medal, ExternalLink
 } from 'lucide-react';
 import FinancesDashboard from '../components/FinancesDashboard';
 import { useAuthPermissions } from '../context/AuthPermissionsContext';
@@ -27,6 +27,78 @@ const getTeacherInitials = (name) => {
         return (parts[0][0] + parts[1][0]).toUpperCase();
     }
     return clean.substring(0, 2).toUpperCase();
+};
+
+const formatAttendanceTime = (rawTime) => {
+    if (!rawTime) return null;
+    try {
+        let dateObj = null;
+        if (typeof rawTime?.toDate === 'function') {
+            dateObj = rawTime.toDate();
+        } else if (rawTime?.seconds !== undefined) {
+            dateObj = new Date(rawTime.seconds * 1000);
+        } else if (typeof rawTime === 'string') {
+            dateObj = new Date(rawTime);
+        } else if (rawTime instanceof Date) {
+            dateObj = rawTime;
+        }
+        if (!dateObj || isNaN(dateObj.getTime())) return null;
+        return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    } catch (_) {
+        return null;
+    }
+};
+
+const getTeacherAutoRemark = (overallScore, acadScore, syllScore, attScore, hwScore) => {
+    // 1. Top Performer: overall score >= 85 and no severe deficit (all >= 70)
+    if (overallScore >= 85 && acadScore >= 70 && syllScore >= 70 && attScore >= 70 && hwScore >= 70) {
+        return {
+            label: '🌟 Top Performer',
+            bg: '#ecfdf5',
+            color: '#065f46',
+            border: '#a7f3d0'
+        };
+    }
+
+    // 2. Put all 4 real scores in an array to find the exact lowest pillar for this teacher
+    const pillars = [
+        { name: 'Syllabus Cover', score: syllScore, label: '⚠️ Needs Improvement: Syllabus Cover', color: '#b45309', bg: '#fffbeb', border: '#fde68a' },
+        { name: 'Teacher Attendance', score: attScore, label: '⚠️ Needs Improvement: Teacher Attendance', color: '#c2410c', bg: '#fff7ed', border: '#fed7aa' },
+        { name: 'Homework', score: hwScore, label: '⚠️ Needs Improvement: Homework', color: '#92400e', bg: '#fef3c7', border: '#fde68a' },
+        { name: 'Teaching Score', score: acadScore, label: '⚠️ Needs Improvement: Teaching Score', color: '#7e22ce', bg: '#faf5ff', border: '#e9d5ff' }
+    ];
+
+    // Sort ascending by score so the absolute lowest pillar is at index 0
+    pillars.sort((a, b) => a.score - b.score);
+    const lowest = pillars[0];
+
+    // If the lowest score has room for improvement (< 75%)
+    if (lowest.score < 75) {
+        return {
+            label: lowest.label,
+            bg: lowest.bg,
+            color: lowest.color,
+            border: lowest.border
+        };
+    }
+
+    // 3. If all 4 scores are healthy (all >= 75%)
+    if (overallScore >= 75) {
+        return {
+            label: '👍 Good Performance',
+            bg: '#eff6ff',
+            color: '#1d4ed8',
+            border: '#bfdbfe'
+        };
+    }
+
+    // Fallback: show the lowest pillar
+    return {
+        label: lowest.label,
+        bg: lowest.bg,
+        color: lowest.color,
+        border: lowest.border
+    };
 };
 
 const MetricTooltipPill = ({ label, value, fullTitle, weight, extraInfo }) => {
@@ -160,6 +232,7 @@ const Dashboard = () => {
     const [fetchedClasses, setFetchedClasses] = useState(() => cachedInitialData?.classes || []);
     const [messages, setMessages] = useState([]);
     const [teachers, setTeachers] = useState(() => cachedInitialData?.teachers || []);
+    const [todayAttendanceLogs, setTodayAttendanceLogs] = useState({});
 
     const [collectionStats, setCollectionStats] = useState(() => cachedInitialData?.collectionStats || { paid: 0, unpaid: 0, total: 0 });
     const [attendanceStats, setAttendanceStats] = useState(() => cachedInitialData?.attendanceStats || { present: 0, absent: 0 });
@@ -190,6 +263,13 @@ const Dashboard = () => {
     const [rankingCycle, setRankingCycle] = useState(() => cachedInitialData?.rankingCycle || '');
     const [isSyncingRankings, setIsSyncingRankings] = useState(false);
     const [lastRankingSync, setLastRankingSync] = useState(null);
+    const [expandedTeacherIds, setExpandedTeacherIds] = useState({});
+    const toggleTeacherExpand = (id) => {
+        setExpandedTeacherIds(prev => ({
+            ...prev,
+            [id]: !prev[id]
+        }));
+    };
     const [teacherHomeworkCounts, setTeacherHomeworkCounts] = useState(() => cachedInitialData?.teacherHomeworkCounts || {});
     const [teacherMonthlyAttendance, setTeacherMonthlyAttendance] = useState(() => cachedInitialData?.teacherMonthlyAttendance || {});
     const [teacherSyllabusScores, setTeacherSyllabusScores] = useState(() => cachedInitialData?.teacherSyllabusScores || {});
@@ -520,6 +600,39 @@ const Dashboard = () => {
         });
         return () => unsubscribe();
     }, [schoolId]);
+
+    // Real-Time Listener for Today's Teacher Attendance Logs (Check-In & Check-Out)
+    useEffect(() => {
+        if (!schoolId || !teachers || teachers.length === 0) return;
+        const todayStr = getTodayPktStr();
+        const unsubs = [];
+        teachers.forEach(t => {
+            if (!t?.id) return;
+            const logDocRef = doc(db, `schools/${schoolId}/teachers/${t.id}/attendance_logs`, todayStr);
+            const unsub = onSnapshot(logDocRef, (snap) => {
+                if (snap.exists()) {
+                    setTodayAttendanceLogs(prev => ({
+                        ...prev,
+                        [t.id]: snap.data()
+                    }));
+                } else {
+                    setTodayAttendanceLogs(prev => ({
+                        ...prev,
+                        [t.id]: null
+                    }));
+                }
+            }, (err) => {
+                // Gracefully fallback
+            });
+            unsubs.push(unsub);
+        });
+
+        return () => {
+            unsubs.forEach(u => {
+                try { u(); } catch (_) {}
+            });
+        };
+    }, [schoolId, teachers.map(t => t.id).join(',')]);
 
     // Listen to Pre-aggregated Teacher Rankings (Fast O(1) Load)
     useEffect(() => {
@@ -1467,6 +1580,14 @@ const Dashboard = () => {
 
         return list.map((t, idx) => ({ ...t, rank: idx + 1 }));
     }, [rankingData, teachers, teacherHomeworkCounts, teacherMonthlyAttendance, teacherSyllabusScores, teacherAcademicScores, allClassesData, fetchedClasses, masterTimetable]);
+
+    // Live Checked-In Teachers Counter for Today
+    const checkedInCount = useMemo(() => {
+        return teachers.filter(t => {
+            const log = todayAttendanceLogs[t.id];
+            return Boolean(log?.checkIn || t.isPresent);
+        }).length;
+    }, [teachers, todayAttendanceLogs]);
 
     // 5. Attendance Chart Data (Real-time)
     const [attendanceChartData, setAttendanceChartData] = useState(() => cachedInitialData?.attendanceChartData || []);
@@ -2987,7 +3108,7 @@ const Dashboard = () => {
                     {/* Teacher Feedback Card Removed */}
 
                     {/* Teachers Performance */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: '2rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(420px, 460px) 1fr', gap: '2rem' }}>
                         <div className="card" style={{
                             padding: '0',
                             background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(6, 182, 212, 0.08) 100%)',
@@ -3020,135 +3141,318 @@ const Dashboard = () => {
                                 background: 'linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.6), rgba(6, 182, 212, 0.6), transparent)',
                                 zIndex: 1
                             }} />
-                            <div style={{ padding: '1.5rem', borderBottom: '1px solid rgba(241, 245, 249, 0.6)', display: 'flex', flexDirection: 'column', gap: '1rem', position: 'relative', zIndex: 2 }}>
-                                <h3 style={{ fontSize: '1.125rem', margin: 0 }}>Teachers Live</h3>
 
-                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', width: '100%' }}>
-                                    <button
-                                        onClick={() => navigate('/inbox')}
-                                        style={{
-                                            flex: 1,
-                                            padding: '0.75rem 1rem',
-                                            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '12px',
-                                            fontSize: '0.875rem',
-                                            fontWeight: '600',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            gap: '0.625rem',
-                                            transition: 'var(--transition)',
-                                            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)',
-                                            position: 'relative'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            e.currentTarget.style.transform = 'translateY(-2px)';
-                                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.25)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.transform = 'translateY(0)';
-                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.15)';
-                                        }}
-                                    >
-                                        <MessagesSquare size={18} />
-                                        <span>Chat</span>
+                            {/* Redesigned Clean Header */}
+                            <div style={{
+                                padding: '1.25rem 1.4rem',
+                                borderBottom: '1px solid rgba(226, 232, 240, 0.8)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                position: 'relative',
+                                zIndex: 2,
+                                background: 'rgba(255, 255, 255, 0.5)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                    <span style={{
+                                        width: '9px',
+                                        height: '9px',
+                                        borderRadius: '50%',
+                                        background: '#10b981',
+                                        boxShadow: '0 0 10px rgba(16, 185, 129, 0.8)',
+                                        display: 'inline-block'
+                                    }} />
+                                    <div>
+                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#0f172a', margin: 0 }}>
+                                            Teachers Live & Attendance
+                                        </h3>
+                                        <p style={{ fontSize: '0.74rem', color: '#64748b', margin: '2px 0 0 0' }}>
+                                            Live daily check-in & duty monitoring
+                                        </p>
+                                    </div>
+                                </div>
 
-                                        {messages.filter(m => m.read === false).length > 0 && (
-                                            <span style={{
-                                                background: '#ef4444',
-                                                color: 'white',
-                                                fontSize: '0.75rem',
-                                                fontWeight: '800',
-                                                padding: '2px 8px',
-                                                borderRadius: '20px',
-                                                marginLeft: '0.5rem',
-                                                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                                                border: '1.5px solid rgba(255,255,255,0.3)'
-                                            }}>
-                                                {messages.filter(m => m.read === false).length}
-                                            </span>
-                                        )}
-                                    </button>
+                                <div style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '4px 10px',
+                                    borderRadius: '20px',
+                                    background: '#ecfdf5',
+                                    border: '1px solid #a7f3d0',
+                                    color: '#065f46',
+                                    fontSize: '0.78rem',
+                                    fontWeight: '700'
+                                }}>
+                                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                                    <span>Checked In: {checkedInCount} / {teachers.length}</span>
                                 </div>
                             </div>
-                            <div className="custom-scrollbar" style={{ padding: '1rem', maxHeight: '400px', overflowY: 'auto', position: 'relative', zIndex: 2 }}>
-                                {teachers.map((teacher, i) => (
-                                    <div key={i} className="flex-between" style={{ padding: '0.85rem 1rem', borderRadius: '12px', transition: 'background 0.2s ease', borderBottom: '1px solid rgba(241, 245, 249, 0.6)' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-                                            <div style={{ position: 'relative' }}>
-                                                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                    <User size={20} color="#64748b" />
-                                                </div>
-                                                <div style={{
-                                                    position: 'absolute', bottom: '-2px', right: '-2px',
-                                                    width: '12px', height: '12px', borderRadius: '50%', border: '2px solid white',
-                                                    background: teacher.status === 'on' ? '#10b981' : '#ef4444'
-                                                }} />
-                                            </div>
-                                            <div>
-                                                <p
-                                                    onClick={(e) => {
-                                                        setSelectedTeacher(teacher);
-                                                        setIsBroadcast(false);
-                                                        if (e && e.currentTarget) {
-                                                            const rect = e.currentTarget.getBoundingClientRect();
-                                                            setModalPos({
-                                                                top: rect.bottom + 10,
-                                                                left: Math.min(rect.left, window.innerWidth - 420)
-                                                            });
-                                                        } else {
-                                                            setModalPos(null);
-                                                        }
-                                                    }}
-                                                    style={{
-                                                        fontWeight: '700',
-                                                        fontSize: '0.9rem',
-                                                        color: '#1e293b',
-                                                        cursor: 'pointer',
-                                                        margin: 0,
-                                                        transition: 'color 0.2s ease'
-                                                    }}
-                                                    onMouseEnter={(e) => { e.currentTarget.style.color = '#4f46e5'; }}
-                                                    onMouseLeave={(e) => { e.currentTarget.style.color = '#1e293b'; }}
-                                                >
-                                                    {teacher.name}
-                                                </p>
-                                                <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '2px 0 0 0' }}>{teacher.class || 'No Class'}</p>
-                                            </div>
-                                        </div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-                                            {/* Present / Absent Badge (Stacked on Top) */}
-                                            <span style={{
-                                                fontSize: '0.65rem',
-                                                padding: '2px 8px',
-                                                borderRadius: '6px',
-                                                background: teacher.isPresent ? '#3b82f6' : '#ef4444',
-                                                color: '#ffffff',
-                                                fontWeight: '700',
-                                                letterSpacing: '0.3px',
-                                                display: 'inline-block'
-                                            }}>
-                                                {teacher.isPresent ? 'Present' : 'Absent'}
-                                            </span>
 
-                                            {/* On / Off Class Status (Stacked on Bottom) */}
-                                            <span style={{
-                                                fontSize: '0.68rem',
-                                                color: teacher.status === 'on' ? '#10b981' : '#ef4444',
-                                                fontWeight: '600',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '4px'
-                                            }}>
-                                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: teacher.status === 'on' ? '#10b981' : '#ef4444' }} />
-                                                {teacher.status === 'on' ? 'On Class' : 'Off Class'}
-                                            </span>
+                            {/* Mini Table Header */}
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'minmax(140px, 1.4fr) minmax(95px, 1fr) minmax(95px, 1fr) minmax(75px, 0.8fr)',
+                                padding: '0.65rem 1rem',
+                                background: '#f8fafc',
+                                borderBottom: '1px solid rgba(226, 232, 240, 0.8)',
+                                fontSize: '0.74rem',
+                                fontWeight: '700',
+                                color: '#64748b',
+                                letterSpacing: '0.04em',
+                                textTransform: 'uppercase',
+                                position: 'relative',
+                                zIndex: 2
+                            }}>
+                                <div>Teacher</div>
+                                <div style={{ textAlign: 'center' }}>Check-In</div>
+                                <div style={{ textAlign: 'center' }}>Check-Out</div>
+                                <div style={{ textAlign: 'right' }}>Status</div>
+                            </div>
+
+                            {/* Mini Table Body */}
+                            <div className="custom-scrollbar" style={{
+                                maxHeight: '420px',
+                                overflowY: 'auto',
+                                overflowX: 'auto',
+                                position: 'relative',
+                                zIndex: 2
+                            }}>
+                                <div style={{ minWidth: '400px' }}>
+                                    {teachers.length === 0 ? (
+                                        <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.88rem' }}>
+                                            No teachers registered yet
                                         </div>
-                                    </div>
-                                ))}
+                                    ) : (
+                                        teachers.map((teacher, i) => {
+                                            const todayLog = todayAttendanceLogs[teacher.id];
+                                            const checkInFormatted = formatAttendanceTime(todayLog?.checkIn);
+                                            const checkOutFormatted = formatAttendanceTime(todayLog?.checkOut);
+                                            const isCheckedIn = Boolean(checkInFormatted || todayLog?.checkIn || teacher.isPresent);
+
+                                            return (
+                                                <div
+                                                    key={teacher.id || i}
+                                                    style={{
+                                                        display: 'grid',
+                                                        gridTemplateColumns: 'minmax(140px, 1.4fr) minmax(95px, 1fr) minmax(95px, 1fr) minmax(75px, 0.8fr)',
+                                                        alignItems: 'center',
+                                                        padding: '0.75rem 1rem',
+                                                        borderBottom: '1px solid rgba(241, 245, 249, 0.8)',
+                                                        transition: 'background 0.15s ease'
+                                                    }}
+                                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(248, 250, 252, 0.85)'; }}
+                                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                                                >
+                                                    {/* 1. Teacher Column */}
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: 0 }}>
+                                                        <div style={{ position: 'relative', flexShrink: 0 }}>
+                                                            <div style={{
+                                                                width: '36px',
+                                                                height: '36px',
+                                                                borderRadius: '10px',
+                                                                background: '#f1f5f9',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                fontWeight: '700',
+                                                                fontSize: '0.82rem',
+                                                                color: '#475569',
+                                                                border: '1px solid #e2e8f0'
+                                                            }}>
+                                                                {getTeacherInitials(teacher.name)}
+                                                            </div>
+                                                            <div
+                                                                style={{
+                                                                    position: 'absolute',
+                                                                    bottom: '-2px',
+                                                                    right: '-2px',
+                                                                    width: '10px',
+                                                                    height: '10px',
+                                                                    borderRadius: '50%',
+                                                                    border: '2px solid white',
+                                                                    background: teacher.status === 'on' ? '#10b981' : '#cbd5e1'
+                                                                }}
+                                                                title={teacher.status === 'on' ? 'On Class' : 'Off Class'}
+                                                            />
+                                                        </div>
+                                                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                                                            <p
+                                                                onClick={(e) => {
+                                                                    setSelectedTeacher(teacher);
+                                                                    setIsBroadcast(false);
+                                                                    if (e && e.currentTarget) {
+                                                                        const rect = e.currentTarget.getBoundingClientRect();
+                                                                        setModalPos({
+                                                                            top: rect.bottom + 10,
+                                                                            left: Math.min(rect.left, window.innerWidth - 420)
+                                                                        });
+                                                                    } else {
+                                                                        setModalPos(null);
+                                                                    }
+                                                                }}
+                                                                style={{
+                                                                    fontWeight: '700',
+                                                                    fontSize: '0.88rem',
+                                                                    color: '#1e293b',
+                                                                    cursor: 'pointer',
+                                                                    margin: 0,
+                                                                    whiteSpace: 'nowrap',
+                                                                    textOverflow: 'ellipsis',
+                                                                    overflow: 'hidden',
+                                                                    transition: 'color 0.15s ease'
+                                                                }}
+                                                                title={`${teacher.name} (Click to message)`}
+                                                                onMouseEnter={(e) => { e.currentTarget.style.color = '#4f46e5'; }}
+                                                                onMouseLeave={(e) => { e.currentTarget.style.color = '#1e293b'; }}
+                                                            >
+                                                                {teacher.name}
+                                                            </p>
+                                                            <p style={{
+                                                                fontSize: '0.73rem',
+                                                                color: '#64748b',
+                                                                margin: '2px 0 0 0',
+                                                                whiteSpace: 'nowrap',
+                                                                textOverflow: 'ellipsis',
+                                                                overflow: 'hidden'
+                                                            }}>
+                                                                {teacher.class || 'No Class'}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* 2. Check-In Column */}
+                                                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                                        {checkInFormatted ? (
+                                                            <span
+                                                                title={`Checked in at ${checkInFormatted}`}
+                                                                style={{
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    padding: '4px 8px',
+                                                                    borderRadius: '6px',
+                                                                    background: '#ecfdf5',
+                                                                    color: '#065f46',
+                                                                    border: '1px solid #a7f3d0',
+                                                                    fontSize: '0.78rem',
+                                                                    fontWeight: '700',
+                                                                    letterSpacing: '0.2px'
+                                                                }}
+                                                            >
+                                                                <Clock size={12} color="#059669" />
+                                                                {checkInFormatted}
+                                                            </span>
+                                                        ) : teacher.isPresent ? (
+                                                            <span
+                                                                title="Marked Present"
+                                                                style={{
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    padding: '4px 8px',
+                                                                    borderRadius: '6px',
+                                                                    background: '#ecfdf5',
+                                                                    color: '#065f46',
+                                                                    border: '1px solid #a7f3d0',
+                                                                    fontSize: '0.78rem',
+                                                                    fontWeight: '700'
+                                                                }}
+                                                            >
+                                                                <CheckCircle2 size={12} color="#059669" />
+                                                                Present
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600' }}>
+                                                                --:--
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* 3. Check-Out Column */}
+                                                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                                        {checkOutFormatted ? (
+                                                            <span
+                                                                title={`Checked out at ${checkOutFormatted}`}
+                                                                style={{
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    padding: '4px 8px',
+                                                                    borderRadius: '6px',
+                                                                    background: '#eff6ff',
+                                                                    color: '#1d4ed8',
+                                                                    border: '1px solid #bfdbfe',
+                                                                    fontSize: '0.78rem',
+                                                                    fontWeight: '700',
+                                                                    letterSpacing: '0.2px'
+                                                                }}
+                                                            >
+                                                                <Clock size={12} color="#2563eb" />
+                                                                {checkOutFormatted}
+                                                            </span>
+                                                        ) : isCheckedIn ? (
+                                                            <span
+                                                                title="Currently in school / on duty"
+                                                                style={{
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '4px',
+                                                                    padding: '3px 8px',
+                                                                    borderRadius: '6px',
+                                                                    background: '#f0fdf4',
+                                                                    color: '#15803d',
+                                                                    border: '1px solid #bbf7d0',
+                                                                    fontSize: '0.74rem',
+                                                                    fontWeight: '600'
+                                                                }}
+                                                            >
+                                                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#16a34a' }} />
+                                                                In School
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: '600' }}>
+                                                                --:--
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* 4. Status Column */}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', gap: '3px' }}>
+                                                        <span style={{
+                                                            fontSize: '0.71rem',
+                                                            padding: '2px 7px',
+                                                            borderRadius: '5px',
+                                                            background: teacher.isPresent ? '#dbeafe' : '#fee2e2',
+                                                            color: teacher.isPresent ? '#1e40af' : '#b91c1c',
+                                                            fontWeight: '700',
+                                                            letterSpacing: '0.2px',
+                                                            display: 'inline-block'
+                                                        }}>
+                                                            {teacher.isPresent ? 'Present' : 'Absent'}
+                                                        </span>
+                                                        <span style={{
+                                                            fontSize: '0.68rem',
+                                                            color: teacher.status === 'on' ? '#059669' : '#64748b',
+                                                            fontWeight: '600',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '3px'
+                                                        }}>
+                                                            <span style={{
+                                                                width: '5px',
+                                                                height: '5px',
+                                                                borderRadius: '50%',
+                                                                background: teacher.status === 'on' ? '#10b981' : '#94a3b8'
+                                                            }} />
+                                                            {teacher.status === 'on' ? 'On Class' : 'Off Class'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -3240,15 +3544,15 @@ const Dashboard = () => {
                                             const isRank3 = actualRank === 3;
                                             const b = teacher.breakdown || {};
 
-                                            const acadVal = b.academicScore ?? 80;
-                                            const syllVal = b.syllabusScore ?? 75;
-                                            const attVal = b.attendanceScore ?? 90;
-                                            const hwVal = b.homeworkScore ?? 0;
+                                            const acadVal = Math.round(b.academicScore ?? 0);
+                                            const syllVal = Math.round(b.syllabusScore ?? 0);
+                                            const attVal = Math.round(b.attendanceScore ?? 0);
+                                            const hwVal = Math.round(b.homeworkScore ?? 0);
                                             const hwTasks = b.homeworkCount ?? 0;
                                             const attInfo = b.attendanceInfo || {};
-                                            const presentDays = attInfo.presentDays !== undefined ? attInfo.presentDays : (teacher.isPresent ? 22 : 20);
-                                            const absentDays = attInfo.absentDays !== undefined ? attInfo.absentDays : (teacher.isPresent ? 2 : 4);
-                                            const totalDays = attInfo.totalWorkingDays || (presentDays + absentDays);
+                                            const presentDays = attInfo.presentDays !== undefined ? attInfo.presentDays : (teacher.isPresent ? 1 : 0);
+                                            const absentDays = attInfo.absentDays !== undefined ? attInfo.absentDays : 0;
+                                            const totalDays = attInfo.totalWorkingDays || Math.max(1, presentDays + absentDays);
 
                                             // Visual weighted segments for composite bar (adds up to 100%)
                                             // Dynamic Color Scale for Standard Tracks (0-30% Red, 31-59% Orange, 60-100% Green)
@@ -3278,19 +3582,23 @@ const Dashboard = () => {
                                             const syllColors = getScoreColorConfig(syllVal);
                                             const hwColors = getScoreColorConfig(hwVal);
                                             const attColors = getAttendanceColorConfig(attVal, absentDays);
+                                            const autoRemark = getTeacherAutoRemark(teacher.performanceScore, acadVal, syllVal, attVal, hwVal);
+
+                                            const teacherIdKey = teacher.id || `rank_${actualRank}`;
+                                            const isExpanded = Boolean(expandedTeacherIds[teacherIdKey]);
 
                                             return (
                                                 <div
-                                                    key={teacher.id || index}
-                                                    onClick={() => navigate('/teachers', { state: { selectedTeacherId: teacher.id || teacher.teacherId } })}
+                                                    key={teacherIdKey}
+                                                    onClick={() => toggleTeacherExpand(teacherIdKey)}
                                                     style={{
                                                         display: 'flex',
                                                         flexDirection: 'column',
-                                                        gap: '0.85rem',
-                                                        padding: '1rem 1.15rem',
+                                                        gap: isExpanded ? '0.9rem' : '0.65rem',
+                                                        padding: '1rem 1.25rem',
                                                         borderRadius: '12px',
-                                                        background: '#ffffff',
-                                                        border: isRank1 ? '1.5px solid #fcd34d' : '1px solid #e2e8f0',
+                                                        background: isExpanded ? '#fafafa' : '#ffffff',
+                                                        border: isRank1 ? '1.5px solid #fcd34d' : (isExpanded ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
                                                         boxShadow: isRank1 
                                                             ? '0 3px 10px rgba(245, 158, 11, 0.08)' 
                                                             : '0 1px 3px rgba(0, 0, 0, 0.02)',
@@ -3301,23 +3609,23 @@ const Dashboard = () => {
                                                     onMouseEnter={(e) => {
                                                         e.currentTarget.style.transform = 'translateY(-1px)';
                                                         e.currentTarget.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.06)';
-                                                        e.currentTarget.style.borderColor = isRank1 ? '#f59e0b' : '#cbd5e1';
+                                                        e.currentTarget.style.borderColor = isRank1 ? '#f59e0b' : '#94a3b8';
                                                     }}
                                                     onMouseLeave={(e) => {
                                                         e.currentTarget.style.transform = 'translateY(0)';
                                                         e.currentTarget.style.boxShadow = isRank1 
                                                             ? '0 3px 10px rgba(245, 158, 11, 0.08)' 
                                                             : '0 1px 3px rgba(0, 0, 0, 0.02)';
-                                                        e.currentTarget.style.borderColor = isRank1 ? '#fcd34d' : '#e2e8f0';
+                                                        e.currentTarget.style.borderColor = isRank1 ? '#fcd34d' : (isExpanded ? '#cbd5e1' : '#e2e8f0');
                                                     }}
                                                 >
-                                                    {/* Top Row: Simple Rank Badge, Avatar, Name & Overall Score */}
+                                                    {/* Top Row: Rank Badge, Avatar, Name & Overall Score */}
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
                                                             {/* Simple Modern Rank Badge */}
                                                             <div style={{
-                                                                minWidth: '42px',
-                                                                height: '28px',
+                                                                minWidth: '44px',
+                                                                height: '30px',
                                                                 padding: '0 8px',
                                                                 borderRadius: '8px',
                                                                 background: isRank1 
@@ -3345,20 +3653,20 @@ const Dashboard = () => {
                                                                 alignItems: 'center',
                                                                 justifyContent: 'center',
                                                                 gap: '4px',
-                                                                fontSize: '0.8rem',
+                                                                fontSize: '0.85rem',
                                                                 fontWeight: '800',
                                                                 flexShrink: 0
                                                             }}>
-                                                                {isRank1 && <Trophy size={13} color="#d97706" />}
-                                                                {isRank2 && <Medal size={13} color="#64748b" />}
-                                                                {isRank3 && <Medal size={13} color="#ea580c" />}
+                                                                {isRank1 && <Trophy size={14} color="#d97706" />}
+                                                                {isRank2 && <Medal size={14} color="#64748b" />}
+                                                                {isRank3 && <Medal size={14} color="#ea580c" />}
                                                                 #{actualRank}
                                                             </div>
 
                                                             {/* Teacher Avatar Initials */}
                                                             <div style={{
-                                                                width: '36px',
-                                                                height: '36px',
+                                                                width: '38px',
+                                                                height: '38px',
                                                                 borderRadius: '50%',
                                                                 background: '#f8fafc',
                                                                 border: '1.5px solid #e2e8f0',
@@ -3367,7 +3675,7 @@ const Dashboard = () => {
                                                                 alignItems: 'center',
                                                                 justifyContent: 'center',
                                                                 fontWeight: '700',
-                                                                fontSize: '0.82rem',
+                                                                fontSize: '0.86rem',
                                                                 flexShrink: 0
                                                             }}>
                                                                 {getTeacherInitials(teacher.name)}
@@ -3376,47 +3684,66 @@ const Dashboard = () => {
                                                             {/* Teacher Name & Class/Tier */}
                                                             <div>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                                                    <span style={{ fontWeight: '700', fontSize: '0.95rem', color: '#0f172a' }}>
+                                                                    <span style={{ fontWeight: '700', fontSize: '1rem', color: '#0f172a' }}>
                                                                         {teacher.name}
                                                                     </span>
                                                                     <span style={{
-                                                                        fontSize: '0.68rem',
-                                                                        padding: '2px 7px',
-                                                                        borderRadius: '5px',
-                                                                        fontWeight: '600',
-                                                                        background: teacher.performanceScore >= 85 ? '#eff6ff' : (teacher.performanceScore >= 75 ? '#f0fdf4' : '#f8fafc'),
-                                                                        color: teacher.performanceScore >= 85 ? '#1d4ed8' : (teacher.performanceScore >= 75 ? '#15803d' : '#475569'),
-                                                                        border: teacher.performanceScore >= 85 ? '1px solid #dbeafe' : (teacher.performanceScore >= 75 ? '1px solid #bbf7d0' : '1px solid #e2e8f0'),
+                                                                        fontSize: '0.74rem',
+                                                                        padding: '3px 9px',
+                                                                        borderRadius: '6px',
+                                                                        fontWeight: '700',
+                                                                        background: autoRemark.bg,
+                                                                        color: autoRemark.color,
+                                                                        border: `1px solid ${autoRemark.border}`,
                                                                         display: 'inline-flex',
-                                                                        alignItems: 'center'
+                                                                        alignItems: 'center',
+                                                                        gap: '4px',
+                                                                        whiteSpace: 'nowrap'
                                                                     }}>
-                                                                        {teacher.tier || 'Developing'}
+                                                                        {autoRemark.label}
                                                                     </span>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            navigate('/teachers', { state: { selectedTeacherId: teacher.id || teacher.teacherId } });
+                                                                        }}
+                                                                        title="Open Teacher Profile"
+                                                                        style={{
+                                                                            background: '#f1f5f9',
+                                                                            border: '1px solid #e2e8f0',
+                                                                            borderRadius: '6px',
+                                                                            padding: '2px 7px',
+                                                                            fontSize: '0.74rem',
+                                                                            fontWeight: '600',
+                                                                            color: '#475569',
+                                                                            cursor: 'pointer',
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px',
+                                                                            transition: 'all 0.15s ease'
+                                                                        }}
+                                                                        onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0'; }}
+                                                                        onMouseLeave={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
+                                                                    >
+                                                                        Profile <ExternalLink size={11} />
+                                                                    </button>
                                                                 </div>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginTop: '2px' }}>
-                                                                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '500' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '3px' }}>
+                                                                    <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '500' }}>
                                                                         {teacher.class || 'All Classes'}
-                                                                    </span>
-                                                                    <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#cbd5e1' }} />
-                                                                    <span style={{
-                                                                        fontSize: '0.7rem',
-                                                                        fontWeight: '600',
-                                                                        color: teacher.isPresent ? '#10b981' : '#94a3b8'
-                                                                    }}>
-                                                                        {teacher.isPresent ? '● Present Today' : '○ Absent Today'}
                                                                     </span>
                                                                 </div>
                                                             </div>
                                                         </div>
 
-                                                        {/* Overall Score Dial */}
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                                        {/* Overall Score Dial & Expand Toggle */}
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
                                                             <div style={{ textAlign: 'right' }}>
-                                                                <div style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                                                <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                                                                     Overall Score
                                                                 </div>
                                                                 <div style={{
-                                                                    fontSize: '1.4rem',
+                                                                    fontSize: '1.45rem',
                                                                     fontWeight: '800',
                                                                     color: overallColors.text,
                                                                     lineHeight: 1.1
@@ -3424,7 +3751,26 @@ const Dashboard = () => {
                                                                     {teacher.performanceScore}%
                                                                 </div>
                                                             </div>
-                                                            <ChevronRight size={16} color="#94a3b8" />
+
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '4px',
+                                                                padding: '5px 9px',
+                                                                borderRadius: '8px',
+                                                                background: isExpanded ? '#e0e7ff' : '#f1f5f9',
+                                                                color: isExpanded ? '#4338ca' : '#475569',
+                                                                fontSize: '0.78rem',
+                                                                fontWeight: '700',
+                                                                transition: 'all 0.2s ease',
+                                                                flexShrink: 0
+                                                            }}>
+                                                                <span>{isExpanded ? 'Hide' : 'Details'}</span>
+                                                                <ChevronDown size={15} style={{
+                                                                    transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                                                    transition: 'transform 0.2s ease'
+                                                                }} />
+                                                            </div>
                                                         </div>
                                                     </div>
 
@@ -3450,95 +3796,98 @@ const Dashboard = () => {
                                                         </div>
                                                     </div>
 
-                                                    {/* 4 Dedicated Score Lines (Tracks) Grid - 100% Performance Metric Display */}
-                                                    <div 
-                                                        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1.42fr_1.08fr]"
-                                                        style={{
-                                                            gap: '0.65rem',
-                                                            padding: '0.75rem 0.85rem',
-                                                            background: '#f8fafc',
-                                                            borderRadius: '10px',
-                                                            border: '1px solid #f1f5f9'
-                                                        }} 
-                                                        onClick={(e) => e.stopPropagation()}
-                                                    >
-                                                        {/* Track 1: Academics (35%) */}
-                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
-                                                                <span style={{ fontWeight: '600', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                                                                    <GraduationCap size={13} color="#2563eb" /> Academics
-                                                                </span>
-                                                                <span style={{ fontWeight: '700', color: acadColors.text, flexShrink: 0 }}>
-                                                                    {acadVal}% <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '500' }}>/ 100%</span>
-                                                                </span>
-                                                            </div>
-                                                            <div style={{ width: '100%', height: '5px', background: acadColors.track, borderRadius: '999px', overflow: 'hidden' }}>
-                                                                <div style={{ width: `${acadVal}%`, height: '100%', background: acadColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Track 2: Syllabus (30%) */}
-                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
-                                                                <span style={{ fontWeight: '600', color: '#6d28d9', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                                                                    <BookOpen size={13} color="#7c3aed" /> Syllabus
-                                                                </span>
-                                                                <span style={{ fontWeight: '700', color: syllColors.text, flexShrink: 0 }}>
-                                                                    {syllVal}% <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '500' }}>/ 100%</span>
-                                                                </span>
-                                                            </div>
-                                                            <div style={{ width: '100%', height: '5px', background: syllColors.track, borderRadius: '999px', overflow: 'hidden' }}>
-                                                                <div style={{ width: `${syllVal}%`, height: '100%', background: syllColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Track 3: Attendance (25%) */}
-                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
-                                                                <span style={{ fontWeight: '600', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                                                                    <Clock size={13} color="#0284c7" /> Attendance
-                                                                </span>
-                                                                <span style={{ fontWeight: '700', color: '#1e293b', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-                                                                    <span style={{ color: '#0284c7' }}>{presentDays} Present</span>
-                                                                    <span style={{ color: '#94a3b8', margin: '0 3px' }}>•</span>
-                                                                    <span style={{ color: attColors.absentColor }}>{absentDays} Absent</span>
-                                                                    <span 
-                                                                        title="School working days (excluding Sundays)"
-                                                                        style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: '500', marginLeft: '4px', cursor: 'help', whiteSpace: 'nowrap' }}
-                                                                    >
-                                                                        ({totalDays}&nbsp;working&nbsp;days)
+                                                    {/* 4 Dedicated Score Lines (Tracks) Grid - Shown Only When Expanded */}
+                                                    {isExpanded && (
+                                                        <div 
+                                                            className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1.42fr_1.08fr]"
+                                                            style={{
+                                                                gap: '0.75rem',
+                                                                padding: '0.85rem 1rem',
+                                                                background: '#ffffff',
+                                                                borderRadius: '10px',
+                                                                border: '1px solid #e2e8f0',
+                                                                boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+                                                            }} 
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            {/* Track 1: Teaching Score (35%) */}
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', minHeight: '19px', whiteSpace: 'nowrap' }}>
+                                                                    <span style={{ fontWeight: '700', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                        <GraduationCap size={14} color="#2563eb" /> Teaching Score
                                                                     </span>
-                                                                </span>
-                                                            </div>
-                                                            <div style={{ width: '100%', height: '5px', background: attColors.track, borderRadius: '999px', overflow: 'hidden' }}>
-                                                                <div style={{ width: `${attVal}%`, height: '100%', background: attColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Track 4: Homework (10%) */}
-                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', minHeight: '18px', whiteSpace: 'nowrap' }}>
-                                                                <span style={{ fontWeight: '600', color: '#047857', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                                                                    <ClipboardList size={13} color="#059669" /> Homework
-                                                                </span>
-                                                                <span style={{ fontWeight: '700', color: hwColors.text, flexShrink: 0 }}>
-                                                                    {hwVal}% <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: '500' }}>/ 100%</span>
-                                                                    <span style={{ fontSize: '0.62rem', fontWeight: '500', color: '#64748b', marginLeft: '3px', whiteSpace: 'nowrap' }}>
-                                                                        ({hwTasks} tasks)
+                                                                    <span style={{ fontWeight: '800', color: acadColors.text, flexShrink: 0, fontSize: '0.82rem' }}>
+                                                                        {acadVal}% <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '600' }}>/ 100%</span>
                                                                     </span>
-                                                                </span>
+                                                                </div>
+                                                                <div style={{ width: '100%', height: '6px', background: acadColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                    <div style={{ width: `${acadVal}%`, height: '100%', background: acadColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+                                                                </div>
                                                             </div>
-                                                            <div style={{ width: '100%', height: '5px', background: hwColors.track, borderRadius: '999px', overflow: 'hidden' }}>
-                                                                <div style={{
-                                                                    width: `${hwVal}%`,
-                                                                    height: '100%',
-                                                                    background: hwColors.bar,
-                                                                    borderRadius: '999px',
-                                                                    transition: 'width 0.6s ease'
-                                                                }} />
+
+                                                            {/* Track 2: Syllabus Cover (30%) */}
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', minHeight: '19px', whiteSpace: 'nowrap' }}>
+                                                                    <span style={{ fontWeight: '700', color: '#6d28d9', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                        <BookOpen size={14} color="#7c3aed" /> Syllabus Cover
+                                                                    </span>
+                                                                    <span style={{ fontWeight: '800', color: syllColors.text, flexShrink: 0, fontSize: '0.82rem' }}>
+                                                                        {syllVal}% <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '600' }}>/ 100%</span>
+                                                                    </span>
+                                                                </div>
+                                                                <div style={{ width: '100%', height: '6px', background: syllColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                    <div style={{ width: `${syllVal}%`, height: '100%', background: syllColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Track 3: Teacher Attendance (25%) */}
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', minHeight: '19px', whiteSpace: 'nowrap' }}>
+                                                                    <span style={{ fontWeight: '700', color: '#0369a1', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                        <Clock size={14} color="#0284c7" /> Teacher Attendance
+                                                                    </span>
+                                                                    <span style={{ fontWeight: '800', color: '#1e293b', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', flexShrink: 0, fontSize: '0.82rem' }}>
+                                                                        <span style={{ color: '#0284c7' }}>{presentDays} Present</span>
+                                                                        <span style={{ color: '#94a3b8', margin: '0 3px' }}>•</span>
+                                                                        <span style={{ color: attColors.absentColor }}>{absentDays} Absent</span>
+                                                                        <span 
+                                                                            title="School working days (excluding Sundays)"
+                                                                            style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600', marginLeft: '4px', cursor: 'help', whiteSpace: 'nowrap' }}
+                                                                        >
+                                                                            ({totalDays}&nbsp;days)
+                                                                        </span>
+                                                                    </span>
+                                                                </div>
+                                                                <div style={{ width: '100%', height: '6px', background: attColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                    <div style={{ width: `${attVal}%`, height: '100%', background: attColors.bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Track 4: Homework (10%) */}
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', minHeight: '19px', whiteSpace: 'nowrap' }}>
+                                                                    <span style={{ fontWeight: '700', color: '#047857', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                                                        <ClipboardList size={14} color="#059669" /> Homework
+                                                                    </span>
+                                                                    <span style={{ fontWeight: '800', color: hwColors.text, flexShrink: 0, fontSize: '0.82rem' }}>
+                                                                        {hwVal}% <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '600' }}>/ 100%</span>
+                                                                        <span style={{ fontSize: '0.72rem', fontWeight: '600', color: '#64748b', marginLeft: '3px', whiteSpace: 'nowrap' }}>
+                                                                            ({hwTasks} tasks)
+                                                                        </span>
+                                                                    </span>
+                                                                </div>
+                                                                <div style={{ width: '100%', height: '6px', background: hwColors.track, borderRadius: '999px', overflow: 'hidden' }}>
+                                                                    <div style={{
+                                                                        width: `${hwVal}%`,
+                                                                        height: '100%',
+                                                                        background: hwColors.bar,
+                                                                        borderRadius: '999px',
+                                                                        transition: 'width 0.6s ease'
+                                                                    }} />
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
+                                                    )}
                                                 </div>
                                             );
                                         })
